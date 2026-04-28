@@ -5,6 +5,7 @@ use crate::{
     config::{ClientConfig, LocalConfigStore},
     crypto::compose_local_encrypted_message,
     models::SpacePreview,
+    workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
 
 const DEMO_SPACE: &str = "cx:space:01js0sp0000000000000000000";
@@ -57,6 +58,7 @@ enum View {
     Directory,
     Settings,
     Devices,
+    Readiness,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,6 +194,7 @@ pub fn App() -> Element {
                     button { class: "secondary", onclick: move |_| view.set(View::Timeline), "Timeline" }
                     button { class: "secondary", "data-testid": "settings-nav-button", onclick: move |_| view.set(View::Settings), "Settings" }
                     button { class: "secondary", "data-testid": "devices-nav-button", onclick: move |_| view.set(View::Devices), "Devices" }
+                    button { class: "secondary", "data-testid": "readiness-nav-button", onclick: move |_| view.set(View::Readiness), "Release" }
                 }
             }
 
@@ -268,6 +271,11 @@ pub fn App() -> Element {
                             device_queue: device_queue(),
                             push_state: push_state(),
                             crypto_state: crypto_state(),
+                        }
+                    },
+                    View::Readiness => rsx! {
+                        ReadinessPanel {
+                            status,
                         }
                     },
                 }
@@ -663,6 +671,46 @@ fn DevicesPanel(
             div { class: "event",
                 div { class: "event-head", span { "Encryption" } span { "dev mode" } }
                 div { "MLS local compose/decrypt helpers are active. Missing group state keeps ciphertext pending." }
+            }
+        }
+    }
+}
+
+#[component]
+fn ReadinessPanel(mut status: Signal<String>) -> Element {
+    let workflows = production_release_workflows();
+    let blocked_count = blocked_release_workflows().len();
+    rsx! {
+        div { class: "timeline", "data-testid": "readiness-panel",
+            div { class: "event", "data-testid": "release-summary",
+                div { class: "event-head", span { "Release readiness" } span { "{blocked_count} blockers" } }
+                div { class: "space-title", "Not production-ready" }
+                div { class: "muted", "Critical account, contacts, Space lifecycle, member management, recovery, and release packaging flows remain blocked by missing product endpoints or security work." }
+            }
+            for workflow in workflows {
+                div { class: "event", "data-testid": "workflow-row",
+                    div { class: "event-head",
+                        span { "{workflow.stage.label()}" }
+                        span { "{workflow.id}" }
+                    }
+                    div { class: "space-title", "{workflow.name}" }
+                    div { class: "muted", "Client: {workflow.client_surface}" }
+                    div { class: "muted", "Dependency: {workflow.server_dependency}" }
+                    if workflow.stage == WorkflowStage::Blocked {
+                        div { class: "actions",
+                            button {
+                                class: "secondary",
+                                "data-testid": "blocked-workflow-button",
+                                onclick: {
+                                    let name = workflow.name;
+                                    let dependency = workflow.server_dependency;
+                                    move |_| status.set(format!("Blocked: {name} requires {dependency}"))
+                                },
+                                "Show blocker"
+                            }
+                        }
+                    }
+                }
             }
         }
     }

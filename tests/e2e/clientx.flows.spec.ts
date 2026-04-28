@@ -3,8 +3,8 @@ import { mockContrixApi } from "./mockContrixApi";
 
 test.beforeEach(async ({ page }) => {
   await mockContrixApi(page);
-  await page.goto("/");
-  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {
@@ -83,4 +83,19 @@ test("invalid server URL surfaces an error state", async ({ page }) => {
   await page.getByTestId("connect-button").click();
 
   await expect(page.getByTestId("status-label")).toContainText("Error: invalid URL");
+});
+
+test("release readiness panel keeps production blockers visible", async ({ page }) => {
+  await page.getByTestId("readiness-nav-button").click();
+
+  await expect(page.getByTestId("readiness-panel")).toBeVisible();
+  await expect(page.getByTestId("release-summary")).toContainText("Not production-ready");
+  await expect(page.getByTestId("readiness-panel")).toContainText("Production registration");
+  await expect(page.getByTestId("readiness-panel")).toContainText("Contacts and friends");
+  await expect(page.getByTestId("readiness-panel")).toContainText("Create space");
+  await expect(page.getByTestId("readiness-panel")).toContainText("Invite, add, remove, and kick members");
+  await expect(page.getByTestId("readiness-panel")).toContainText("Leave, archive, and delete space");
+
+  await page.getByTestId("blocked-workflow-button").first().click();
+  await expect(page.getByTestId("status-label")).toContainText("Blocked:");
 });

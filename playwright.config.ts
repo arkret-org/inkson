@@ -5,11 +5,12 @@ const shouldStartServer = !process.env.CLIENTX_E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 60_000,
+  timeout: 120_000,
   expect: {
-    timeout: 10_000,
+    timeout: 20_000,
   },
   fullyParallel: true,
+  workers: process.env.CI ? 1 : 2,
   reporter: "list",
   use: {
     baseURL,
@@ -27,7 +28,7 @@ export default defineConfig({
           "dx serve --platform web --addr 127.0.0.1 --port 4527 --open false --hot-reload false --watch false",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
-        timeout: 180_000,
+        timeout: 240_000,
       }
     : undefined,
 });

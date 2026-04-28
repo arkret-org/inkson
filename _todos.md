@@ -76,3 +76,17 @@
 - [x] Test devices/security panel after bootstrap.
 - [x] Test invalid server URL error state.
 - [x] Document Playwright execution in README.
+
+## Production Release Readiness
+
+- [x] Add release-readiness inventory in code so major unsupported business flows are visible in the product, not only in notes.
+- [x] Add UI panel for production blockers: registration, production login, device verification, contacts/friends, create Space, invite/add/kick member, leave/archive/delete Space, canonical message persistence, and release packaging.
+- [x] Add Playwright coverage that the product explicitly says it is not production-ready while those blockers remain.
+- [ ] Implement production registration with DID proof challenge, device bootstrap, verification, and recovery policy.
+- [ ] Implement production login with password/passkey/OIDC, token refresh, logout, soft-logout recovery, and device-bound session grants.
+- [ ] Implement contacts/friends: discoverable contact request, accept/reject, block, privacy-preserving directory lookup, and notification handling.
+- [ ] Implement Space lifecycle: create Space, edit metadata, set policy, invite/add member, accept invite, leave, kick/remove member, archive, delete/tombstone, and history retention rules.
+- [ ] Implement canonical message persistence: local compose -> encrypted/plain operation -> signed commit -> repo submit -> sync projection.
+- [ ] Implement web-grade E2EE crypto store instead of wasm placeholder envelope compose.
+- [ ] Implement production local encrypted storage, offline queue, retry reconciliation, and crash-safe draft/message recovery.
+- [ ] Implement release engineering: signed desktop/mobile builds, web deployment config, updater, crash telemetry, privacy/security review, and release channels.
