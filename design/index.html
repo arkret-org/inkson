@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>clientx 页面设计目录</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="page-index">
+    <div class="topbar">
+      <div class="grid">
+        <h1>clientx 页面设计稿</h1>
+        <p class="muted">每个入口都是独立页面原型，不是信息架构图。按协议功能覆盖登录、注册、看板、Space、联系人、设备、审计、设置。</p>
+      </div>
+      <div class="pill-row">
+        <span class="pill blue">HTML prototype</span>
+        <span class="pill green">Protocol mapped</span>
+      </div>
+    </div>
+    <section class="page-grid">
+      <a class="page-link" href="login.html"><h2>登录页面</h2><p class="muted">服务器、账号、passkey/OIDC、dev bootstrap、错误状态。</p><span class="pill blue">Auth</span></a>
+      <a class="page-link" href="register.html"><h2>注册页面</h2><p class="muted">DID、handle、设备绑定、proof challenge、恢复策略。</p><span class="pill amber">Registration</span></a>
+      <a class="page-link" href="verify-device.html"><h2>设备验证页面</h2><p class="muted">QR/SAS、设备信任、MLS key package、撤销风险。</p><span class="pill cyan">Security</span></a>
+      <a class="page-link" href="dashboard.html"><h2>看板页面</h2><p class="muted">全局工作台：Spaces、timeline、同步、队列、健康状态。</p><span class="pill green">Home</span></a>
+      <a class="page-link" href="space.html"><h2>Space 聊天页面</h2><p class="muted">消息流、加密 composer、reply、reaction、redaction、moderation。</p><span class="pill blue">Messaging</span></a>
+      <a class="page-link" href="contacts.html"><h2>联系人页面</h2><p class="muted">搜索、请求、接受/拒绝、block、隐私状态。</p><span class="pill amber">Social</span></a>
+      <a class="page-link" href="space-admin.html"><h2>Space 管理页面</h2><p class="muted">创建、策略、成员、邀请、移除、归档、删除。</p><span class="pill red">Admin</span></a>
+      <a class="page-link" href="directory.html"><h2>目录发现页面</h2><p class="muted">spaces、organizations、actors、handles 的搜索和 resolve。</p><span class="pill green">Directory</span></a>
+      <a class="page-link" href="devices.html"><h2>设备与密钥页面</h2><p class="muted">设备、keys、MLS group、to-device、push registration。</p><span class="pill cyan">Devices</span></a>
+      <a class="page-link" href="audit.html"><h2>同步审计页面</h2><p class="muted">repo、commits、operations、snapshot、backfill、conflict。</p><span class="pill blue">Audit</span></a>
+      <a class="page-link" href="settings.html"><h2>设置与发布健康页面</h2><p class="muted">服务器、存储、加密、CI、release readiness。</p><span class="pill red">Release</span></a>
+    </section>
+  </main>
+</body>
+</html>

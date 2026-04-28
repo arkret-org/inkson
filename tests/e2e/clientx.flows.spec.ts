@@ -25,6 +25,12 @@ test("settings can update account and device before session bootstrap", async ({
 
   await page.getByTestId("settings-account-did-input").fill("did:web:bob.example");
   await page.getByTestId("settings-device-id-input").fill("dev_bob_1");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await page.getByTestId("settings-nav-button").click();
+  await expect(page.getByTestId("settings-account-did-input")).toHaveValue("did:web:bob.example");
+  await expect(page.getByTestId("settings-device-id-input")).toHaveValue("dev_bob_1");
+
   await page.getByTestId("connect-button").click();
 
   await expect(page.getByTestId("session-panel")).toContainText("session dev_bob_1");
@@ -46,7 +52,49 @@ test("directory search resolve and space selection flow works", async ({ page })
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0sp0000000000000000000");
 });
 
+test("product account contacts space lifecycle and canonical message flow works", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
+
+  await page.getByTestId("product-nav-button").click();
+  await expect(page.getByTestId("product-panel")).toBeVisible();
+
+  await page.getByTestId("register-account-button").click();
+  await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
+
+  await page.getByTestId("request-contact-button").click();
+  await expect(page.getByTestId("contacts-flow")).toContainText("contact did:web:bob.example pending");
+  await page.getByTestId("list-contacts-button").click();
+  await expect(page.getByTestId("contacts-flow")).toContainText("1 contact(s)");
+  await page.getByTestId("accept-contact-button").click();
+  await expect(page.getByTestId("contacts-flow")).toContainText("contact did:web:bob.example accepted");
+
+  await page.getByTestId("create-space-button").click();
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0productflow000000000000");
+  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0productflow000000000000");
+
+  await page.getByTestId("add-member-button").click();
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
+  await page.getByTestId("persist-message-button").click();
+  await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted cx:operation:e2e-product");
+  await page.getByRole("button", { name: "Timeline" }).click();
+  await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:e2e-product");
+  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:product");
+  await expect(page.getByTestId("sync-metrics")).toContainText("cx:commit:e2e-product");
+
+  await page.getByTestId("product-nav-button").click();
+  await page.getByTestId("remove-member-button").click();
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("removed; members");
+  await page.getByTestId("delete-space-button").click();
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("deleted true");
+});
+
 test("plaintext and local MLS compose add timeline entries", async ({ page }) => {
+  await page.getByTestId("composer-input").fill("draft survives reload");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
+
   await page.getByTestId("composer-input").fill("plain e2e message");
   await page.getByTestId("send-button").click();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message");

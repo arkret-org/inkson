@@ -1,8 +1,13 @@
 import type { Page, Route } from "@playwright/test";
 
 const DEMO_SPACE = "cx:space:01js0sp0000000000000000000";
+const PRODUCT_SPACE = "cx:space:01js0productflow000000000000";
 
 export async function mockContrixApi(page: Page) {
+  let contactRequested = false;
+  let productSpaceDeleted = false;
+  let productMembers = ["did:web:alice.example", "did:web:bob.example"];
+
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/health") {
@@ -32,6 +37,87 @@ export async function mockContrixApi(page: Page) {
         device_id: body.device_id,
         expires_at: "2026-04-28T12:00:00Z",
       });
+    }
+
+    if (url.pathname === "/api/v1/account/register") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        did: body.did,
+        handle: body.handle,
+        display_name: body.display_name,
+        created_at: "2026-04-28T12:00:00Z",
+      }, 201);
+    }
+
+    if (url.pathname === "/api/v1/account/me") {
+      return json(route, {
+        did: "did:web:alice.example",
+        handle: "alice.example",
+        display_name: "clientx",
+        created_at: "2026-04-28T12:00:00Z",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/logout") {
+      return json(route, { ok: true });
+    }
+
+    if (url.pathname === "/api/v1/contacts/request") {
+      contactRequested = true;
+      const body = await route.request().postDataJSON();
+      return json(route, contact(body.target, "pending"), 201);
+    }
+
+    if (url.pathname === "/api/v1/contacts/respond") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        requester: body.requester,
+        target: "did:web:alice.example",
+        status: body.action === "accept" ? "accepted" : "rejected",
+        created_at: "2026-04-28T12:00:00Z",
+        updated_at: "2026-04-28T12:00:00Z",
+      });
+    }
+
+    if (url.pathname === "/api/v1/contacts") {
+      return json(route, {
+        contacts: contactRequested ? [contact("did:web:bob.example", "pending")] : [],
+      });
+    }
+
+    if (url.pathname === "/api/v1/spaces" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      productSpaceDeleted = false;
+      productMembers = ["did:web:alice.example", ...(body.invitees ?? [])];
+      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted), 201);
+    }
+
+    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}/members` && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      if (!productMembers.includes(body.member)) {
+        productMembers.push(body.member);
+      }
+      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+    }
+
+    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}/members/did:web:bob.example` && route.request().method() === "DELETE") {
+      productMembers = productMembers.filter((member) => member !== "did:web:bob.example");
+      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+    }
+
+    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}` && route.request().method() === "DELETE") {
+      productSpaceDeleted = true;
+      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+    }
+
+    if (url.pathname === "/api/v1/messages/send") {
+      return json(route, {
+        event_id: "cx:event:e2e-product",
+        operation_id: "cx:operation:e2e-product",
+        commit_id: "cx:commit:e2e-product",
+        head_commit: "cx:commit:e2e-product",
+        sync_token: "sx:e2e:product",
+      }, 201);
     }
 
     if (url.pathname === "/api/v1/sync") {
@@ -236,6 +322,26 @@ function spacePreview() {
     tags: ["demo"],
     public: true,
     category: "collaboration",
+  };
+}
+
+function contact(target: string, status: string) {
+  return {
+    requester: "did:web:alice.example",
+    target,
+    status,
+    created_at: "2026-04-28T12:00:00Z",
+    updated_at: "2026-04-28T12:00:00Z",
+  };
+}
+
+function spaceLifecycle(spaceId: string, members: string[], deleted: boolean) {
+  return {
+    ok: true,
+    space_id: spaceId,
+    owner: "did:web:alice.example",
+    members,
+    deleted,
   };
 }
 

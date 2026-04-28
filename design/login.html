@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>登录 - clientx</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <main class="auth-layout">
+    <section class="auth-card">
+      <div class="brand"><strong>clientx</strong><span>登录到 Contrix 服务器</span></div>
+      <div class="grid">
+        <h1>登录</h1>
+        <p class="muted">生产登录需要 passkey/OIDC、token refresh 和设备绑定 session。dev 模式仅用于本地 serverx。</p>
+      </div>
+      <div class="field"><label>Server URL</label><input value="https://serverx.example.com"></div>
+      <div class="field"><label>Account DID / Handle</label><input value="did:web:alice.example"></div>
+      <div class="grid two">
+        <button class="btn primary">使用 Passkey 登录</button>
+        <button class="btn">OIDC 登录</button>
+      </div>
+      <button class="btn">Dev bootstrap login</button>
+      <div class="pill-row"><span class="pill amber">token refresh required</span><span class="pill blue">device grant</span><span class="pill red">recovery not configured</span></div>
+      <div class="toolbar"><a class="btn" href="register.html">注册</a><a class="btn" href="dashboard.html">进入看板预览</a></div>
+    </section>
+    <section class="auth-visual">
+      <div class="device-frame">
+        <h2>登录状态面板</h2>
+        <div class="metric"><strong>Auth metadata</strong><span>passkey, oidc, dev-login</span></div>
+        <div class="metric"><strong>Session</strong><span>device-bound bearer token</span></div>
+        <div class="metric"><strong>Storage</strong><span>native file / web localStorage</span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

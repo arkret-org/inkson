@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>设备验证 - clientx</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <main class="auth-layout">
+    <section class="auth-card">
+      <h1>验证新设备</h1>
+      <p class="muted">用于跨设备信任、MLS group 加入、密钥备份和撤销。桌面显示 QR，移动端扫描；无法扫码时使用 SAS。</p>
+      <div class="grid two">
+        <div class="panel flat"><h3>QR 验证</h3><div class="qr"></div><p class="muted">在已信任设备上扫描。</p></div>
+        <div class="panel flat"><h3>SAS 短码</h3><h1>742 918</h1><p class="muted">两个设备显示一致后确认。</p></div>
+      </div>
+      <div class="table">
+        <div class="row"><div class="cell">Device</div><div class="cell">Trust</div><div class="cell">Key</div><div class="cell">Action</div></div>
+        <div class="row"><div class="cell">dev_clientx</div><div class="cell"><span class="pill green">current</span></div><div class="cell">ed25519</div><div class="cell">Keep</div></div>
+        <div class="row"><div class="cell">ios_alice</div><div class="cell"><span class="pill amber">pending</span></div><div class="cell">mls key package</div><div class="cell">Verify</div></div>
+      </div>
+      <div class="toolbar"><a class="btn" href="dashboard.html">完成</a><button class="btn danger">拒绝设备</button></div>
+    </section>
+    <section class="auth-visual"><div class="device-frame"><h2>安全影响</h2><p>验证后允许解密历史策略范围内的消息，并接收 Welcome / Commit。</p><span class="pill red">revocation must rotate epoch</span></div></section>
+  </main>
+</body>
+</html>

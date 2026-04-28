@@ -1,0 +1,18 @@
+[files]
+extend-exclude = [
+  "Cargo.lock",
+  "package-lock.json",
+  "target",
+  "node_modules",
+  "test-results",
+  "playwright-report",
+  "docker-context",
+]
+
+[default.extend-words]
+Dioxus = "Dioxus"
+OpenMLS = "OpenMLS"
+serverx = "serverx"
+clientx = "clientx"
+authz = "authz"
+to_device = "to_device"

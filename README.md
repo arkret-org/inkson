@@ -32,6 +32,32 @@ The Playwright runner starts `dx serve --platform web --port 4527 --open false` 
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 
+The release gate used by CI is available locally:
+
+```powershell
+npm install
+npm run release:check
+```
+
+## GitHub CI
+
+The repository includes CI for:
+
+- `Typos`: spell checking through `crate-ci/typos`.
+- `CI`: Rust format, clippy, tests, and Dioxus web build on Ubuntu.
+- `Packages`: release binary artifacts for Linux, Windows, and macOS runners.
+- `Docker`: web image build on pull requests and GHCR push on `main`, `master`, or `v*` tags.
+- `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
+
+CI checks out `contrix-rust-sdk` next to `clientx` because `Cargo.toml` uses `../contrix-rust-sdk` as a path dependency. The expected GitHub repository name is `${OWNER}/contrix-rust-sdk`.
+
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing both repositories:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
+docker build -f docker-context/clientx/Dockerfile -t clientx-web docker-context
+```
+
 By default the UI points at `http://127.0.0.1:8787`. Start serverx first:
 
 ```powershell

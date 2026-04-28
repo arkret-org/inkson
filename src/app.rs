@@ -2,10 +2,14 @@ use dioxus::prelude::*;
 
 use crate::{
     api::ContrixApi,
-    config::{ClientConfig, LocalConfigStore},
-    crypto::compose_local_encrypted_message,
+    components::Metric,
+    config::LocalConfigStore,
+    local_state::LocalStateStore,
     models::SpacePreview,
-    workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
+    views::{
+        ConnectionState, View,
+        helpers::{handle_from_did, persist_config},
+    },
 };
 
 const DEMO_SPACE: &str = "cx:space:01js0sp0000000000000000000";
@@ -18,7 +22,7 @@ button, input, textarea { font: inherit; }
 .brand { font-size: 24px; font-weight: 700; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
 .search { display: grid; gap: 8px; }
-.search input, .settings input, .composer textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
+.search input, .settings input, .workflow-form input, .composer textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
 .space-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
 .space-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
 .space-button.active { border-color: #5cc8a7; background: #284252; }
@@ -44,7 +48,17 @@ button, input, textarea { font: inherit; }
 .metric { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 10px; min-width: 0; }
 .metric strong { display: block; font-size: 12px; color: #607086; margin-bottom: 4px; }
 .metric span { overflow-wrap: anywhere; }
-.settings { display: grid; gap: 10px; }
+.settings, .workflow-form { display: grid; gap: 10px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.badge-info { background: #e7edf3; color: #18212f; }
+.badge-success { background: #d4edda; color: #155724; }
+.badge-error { background: #f8d7da; color: #721c24; }
+.badge-warning { background: #fff3cd; color: #856404; }
+.error-banner { border-color: #f5c6cb; background: #fef2f2; }
+.loading { opacity: 0.7; }
+.tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.tab { border: 1px solid #cbd5df; border-radius: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; background: #e7edf3; }
+.tab.active { background: white; border-bottom-color: white; font-weight: 600; }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar, .panel { border: 0; }
@@ -52,42 +66,12 @@ button, input, textarea { font: inherit; }
 }
 "#;
 
-#[derive(Clone, Copy, PartialEq)]
-enum View {
-    Timeline,
-    Directory,
-    Settings,
-    Devices,
-    Readiness,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConnectionState {
-    Offline,
-    Loading,
-    Online,
-    Reconnecting,
-    Empty,
-    Error,
-}
-
-impl ConnectionState {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Offline => "Offline",
-            Self::Loading => "Loading",
-            Self::Online => "Online",
-            Self::Reconnecting => "Reconnecting",
-            Self::Empty => "Empty",
-            Self::Error => "Error",
-        }
-    }
-}
-
 #[component]
 pub fn App() -> Element {
     let initial_config = LocalConfigStore::default().load();
+    let initial_local_state = LocalStateStore::default().load();
     let config_store = use_signal(LocalConfigStore::default);
+    let mut state_store = use_signal(LocalStateStore::default);
     let mut base_url = use_signal({
         let initial_config = initial_config.clone();
         move || initial_config.server_url
@@ -101,13 +85,30 @@ pub fn App() -> Element {
         move || initial_config.device_id
     });
     let token = use_signal(move || initial_config.session_token);
-    let mut view = use_signal(|| View::Timeline);
+    let mut view = use_signal(|| View::Dashboard);
     let status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let sync_cursor = use_signal(|| "-".to_owned());
+    let sync_cursor = use_signal({
+        let initial_local_state = initial_local_state.clone();
+        move || {
+            initial_local_state
+                .sync_cursor
+                .clone()
+                .unwrap_or_else(|| "-".to_owned())
+        }
+    });
     let mut selected_space = use_signal(|| DEMO_SPACE.to_owned());
     let spaces = use_signal(Vec::<SpacePreview>::new);
     let mut timeline = use_signal(Vec::<String>::new);
-    let mut draft = use_signal(String::new);
+    let mut draft = use_signal({
+        let initial_local_state = initial_local_state.clone();
+        move || {
+            initial_local_state
+                .drafts
+                .get(DEMO_SPACE)
+                .cloned()
+                .unwrap_or_default()
+        }
+    });
     let device_queue = use_signal(|| 0usize);
     let push_state = use_signal(|| "Not registered".to_owned());
     let repo_state = use_signal(|| "Not checked".to_owned());
@@ -149,16 +150,19 @@ pub fn App() -> Element {
                                 base_url(),
                                 account_did(),
                                 device_id(),
-                                status,
-                                sync_cursor,
-                                token,
-                                spaces,
-                                timeline,
-                                device_queue,
-                                repo_state,
-                                crypto_state,
-                                push_state,
-                                config_store,
+                                ConnectContext {
+                                    status,
+                                    sync_cursor,
+                                    token,
+                                    spaces,
+                                    timeline,
+                                    device_queue,
+                                    repo_state,
+                                    crypto_state,
+                                    push_state,
+                                    config_store,
+                                    state_store,
+                                },
                             ),
                             "Connect"
                         }
@@ -191,9 +195,18 @@ pub fn App() -> Element {
                     }
                 }
                 div { class: "actions",
+                    button { class: "secondary", onclick: move |_| view.set(View::Dashboard), "Dashboard" }
                     button { class: "secondary", onclick: move |_| view.set(View::Timeline), "Timeline" }
+                    button { class: "secondary", "data-testid": "product-nav-button", onclick: move |_| view.set(View::Product), "Product" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Contacts), "Contacts" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Directory), "Directory" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Kanban), "Kanban" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Chat), "Chat" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Forum), "Forum" }
+                    button { class: "secondary", onclick: move |_| view.set(View::Audit), "Audit" }
                     button { class: "secondary", "data-testid": "settings-nav-button", onclick: move |_| view.set(View::Settings), "Settings" }
                     button { class: "secondary", "data-testid": "devices-nav-button", onclick: move |_| view.set(View::Devices), "Devices" }
+                    button { class: "secondary", onclick: move |_| view.set(View::VerifyDevice), "Verify" }
                     button { class: "secondary", "data-testid": "readiness-nav-button", onclick: move |_| view.set(View::Readiness), "Release" }
                 }
             }
@@ -228,128 +241,184 @@ pub fn App() -> Element {
                     }
                 }
                 match view() {
+                    View::Login => rsx! {
+                        crate::views::login::LoginPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            status,
+                            config_store,
+                            on_login: move |_| view.set(View::Dashboard),
+                        }
+                    },
+                    View::Register => rsx! {
+                        crate::views::register::RegisterPanel {
+                            base_url: base_url(),
+                            on_register: move |_| view.set(View::Login),
+                        }
+                    },
+                    View::Dashboard => rsx! {
+                        crate::views::dashboard::DashboardPanel {
+                            base_url: base_url(),
+                            token,
+                            spaces,
+                            selected_space,
+                            view,
+                            device_queue: device_queue(),
+                            repo_state: repo_state(),
+                            sync_cursor: sync_cursor(),
+                        }
+                    },
                     View::Timeline => rsx! {
-                        div { class: "timeline", "data-testid": "timeline",
-                            for event in timeline() {
-                                div { class: "event", "data-testid": "timeline-event",
-                                    div { class: "event-head",
-                                        span { "clientx" }
-                                        span { "local" }
-                                    }
-                                    div { "{event}" }
-                                }
-                            }
-                            if timeline().is_empty() {
-                                div { class: "event",
-                                    div { class: "event-head", span { "serverx" } span { "empty" } }
-                                    div { "No timeline events yet. Compose a dev-mode message." }
-                                }
-                            }
+                        crate::views::timeline::TimelinePanel {
+                            base_url: base_url(),
+                            account_did: account_did(),
+                            device_id: device_id(),
+                            token,
+                            selected_space: selected_space(),
+                            timeline,
+                            draft,
+                            state_store,
+                            crypto_state,
+                            base_url_sig: base_url,
                         }
                     },
                     View::Directory => rsx! {
-                        DirectoryPanel {
+                        crate::views::directory::DirectoryPanel {
                             base_url: base_url(),
                             selected_space,
                             spaces,
                             status,
+                            token,
+                            view,
+                        }
+                    },
+                    View::Product => rsx! {
+                        crate::views::product::ProductPanel {
+                            base_url: base_url(),
+                            account_did: account_did(),
+                            device_id: device_id(),
+                            token,
+                            selected_space,
+                            spaces,
+                            timeline,
+                            status,
+                            sync_cursor,
+                            repo_state,
+                            state_store,
                         }
                     },
                     View::Settings => rsx! {
-                        SettingsPanel {
+                        crate::views::settings::SettingsPanel {
                             base_url,
                             account_did,
                             device_id,
                             token,
                             crypto_state: crypto_state(),
                             config_store,
-                        }
-                    },
-                    View::Devices => rsx! {
-                        DevicesPanel {
-                            device_id: device_id(),
-                            device_queue: device_queue(),
-                            push_state: push_state(),
-                            crypto_state: crypto_state(),
-                        }
-                    },
-                    View::Readiness => rsx! {
-                        ReadinessPanel {
                             status,
                         }
                     },
-                }
-                div { class: "composer",
-                    textarea {
-                        "data-testid": "composer-input",
-                        value: "{draft}",
-                        placeholder: "Write a plaintext dev-mode message",
-                        oninput: move |event| draft.set(event.value())
-                    }
-                    div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "send-button",
-                            onclick: move |_| {
-                                let body = draft().trim().to_owned();
-                                if !body.is_empty() {
-                                    timeline.write().push(body);
-                                    draft.set(String::new());
-                                }
-                            },
-                            "Send"
+                    View::Devices => rsx! {
+                        crate::views::devices::DevicesPanel {
+                            base_url: base_url(),
+                            token,
+                            device_id: device_id(),
+                            device_queue: device_queue(),
+                            push_state,
+                            crypto_state,
                         }
-                        button {
-                            class: "secondary",
-                            "data-testid": "encrypt-local-button",
-                            onclick: move |_| {
-                                let body = draft().trim().to_owned();
-                                if !body.is_empty() {
-                                    match compose_local_encrypted_message(
-                                        &account_did(),
-                                        &device_id(),
-                                        &selected_space(),
-                                        "cx:message:local-compose",
-                                        &body,
-                                    ) {
-                                        Ok(message) => {
-                                            timeline.write().push(format!(
-                                                "encrypted {} epoch {} digest {}",
-                                                message.payload.scheme.as_str(),
-                                                message.payload.epoch,
-                                                message.payload.payload_digest
-                                            ));
-                                            crypto_state.set(format!(
-                                                "encrypted local payload for {}",
-                                                message.payload.group_id
-                                            ));
-                                            draft.set(String::new());
-                                        }
-                                        Err(error) => crypto_state.set(format!("encrypt failed: {error}")),
-                                    }
-                                }
-                            },
-                            "Encrypt Local"
+                    },
+                    View::Readiness => rsx! {
+                        crate::views::readiness::ReadinessPanel {
+                            status,
                         }
-                        button {
-                            class: "secondary",
-                            "data-testid": "report-queue-button",
-                            onclick: move |_| {
-                                let base = base_url();
-                                let actor = account_did();
-                                let device = device_id();
-                                let bearer = token();
-                                spawn(async move {
-                                    if let Ok(api) = ContrixApi::new(&base) {
-                                        let api = if bearer.is_empty() { api } else { api.with_bearer(bearer) };
-                                        let _ = api.report_moderation(DEMO_SPACE, "local:event", "spam", &actor).await;
-                                        let _ = api.send_to_device(&actor, &device).await;
-                                    }
-                                });
-                            },
-                            "Report / Queue"
+                    },
+                    View::VerifyDevice => rsx! {
+                        crate::views::verify_device::VerifyDevicePanel {
+                            base_url: base_url(),
+                            token,
+                            device_id: device_id(),
                         }
-                    }
+                    },
+                    View::Contacts => rsx! {
+                        crate::views::contacts::ContactsPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::SpaceAdmin => rsx! {
+                        crate::views::space_admin::SpaceAdminPanel {
+                            base_url: base_url(),
+                            token,
+                            selected_space: selected_space(),
+                        }
+                    },
+                    View::Audit => rsx! {
+                        crate::views::audit::AuditPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::Kanban => rsx! {
+                        crate::views::kanban::KanbanPanel {
+                            base_url: base_url(),
+                            token,
+                            selected_space: selected_space(),
+                        }
+                    },
+                    View::Chat => rsx! {
+                        crate::views::chat::ChatPanel {
+                            base_url: base_url(),
+                            token,
+                            selected_space: selected_space(),
+                        }
+                    },
+                    View::Forum => rsx! {
+                        crate::views::forum::ForumPanel {
+                            base_url: base_url(),
+                            token,
+                            selected_space: selected_space(),
+                        }
+                    },
+                    View::SocialFeed => rsx! {
+                        crate::views::social_feed::SocialFeedPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::MemoryReview => rsx! {
+                        crate::views::memory_review::MemoryReviewPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::AgentRuns => rsx! {
+                        crate::views::agent_runs::AgentRunsPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::Notifications => rsx! {
+                        crate::views::notifications::NotificationsPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    View::Document => rsx! {
+                        crate::views::document::DocumentPanel {
+                            base_url: base_url(),
+                            token,
+                            selected_space: selected_space(),
+                        }
+                    },
+                    View::Call => rsx! {
+                        crate::views::call::CallPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
                 }
             }
 
@@ -383,22 +452,35 @@ pub fn App() -> Element {
     }
 }
 
-fn connect(
-    base: String,
-    actor: String,
-    device: String,
-    mut status: Signal<String>,
-    mut sync_cursor: Signal<String>,
-    mut token: Signal<String>,
-    mut spaces: Signal<Vec<SpacePreview>>,
-    mut timeline: Signal<Vec<String>>,
-    mut device_queue: Signal<usize>,
-    mut repo_state: Signal<String>,
-    mut crypto_state: Signal<String>,
-    mut push_state: Signal<String>,
+#[derive(Clone, Copy)]
+struct ConnectContext {
+    status: Signal<String>,
+    sync_cursor: Signal<String>,
+    token: Signal<String>,
+    spaces: Signal<Vec<SpacePreview>>,
+    timeline: Signal<Vec<String>>,
+    device_queue: Signal<usize>,
+    repo_state: Signal<String>,
+    crypto_state: Signal<String>,
+    push_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-) {
+    state_store: Signal<LocalStateStore>,
+}
+
+fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     spawn(async move {
+        let mut status = ctx.status;
+        let mut sync_cursor = ctx.sync_cursor;
+        let mut token = ctx.token;
+        let mut spaces = ctx.spaces;
+        let mut timeline = ctx.timeline;
+        let mut device_queue = ctx.device_queue;
+        let mut repo_state = ctx.repo_state;
+        let mut crypto_state = ctx.crypto_state;
+        let mut push_state = ctx.push_state;
+        let config_store = ctx.config_store;
+        let mut state_store = ctx.state_store;
+
         status.set(ConnectionState::Loading.label().to_owned());
         match ContrixApi::new(&base) {
             Ok(api) => {
@@ -428,8 +510,42 @@ fn connect(
                         api.clone().with_bearer(session.access_token)
                     }
                     Err(error) => {
-                        crypto_state.set(format!("login failed: {error}"));
-                        api.clone()
+                        match api
+                            .register_account(
+                                &actor,
+                                &handle_from_did(&actor),
+                                Some("clientx"),
+                                Some(&device),
+                            )
+                            .await
+                        {
+                            Ok(_) => match api.dev_login(&actor, &device).await {
+                                Ok(session) => {
+                                    token.set(session.access_token.clone());
+                                    persist_config(
+                                        config_store,
+                                        base.clone(),
+                                        actor.clone(),
+                                        device.clone(),
+                                        session.access_token.clone(),
+                                    );
+                                    crypto_state.set(format!("session {}", session.device_id));
+                                    api.clone().with_bearer(session.access_token)
+                                }
+                                Err(retry_error) => {
+                                    crypto_state.set(format!(
+                                        "login failed: {error}; retry failed: {retry_error}"
+                                    ));
+                                    api.clone()
+                                }
+                            },
+                            Err(register_error) => {
+                                crypto_state.set(format!(
+                                    "login failed: {error}; register failed: {register_error}"
+                                ));
+                                api.clone()
+                            }
+                        }
                     }
                 };
                 match api.search_spaces("").await {
@@ -444,6 +560,13 @@ fn connect(
                     )),
                 }
                 if let Ok(sync) = authed.sync(None).await {
+                    {
+                        let mut store = state_store.write();
+                        store.save_sync_cursor(sync.next_batch.clone());
+                        for (id, body) in &sync.spaces {
+                            store.save_space_projection(id.clone(), body.clone());
+                        }
+                    }
                     sync_cursor.set(sync.next_batch);
                     device_queue.set(sync.to_device.len());
                     timeline.set(
@@ -499,229 +622,4 @@ fn connect(
             )),
         }
     });
-}
-
-#[component]
-fn DirectoryPanel(
-    base_url: String,
-    mut selected_space: Signal<String>,
-    mut spaces: Signal<Vec<SpacePreview>>,
-    mut status: Signal<String>,
-) -> Element {
-    let mut query = use_signal(String::new);
-    let search_base_url = base_url.clone();
-    let resolve_base_url = base_url;
-    rsx! {
-        div { class: "timeline", "data-testid": "directory-panel",
-            div { class: "event",
-                div { class: "event-head", span { "Directory" } span { "search and exact resolve" } }
-                div { class: "search",
-                    input {
-                        "data-testid": "directory-search-input",
-                        value: "{query}",
-                        placeholder: "Search spaces",
-                        oninput: move |event| query.set(event.value())
-                    }
-                    div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "directory-search-button",
-                            onclick: move |_| {
-                                let base = search_base_url.clone();
-                                let q = query();
-                                spawn(async move {
-                                    if let Ok(api) = ContrixApi::new(&base) {
-                                        match api.search_spaces(&q).await {
-                                            Ok(search) => spaces.set(search.results),
-                                            Err(error) => status.set(format!("search failed: {error}")),
-                                        }
-                                    }
-                                });
-                            },
-                            "Search"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "resolve-selected-button",
-                            onclick: move |_| {
-                                let base = resolve_base_url.clone();
-                                let id = selected_space();
-                                spawn(async move {
-                                    if let Ok(api) = ContrixApi::new(&base) {
-                                        match api.resolve_space(&id).await {
-                                            Ok(resolved) => {
-                                                selected_space.set(resolved.space_preview.space_id);
-                                                status.set(format!("resolved {}", resolved.join_rule));
-                                            }
-                                            Err(error) => status.set(format!("resolve failed: {error}")),
-                                        }
-                                    }
-                                });
-                            },
-                            "Resolve Selected"
-                        }
-                    }
-                }
-            }
-            for space in spaces() {
-                div { class: "event", "data-testid": "directory-result",
-                    div { class: "event-head", span { "{space.category.clone().unwrap_or_else(|| \"space\".to_owned())}" } span { if space.public { "public" } else { "private" } } }
-                    div { class: "space-title", "{space.name}" }
-                    div { class: "muted", "{space.description.clone().unwrap_or_default()}" }
-                    div { class: "actions",
-                        button {
-                            class: "secondary",
-                            "data-testid": "directory-select-button",
-                            onclick: {
-                                let id = space.space_id.clone();
-                                move |_| selected_space.set(id.clone())
-                            },
-                            "Select"
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn SettingsPanel(
-    mut base_url: Signal<String>,
-    mut account_did: Signal<String>,
-    mut device_id: Signal<String>,
-    token: Signal<String>,
-    crypto_state: String,
-    mut config_store: Signal<LocalConfigStore>,
-) -> Element {
-    rsx! {
-        div { class: "settings", "data-testid": "settings-panel",
-            div { class: "event",
-                div { class: "event-head", span { "Settings" } span { "client configuration" } }
-                label { "Server URL" }
-                input {
-                    "data-testid": "settings-server-url-input",
-                    value: "{base_url}",
-                    oninput: move |event| {
-                        let value = event.value();
-                        base_url.set(value.clone());
-                        persist_config(config_store, value, account_did(), device_id(), token());
-                    }
-                }
-                label { "Account DID" }
-                input {
-                    "data-testid": "settings-account-did-input",
-                    value: "{account_did}",
-                    oninput: move |event| {
-                        let value = event.value();
-                        account_did.set(value.clone());
-                        persist_config(config_store, base_url(), value, device_id(), token());
-                    }
-                }
-                label { "Device ID" }
-                input {
-                    "data-testid": "settings-device-id-input",
-                    value: "{device_id}",
-                    oninput: move |event| {
-                        let value = event.value();
-                        device_id.set(value.clone());
-                        persist_config(config_store, base_url(), account_did(), value, token());
-                    }
-                }
-            }
-            div { class: "event", "data-testid": "session-panel",
-                div { class: "event-head", span { "Session" } span { "bearer" } }
-                div { class: "muted", if token().is_empty() { "No token" } else { "Token loaded" } }
-                div { "{crypto_state}" }
-            }
-        }
-    }
-}
-
-fn persist_config(
-    mut config_store: Signal<LocalConfigStore>,
-    server_url: String,
-    account_did: String,
-    device_id: String,
-    session_token: String,
-) {
-    config_store.write().save(ClientConfig::from_fields(
-        server_url,
-        account_did,
-        device_id,
-        session_token,
-    ));
-}
-
-#[component]
-fn DevicesPanel(
-    device_id: String,
-    device_queue: usize,
-    push_state: String,
-    crypto_state: String,
-) -> Element {
-    rsx! {
-        div { class: "timeline", "data-testid": "devices-panel",
-            div { class: "event", "data-testid": "device-summary",
-                div { class: "event-head", span { "Device" } span { "{device_id}" } }
-                div { "Queue count: {device_queue}" }
-                div { "Push: {push_state}" }
-                div { "Keys: {crypto_state}" }
-            }
-            div { class: "event",
-                div { class: "event-head", span { "Encryption" } span { "dev mode" } }
-                div { "MLS local compose/decrypt helpers are active. Missing group state keeps ciphertext pending." }
-            }
-        }
-    }
-}
-
-#[component]
-fn ReadinessPanel(mut status: Signal<String>) -> Element {
-    let workflows = production_release_workflows();
-    let blocked_count = blocked_release_workflows().len();
-    rsx! {
-        div { class: "timeline", "data-testid": "readiness-panel",
-            div { class: "event", "data-testid": "release-summary",
-                div { class: "event-head", span { "Release readiness" } span { "{blocked_count} blockers" } }
-                div { class: "space-title", "Not production-ready" }
-                div { class: "muted", "Critical account, contacts, Space lifecycle, member management, recovery, and release packaging flows remain blocked by missing product endpoints or security work." }
-            }
-            for workflow in workflows {
-                div { class: "event", "data-testid": "workflow-row",
-                    div { class: "event-head",
-                        span { "{workflow.stage.label()}" }
-                        span { "{workflow.id}" }
-                    }
-                    div { class: "space-title", "{workflow.name}" }
-                    div { class: "muted", "Client: {workflow.client_surface}" }
-                    div { class: "muted", "Dependency: {workflow.server_dependency}" }
-                    if workflow.stage == WorkflowStage::Blocked {
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "blocked-workflow-button",
-                                onclick: {
-                                    let name = workflow.name;
-                                    let dependency = workflow.server_dependency;
-                                    move |_| status.set(format!("Blocked: {name} requires {dependency}"))
-                                },
-                                "Show blocker"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn Metric(label: String, value: String) -> Element {
-    rsx! {
-        div { class: "metric",
-            strong { "{label}" }
-            span { "{value}" }
-        }
-    }
 }

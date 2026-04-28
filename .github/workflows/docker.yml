@@ -1,0 +1,77 @@
+name: Docker
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/clientx-web
+
+jobs:
+  image:
+    name: Build web image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout clientx
+        uses: actions/checkout@v4
+        with:
+          path: clientx
+
+      - name: Checkout contrix-rust-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/contrix-rust-sdk
+          path: contrix-rust-sdk
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      - name: Prepare Docker context
+        run: |
+          mkdir -p docker-context
+          rsync -a --delete \
+            --exclude .git \
+            --exclude target \
+            --exclude node_modules \
+            --exclude test-results \
+            --exclude playwright-report \
+            clientx/ docker-context/clientx/
+          rsync -a --delete \
+            --exclude .git \
+            --exclude target \
+            contrix-rust-sdk/ docker-context/contrix-rust-sdk/
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker-context
+          file: docker-context/clientx/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

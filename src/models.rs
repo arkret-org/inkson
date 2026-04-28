@@ -20,6 +20,48 @@ pub struct DevLoginResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AccountResponse {
+    pub did: String,
+    pub handle: String,
+    pub display_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContactResponse {
+    pub requester: String,
+    pub target: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContactsResponse {
+    #[serde(default)]
+    pub contacts: Vec<ContactResponse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpaceLifecycleResponse {
+    pub ok: bool,
+    pub space_id: String,
+    pub owner: String,
+    #[serde(default)]
+    pub members: Vec<String>,
+    pub deleted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SendMessageResponse {
+    pub event_id: String,
+    pub operation_id: String,
+    pub commit_id: String,
+    pub head_commit: Option<String>,
+    pub sync_token: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServerDescription {
     pub service_did: String,
     pub service_type: String,
@@ -298,4 +340,227 @@ pub struct ModerationReportResponse {
     pub status: String,
     #[serde(default)]
     pub routed_to: Vec<String>,
+}
+
+// ── Authentication ──────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PasskeyChallengeResponse {
+    pub challenge: String,
+    pub rp_id: String,
+    pub user_did: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PasskeyVerifyResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub actor: String,
+    pub device_id: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OidcAuthorizeResponse {
+    pub redirect_url: String,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OidcCallbackResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub actor: String,
+    pub device_id: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TokenRefreshResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AccountRecoveryResponse {
+    pub ok: bool,
+    pub recovery_method: String,
+    pub challenge: Option<String>,
+}
+
+// ── Directory ───────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SearchOrganizationsResponse {
+    pub results: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SearchActorsResponse {
+    pub results: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SearchUsersResponse {
+    pub results: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResolveHandleResponse {
+    pub did: String,
+    pub handle: String,
+    pub did_document: Option<Value>,
+}
+
+// ── Space Management ────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpdateSpaceResponse {
+    pub ok: bool,
+    pub space_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ArchiveSpaceResponse {
+    pub ok: bool,
+    pub space_id: String,
+    pub archived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpacePolicyResponse {
+    pub ok: bool,
+    pub space_id: String,
+    pub join_rule: String,
+    pub history_visibility: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpaceInviteResponse {
+    pub ok: bool,
+    pub invite_id: String,
+    pub space_id: String,
+    pub target: String,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpaceLeaveResponse {
+    pub ok: bool,
+    pub space_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BanMemberResponse {
+    pub ok: bool,
+    pub space_id: String,
+    pub member: String,
+    pub banned: bool,
+}
+
+// ── Messaging ───────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EditMessageResponse {
+    pub event_id: String,
+    pub operation_id: String,
+    pub commit_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RedactMessageResponse {
+    pub event_id: String,
+    pub redaction_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReactionResponse {
+    pub event_id: String,
+    pub reaction_key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypingResponse {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReceiptResponse {
+    pub ok: bool,
+}
+
+// ── Device & Crypto ─────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RevokeDeviceResponse {
+    pub ok: bool,
+    pub device_id: String,
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RotateKeysResponse {
+    pub one_time_key_counts: Value,
+    pub fallback_keys: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceTrustResponse {
+    pub devices: Vec<DeviceTrustEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceTrustEntry {
+    pub device_id: String,
+    pub trust_state: String,
+    pub verified_at: Option<String>,
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VerifyDeviceResponse {
+    pub ok: bool,
+    pub device_id: String,
+    pub trust_state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MlsEpochResponse {
+    pub epoch: u64,
+    pub group_id: String,
+    pub member_count: usize,
+    pub last_rotation: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MlsRotateResponse {
+    pub ok: bool,
+    pub epoch: u64,
+    pub group_id: String,
+}
+
+// ── Moderation & Policy ─────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModerationReportsResponse {
+    pub reports: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModerationResolveResponse {
+    pub ok: bool,
+    pub report_id: String,
+    pub resolution: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PolicyResponse {
+    pub resource: String,
+    pub policy: Value,
 }

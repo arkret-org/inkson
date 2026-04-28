@@ -8,14 +8,23 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::models::{
-    AuthzCheckResponse, BackfillResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
-    DeviceMessagesReceiveResponse, DeviceMessagesSendResponse, DirectoryDescribeResponse,
-    EffectiveGrantsResponse, GetCommitResponse, GetOperationsResponse, HealthResponse,
-    IdentityDescribeResponse, IdentityResolveResponse, IndexDescribeResponse, IndexQueryResponse,
-    InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
-    ModerationReportResponse, OkResponse, PushRegisterResponse, RepoDescribeResponse,
-    RepoSyncResponse, ResolveSpaceResponse, SearchSpacesResponse, ServerDescription,
-    SnapshotHeadResponse, SubmitCommitResponse, SyncDescribeResponse,
+    AccountRecoveryResponse, AccountResponse, ArchiveSpaceResponse, AuthzCheckResponse,
+    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse,
+    DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
+    DeviceTrustResponse, DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
+    GetCommitResponse, GetOperationsResponse, HealthResponse, IdentityDescribeResponse,
+    IdentityResolveResponse, IndexDescribeResponse, IndexQueryResponse, InvitesResponse,
+    KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
+    MlsEpochResponse, MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
+    ModerationResolveResponse, OkResponse, OidcAuthorizeResponse, OidcCallbackResponse,
+    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyResponse, PushRegisterResponse,
+    ReactionResponse, ReceiptResponse, RedactMessageResponse, RepoDescribeResponse,
+    RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
+    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, SearchUsersResponse,
+    SendMessageResponse, ServerDescription, SnapshotHeadResponse, SpaceInviteResponse,
+    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitCommitResponse,
+    SyncDescribeResponse, TokenRefreshResponse, TypingResponse, UpdateSpaceResponse,
+    VerifyDeviceResponse,
 };
 
 #[derive(Clone, Debug)]
@@ -118,6 +127,120 @@ impl ContrixApi {
         self.post_json(
             "api/v1/auth/dev-login",
             json!({"actor": actor, "device_id": device_id, "display_name": "clientx"}),
+        )
+        .await
+    }
+
+    pub async fn register_account(
+        &self,
+        did: &str,
+        handle: &str,
+        display_name: Option<&str>,
+        device_id: Option<&str>,
+    ) -> anyhow::Result<AccountResponse> {
+        self.post_json(
+            "api/v1/account/register",
+            json!({
+                "did": did,
+                "handle": handle,
+                "display_name": display_name,
+                "device_id": device_id
+            }),
+        )
+        .await
+    }
+
+    pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
+        self.get_json("api/v1/account/me").await
+    }
+
+    pub async fn logout(&self) -> anyhow::Result<OkResponse> {
+        self.post_json("api/v1/auth/logout", json!({})).await
+    }
+
+    pub async fn request_contact(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<crate::models::ContactResponse> {
+        self.post_json("api/v1/contacts/request", json!({"target": target}))
+            .await
+    }
+
+    pub async fn respond_contact(
+        &self,
+        requester: &str,
+        action: &str,
+    ) -> anyhow::Result<crate::models::ContactResponse> {
+        self.post_json(
+            "api/v1/contacts/respond",
+            json!({"requester": requester, "action": action}),
+        )
+        .await
+    }
+
+    pub async fn list_contacts(&self) -> anyhow::Result<ContactsResponse> {
+        self.get_json("api/v1/contacts").await
+    }
+
+    pub async fn create_space(
+        &self,
+        title: &str,
+        summary: Option<&str>,
+        public: bool,
+        invitees: Vec<String>,
+    ) -> anyhow::Result<SpaceLifecycleResponse> {
+        self.post_json(
+            "api/v1/spaces",
+            json!({
+                "title": title,
+                "summary": summary,
+                "public": public,
+                "invitees": invitees
+            }),
+        )
+        .await
+    }
+
+    pub async fn add_space_member(
+        &self,
+        space_id: &str,
+        member: &str,
+    ) -> anyhow::Result<SpaceLifecycleResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/members"),
+            json!({"member": member}),
+        )
+        .await
+    }
+
+    pub async fn remove_space_member(
+        &self,
+        space_id: &str,
+        member: &str,
+    ) -> anyhow::Result<SpaceLifecycleResponse> {
+        self.delete_json(&format!("api/v1/spaces/{space_id}/members/{member}"))
+            .await
+    }
+
+    pub async fn delete_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
+        self.delete_json(&format!("api/v1/spaces/{space_id}")).await
+    }
+
+    pub async fn send_message(
+        &self,
+        space_id: &str,
+        thread_id: Option<&str>,
+        content: Value,
+        encrypted: bool,
+    ) -> anyhow::Result<SendMessageResponse> {
+        self.post_json(
+            "api/v1/messages/send",
+            json!({
+                "space_id": space_id,
+                "thread_id": thread_id,
+                "content": content,
+                "encrypted": encrypted
+            }),
         )
         .await
     }
@@ -399,6 +522,350 @@ impl ContrixApi {
         .await
     }
 
+    // ── Authentication ──────────────────────────────────────────────
+
+    pub async fn passkey_challenge(
+        &self,
+        user_did: &str,
+    ) -> anyhow::Result<PasskeyChallengeResponse> {
+        self.post_json(
+            "api/v1/auth/passkey/challenge",
+            json!({"user_did": user_did}),
+        )
+        .await
+    }
+
+    pub async fn passkey_verify(
+        &self,
+        user_did: &str,
+        credential: Value,
+    ) -> anyhow::Result<PasskeyVerifyResponse> {
+        self.post_json(
+            "api/v1/auth/passkey/verify",
+            json!({"user_did": user_did, "credential": credential}),
+        )
+        .await
+    }
+
+    pub async fn oidc_authorize(
+        &self,
+        provider: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<OidcAuthorizeResponse> {
+        self.post_json(
+            "api/v1/auth/oidc/authorize",
+            json!({"provider": provider, "redirect_uri": redirect_uri}),
+        )
+        .await
+    }
+
+    pub async fn oidc_callback(
+        &self,
+        code: &str,
+        state: &str,
+    ) -> anyhow::Result<OidcCallbackResponse> {
+        self.post_json(
+            "api/v1/auth/oidc/callback",
+            json!({"code": code, "state": state}),
+        )
+        .await
+    }
+
+    pub async fn token_refresh(&self, refresh_token: &str) -> anyhow::Result<TokenRefreshResponse> {
+        self.post_json(
+            "api/v1/auth/token/refresh",
+            json!({"refresh_token": refresh_token}),
+        )
+        .await
+    }
+
+    pub async fn account_recovery(
+        &self,
+        did: &str,
+        method: &str,
+        proof: Value,
+    ) -> anyhow::Result<AccountRecoveryResponse> {
+        self.post_json(
+            "api/v1/account/recovery",
+            json!({"did": did, "method": method, "proof": proof}),
+        )
+        .await
+    }
+
+    // ── Identity & Directory ────────────────────────────────────────
+
+    pub async fn search_organizations(
+        &self,
+        query: &str,
+    ) -> anyhow::Result<SearchOrganizationsResponse> {
+        self.post_json(
+            "api/v1/directory/search-organizations",
+            json!({"query": query, "limit": 20}),
+        )
+        .await
+    }
+
+    pub async fn search_actors(&self, query: &str) -> anyhow::Result<SearchActorsResponse> {
+        self.post_json(
+            "api/v1/directory/search-actors",
+            json!({"query": query, "limit": 20}),
+        )
+        .await
+    }
+
+    pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
+        self.post_json(
+            "api/v1/identity/resolve-handle",
+            json!({"handle": handle}),
+        )
+        .await
+    }
+
+    pub async fn search_users(&self, query: &str) -> anyhow::Result<SearchUsersResponse> {
+        self.post_json(
+            "api/v1/directory/search-users",
+            json!({"query": query, "limit": 20}),
+        )
+        .await
+    }
+
+    // ── Space Management ────────────────────────────────────────────
+
+    pub async fn update_space(
+        &self,
+        space_id: &str,
+        updates: Value,
+    ) -> anyhow::Result<UpdateSpaceResponse> {
+        self.patch_json(
+            &format!("api/v1/spaces/{space_id}"),
+            updates,
+        )
+        .await
+    }
+
+    pub async fn archive_space(&self, space_id: &str) -> anyhow::Result<ArchiveSpaceResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/archive"),
+            json!({}),
+        )
+        .await
+    }
+
+    pub async fn set_space_policy(
+        &self,
+        space_id: &str,
+        join_rule: &str,
+        history_visibility: &str,
+    ) -> anyhow::Result<SpacePolicyResponse> {
+        self.put_json(
+            &format!("api/v1/spaces/{space_id}/policy"),
+            json!({"join_rule": join_rule, "history_visibility": history_visibility}),
+        )
+        .await
+    }
+
+    pub async fn invite_to_space(
+        &self,
+        space_id: &str,
+        target: &str,
+        role: Option<&str>,
+    ) -> anyhow::Result<SpaceInviteResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/invite"),
+            json!({"target": target, "role": role}),
+        )
+        .await
+    }
+
+    pub async fn accept_space_invite(
+        &self,
+        space_id: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<SpaceInviteResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/invite/accept"),
+            json!({"invite_id": invite_id}),
+        )
+        .await
+    }
+
+    pub async fn reject_space_invite(
+        &self,
+        space_id: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<SpaceInviteResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/invite/reject"),
+            json!({"invite_id": invite_id}),
+        )
+        .await
+    }
+
+    pub async fn leave_space(&self, space_id: &str) -> anyhow::Result<SpaceLeaveResponse> {
+        self.post_json(&format!("api/v1/spaces/{space_id}/leave"), json!({}))
+            .await
+    }
+
+    pub async fn ban_member(
+        &self,
+        space_id: &str,
+        member: &str,
+    ) -> anyhow::Result<BanMemberResponse> {
+        self.post_json(
+            &format!("api/v1/spaces/{space_id}/members/{member}/ban"),
+            json!({}),
+        )
+        .await
+    }
+
+    // ── Messaging ───────────────────────────────────────────────────
+
+    pub async fn edit_message(
+        &self,
+        message_id: &str,
+        content: Value,
+    ) -> anyhow::Result<EditMessageResponse> {
+        self.patch_json(
+            &format!("api/v1/messages/{message_id}"),
+            json!({"content": content}),
+        )
+        .await
+    }
+
+    pub async fn redact_message(
+        &self,
+        message_id: &str,
+        reason: Option<&str>,
+    ) -> anyhow::Result<RedactMessageResponse> {
+        self.post_json(
+            &format!("api/v1/messages/{message_id}/redact"),
+            json!({"reason": reason}),
+        )
+        .await
+    }
+
+    pub async fn add_reaction(
+        &self,
+        message_id: &str,
+        reaction_key: &str,
+    ) -> anyhow::Result<ReactionResponse> {
+        self.post_json(
+            &format!("api/v1/messages/{message_id}/reactions"),
+            json!({"reaction_key": reaction_key}),
+        )
+        .await
+    }
+
+    pub async fn remove_reaction(
+        &self,
+        message_id: &str,
+        reaction_key: &str,
+    ) -> anyhow::Result<ReactionResponse> {
+        self.delete_json(&format!(
+            "api/v1/messages/{message_id}/reactions/{reaction_key}"
+        ))
+        .await
+    }
+
+    pub async fn send_typing(
+        &self,
+        space_id: &str,
+        typing: bool,
+    ) -> anyhow::Result<TypingResponse> {
+        self.post_json(
+            "api/v1/typing",
+            json!({"space_id": space_id, "typing": typing}),
+        )
+        .await
+    }
+
+    pub async fn send_receipt(
+        &self,
+        space_id: &str,
+        event_id: &str,
+        receipt_type: &str,
+    ) -> anyhow::Result<ReceiptResponse> {
+        self.post_json(
+            "api/v1/receipts",
+            json!({"space_id": space_id, "event_id": event_id, "receipt_type": receipt_type}),
+        )
+        .await
+    }
+
+    // ── Device & Crypto ─────────────────────────────────────────────
+
+    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
+        self.post_json(
+            &format!("api/v1/devices/{device_id}/revoke"),
+            json!({}),
+        )
+        .await
+    }
+
+    pub async fn rotate_keys(&self, device_id: &str) -> anyhow::Result<RotateKeysResponse> {
+        self.post_json("api/v1/keys/rotate", json!({"device_id": device_id}))
+            .await
+    }
+
+    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustResponse> {
+        self.get_json("api/v1/devices/trust").await
+    }
+
+    pub async fn verify_device(
+        &self,
+        device_id: &str,
+        method: &str,
+        proof: Value,
+    ) -> anyhow::Result<VerifyDeviceResponse> {
+        self.post_json(
+            &format!("api/v1/devices/{device_id}/verify"),
+            json!({"method": method, "proof": proof}),
+        )
+        .await
+    }
+
+    pub async fn get_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsEpochResponse> {
+        self.get_json(&format!("api/v1/mls/epoch?group_id={group_id}"))
+            .await
+    }
+
+    pub async fn rotate_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsRotateResponse> {
+        self.post_json("api/v1/mls/rotate", json!({"group_id": group_id}))
+            .await
+    }
+
+    // ── Moderation & Policy ─────────────────────────────────────────
+
+    pub async fn get_moderation_reports(
+        &self,
+        space_id: Option<&str>,
+    ) -> anyhow::Result<ModerationReportsResponse> {
+        match space_id {
+            Some(sid) => {
+                self.get_json(&format!("api/v1/moderation/reports?space_id={sid}"))
+                    .await
+            }
+            None => self.get_json("api/v1/moderation/reports").await,
+        }
+    }
+
+    pub async fn resolve_moderation_report(
+        &self,
+        report_id: &str,
+        resolution: &str,
+        notes: Option<&str>,
+    ) -> anyhow::Result<ModerationResolveResponse> {
+        self.post_json(
+            &format!("api/v1/moderation/reports/{report_id}/resolve"),
+            json!({"resolution": resolution, "notes": notes}),
+        )
+        .await
+    }
+
+    pub async fn get_policy(&self, resource: &str) -> anyhow::Result<PolicyResponse> {
+        self.get_json(&format!("api/v1/policy/{resource}")).await
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let request = self.http.get(self.endpoint(path)?);
         self.send_json(self.authorize(request), Method::GET).await
@@ -412,6 +879,21 @@ impl ContrixApi {
     async fn put_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.put(self.endpoint(path)?).json(&body);
         self.send_json(self.authorize(request), Method::PUT).await
+    }
+
+    async fn patch_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: Value,
+    ) -> anyhow::Result<T> {
+        let request = self.http.patch(self.endpoint(path)?).json(&body);
+        self.send_json(self.authorize(request), Method::PATCH).await
+    }
+
+    async fn delete_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        let request = self.http.delete(self.endpoint(path)?);
+        self.send_json(self.authorize(request), Method::DELETE)
+            .await
     }
 
     async fn send_json<T: DeserializeOwned>(
@@ -507,7 +989,7 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
 }
 
 fn is_retryable_method(method: &Method) -> bool {
-    matches!(method, &Method::GET | &Method::PUT)
+    matches!(method, &Method::GET | &Method::PUT | &Method::PATCH)
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {

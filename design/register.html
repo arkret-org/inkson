@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>注册 - clientx</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <main class="auth-layout">
+    <section class="auth-card">
+      <div class="brand"><strong>clientx</strong><span>创建账号与首台设备</span></div>
+      <h1>注册新账号</h1>
+      <div class="grid two">
+        <div class="field"><label>DID</label><input value="did:web:alice.example"></div>
+        <div class="field"><label>Handle</label><input value="alice.example"></div>
+      </div>
+      <div class="field"><label>Display name</label><input value="Alice"></div>
+      <div class="field"><label>Device label</label><input value="Alice Windows Desktop"></div>
+      <div class="panel flat">
+        <h3>DID proof challenge</h3>
+        <p class="muted">服务端返回 challenge，客户端用 DID 控制密钥签名，并绑定初始 device key package。</p>
+        <div class="pill-row"><span class="pill red">proof missing</span><span class="pill amber">recovery policy required</span></div>
+      </div>
+      <button class="btn primary">创建账号并绑定设备</button>
+      <div class="toolbar"><a class="btn" href="login.html">已有账号登录</a><a class="btn" href="verify-device.html">下一步：设备验证</a></div>
+    </section>
+    <section class="auth-visual"><div class="phone-frame"><h2>注册进度</h2><div class="event"><b>1. Account</b><p class="muted">DID + handle reserved</p></div><div class="event"><b>2. Device</b><p class="muted">Upload keys and one-time keys</p></div><div class="event"><b>3. Recovery</b><p class="muted">Configure backup and revocation</p></div></div></section>
+  </main>
+</body>
+</html>

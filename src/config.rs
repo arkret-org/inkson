@@ -1,8 +1,16 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8787";
 const DEFAULT_ACCOUNT_DID: &str = "did:web:alice.example";
 const DEFAULT_DEVICE_ID: &str = "dev_clientx";
+#[cfg(target_arch = "wasm32")]
+const CONFIG_STORAGE_KEY: &str = "clientx.config.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -39,18 +47,41 @@ impl ClientConfig {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LocalConfigStore {
     cached: Option<ClientConfig>,
+    #[cfg(not(target_arch = "wasm32"))]
+    path: PathBuf,
+}
+
+impl Default for LocalConfigStore {
+    fn default() -> Self {
+        Self {
+            cached: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            path: default_config_path(),
+        }
+    }
 }
 
 impl LocalConfigStore {
     pub fn load(&self) -> ClientConfig {
-        self.cached.clone().unwrap_or_default()
+        self.cached
+            .clone()
+            .or_else(|| self.read_persisted_config())
+            .unwrap_or_default()
     }
 
     pub fn save(&mut self, config: ClientConfig) {
         self.cached = Some(config);
+        let _ = self.flush();
+    }
+
+    pub fn flush(&self) -> anyhow::Result<()> {
+        if let Some(config) = &self.cached {
+            self.write_persisted_config(config)?;
+        }
+        Ok(())
     }
 
     pub fn save_fields(
@@ -67,11 +98,75 @@ impl LocalConfigStore {
             session_token,
         ));
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_path(path: impl Into<PathBuf>) -> Self {
+        Self {
+            cached: None,
+            path: path.into(),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_persisted_config(&self) -> Option<ClientConfig> {
+        let bytes = fs::read(&self.path).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn read_persisted_config(&self) -> Option<ClientConfig> {
+        browser_storage()
+            .and_then(|storage| storage.get_item(CONFIG_STORAGE_KEY).ok().flatten())
+            .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_persisted_config(&self, config: &ClientConfig) -> anyhow::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.path, serde_json::to_vec_pretty(config)?)?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn write_persisted_config(&self, config: &ClientConfig) -> anyhow::Result<()> {
+        let Some(storage) = browser_storage() else {
+            return Ok(());
+        };
+        storage
+            .set_item(CONFIG_STORAGE_KEY, &serde_json::to_string(config)?)
+            .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn browser_storage() -> Option<web_sys::Storage> {
+    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_config_path() -> PathBuf {
+    std::env::var_os("CLIENTX_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app_data_dir().join("config.json"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn app_data_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("clientx")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn default_config_matches_dev_server_bootstrap() {
@@ -84,7 +179,8 @@ mod tests {
 
     #[test]
     fn local_config_store_round_trips_latest_config() {
-        let mut store = LocalConfigStore::default();
+        let path = temp_config_path("round_trip");
+        let mut store = LocalConfigStore::with_path(path);
         store.save_fields(
             "http://serverx.local".to_owned(),
             "did:web:bob.example".to_owned(),
@@ -101,5 +197,37 @@ mod tests {
                 "sx_token",
             )
         );
+    }
+
+    #[test]
+    fn local_config_store_persists_to_disk_between_instances() {
+        let path = temp_config_path("persisted");
+
+        let mut writer = LocalConfigStore::with_path(path.clone());
+        writer.save_fields(
+            "http://persisted.local".to_owned(),
+            "did:web:persisted.example".to_owned(),
+            "dev_persisted".to_owned(),
+            "sx_persisted".to_owned(),
+        );
+
+        let reader = LocalConfigStore::with_path(path);
+        assert_eq!(
+            reader.load(),
+            ClientConfig::from_fields(
+                "http://persisted.local",
+                "did:web:persisted.example",
+                "dev_persisted",
+                "sx_persisted",
+            )
+        );
+    }
+
+    fn temp_config_path(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("clientx-{name}-{stamp}.json"))
     }
 }

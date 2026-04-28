@@ -5,12 +5,12 @@ const shouldStartServer = !process.env.CLIENTX_E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 120_000,
+  timeout: 180_000,
   expect: {
     timeout: 20_000,
   },
-  fullyParallel: true,
-  workers: process.env.CI ? 1 : 2,
+  fullyParallel: false,
+  workers: 1,
   reporter: "list",
   use: {
     baseURL,

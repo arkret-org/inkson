@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Space - clientx</title><link rel="stylesheet" href="styles.css"></head>
+<body><div class="page-shell">
+<aside class="sidebar"><div class="brand"><strong>clientx</strong><span>Space</span></div><div class="status-card"><div class="status-row"><span>Space</span><b>epoch 4</b></div><div class="status-row"><span>Mode</span><b>encrypted</b></div></div><nav class="nav"><a href="dashboard.html">看板<span>全局概览</span></a><a class="active" href="space.html">Space<span>消息与加密</span></a><a href="contacts.html">联系人<span>好友和请求</span></a><a href="space-admin.html">Space 管理<span>策略和成员</span></a><a href="directory.html">目录<span>发现</span></a><a href="devices.html">设备密钥<span>MLS</span></a><a href="audit.html">审计<span>repo</span></a><a href="settings.html">设置<span>健康</span></a></nav><a class="btn" href="index.html">页面目录</a></aside>
+<main class="content">
+  <section class="topbar"><div><h1>Contrix Demo Space</h1><p class="muted">消息、reaction、redaction、moderation、backfill、加密状态都在同一页面完成。</p></div><div class="toolbar"><button class="btn">Backfill</button><button class="btn">Members</button><button class="btn primary">Resolve Space</button></div></section>
+  <section class="grid two">
+    <div class="panel"><h2>Timeline</h2><div class="event"><div class="event-head"><span>Alice</span><span>cx:commit:e2e</span></div><p>Plain message rendered from sync projection.</p><div class="toolbar"><button class="btn">Reply</button><button class="btn">React</button><button class="btn danger">Report</button></div></div><div class="event"><div class="event-head"><span>Bob</span><span>pending decrypt</span></div><p>MLS ciphertext preserved until group state is available.</p><span class="pill amber">pending key</span></div></div>
+    <div class="panel"><h2>Composer</h2><textarea>Draft saved locally before send.</textarea><div class="grid two"><select><option>Encrypted MLS</option><option>Plaintext dev</option></select><select><option>Current thread</option><option>New thread</option></select></div><div class="pill-row"><span class="pill green">draft persisted</span><span class="pill blue">operation preview</span><span class="pill amber">offline queue</span></div><div class="toolbar"><button class="btn primary">Send</button><button class="btn">Attach Blob</button><button class="btn">Sign Commit</button></div></div>
+  </section>
+</main></div></body></html>
