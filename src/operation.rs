@@ -138,11 +138,7 @@ impl OperationBuilder {
     }
 
     /// Build with explicit dependencies.
-    pub fn build_with_deps(
-        self,
-        node_id: &str,
-        deps: Vec<String>,
-    ) -> OperationEnvelope {
+    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> OperationEnvelope {
         let hlc = Hlc::now(node_id);
         OperationEnvelope {
             operation_id: uuid_v8(),
@@ -218,10 +214,7 @@ pub fn uuid_v8() -> String {
     let ts_lo = (now & 0xFFFF) as u16;
     let rand_a: u16 = 0x8000 | (rand_u16() & 0x0FFF); // version 8
     let rand_b = rand_u64();
-    format!(
-        "{:08x}-{:04x}-{:04x}-{:016x}",
-        ts_hi, ts_lo, rand_a, rand_b
-    )
+    format!("{:08x}-{:04x}-{:04x}-{:016x}", ts_hi, ts_lo, rand_a, rand_b)
 }
 
 fn rand_u16() -> u16 {
@@ -246,13 +239,12 @@ fn rand_u64() -> u64 {
 
 /// Standard operation types per contrix-spec section 6.6.
 pub mod cx_ops {
-    use serde_json::{Value, json};
     use super::OperationBuilder;
+    use serde_json::{Value, json};
 
     // Space/Schema/Policy
     pub fn space_create(space_id: &str, actor: &str, name: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.space.create")
-            .body(json!({"name": name}))
+        OperationBuilder::new(space_id, actor, "cx.space.create").body(json!({"name": name}))
     }
 
     pub fn space_update(space_id: &str, actor: &str, changes: Value) -> OperationBuilder {
@@ -260,12 +252,22 @@ pub mod cx_ops {
     }
 
     // Entity
-    pub fn entity_create(space_id: &str, actor: &str, entity_type: &str, body: Value) -> OperationBuilder {
+    pub fn entity_create(
+        space_id: &str,
+        actor: &str,
+        entity_type: &str,
+        body: Value,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.entity.create")
             .body(json!({"entity_type": entity_type, "data": body}))
     }
 
-    pub fn entity_update(space_id: &str, actor: &str, entity_id: &str, changes: Value) -> OperationBuilder {
+    pub fn entity_update(
+        space_id: &str,
+        actor: &str,
+        entity_id: &str,
+        changes: Value,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.entity.update")
             .target_ref(entity_id)
             .body(changes)
@@ -284,7 +286,13 @@ pub mod cx_ops {
     }
 
     // Relation
-    pub fn relation_create(space_id: &str, actor: &str, source: &str, target: &str, rel_type: &str) -> OperationBuilder {
+    pub fn relation_create(
+        space_id: &str,
+        actor: &str,
+        source: &str,
+        target: &str,
+        rel_type: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.relation.create")
             .body(json!({"source": source, "target": target, "relation_type": rel_type}))
     }
@@ -296,31 +304,56 @@ pub mod cx_ops {
     }
 
     // Message
-    pub fn message_create(space_id: &str, actor: &str, channel: &str, body: &str) -> OperationBuilder {
+    pub fn message_create(
+        space_id: &str,
+        actor: &str,
+        channel: &str,
+        body: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.message.create")
             .body(json!({"channel": channel, "msgtype": "m.text", "body": body}))
     }
 
-    pub fn message_revise(space_id: &str, actor: &str, message_id: &str, new_body: &str) -> OperationBuilder {
+    pub fn message_revise(
+        space_id: &str,
+        actor: &str,
+        message_id: &str,
+        new_body: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.message.revise")
             .target_ref(message_id)
             .body(json!({"body": new_body}))
     }
 
-    pub fn message_redact(space_id: &str, actor: &str, message_id: &str, reason: Option<&str>) -> OperationBuilder {
+    pub fn message_redact(
+        space_id: &str,
+        actor: &str,
+        message_id: &str,
+        reason: Option<&str>,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.message.redact")
             .target_ref(message_id)
             .body(json!({"reason": reason}))
     }
 
     // Reaction
-    pub fn reaction_add(space_id: &str, actor: &str, message_id: &str, reaction: &str) -> OperationBuilder {
+    pub fn reaction_add(
+        space_id: &str,
+        actor: &str,
+        message_id: &str,
+        reaction: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.reaction.add")
             .target_ref(message_id)
             .body(json!({"reaction": reaction}))
     }
 
-    pub fn reaction_remove(space_id: &str, actor: &str, message_id: &str, reaction: &str) -> OperationBuilder {
+    pub fn reaction_remove(
+        space_id: &str,
+        actor: &str,
+        message_id: &str,
+        reaction: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.reaction.remove")
             .target_ref(message_id)
             .body(json!({"reaction": reaction}))
@@ -339,38 +372,62 @@ pub mod cx_ops {
     }
 
     // Comment
-    pub fn comment_create(space_id: &str, actor: &str, target: &str, body: &str) -> OperationBuilder {
+    pub fn comment_create(
+        space_id: &str,
+        actor: &str,
+        target: &str,
+        body: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.comment.create")
             .target_ref(target)
             .body(json!({"body": body}))
     }
 
     // Run/Memory
-    pub fn run_create(space_id: &str, actor: &str, agent_name: &str, input: Value) -> OperationBuilder {
+    pub fn run_create(
+        space_id: &str,
+        actor: &str,
+        agent_name: &str,
+        input: Value,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.run.create")
             .body(json!({"agent_name": agent_name, "input": input}))
     }
 
-    pub fn memory_create(space_id: &str, actor: &str, content: &str, layer: &str) -> OperationBuilder {
+    pub fn memory_create(
+        space_id: &str,
+        actor: &str,
+        content: &str,
+        layer: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.memory.create")
             .body(json!({"content": content, "layer": layer}))
     }
 
     // Invite
     pub fn invite_create(space_id: &str, actor: &str, target: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.invite.create")
-            .body(json!({"target": target}))
+        OperationBuilder::new(space_id, actor, "cx.invite.create").body(json!({"target": target}))
     }
 
     // Read marker
-    pub fn read_marker(space_id: &str, actor: &str, entity_id: &str, position: &str) -> OperationBuilder {
+    pub fn read_marker(
+        space_id: &str,
+        actor: &str,
+        entity_id: &str,
+        position: &str,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.read.marker")
             .target_ref(entity_id)
             .body(json!({"position": position}))
     }
 
     // Capability
-    pub fn capability_grant(space_id: &str, actor: &str, subject: &str, actions: Vec<&str>) -> OperationBuilder {
+    pub fn capability_grant(
+        space_id: &str,
+        actor: &str,
+        subject: &str,
+        actions: Vec<&str>,
+    ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.capability.grant")
             .body(json!({"subject": subject, "actions": actions}))
     }
@@ -443,27 +500,117 @@ mod tests {
     #[test]
     fn cx_ops_cover_all_standard_types() {
         // Verify constructors produce correct operation types
-        assert_eq!(cx_ops::space_create("s", "a", "n").build("n").op_type, "cx.space.create");
-        assert_eq!(cx_ops::space_update("s", "a", json!({})).build("n").op_type, "cx.space.update");
-        assert_eq!(cx_ops::entity_create("s", "a", "task", json!({})).build("n").op_type, "cx.entity.create");
-        assert_eq!(cx_ops::entity_update("s", "a", "e", json!({})).build("n").op_type, "cx.entity.update");
-        assert_eq!(cx_ops::entity_delete("s", "a", "e").build("n").op_type, "cx.entity.delete");
-        assert_eq!(cx_ops::entity_restore("s", "a", "e").build("n").op_type, "cx.entity.restore");
-        assert_eq!(cx_ops::relation_create("s", "a", "x", "y", "dep").build("n").op_type, "cx.relation.create");
-        assert_eq!(cx_ops::relation_delete("s", "a", "r").build("n").op_type, "cx.relation.delete");
-        assert_eq!(cx_ops::message_create("s", "a", "c", "b").build("n").op_type, "cx.message.create");
-        assert_eq!(cx_ops::message_revise("s", "a", "m", "b").build("n").op_type, "cx.message.revise");
-        assert_eq!(cx_ops::message_redact("s", "a", "m", None).build("n").op_type, "cx.message.redact");
-        assert_eq!(cx_ops::reaction_add("s", "a", "m", "+1").build("n").op_type, "cx.reaction.add");
-        assert_eq!(cx_ops::reaction_remove("s", "a", "m", "+1").build("n").op_type, "cx.reaction.remove");
-        assert_eq!(cx_ops::channel_create("s", "a", "c", "chat").build("n").op_type, "cx.channel.create");
-        assert_eq!(cx_ops::topic_create("s", "a", "t", "b").build("n").op_type, "cx.topic.create");
-        assert_eq!(cx_ops::comment_create("s", "a", "e", "b").build("n").op_type, "cx.comment.create");
-        assert_eq!(cx_ops::run_create("s", "a", "agent", json!({})).build("n").op_type, "cx.run.create");
-        assert_eq!(cx_ops::memory_create("s", "a", "fact", "semantic").build("n").op_type, "cx.memory.create");
-        assert_eq!(cx_ops::invite_create("s", "a", "t").build("n").op_type, "cx.invite.create");
-        assert_eq!(cx_ops::read_marker("s", "a", "e", "p").build("n").op_type, "cx.read.marker");
-        assert_eq!(cx_ops::capability_grant("s", "a", "sub", vec!["read"]).build("n").op_type, "cx.capability.grant");
-        assert_eq!(cx_ops::capability_revoke("s", "a", "g").build("n").op_type, "cx.capability.revoke");
+        assert_eq!(
+            cx_ops::space_create("s", "a", "n").build("n").op_type,
+            "cx.space.create"
+        );
+        assert_eq!(
+            cx_ops::space_update("s", "a", json!({})).build("n").op_type,
+            "cx.space.update"
+        );
+        assert_eq!(
+            cx_ops::entity_create("s", "a", "task", json!({}))
+                .build("n")
+                .op_type,
+            "cx.entity.create"
+        );
+        assert_eq!(
+            cx_ops::entity_update("s", "a", "e", json!({}))
+                .build("n")
+                .op_type,
+            "cx.entity.update"
+        );
+        assert_eq!(
+            cx_ops::entity_delete("s", "a", "e").build("n").op_type,
+            "cx.entity.delete"
+        );
+        assert_eq!(
+            cx_ops::entity_restore("s", "a", "e").build("n").op_type,
+            "cx.entity.restore"
+        );
+        assert_eq!(
+            cx_ops::relation_create("s", "a", "x", "y", "dep")
+                .build("n")
+                .op_type,
+            "cx.relation.create"
+        );
+        assert_eq!(
+            cx_ops::relation_delete("s", "a", "r").build("n").op_type,
+            "cx.relation.delete"
+        );
+        assert_eq!(
+            cx_ops::message_create("s", "a", "c", "b")
+                .build("n")
+                .op_type,
+            "cx.message.create"
+        );
+        assert_eq!(
+            cx_ops::message_revise("s", "a", "m", "b")
+                .build("n")
+                .op_type,
+            "cx.message.revise"
+        );
+        assert_eq!(
+            cx_ops::message_redact("s", "a", "m", None)
+                .build("n")
+                .op_type,
+            "cx.message.redact"
+        );
+        assert_eq!(
+            cx_ops::reaction_add("s", "a", "m", "+1").build("n").op_type,
+            "cx.reaction.add"
+        );
+        assert_eq!(
+            cx_ops::reaction_remove("s", "a", "m", "+1")
+                .build("n")
+                .op_type,
+            "cx.reaction.remove"
+        );
+        assert_eq!(
+            cx_ops::channel_create("s", "a", "c", "chat")
+                .build("n")
+                .op_type,
+            "cx.channel.create"
+        );
+        assert_eq!(
+            cx_ops::topic_create("s", "a", "t", "b").build("n").op_type,
+            "cx.topic.create"
+        );
+        assert_eq!(
+            cx_ops::comment_create("s", "a", "e", "b")
+                .build("n")
+                .op_type,
+            "cx.comment.create"
+        );
+        assert_eq!(
+            cx_ops::run_create("s", "a", "agent", json!({}))
+                .build("n")
+                .op_type,
+            "cx.run.create"
+        );
+        assert_eq!(
+            cx_ops::memory_create("s", "a", "fact", "semantic")
+                .build("n")
+                .op_type,
+            "cx.memory.create"
+        );
+        assert_eq!(
+            cx_ops::invite_create("s", "a", "t").build("n").op_type,
+            "cx.invite.create"
+        );
+        assert_eq!(
+            cx_ops::read_marker("s", "a", "e", "p").build("n").op_type,
+            "cx.read.marker"
+        );
+        assert_eq!(
+            cx_ops::capability_grant("s", "a", "sub", vec!["read"])
+                .build("n")
+                .op_type,
+            "cx.capability.grant"
+        );
+        assert_eq!(
+            cx_ops::capability_revoke("s", "a", "g").build("n").op_type,
+            "cx.capability.revoke"
+        );
     }
 }

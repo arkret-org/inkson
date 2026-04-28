@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use dioxus_router::prelude::*;
+use dioxus_router::{Link, Router, hooks::*};
 
 use crate::{
     api::ContrixApi,
@@ -9,7 +9,7 @@ use crate::{
     models::SpacePreview,
     routes::Route,
     views::{
-        ConnectionState, View,
+        ConnectionState,
         helpers::{handle_from_did, persist_config},
     },
 };
@@ -117,7 +117,7 @@ pub fn App() -> Element {
 }
 
 #[component]
-fn RouterView() -> Element {
+pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_local_state = LocalStateStore::default().load();
     let config_store = use_signal(LocalConfigStore::default);
@@ -179,7 +179,7 @@ fn RouterView() -> Element {
         style { "{STYLE}" }
         div { class: "shell", "data-testid": "client-shell",
             aside { class: "sidebar", "data-testid": "sidebar",
-                div { class: "brand", "clientx" }
+                div { class: "brand", "chask" }
                 div { class: "status", "data-testid": "connection-status",
                     div { class: "space-title", "data-testid": "status-label", "{status}" }
                     div { class: "muted", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
@@ -580,13 +580,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         api.clone().with_bearer(session.access_token)
                     }
                     Err(error) => {
+                        let handle = handle_from_did(&actor);
                         match api
-                            .register_account(
-                                &actor,
-                                &handle_from_did(&actor),
-                                Some("clientx"),
-                                Some(&device),
-                            )
+                            .register_account(&actor, &handle, Some("chask"), Some(&device))
                             .await
                         {
                             Ok(_) => match api.dev_login(&actor, &device).await {
@@ -672,7 +668,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     .claim_keys(&actor, &device, "signed_curve25519")
                     .await;
                 let _ = authed.receive_device_messages().await;
-                if let Ok(blob) = authed.upload_blob(b"clientx encrypted bytes").await {
+                if let Ok(blob) = authed.upload_blob(b"chask encrypted bytes").await {
                     let _ = authed.get_blob_bytes(&blob.blob_ref).await;
                 }
                 match authed.register_push_device().await {

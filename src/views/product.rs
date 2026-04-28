@@ -54,7 +54,7 @@ pub fn ProductPanel(
                                         Ok(api) => match api.register_account(
                                             &actor,
                                             &handle_from_did(&actor),
-                                            Some("clientx"),
+                                            Some("chask"),
                                             Some(&device),
                                         ).await {
                                             Ok(account) => account_state.set(format!("registered {}", account.handle)),
@@ -245,13 +245,13 @@ pub fn ProductPanel(
                                     let invitee = member_did();
                                     spawn(async move {
                                         match authed_api(&base, api_token) {
-                                            Ok(api) => match api.create_space(&title, Some("Created from clientx product flow"), true, vec![invitee]).await {
+                                            Ok(api) => match api.create_space(&title, Some("Created from chask product flow"), true, vec![invitee]).await {
                                                 Ok(space) => {
                                                     selected_space.set(space.space_id.clone());
                                                     spaces.write().push(SpacePreview {
                                                         space_id: space.space_id.clone(),
                                                         name: title,
-                                                        description: Some("Created from clientx product flow".to_owned()),
+                                                        description: Some("Created from chask product flow".to_owned()),
                                                         tags: Default::default(),
                                                         public: true,
                                                         category: Some("collaboration".to_owned()),

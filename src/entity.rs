@@ -490,7 +490,14 @@ mod tests {
 
     #[test]
     fn relation_round_trip_serde() {
-        let rel = Relation::new("r1", "cx:space:s1", RelationType::DependsOn, "e1", "e2", "did:web:bob");
+        let rel = Relation::new(
+            "r1",
+            "cx:space:s1",
+            RelationType::DependsOn,
+            "e1",
+            "e2",
+            "did:web:bob",
+        );
         let json = serde_json::to_string(&rel).unwrap();
         let parsed: Relation = serde_json::from_str(&json).unwrap();
         assert_eq!(rel, parsed);
@@ -500,16 +507,26 @@ mod tests {
     fn entity_type_from_str_standard_types() {
         assert_eq!(EntityType::from_str("task"), EntityType::Task);
         assert_eq!(EntityType::from_str("message"), EntityType::Message);
-        assert_eq!(EntityType::from_str("custom_thing"), EntityType::Custom("custom_thing".into()));
+        assert_eq!(
+            EntityType::from_str("custom_thing"),
+            EntityType::Custom("custom_thing".into())
+        );
     }
 
     #[test]
     fn entity_type_as_str_round_trip() {
         let types = vec![
-            EntityType::Board, EntityType::Task, EntityType::Message,
-            EntityType::Topic, EntityType::Channel, EntityType::Document,
-            EntityType::File, EntityType::Memory, EntityType::Run,
-            EntityType::ActorProfile, EntityType::Poll,
+            EntityType::Board,
+            EntityType::Task,
+            EntityType::Message,
+            EntityType::Topic,
+            EntityType::Channel,
+            EntityType::Document,
+            EntityType::File,
+            EntityType::Memory,
+            EntityType::Run,
+            EntityType::ActorProfile,
+            EntityType::Poll,
             EntityType::Custom("com.example.custom".into()),
         ];
         for t in types {

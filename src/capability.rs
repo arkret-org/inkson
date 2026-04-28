@@ -125,9 +125,7 @@ pub enum Constraint {
         min_approvals: u32,
     },
     /// Require specific claims to be present.
-    ClaimBased {
-        required_claims: Vec<String>,
-    },
+    ClaimBased { required_claims: Vec<String> },
     /// Ensure operations are attributable.
     Accountability {
         audit_log: bool,
@@ -168,9 +166,7 @@ impl Constraint {
                 if let Some(ref fields) = ctx.requested_fields {
                     for field in fields {
                         if denied_fields.contains(field) {
-                            return ConstraintResult::Deny(format!(
-                                "field {field} is denied"
-                            ));
+                            return ConstraintResult::Deny(format!("field {field} is denied"));
                         }
                         if !allowed_fields.is_empty() && !allowed_fields.contains(field) {
                             return ConstraintResult::Deny(format!(
@@ -197,9 +193,7 @@ impl Constraint {
             } => {
                 if let Some(ref space) = ctx.space_id {
                     if !space_ids.is_empty() && !space_ids.contains(space) {
-                        return ConstraintResult::Deny(format!(
-                            "space {space} not in scope"
-                        ));
+                        return ConstraintResult::Deny(format!("space {space} not in scope"));
                     }
                 }
                 if let Some(ref collection) = ctx.collection_id {
@@ -220,9 +214,7 @@ impl Constraint {
                 }
                 if let Some(ref action) = ctx.action {
                     if !allowed_actions.is_empty() && !allowed_actions.contains(action) {
-                        return ConstraintResult::Deny(format!(
-                            "action {action} not delegatable"
-                        ));
+                        return ConstraintResult::Deny(format!("action {action} not delegatable"));
                     }
                 }
                 ConstraintResult::Allow
@@ -276,9 +268,7 @@ impl Constraint {
                     return ConstraintResult::Deny("audit log required".to_owned());
                 }
                 if *retain_identity && ctx.anonymous {
-                    return ConstraintResult::Deny(
-                        "identity retention required".to_owned(),
-                    );
+                    return ConstraintResult::Deny("identity retention required".to_owned());
                 }
                 ConstraintResult::Allow
             }
@@ -367,8 +357,7 @@ impl ResourceSelector {
             Self::Any(selectors) => selectors.iter().any(|s| s.matches(resource)),
             Self::All(selectors) => selectors.iter().all(|s| s.matches(resource)),
             Self::Except(include, excludes) => {
-                include.matches(resource)
-                    && !excludes.iter().any(|e| e.matches(resource))
+                include.matches(resource) && !excludes.iter().any(|e| e.matches(resource))
             }
         }
     }
@@ -507,9 +496,7 @@ impl CapabilityEngine {
             .collect();
 
         if applicable_grants.is_empty() {
-            return AuthzDecision::Deny(format!(
-                "no grant found for {subject} to {action}"
-            ));
+            return AuthzDecision::Deny(format!("no grant found for {subject} to {action}"));
         }
 
         // Evaluate constraints in priority order: deny > quarantine > allow > require_review
@@ -564,14 +551,12 @@ impl CapabilityEngine {
                 self.check(subject, action, resource, ctx)
             }
             (AuthzDecision::Deny(r1), AuthzDecision::Deny(r2)) => {
-                AuthzDecision::Deny(format!(
-                    "cannot delegate: {r1} / {r2}"
-                ))
+                AuthzDecision::Deny(format!("cannot delegate: {r1} / {r2}"))
             }
-            (AuthzDecision::Quarantine(r), _)
-            | (_, AuthzDecision::Quarantine(r)) => AuthzDecision::Quarantine(r),
-            (AuthzDecision::RequireReview(r), _)
-            | (_, AuthzDecision::RequireReview(r)) => {
+            (AuthzDecision::Quarantine(r), _) | (_, AuthzDecision::Quarantine(r)) => {
+                AuthzDecision::Quarantine(r)
+            }
+            (AuthzDecision::RequireReview(r), _) | (_, AuthzDecision::RequireReview(r)) => {
                 AuthzDecision::RequireReview(r)
             }
         }
@@ -627,11 +612,8 @@ impl CapabilityEngine {
 
             // Child's actions must be a subset of parent's actions
             for action in &child.actions {
-                if !parent.actions.contains(action) && !parent.actions.contains(&"*".to_owned())
-                {
-                    return Err(format!(
-                        "action {action} not in parent grant"
-                    ));
+                if !parent.actions.contains(action) && !parent.actions.contains(&"*".to_owned()) {
+                    return Err(format!("action {action} not in parent grant"));
                 }
             }
 
@@ -642,10 +624,7 @@ impl CapabilityEngine {
         // Check revocations
         for grant in &chain {
             if self.revocations.contains_key(&grant.grant_id) {
-                return Err(format!(
-                    "grant {} is revoked",
-                    grant.grant_id
-                ));
+                return Err(format!("grant {} is revoked", grant.grant_id));
             }
         }
 
@@ -702,7 +681,7 @@ impl GrantBuilder {
                 actions: Vec::new(),
                 constraints: Vec::new(),
                 proofs: Vec::new(),
-                issued_at: Hlc::now(),
+                issued_at: Hlc::now("chask"),
                 max_delegation_depth: 0,
                 parent_grant_id: None,
                 revocable: true,
@@ -723,7 +702,7 @@ impl GrantBuilder {
     pub fn with_actions(mut self, actions: &[&str]) -> Self {
         self.grant
             .actions
-            .extend(actions.iter().map(|s| s.to_owned()));
+            .extend(actions.iter().map(|s| (*s).to_owned()));
         self
     }
 
@@ -971,7 +950,7 @@ mod tests {
         engine.revoke(CapabilityRevocation {
             grant_id: grant_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now(),
+            revoked_at: Hlc::now("chask"),
             reason: Some("test revocation".to_owned()),
             cascade: false,
         });
@@ -1046,7 +1025,7 @@ mod tests {
         engine.revoke(CapabilityRevocation {
             grant_id: parent_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now(),
+            revoked_at: Hlc::now("chask"),
             reason: Some("test cascade".to_owned()),
             cascade: true,
         });
@@ -1149,7 +1128,7 @@ mod tests {
         let revocation = CapabilityRevocation {
             grant_id: grant.grant_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now(),
+            revoked_at: Hlc::now("chask"),
             reason: Some("test".to_owned()),
             cascade: false,
         };

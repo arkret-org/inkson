@@ -94,7 +94,7 @@ impl LwwResolver {
             return ConflictResolution {
                 winner: serde_json::Value::Null,
                 strategy: ConflictStrategy::LastWriteWins,
-                winner_hlc: Hlc::now(),
+                winner_hlc: Hlc::now("chask"),
                 had_conflict: false,
                 losers: vec![],
             };
@@ -158,10 +158,7 @@ impl ORSet {
             hlc,
             actor: actor.to_owned(),
         };
-        self.adds
-            .entry(element.to_owned())
-            .or_default()
-            .push(event);
+        self.adds.entry(element.to_owned()).or_default().push(event);
     }
 
     /// Remove an element from the set.
@@ -180,8 +177,14 @@ impl ORSet {
     /// Check if an element is in the set.
     /// An element is in the set if its latest add event is after its latest remove event.
     pub fn contains(&self, element: &str) -> bool {
-        let latest_add = self.adds.get(element).and_then(|events| events.iter().max_by_key(|e| &e.hlc));
-        let latest_remove = self.removes.get(element).and_then(|events| events.iter().max_by_key(|e| &e.hlc));
+        let latest_add = self
+            .adds
+            .get(element)
+            .and_then(|events| events.iter().max_by_key(|e| &e.hlc));
+        let latest_remove = self
+            .removes
+            .get(element)
+            .and_then(|events| events.iter().max_by_key(|e| &e.hlc));
 
         match (latest_add, latest_remove) {
             (Some(add), Some(rm)) => add.hlc > rm.hlc,
@@ -287,12 +290,7 @@ impl FractionalIndexer {
     /// Generate an index between two existing indices.
     /// If before is None, generates before all existing indices.
     /// If after is None, generates after all existing indices.
-    pub fn between(
-        &mut self,
-        item_id: &str,
-        before: Option<&str>,
-        after: Option<&str>,
-    ) -> String {
+    pub fn between(&mut self, item_id: &str, before: Option<&str>, after: Option<&str>) -> String {
         let index = match (before, after) {
             (Some(b), Some(a)) => Self::midpoint(b, a),
             (Some(b), None) => Self::after(b),
@@ -335,16 +333,8 @@ impl FractionalIndexer {
         let mut carry = false;
 
         for i in 0..max_len {
-            let a_val = if i < a_bytes.len() {
-                a_bytes[i]
-            } else {
-                b'`'
-            };
-            let b_val = if i < b_bytes.len() {
-                b_bytes[i]
-            } else {
-                b'`'
-            };
+            let a_val = if i < a_bytes.len() { a_bytes[i] } else { b'`' };
+            let b_val = if i < b_bytes.len() { b_bytes[i] } else { b'`' };
 
             let mid = if carry {
                 (a_val + b_val + 1) / 2
@@ -435,10 +425,7 @@ impl ConflictResolver {
     }
 
     /// Resolve ordered field conflicts using fractional indexing.
-    pub fn resolve_ordered(
-        &self,
-        items: &[(String, Hlc, String)],
-    ) -> Vec<String> {
+    pub fn resolve_ordered(&self, items: &[(String, Hlc, String)]) -> Vec<String> {
         let mut indexer = FractionalIndexer::new();
 
         // Sort by HLC to process in causal order
@@ -477,8 +464,7 @@ impl SnapshotManager {
 
     /// Store a snapshot manifest.
     pub fn store(&mut self, manifest: SnapshotManifest) {
-        self.snapshots
-            .insert(manifest.space_id.clone(), manifest);
+        self.snapshots.insert(manifest.space_id.clone(), manifest);
     }
 
     /// Get the latest snapshot for a space.
@@ -514,19 +500,14 @@ impl SnapshotManager {
             chunks: Vec::new(),
             reducer_version: reducer_version.to_owned(),
             generator_signature: None,
-            created_at: Hlc::now(),
+            created_at: Hlc::now("chask"),
             operation_count,
             size_bytes: 0,
         }
     }
 
     /// Add a chunk to a snapshot manifest.
-    pub fn add_chunk(
-        &mut self,
-        space_id: &str,
-        content_hash: &str,
-        size_bytes: u64,
-    ) -> Option<()> {
+    pub fn add_chunk(&mut self, space_id: &str, content_hash: &str, size_bytes: u64) -> Option<()> {
         let manifest = self.snapshots.get_mut(space_id)?;
         let index = manifest.chunks.len() as u32;
         manifest.chunks.push(SnapshotChunk {
@@ -716,10 +697,7 @@ mod tests {
 
         assert!(idx1 < idx2);
         assert!(idx2 < idx3);
-        assert_eq!(
-            indexer.ordered_items(),
-            vec!["item-1", "item-2", "item-3"]
-        );
+        assert_eq!(indexer.ordered_items(), vec!["item-1", "item-2", "item-3"]);
     }
 
     #[test]
@@ -764,26 +742,15 @@ mod tests {
 
         manager.store(manifest);
 
-        assert!(manager.covers_frontier(
-            "cx:space:test",
-            &["op-1".to_owned(), "op-2".to_owned()]
-        ));
-        assert!(!manager.covers_frontier(
-            "cx:space:test",
-            &["op-1".to_owned(), "op-4".to_owned()]
-        ));
+        assert!(manager.covers_frontier("cx:space:test", &["op-1".to_owned(), "op-2".to_owned()]));
+        assert!(!manager.covers_frontier("cx:space:test", &["op-1".to_owned(), "op-4".to_owned()]));
     }
 
     #[test]
     fn test_snapshot_add_chunk() {
         let mut manager = SnapshotManager::new();
 
-        let manifest = SnapshotManager::create_manifest(
-            "cx:space:test",
-            vec![],
-            0,
-            "reducer-v1",
-        );
+        let manifest = SnapshotManager::create_manifest("cx:space:test", vec![], 0, "reducer-v1");
 
         manager.store(manifest);
         manager.add_chunk("cx:space:test", "hash-abc", 1024);
@@ -798,9 +765,21 @@ mod tests {
         let resolver = ConflictResolver::new();
 
         let items = vec![
-            ("item-c".to_owned(), Hlc::from_parts(3000, 0, 1), "alice".to_owned()),
-            ("item-a".to_owned(), Hlc::from_parts(1000, 0, 2), "bob".to_owned()),
-            ("item-b".to_owned(), Hlc::from_parts(2000, 0, 3), "charlie".to_owned()),
+            (
+                "item-c".to_owned(),
+                Hlc::from_parts(3000, 0, 1),
+                "alice".to_owned(),
+            ),
+            (
+                "item-a".to_owned(),
+                Hlc::from_parts(1000, 0, 2),
+                "bob".to_owned(),
+            ),
+            (
+                "item-b".to_owned(),
+                Hlc::from_parts(2000, 0, 3),
+                "charlie".to_owned(),
+            ),
         ];
 
         let ordered = resolver.resolve_ordered(&items);

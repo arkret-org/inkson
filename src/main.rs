@@ -1,3 +1,3 @@
 fn main() {
-    dioxus::launch(clientx::App);
+    dioxus::launch(chask::App);
 }

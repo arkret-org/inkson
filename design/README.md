@@ -1,4 +1,4 @@
-# clientx Interface Design
+# chask Interface Design
 
 This folder contains static HTML product design prototypes for the Contrix client.
 

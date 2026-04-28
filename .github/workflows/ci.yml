@@ -17,10 +17,10 @@ jobs:
     name: Rust tests and web build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout clientx
+      - name: Checkout chask
         uses: actions/checkout@v4
         with:
-          path: clientx
+          path: chask
 
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v4
@@ -45,34 +45,34 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: clientx
+          workspaces: chask
 
       - name: Install Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: clientx/package-lock.json
+          cache-dependency-path: chask/package-lock.json
 
       - name: Install npm dependencies
-        working-directory: clientx
+        working-directory: chask
         run: npm ci
 
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
       - name: Format check
-        working-directory: clientx
+        working-directory: chask
         run: cargo fmt --check
 
       - name: Clippy
-        working-directory: clientx
+        working-directory: chask
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Rust tests
-        working-directory: clientx
+        working-directory: chask
         run: cargo test
 
       - name: Web build
-        working-directory: clientx
+        working-directory: chask
         run: dx build --platform web

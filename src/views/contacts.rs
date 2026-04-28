@@ -1,10 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::{models::*, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ContactTab {
@@ -16,10 +13,7 @@ enum ContactTab {
 }
 
 #[component]
-pub fn ContactsPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
     let mut active_tab = use_signal(|| ContactTab::All);
     let mut search_query = use_signal(String::new);
     let mut search_results = use_signal(Vec::<Value>::new);

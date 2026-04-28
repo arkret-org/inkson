@@ -2,14 +2,23 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    crypto::compose_local_encrypted_message,
-    local_state::LocalStateStore,
+    crypto::compose_local_encrypted_message, local_state::LocalStateStore,
     views::helpers::authed_api,
 };
 
 const EMOJI_GRID: &[&str] = &[
-    "\u{1f44d}", "\u{2764}\u{fe0f}", "\u{1f602}", "\u{1f62e}", "\u{1f622}", "\u{1f389}",
-    "\u{1f525}", "\u{1f44e}", "\u{1f64f}", "\u{1f440}", "\u{1f4af}", "\u{1f680}",
+    "\u{1f44d}",
+    "\u{2764}\u{fe0f}",
+    "\u{1f602}",
+    "\u{1f62e}",
+    "\u{1f622}",
+    "\u{1f389}",
+    "\u{1f525}",
+    "\u{1f44e}",
+    "\u{1f64f}",
+    "\u{1f440}",
+    "\u{1f4af}",
+    "\u{1f680}",
 ];
 
 /// Event model for timeline display.
@@ -32,7 +41,7 @@ impl Default for TimelineEvent {
     fn default() -> Self {
         Self {
             id: String::new(),
-            sender: "clientx".to_owned(),
+            sender: "chask".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),
             timestamp: String::new(),
@@ -70,7 +79,6 @@ pub fn TimelinePanel(
     let read_receipts = use_signal(Vec::<String>::new);
     let mut blob_status = use_signal(|| String::new());
     let mut search_query = use_signal(String::new);
-    let mut jump_to_event = use_signal(|| Option::<String>::None);
 
     // Clone String params so they can be used in multiple closures
     let _base_url_c = base_url.clone();
@@ -78,29 +86,27 @@ pub fn TimelinePanel(
     let device_id_c = device_id.clone();
     let selected_space_c = selected_space.clone();
 
-    let events = use_signal(|| -> Vec<TimelineEvent> {
-        timeline()
-            .iter()
-            .enumerate()
-            .map(|(i, body)| TimelineEvent {
-                id: format!("local-event-{i}"),
-                sender: "clientx".to_owned(),
-                sender_display: "local".to_owned(),
-                body: body.clone(),
-                timestamp: "now".to_owned(),
-                reply_to: None,
-                reactions: Vec::new(),
-                redacted: false,
-                edited: false,
-                thread_id: None,
-                blob_ref: None,
-            })
-            .collect()
-    });
-
-    let events_data: Vec<(usize, TimelineEvent)> = events()
-        .into_iter()
+    let events_data: Vec<(usize, TimelineEvent)> = timeline()
+        .iter()
         .enumerate()
+        .map(|(i, body)| {
+            (
+                i,
+                TimelineEvent {
+                    id: format!("local-event-{i}"),
+                    sender: "chask".to_owned(),
+                    sender_display: "local".to_owned(),
+                    body: body.clone(),
+                    timestamp: "now".to_owned(),
+                    reply_to: None,
+                    reactions: Vec::new(),
+                    redacted: false,
+                    edited: false,
+                    thread_id: None,
+                    blob_ref: None,
+                },
+            )
+        })
         .collect();
 
     rsx! {
@@ -391,6 +397,7 @@ pub fn TimelinePanel(
                 label {
                     input {
                         r#type: "checkbox",
+                        "data-testid": "encrypt-local-button",
                         checked: encrypt_toggle(),
                         onchange: move |evt| encrypt_toggle.set(evt.value() == "true"),
                     }
@@ -406,7 +413,7 @@ pub fn TimelinePanel(
                         let api_token = token();
                         spawn(async move {
                             if let Ok(api) = authed_api(&base, api_token) {
-                                match api.upload_blob(b"clientx attached bytes").await {
+                                match api.upload_blob(b"chask attached bytes").await {
                                     Ok(blob) => blob_status.set(format!("attached {}", blob.blob_ref)),
                                     Err(e) => blob_status.set(format!("attach failed: {e}")),
                                 }

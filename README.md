@@ -1,4 +1,4 @@
-# clientx
+# chask
 
 Cross-platform Contrix client built with Dioxus 0.7.
 
@@ -49,13 +49,13 @@ The repository includes CI for:
 - `Docker`: web image build on pull requests and GHCR push on `main`, `master`, or `v*` tags.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `contrix-rust-sdk` next to `clientx` because `Cargo.toml` uses `../contrix-rust-sdk` as a path dependency. The expected GitHub repository name is `${OWNER}/contrix-rust-sdk`.
+CI checks out `contrix-rust-sdk` next to `chask` because `Cargo.toml` uses `../contrix-rust-sdk` as a path dependency. The expected GitHub repository name is `${OWNER}/contrix-rust-sdk`.
 
 The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing both repositories:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/clientx/Dockerfile -t clientx-web docker-context
+docker build -f docker-context/chask/Dockerfile -t chask-web docker-context
 ```
 
 By default the UI points at `http://127.0.0.1:8787`. Start serverx first:

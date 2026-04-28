@@ -188,7 +188,7 @@ impl DisplayMetadata {
             location: None,
             website: None,
             custom_fields: HashMap::new(),
-            updated_at: Hlc::now(),
+            updated_at: Hlc::now("chask"),
         }
     }
 }
@@ -345,20 +345,10 @@ impl AuthorizationFilter {
     fn can_access_space(&self, space_id: &str) -> bool {
         // Check if any grant allows access to this space
         self.grants.iter().any(|grant| {
-            grant.resource_selectors.iter().any(|selector| {
-                match selector {
-                    crate::capability::ResourceSelector::Space(id) => id == space_id,
-                    crate::capability::ResourceSelector::Wildcard => true,
-                    crate::capability::ResourceSelector::Any(selectors) => {
-                        selectors.iter().any(|s| match s {
-                            crate::capability::ResourceSelector::Space(id) => id == space_id,
-                            crate::capability::ResourceSelector::Wildcard => true,
-                            _ => false,
-                        })
-                    }
-                    _ => false,
-                }
-            })
+            grant
+                .resource_selectors
+                .iter()
+                .any(|selector| selector == space_id || selector == "*")
         })
     }
 }
@@ -395,8 +385,7 @@ impl DiscoveryManager {
 
     /// Set organization profile.
     pub fn set_org_profile(&mut self, profile: OrgProfileStatus) {
-        self.org_profiles
-            .insert(profile.org_did.clone(), profile);
+        self.org_profiles.insert(profile.org_did.clone(), profile);
     }
 
     /// Get organization profile.
@@ -489,7 +478,7 @@ mod tests {
             last_read_event_id: "event-5".to_owned(),
             last_read_hlc: Hlc::from_parts(5000, 0, 1),
             read_count: 5,
-            set_at: Hlc::now(),
+            set_at: Hlc::now("chask"),
         });
 
         let merged = merger.get_merged_marker("cx:space:test", "did:web:alice");
@@ -508,7 +497,7 @@ mod tests {
             last_read_event_id: "event-5".to_owned(),
             last_read_hlc: Hlc::from_parts(5000, 0, 1),
             read_count: 5,
-            set_at: Hlc::now(),
+            set_at: Hlc::now("chask"),
         });
 
         merger.set_marker(ReadMarker {
@@ -518,10 +507,12 @@ mod tests {
             last_read_event_id: "event-8".to_owned(),
             last_read_hlc: Hlc::from_parts(8000, 0, 2),
             read_count: 8,
-            set_at: Hlc::now(),
+            set_at: Hlc::now("chask"),
         });
 
-        let merged = merger.get_merged_marker("cx:space:test", "did:web:alice").unwrap();
+        let merged = merger
+            .get_merged_marker("cx:space:test", "did:web:alice")
+            .unwrap();
         // Should use the device with the highest HLC (device-2)
         assert_eq!(merged.last_read_event_id, "event-8");
         assert_eq!(merged.device_id, "device-2");
@@ -541,11 +532,10 @@ mod tests {
             last_read_event_id: "event-5".to_owned(),
             last_read_hlc: Hlc::from_parts(5000, 0, 1),
             read_count: 5,
-            set_at: Hlc::now(),
+            set_at: Hlc::now("chask"),
         });
 
-        let marker =
-            merger.get_device_marker("cx:space:test", "did:web:alice", "device-1");
+        let marker = merger.get_device_marker("cx:space:test", "did:web:alice", "device-1");
         assert!(marker.is_some());
         assert_eq!(marker.unwrap().last_read_event_id, "event-5");
 
@@ -558,12 +548,18 @@ mod tests {
 
     #[test]
     fn test_authorization_filter() {
-        use crate::capability::{CapabilityGrant, GrantBuilder, ResourceSelector};
-
-        let grant = GrantBuilder::new("did:web:server", "did:web:alice")
-            .with_action("space.read")
-            .with_resource(ResourceSelector::Space("cx:space:public".to_owned()))
-            .build();
+        let grant = CapabilityGrant {
+            grant_id: "grant-test".to_owned(),
+            issuer: "did:web:server".to_owned(),
+            subject: "did:web:alice".to_owned(),
+            resource_selectors: vec!["cx:space:public".to_owned()],
+            actions: vec!["space.read".to_owned()],
+            constraints: vec![],
+            proofs: vec![],
+            max_delegation_depth: Some(0),
+            created_at: "2026-04-29T00:00:00Z".to_owned(),
+            expires_at: None,
+        };
 
         let filter = AuthorizationFilter::new(vec![grant]);
 
@@ -599,7 +595,7 @@ mod tests {
             },
             allowed_discoverers: vec![],
             anti_enumeration: false,
-            updated_at: Hlc::now(),
+            updated_at: Hlc::now("chask"),
         });
 
         let config = manager.get_space_discovery("cx:space:test");
@@ -614,7 +610,7 @@ mod tests {
             is_encrypted: true,
             message_type: "message".to_owned(),
             sender_hint: Some("alice".to_owned()),
-            timestamp: Hlc::now(),
+            timestamp: Hlc::now("chask"),
         };
 
         let json = serde_json::to_string(&metadata).unwrap();

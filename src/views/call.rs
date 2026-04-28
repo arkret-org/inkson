@@ -10,10 +10,7 @@ enum CallState {
 }
 
 #[component]
-pub fn CallPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
     let mut call_state = use_signal(|| CallState::Idle);
     let mut target_did = use_signal(String::new);
     let mut audio_enabled = use_signal(|| true);

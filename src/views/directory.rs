@@ -1,10 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::{models::*, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {

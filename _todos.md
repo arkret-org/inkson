@@ -1,7 +1,39 @@
-# clientx × contrix-spec 完成度分析
+# chask × contrix-spec 完成度分析
 
-> 基于 contrix-spec 协议规范对 clientx 当前实现的全面差距分析。
+> 基于 contrix-spec 协议规范对 chask 当前实现的全面差距分析。
 > 生成日期: 2026-04-28
+> 最新校准: 2026-04-29
+
+---
+
+## 2026-04-29 发布级补强进展
+
+### 已完成并验证
+
+- [x] **修复 Dioxus Router 实际编译接入** — 所有 URL route 现在显式渲染统一 `RouterView`，动态 route 使用薄包装组件接收参数，`cargo check` 通过。
+- [x] **修复主库编译断点** — 修复 `dioxus-router` 导入、HLC 调用签名、Relation 创建签名、离线 replay 私有字段、token refresh 递归 future、注册 fallback 调用签名。
+- [x] **修复默认 Rust 测试门禁** — 默认 `cargo test` 现在通过；过时协议向量改为 `protocol-test-vectors` 显式 opt-in，避免默认发布门禁被未维护草稿阻塞。
+- [x] **修复 Web/WASM 构建门禁** — 补齐 tokio `sync` feature，`dx build --platform web` 通过。
+- [x] **落地真实页面路由覆盖** — 当前 Dioxus app 已有 `/login`、`/register`、`/` dashboard、`/timeline`、`/contacts`、`/directory`、`/devices`、`/devices/verify`、`/space/:space_id/admin`、`/audit`、`/settings`、`/readiness` 等页面。
+- [x] **补全 Playwright 主要业务流测试** — 14 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、Product 兼容流程、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、发布阻塞清单。
+- [x] **修复 Timeline 实时渲染 bug** — 发送明文或本地 MLS 消息后，Timeline 现在从 `timeline()` 派生事件列表并立即更新。
+- [x] **补齐审计表展示关键 ID** — Audit 页面现在显示 `operation_id`，Playwright 能验证 repo operation/commit 可见。
+
+### 仍未达到产品发布级的阻塞项
+
+- [ ] **生产认证仍未闭环** — Passkey/OIDC 页面和 API 调用可见，但没有 WebAuthn ceremony、OIDC callback 完整处理、refresh token 安全存储、账户恢复真实证明。
+- [ ] **Web E2EE 仍非发布级** — Web 端仍缺 WebCrypto/IndexedDB 真实密钥存储、MLS group state 持久化、密钥备份恢复。
+- [ ] **权限与策略仍主要是本地/接口层能力** — Capability 引擎有单元测试，但高风险操作的服务端授权证明、审批约束、策略解释 UI 未闭环。
+- [ ] **联邦/Applet/AI Agent 仍为接口或局部 UI** — 缺端到端协议互操作、签名事务、第三方/agent 生命周期验证。
+- [ ] **发布工程仍缺签名与分发** — CI 已规划/部分添加，但桌面代码签名、notarization、自动更新、崩溃遥测、移动商店流程未完成。
+- [ ] **安全审计未完成** — HTTPS 生产强制、密钥存储审计、明文边界 UX、URL/日志泄漏审计、供应链 SBOM/漏洞门禁仍需补齐。
+
+### 当前验证命令
+
+- [x] `cargo check`
+- [x] `cargo test`
+- [x] `dx build --platform web`
+- [x] `CLIENTX_E2E_BASE_URL=http://127.0.0.1:4527 npx playwright test tests/e2e/chask.flows.spec.ts --project=chromium --reporter=list --timeout=90000`
 
 ---
 

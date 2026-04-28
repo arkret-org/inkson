@@ -21,17 +21,14 @@ enum RegisterStep {
 }
 
 #[component]
-pub fn RegisterPanel(
-    base_url: String,
-    on_register: EventHandler<()>,
-) -> Element {
+pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element {
     let mut step = use_signal(|| RegisterStep::ChooseDid);
     let mut did_method = use_signal(|| DidMethod::DidUuid);
     let mut generated_did = use_signal(String::new);
     let mut handle = use_signal(String::new);
     let mut handle_available = use_signal(|| Option::<bool>::None);
-    let mut display_name = use_signal(|| "clientx user".to_owned());
-    let mut device_label = use_signal(|| "clientx device".to_owned());
+    let mut display_name = use_signal(|| "chask user".to_owned());
+    let mut device_label = use_signal(|| "chask device".to_owned());
     let mut recovery_method = use_signal(|| "passphrase".to_owned());
     let mut register_status = use_signal(|| String::new());
     let mut proof_challenge = use_signal(|| String::new());

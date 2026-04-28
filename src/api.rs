@@ -12,19 +12,19 @@ use crate::models::{
     AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
     AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
     AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse, BackfillResponse,
-    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse,
-    DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
-    DeviceTrustResponse, DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
+    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse, DevLoginResponse,
+    DeviceMessagesReceiveResponse, DeviceMessagesSendResponse, DeviceTrustResponse,
+    DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
     FederationOperationsResponse, FederationSpaceMembersResponse, FederationTransactionResponse,
     FederationVerifyActorResponse, GetCommitResponse, GetOperationsResponse, HealthResponse,
     IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
     IdentityResolveResponse, IndexDescribeResponse, IndexEntityResponse, IndexInboxResponse,
     IndexNotificationsResponse, IndexQueryResponse, IndexSearchResponse, IndexThreadResponse,
-    InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse,
-    ListCommitsResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
-    ModerationReportsResponse, ModerationResolveResponse, OkResponse, OidcAuthorizeResponse,
-    OidcCallbackResponse, PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse,
-    PolicyResponse, PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
+    InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
+    MlsEpochResponse, MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
+    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
+    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
+    PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
     RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse,
     RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     SearchUsersResponse, SendMessageResponse, ServerDescription, SnapshotHeadResponse,
@@ -37,7 +37,7 @@ use crate::models::{
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
     base_url: Url,
-    http: Client,
+    pub(crate) http: Client,
     access_token: Option<String>,
     retry: RetryPolicy,
     refresh_token: Option<String>,
@@ -163,15 +163,26 @@ impl ContrixApi {
     /// Attempt to refresh the access token using the stored refresh token.
     /// Returns the new tokens if successful.
     pub async fn try_refresh_token(&self) -> anyhow::Result<TokenRefreshResult> {
-        let rt = self.refresh_token.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("no refresh token available")
-        })?;
-        let response: TokenRefreshResponse = self
-            .post_json(
-                "api/v1/auth/token/refresh",
-                json!({"refresh_token": rt}),
-            )
+        let rt = self
+            .refresh_token
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no refresh token available"))?;
+        let response = self
+            .http
+            .post(self.endpoint("api/v1/auth/token/refresh")?)
+            .json(&json!({"refresh_token": rt}))
+            .send()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response.bytes().await?;
+            return Err(ContrixApiError {
+                status,
+                error: decode_contrix_error(status, &bytes),
+            }
+            .into());
+        }
+        let response: TokenRefreshResponse = response.json().await?;
         Ok(TokenRefreshResult {
             new_access_token: response.access_token,
             new_refresh_token: None, // Server may return a new refresh token
@@ -212,7 +223,7 @@ impl ContrixApi {
     ) -> anyhow::Result<DevLoginResponse> {
         self.post_json(
             "api/v1/auth/dev-login",
-            json!({"actor": actor, "device_id": device_id, "display_name": "clientx"}),
+            json!({"actor": actor, "device_id": device_id, "display_name": "chask"}),
         )
         .await
     }
@@ -488,12 +499,12 @@ impl ContrixApi {
         self.post_json(
             "api/v1/push/register-device",
             json!({
-                "device_id": "dev_clientx",
+                "device_id": "dev_chask",
                 "push_gateway": "https://push.example",
                 "push_key": "opaque",
                 "platform": "desktop",
-                "app_id": "clientx",
-                "display_name": "clientx"
+                "app_id": "chask",
+                "display_name": "chask"
             }),
         )
         .await
@@ -502,7 +513,7 @@ impl ContrixApi {
     pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
         self.post_json(
             "api/v1/push/unregister-device",
-            json!({"device_id": device_id, "push_key": null, "app_id": "clientx"}),
+            json!({"device_id": device_id, "push_key": null, "app_id": "chask"}),
         )
         .await
     }
@@ -512,8 +523,8 @@ impl ContrixApi {
             "api/v1/keys/upload",
             json!({
                 "device_id": device_id,
-                "device_keys": {"alg": "mls-rfc9420", "key": "clientx-dev-key"},
-                "one_time_keys": [{"key_id": "clientx-otk-1", "key": "clientx-one-time"}],
+                "device_keys": {"alg": "mls-rfc9420", "key": "chask-dev-key"},
+                "one_time_keys": [{"key_id": "chask-otk-1", "key": "chask-one-time"}],
                 "fallback_keys": {},
                 "device_signature": {"alg": "none"}
             }),
@@ -552,13 +563,13 @@ impl ContrixApi {
         device_id: &str,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
         self.put_json(
-            "api/v1/device_messages/clientx-txn-1",
+            "api/v1/device_messages/chask-txn-1",
             json!({
                 "messages": {
                     actor: {
                         device_id: {
                             "type": "cx.mls.test",
-                            "content": {"ciphertext": "opaque-clientx-test"}
+                            "content": {"ciphertext": "opaque-chask-test"}
                         }
                     }
                 }
@@ -700,11 +711,8 @@ impl ContrixApi {
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
-        self.post_json(
-            "api/v1/identity/resolve-handle",
-            json!({"handle": handle}),
-        )
-        .await
+        self.post_json("api/v1/identity/resolve-handle", json!({"handle": handle}))
+            .await
     }
 
     pub async fn search_users(&self, query: &str) -> anyhow::Result<SearchUsersResponse> {
@@ -722,19 +730,13 @@ impl ContrixApi {
         space_id: &str,
         updates: Value,
     ) -> anyhow::Result<UpdateSpaceResponse> {
-        self.patch_json(
-            &format!("api/v1/spaces/{space_id}"),
-            updates,
-        )
-        .await
+        self.patch_json(&format!("api/v1/spaces/{space_id}"), updates)
+            .await
     }
 
     pub async fn archive_space(&self, space_id: &str) -> anyhow::Result<ArchiveSpaceResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/archive"),
-            json!({}),
-        )
-        .await
+        self.post_json(&format!("api/v1/spaces/{space_id}/archive"), json!({}))
+            .await
     }
 
     pub async fn set_space_policy(
@@ -881,11 +883,8 @@ impl ContrixApi {
     // ── Device & Crypto ─────────────────────────────────────────────
 
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
-        self.post_json(
-            &format!("api/v1/devices/{device_id}/revoke"),
-            json!({}),
-        )
-        .await
+        self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
+            .await
     }
 
     pub async fn rotate_keys(&self, device_id: &str) -> anyhow::Result<RotateKeysResponse> {
@@ -990,11 +989,8 @@ impl ContrixApi {
     }
 
     pub async fn index_inbox(&self, limit: Option<usize>) -> anyhow::Result<IndexInboxResponse> {
-        self.post_json(
-            "api/v1/index/inbox",
-            json!({"limit": limit.unwrap_or(50)}),
-        )
-        .await
+        self.post_json("api/v1/index/inbox", json!({"limit": limit.unwrap_or(50)}))
+            .await
     }
 
     pub async fn index_search(
@@ -1124,10 +1120,8 @@ impl ContrixApi {
         &self,
         applet_did: &str,
     ) -> anyhow::Result<AppletDescribeResponse> {
-        self.get_json(&format!(
-            "api/v1/applet/describe?applet_did={applet_did}"
-        ))
-        .await
+        self.get_json(&format!("api/v1/applet/describe?applet_did={applet_did}"))
+            .await
     }
 
     pub async fn applet_transaction(
@@ -1226,15 +1220,9 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn identity_receipts(
-        &self,
-        did: &str,
-    ) -> anyhow::Result<IdentityReceiptsResponse> {
-        self.post_json(
-            "api/v1/identity/receipts",
-            json!({"did": did}),
-        )
-        .await
+    pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResponse> {
+        self.post_json("api/v1/identity/receipts", json!({"did": did}))
+            .await
     }
 
     // ── Media ───────────────────────────────────────────────────────
@@ -1258,11 +1246,7 @@ impl ContrixApi {
         self.send_json(self.authorize(request), Method::PUT).await
     }
 
-    async fn patch_json<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: Value,
-    ) -> anyhow::Result<T> {
+    async fn patch_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.patch(self.endpoint(path)?).json(&body);
         self.send_json(self.authorize(request), Method::PATCH).await
     }
@@ -1348,7 +1332,9 @@ impl ContrixApi {
                     }
 
                     // Update network state based on response
-                    if response.status().is_server_error() || response.status() == StatusCode::SERVICE_UNAVAILABLE {
+                    if response.status().is_server_error()
+                        || response.status() == StatusCode::SERVICE_UNAVAILABLE
+                    {
                         self.set_network_state(NetworkState::Reconnecting).await;
                     } else if response.status().is_success() {
                         self.set_network_state(NetworkState::Online).await;

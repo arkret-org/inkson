@@ -24,11 +24,7 @@ struct DocumentVersion {
 }
 
 #[component]
-pub fn DocumentPanel(
-    base_url: String,
-    token: Signal<String>,
-    selected_space: String,
-) -> Element {
+pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
     let mut blocks = use_signal(|| {
         vec![
             DocumentBlock {
@@ -47,7 +43,7 @@ pub fn DocumentPanel(
         vec![DocumentVersion {
             id: "v-1".to_owned(),
             timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
-            author: "clientx".to_owned(),
+            author: "chask".to_owned(),
             block_count: 2,
         }]
     });
@@ -83,7 +79,7 @@ pub fn DocumentPanel(
                             versions.write().push(DocumentVersion {
                                 id: format!("v-{v_count}"),
                                 timestamp: "2026-01-01 00:00".to_owned(),
-                                author: "clientx".to_owned(),
+                                author: "chask".to_owned(),
                                 block_count: b_count,
                             });
                         },

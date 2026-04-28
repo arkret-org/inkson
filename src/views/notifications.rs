@@ -22,10 +22,7 @@ struct Notification {
 }
 
 #[component]
-pub fn NotificationsPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn NotificationsPanel(base_url: String, token: Signal<String>) -> Element {
     let mut notifications = use_signal(|| {
         vec![
             Notification {

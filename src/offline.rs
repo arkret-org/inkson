@@ -211,12 +211,7 @@ impl ReconnectionCoordinator {
                 let endpoint = api.endpoint(&op.endpoint);
                 match endpoint {
                     Ok(url) => {
-                        let response = api
-                            .http
-                            .post(url.as_str())
-                            .json(&op.body)
-                            .send()
-                            .await;
+                        let response = api.http.post(url.as_str()).json(&op.body).send().await;
 
                         match response {
                             Ok(resp) => {
@@ -231,10 +226,7 @@ impl ReconnectionCoordinator {
                                         resp.status()
                                     ))
                                 } else {
-                                    ReplayResult::Failed(format!(
-                                        "client error: {}",
-                                        resp.status()
-                                    ))
+                                    ReplayResult::Failed(format!("client error: {}", resp.status()))
                                 }
                             }
                             Err(e) => ReplayResult::RetryLater(format!("network error: {e}")),
@@ -247,12 +239,7 @@ impl ReconnectionCoordinator {
                 let endpoint = api.endpoint(&op.endpoint);
                 match endpoint {
                     Ok(url) => {
-                        let response = api
-                            .http
-                            .put(url.as_str())
-                            .json(&op.body)
-                            .send()
-                            .await;
+                        let response = api.http.put(url.as_str()).json(&op.body).send().await;
 
                         match response {
                             Ok(resp) => {
@@ -262,10 +249,7 @@ impl ReconnectionCoordinator {
                                         op.id, op.endpoint
                                     ))
                                 } else {
-                                    ReplayResult::RetryLater(format!(
-                                        "error: {}",
-                                        resp.status()
-                                    ))
+                                    ReplayResult::RetryLater(format!("error: {}", resp.status()))
                                 }
                             }
                             Err(e) => ReplayResult::RetryLater(format!("network error: {e}")),
@@ -288,10 +272,7 @@ impl ReconnectionCoordinator {
                                         op.id, op.endpoint
                                     ))
                                 } else {
-                                    ReplayResult::RetryLater(format!(
-                                        "error: {}",
-                                        resp.status()
-                                    ))
+                                    ReplayResult::RetryLater(format!("error: {}", resp.status()))
                                 }
                             }
                             Err(e) => ReplayResult::RetryLater(format!("network error: {e}")),
@@ -359,7 +340,7 @@ impl QueuedOperationBuilder {
                 endpoint: endpoint.to_owned(),
                 method: method.to_owned(),
                 body: serde_json::Value::Null,
-                queued_at: Hlc::now(),
+                queued_at: Hlc::now("chask"),
                 space_id: None,
                 op_type: None,
                 retries: 0,
@@ -510,10 +491,7 @@ mod tests {
 
     #[test]
     fn test_offline_error_display() {
-        assert_eq!(
-            OfflineError::QueueFull.to_string(),
-            "offline queue is full"
-        );
+        assert_eq!(OfflineError::QueueFull.to_string(), "offline queue is full");
         assert_eq!(
             OfflineError::OperationFailed("test".to_owned()).to_string(),
             "operation failed: test"

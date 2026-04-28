@@ -4,11 +4,7 @@ use serde_json::{Value, json};
 use crate::views::helpers::authed_api;
 
 #[component]
-pub fn SpaceAdminPanel(
-    base_url: String,
-    token: Signal<String>,
-    selected_space: String,
-) -> Element {
+pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
     let mut space_name = use_signal(|| String::new());
     let mut space_topic = use_signal(|| String::new());
     let mut space_description = use_signal(|| String::new());

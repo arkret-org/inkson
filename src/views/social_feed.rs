@@ -22,14 +22,11 @@ enum FeedFilter {
 }
 
 #[component]
-pub fn SocialFeedPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn SocialFeedPanel(base_url: String, token: Signal<String>) -> Element {
     let mut posts = use_signal(|| {
         vec![SocialPost {
             id: "post-1".to_owned(),
-            author: "clientx".to_owned(),
+            author: "chask".to_owned(),
             content: "Welcome to the social feed! This is a dev-mode post.".to_owned(),
             audience: "public".to_owned(),
             media_refs: Vec::new(),
@@ -86,7 +83,7 @@ pub fn SocialFeedPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         if let Ok(api) = authed_api(&base, api_token) {
-                                            match api.upload_blob(b"clientx social media blob").await {
+                                            match api.upload_blob(b"chask social media blob").await {
                                                 Ok(blob) => media_status.set(format!("attached {}", blob.blob_ref)),
                                                 Err(e) => media_status.set(format!("attach failed: {e}")),
                                             }
@@ -112,7 +109,7 @@ pub fn SocialFeedPanel(
                                 }
                                 posts.write().insert(0, SocialPost {
                                     id: format!("post-{}", chrono::Utc::now().timestamp_millis()),
-                                    author: "clientx".to_owned(),
+                                    author: "chask".to_owned(),
                                     content: content.clone(),
                                     audience: audience(),
                                     media_refs: Vec::new(),

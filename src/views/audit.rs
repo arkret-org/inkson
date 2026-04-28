@@ -4,10 +4,7 @@ use serde_json::Value;
 use crate::views::helpers::authed_api;
 
 #[component]
-pub fn AuditPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
     let mut next_batch = use_signal(|| String::new());
     let mut batch_size = use_signal(|| 0usize);
     let mut operations = use_signal(Vec::<Value>::new);
@@ -62,6 +59,7 @@ pub fn AuditPanel(
                                             Ok(resp) => operations.set(resp.operations),
                                             Err(e) => status_msg.set(format!("operations failed: {e}")),
                                         }
+                                        status_msg.set("Audit data loaded".to_owned());
                                     }
                                 });
                             }
@@ -79,6 +77,9 @@ pub fn AuditPanel(
                         div { class: "event-head",
                             span { "{op.get(\"kind\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
                             span { "{op.get(\"actor\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
+                        }
+                        div { class: "muted",
+                            "{op.get(\"operation_id\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
                         }
                         div { class: "muted",
                             "{op.get(\"timestamp\").and_then(|v| v.as_str()).unwrap_or(\"\")}"

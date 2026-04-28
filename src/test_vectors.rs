@@ -58,7 +58,12 @@ mod hlc_vectors {
     fn test_hlc_encode() {
         for vector in HLC_VECTORS {
             let hlc = Hlc::from_parts(vector.physical, vector.logical, vector.node_id);
-            assert_eq!(hlc.encode(), vector.encoded, "Failed for {:?}", vector.encoded);
+            assert_eq!(
+                hlc.encode(),
+                vector.encoded,
+                "Failed for {:?}",
+                vector.encoded
+            );
         }
     }
 
@@ -345,7 +350,10 @@ mod grant_vectors {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
             ..Default::default()
         };
-        assert_eq!(constraint.evaluate(&ctx_in_range), crate::capability::ConstraintResult::Allow);
+        assert_eq!(
+            constraint.evaluate(&ctx_in_range),
+            crate::capability::ConstraintResult::Allow
+        );
 
         let ctx_before = EvalContext {
             current_time: "2024-01-01T00:00:00Z".to_owned(),
@@ -401,7 +409,7 @@ mod grant_vectors {
 
 #[cfg(test)]
 mod entity_vectors {
-    use crate::entity::{Entity, EntityType, Relation, RelationType, ViewProjection, ViewKind};
+    use crate::entity::{Entity, EntityType, Relation, RelationType, ViewKind, ViewProjection};
 
     #[test]
     fn test_entity_serialization() {
@@ -496,10 +504,7 @@ mod entity_vectors {
             });
 
             let parsed: Relation = serde_json::from_value(relation).unwrap();
-            assert_eq!(
-                parsed.relation_type, expected,
-                "Failed for type: {name}"
-            );
+            assert_eq!(parsed.relation_type, expected, "Failed for type: {name}");
         }
     }
 
@@ -528,10 +533,16 @@ mod conformance_vectors {
     #[test]
     fn test_conformance_profiles() {
         let profiles = vec![
-            ("cx.profile.minimal_client.v1", ConformanceProfile::MinimalClient),
+            (
+                "cx.profile.minimal_client.v1",
+                ConformanceProfile::MinimalClient,
+            ),
             ("cx.profile.full_client.v1", ConformanceProfile::FullClient),
             ("cx.profile.e2ee_client.v1", ConformanceProfile::E2eeClient),
-            ("cx.profile.enterprise_client.v1", ConformanceProfile::EnterpriseClient),
+            (
+                "cx.profile.enterprise_client.v1",
+                ConformanceProfile::EnterpriseClient,
+            ),
         ];
 
         for (name, expected) in profiles {
@@ -687,9 +698,21 @@ mod conflict_vectors {
         let resolver = ConflictResolver::new();
 
         let items = vec![
-            ("c".to_owned(), Hlc::from_parts(3000, 0, 1), "alice".to_owned()),
-            ("a".to_owned(), Hlc::from_parts(1000, 0, 2), "bob".to_owned()),
-            ("b".to_owned(), Hlc::from_parts(2000, 0, 3), "charlie".to_owned()),
+            (
+                "c".to_owned(),
+                Hlc::from_parts(3000, 0, 1),
+                "alice".to_owned(),
+            ),
+            (
+                "a".to_owned(),
+                Hlc::from_parts(1000, 0, 2),
+                "bob".to_owned(),
+            ),
+            (
+                "b".to_owned(),
+                Hlc::from_parts(2000, 0, 3),
+                "charlie".to_owned(),
+            ),
         ];
 
         let ordered = resolver.resolve_ordered(&items);
@@ -739,16 +762,12 @@ mod snapshot_vectors {
         manager.store(manifest);
 
         // Subset of covered frontier
-        assert!(manager.covers_frontier(
-            "cx:space:test",
-            &["op-1".to_owned(), "op-3".to_owned()]
-        ));
+        assert!(manager.covers_frontier("cx:space:test", &["op-1".to_owned(), "op-3".to_owned()]));
 
         // Frontier with uncovered operation
-        assert!(!manager.covers_frontier(
-            "cx:space:test",
-            &["op-1".to_owned(), "op-99".to_owned()]
-        ));
+        assert!(
+            !manager.covers_frontier("cx:space:test", &["op-1".to_owned(), "op-99".to_owned()])
+        );
 
         // Empty frontier
         assert!(manager.covers_frontier("cx:space:test", &[]));
@@ -800,7 +819,10 @@ mod discovery_vectors {
 
     #[test]
     fn test_discoverability_unknown_defaults_to_unlisted() {
-        assert_eq!(Discoverability::from_str("unknown"), Discoverability::Unlisted);
+        assert_eq!(
+            Discoverability::from_str("unknown"),
+            Discoverability::Unlisted
+        );
     }
 
     #[test]

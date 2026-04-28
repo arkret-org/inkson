@@ -1,4 +1,4 @@
-use clientx::{
+use chask::{
     api::{
         decode_contrix_error, parse_directory_describe, parse_index_describe, parse_repo_describe,
         parse_resolve_space, parse_server_description, parse_sync, parse_sync_describe,
@@ -9,7 +9,7 @@ use reqwest::StatusCode;
 use serde_json::json;
 
 #[test]
-fn clientx_accepts_serverx_contract_payloads() {
+fn chask_accepts_serverx_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_did": "did:web:serverx.local",
         "service_type": "principal_server",
@@ -64,7 +64,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     );
     assert_eq!(describe.supported_bindings[0]["base_path"], "/api/v1");
 
-    let identity: clientx::models::IdentityDescribeResponse = serde_json::from_value(json!({
+    let identity: chask::models::IdentityDescribeResponse = serde_json::from_value(json!({
         "service_did": "did:web:serverx.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
@@ -74,7 +74,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: clientx::models::IdentityResolveResponse =
+    let resolved_identity: chask::models::IdentityResolveResponse =
         serde_json::from_value(json!({
             "did_document": {"id": "did:web:alice.example"},
             "key_log_head": null,
@@ -166,7 +166,7 @@ fn clientx_accepts_serverx_contract_payloads() {
             .contains(&"space_preview".to_owned())
     );
 
-    let index: clientx::models::IndexQueryResponse = serde_json::from_value(json!({
+    let index: chask::models::IndexQueryResponse = serde_json::from_value(json!({
         "results": [{
             "kind": "space_preview",
             "space_id": "cx:space:01js0sp0000000000000000000",
@@ -192,7 +192,7 @@ fn clientx_accepts_serverx_contract_payloads() {
             .contains(&"detached_jws".to_owned())
     );
 
-    let commits: clientx::models::ListCommitsResponse = serde_json::from_value(json!({
+    let commits: chask::models::ListCommitsResponse = serde_json::from_value(json!({
         "commits": [],
         "next_cursor": null,
         "has_more": false
@@ -200,7 +200,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(!commits.has_more);
 
-    let operations: clientx::models::GetOperationsResponse = serde_json::from_value(json!({
+    let operations: chask::models::GetOperationsResponse = serde_json::from_value(json!({
         "operations": [],
         "missing": [],
         "unauthorized": []
@@ -208,7 +208,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(operations.missing.is_empty());
 
-    let repo_sync: clientx::models::RepoSyncResponse = serde_json::from_value(json!({
+    let repo_sync: chask::models::RepoSyncResponse = serde_json::from_value(json!({
         "operations": [],
         "next_cursor": "sx:1760000000000",
         "has_more": false
@@ -216,7 +216,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(repo_sync.next_cursor.as_deref(), Some("sx:1760000000000"));
 
-    let submit: clientx::models::SubmitCommitResponse = serde_json::from_value(json!({
+    let submit: chask::models::SubmitCommitResponse = serde_json::from_value(json!({
         "status": "accepted",
         "commit_id": "cx:commit:01js0cm0000000000000000000",
         "head_commit": "cx:commit:01js0cm0000000000000000000",
@@ -225,7 +225,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(submit.status, "accepted");
 
-    let snapshot: clientx::models::SnapshotHeadResponse = serde_json::from_value(json!({
+    let snapshot: chask::models::SnapshotHeadResponse = serde_json::from_value(json!({
         "snapshot_ref": "cx:snapshot:cx:space:01js0sp0000000000000000000:head",
         "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "frontier": {"space_id": "cx:space:01js0sp0000000000000000000"},
@@ -234,17 +234,17 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(snapshot.snapshot_ref.starts_with("cx:snapshot:"));
 
-    let login: clientx::models::DevLoginResponse = serde_json::from_value(json!({
+    let login: chask::models::DevLoginResponse = serde_json::from_value(json!({
         "access_token": "sx_token",
         "token_type": "Bearer",
         "actor": "did:web:alice.example",
-        "device_id": "dev_clientx",
+        "device_id": "dev_chask",
         "expires_at": "2026-04-28T12:00:00Z"
     }))
     .unwrap();
     assert_eq!(login.token_type, "Bearer");
 
-    let authz: clientx::models::AuthzCheckResponse = serde_json::from_value(json!({
+    let authz: chask::models::AuthzCheckResponse = serde_json::from_value(json!({
         "allowed": true,
         "reason_code": null,
         "grants": [{"actor": "did:web:alice.example"}],
@@ -253,7 +253,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(authz.allowed);
 
-    let grants: clientx::models::EffectiveGrantsResponse = serde_json::from_value(json!({
+    let grants: chask::models::EffectiveGrantsResponse = serde_json::from_value(json!({
         "grants": [{"subject": "did:web:alice.example"}],
         "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00Z"
@@ -261,28 +261,28 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
 
-    let invites: clientx::models::InvitesResponse = serde_json::from_value(json!({
+    let invites: chask::models::InvitesResponse = serde_json::from_value(json!({
         "invites": [],
         "next_cursor": null
     }))
     .unwrap();
     assert!(invites.invites.is_empty());
 
-    let keys: clientx::models::KeysUploadResponse = serde_json::from_value(json!({
+    let keys: chask::models::KeysUploadResponse = serde_json::from_value(json!({
         "one_time_key_counts": {"signed_curve25519": 1},
         "fallback_keys": {}
     }))
     .unwrap();
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
-    let claimed: clientx::models::KeysClaimResponse = serde_json::from_value(json!({
+    let claimed: chask::models::KeysClaimResponse = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"dev_alice": {"key_id": "alice-otk-1"}}},
         "failures": {}
     }))
     .unwrap();
     assert!(claimed.one_time_keys.is_object());
 
-    let device_send: clientx::models::DeviceMessagesSendResponse = serde_json::from_value(json!({
+    let device_send: chask::models::DeviceMessagesSendResponse = serde_json::from_value(json!({
         "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
@@ -290,7 +290,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
-    let device_receive: clientx::models::DeviceMessagesReceiveResponse =
+    let device_receive: chask::models::DeviceMessagesReceiveResponse =
         serde_json::from_value(json!({
             "events": [],
             "next_batch": "sx:1760000000000",
@@ -299,7 +299,7 @@ fn clientx_accepts_serverx_contract_payloads() {
         .unwrap();
     assert!(!device_receive.limited);
 
-    let push: clientx::models::PushRegisterResponse = serde_json::from_value(json!({
+    let push: chask::models::PushRegisterResponse = serde_json::from_value(json!({
         "ok": true,
         "registration_id": "cx:push:dev_alice",
         "expires_at": null
@@ -307,10 +307,10 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(push.registration_id.as_deref(), Some("cx:push:dev_alice"));
 
-    let ok: clientx::models::OkResponse = serde_json::from_value(json!({"ok": true})).unwrap();
+    let ok: chask::models::OkResponse = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
-    let blob: clientx::models::BlobUploadResponse = serde_json::from_value(json!({
+    let blob: chask::models::BlobUploadResponse = serde_json::from_value(json!({
         "blob_ref": "cx:blob:sha256:abc",
         "size": 23,
         "media_type": "application/octet-stream",
@@ -320,7 +320,7 @@ fn clientx_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(blob.size, 23);
 
-    let report: clientx::models::ModerationReportResponse = serde_json::from_value(json!({
+    let report: chask::models::ModerationReportResponse = serde_json::from_value(json!({
         "report_id": "cx:report:1760000000000",
         "status": "queued",
         "routed_to": ["did:web:serverx.local#moderation"]
@@ -337,7 +337,7 @@ fn clientx_accepts_serverx_contract_payloads() {
 }
 
 #[test]
-fn clientx_config_store_preserves_server_actor_device_and_token() {
+fn chask_config_store_preserves_server_actor_device_and_token() {
     let mut store = LocalConfigStore::default();
     let config = ClientConfig::from_fields(
         "http://127.0.0.1:8788",
@@ -352,10 +352,10 @@ fn clientx_config_store_preserves_server_actor_device_and_token() {
 }
 
 #[test]
-fn clientx_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
+fn chask_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let mut alice =
-        clientx::crypto::LocalMlsDevice::new("did:web:alice.example", "dev_alice_1").unwrap();
-    let mut bob = clientx::crypto::LocalMlsDevice::new("did:web:bob.example", "dev_bob_1").unwrap();
+        chask::crypto::LocalMlsDevice::new("did:web:alice.example", "dev_alice_1").unwrap();
+    let mut bob = chask::crypto::LocalMlsDevice::new("did:web:bob.example", "dev_bob_1").unwrap();
     let bob_keys = bob.key_package_record().unwrap();
 
     alice

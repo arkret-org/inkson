@@ -25,7 +25,8 @@ pub fn known_profiles() -> Vec<ConformanceProfile> {
         ConformanceProfile {
             profile_id: "cx.profile.full_client.v1".into(),
             version: "1.0".into(),
-            description: "Full client: all views, entity/relation management, capability checks".into(),
+            description: "Full client: all views, entity/relation management, capability checks"
+                .into(),
             supported: false,
         },
         ConformanceProfile {
@@ -196,8 +197,16 @@ mod tests {
     #[test]
     fn conformance_profiles_declared() {
         let profiles = known_profiles();
-        assert!(profiles.iter().any(|p| p.profile_id == "cx.profile.minimal_client.v1" && p.supported));
-        assert!(profiles.iter().any(|p| p.profile_id == "cx.profile.full_client.v1" && !p.supported));
+        assert!(
+            profiles
+                .iter()
+                .any(|p| p.profile_id == "cx.profile.minimal_client.v1" && p.supported)
+        );
+        assert!(
+            profiles
+                .iter()
+                .any(|p| p.profile_id == "cx.profile.full_client.v1" && !p.supported)
+        );
     }
 
     #[test]

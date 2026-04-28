@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(target_arch = "wasm32")]
-const LOCAL_STATE_STORAGE_KEY: &str = "clientx.local_state.v1";
+const LOCAL_STATE_STORAGE_KEY: &str = "chask.local_state.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
@@ -186,7 +186,7 @@ fn app_data_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("clientx")
+        .join("chask")
 }
 
 #[cfg(test)]
@@ -238,6 +238,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("clientx-state-{name}-{stamp}.json"))
+        std::env::temp_dir().join(format!("chask-state-{name}-{stamp}.json"))
     }
 }

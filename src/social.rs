@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::entity::{Entity, EntityType, Relation, RelationType};
+use crate::entity::{Relation, RelationType};
 use crate::hlc::Hlc;
 
 /// Social entity types as defined by the spec.
@@ -528,7 +528,7 @@ pub mod social_ops {
             author: author.to_owned(),
             content,
             audience,
-            published_at: Hlc::now(),
+            published_at: Hlc::now("chask"),
             space_id: space_id.map(|s| s.to_owned()),
             thread_id: None,
             parent_post_id: None,
@@ -577,9 +577,11 @@ pub mod social_ops {
     pub fn follow_relation(follower: &str, following: &str) -> Relation {
         Relation::new(
             &format!("rel-{}", crate::operation::uuid_v8()),
+            "social",
             RelationType::Follows,
             follower,
             following,
+            follower,
         )
     }
 
@@ -587,9 +589,11 @@ pub mod social_ops {
     pub fn like_relation(actor: &str, post_id: &str) -> Relation {
         Relation::new(
             &format!("rel-{}", crate::operation::uuid_v8()),
+            "social",
             RelationType::Likes,
             actor,
             post_id,
+            actor,
         )
     }
 
@@ -597,9 +601,11 @@ pub mod social_ops {
     pub fn repost_relation(actor: &str, post_id: &str) -> Relation {
         Relation::new(
             &format!("rel-{}", crate::operation::uuid_v8()),
+            "social",
             RelationType::Reposts,
             actor,
             post_id,
+            actor,
         )
     }
 }
@@ -663,7 +669,9 @@ mod tests {
         let json = serde_json::to_string(&content).unwrap();
         let parsed: StructuredContent = serde_json::from_str(&json).unwrap();
         match parsed {
-            StructuredContent::Image { url, width, height, .. } => {
+            StructuredContent::Image {
+                url, width, height, ..
+            } => {
                 assert_eq!(url, "https://example.com/image.jpg");
                 assert_eq!(width, Some(800));
                 assert_eq!(height, Some(600));
@@ -713,7 +721,9 @@ mod tests {
         let json = serde_json::to_string(&content).unwrap();
         let parsed: StructuredContent = serde_json::from_str(&json).unwrap();
         match parsed {
-            StructuredContent::Poll { question, options, .. } => {
+            StructuredContent::Poll {
+                question, options, ..
+            } => {
                 assert_eq!(question, "What's your favorite language?");
                 assert_eq!(options.len(), 2);
             }
@@ -732,7 +742,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now(),
+            registered_at: Hlc::now("chask"),
         };
 
         registry.register_entity_type(def).unwrap();
@@ -751,7 +761,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now(),
+            registered_at: Hlc::now("chask"),
         };
 
         assert!(registry.register_entity_type(def).is_err());
@@ -768,7 +778,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now(),
+            registered_at: Hlc::now("chask"),
         };
 
         assert!(registry.register_entity_type(def).is_err());
@@ -818,7 +828,7 @@ mod tests {
         let rel = social_ops::follow_relation("did:web:alice", "did:web:bob");
 
         assert_eq!(rel.relation_type, RelationType::Follows);
-        assert_eq!(rel.source_id, "did:web:alice");
-        assert_eq!(rel.target_id, "did:web:bob");
+        assert_eq!(rel.source, "did:web:alice");
+        assert_eq!(rel.target, "did:web:bob");
     }
 }

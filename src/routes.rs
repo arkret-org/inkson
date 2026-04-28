@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use dioxus_router::prelude::*;
+use dioxus_router::Routable;
 
 use crate::views::View;
 
@@ -7,86 +7,122 @@ use crate::views::View;
 /// Each variant maps to a URL path and a corresponding View.
 #[derive(Clone, Debug, PartialEq, Routable)]
 pub enum Route {
-    #[route("/")]
+    #[route("/", crate::app::RouterView)]
     Dashboard,
 
-    #[route("/login")]
+    #[route("/login", crate::app::RouterView)]
     Login,
 
-    #[route("/register")]
+    #[route("/register", crate::app::RouterView)]
     Register,
 
-    #[route("/timeline")]
+    #[route("/timeline", crate::app::RouterView)]
     Timeline,
 
-    #[route("/timeline/:space_id")]
+    #[route("/timeline/:space_id", TimelineSpacePage)]
     TimelineSpace { space_id: String },
 
-    #[route("/directory")]
+    #[route("/directory", crate::app::RouterView)]
     Directory,
 
-    #[route("/product")]
+    #[route("/product", crate::app::RouterView)]
     Product,
 
-    #[route("/settings")]
+    #[route("/settings", crate::app::RouterView)]
     Settings,
 
-    #[route("/settings/:section")]
+    #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
 
-    #[route("/devices")]
+    #[route("/devices", crate::app::RouterView)]
     Devices,
 
-    #[route("/devices/verify")]
+    #[route("/devices/verify", crate::app::RouterView)]
     VerifyDevice,
 
-    #[route("/readiness")]
+    #[route("/readiness", crate::app::RouterView)]
     Readiness,
 
-    #[route("/contacts")]
+    #[route("/contacts", crate::app::RouterView)]
     Contacts,
 
-    #[route("/space/:space_id/admin")]
+    #[route("/space/:space_id/admin", SpaceAdminPage)]
     SpaceAdmin { space_id: String },
 
-    #[route("/audit")]
+    #[route("/audit", crate::app::RouterView)]
     Audit,
 
-    #[route("/kanban")]
+    #[route("/kanban", crate::app::RouterView)]
     Kanban,
 
-    #[route("/kanban/:space_id")]
+    #[route("/kanban/:space_id", KanbanSpacePage)]
     KanbanSpace { space_id: String },
 
-    #[route("/chat")]
+    #[route("/chat", crate::app::RouterView)]
     Chat,
 
-    #[route("/chat/:space_id")]
+    #[route("/chat/:space_id", ChatSpacePage)]
     ChatSpace { space_id: String },
 
-    #[route("/forum")]
+    #[route("/forum", crate::app::RouterView)]
     Forum,
 
-    #[route("/social")]
+    #[route("/social", crate::app::RouterView)]
     SocialFeed,
 
-    #[route("/memory")]
+    #[route("/memory", crate::app::RouterView)]
     MemoryReview,
 
-    #[route("/agents")]
+    #[route("/agents", crate::app::RouterView)]
     AgentRuns,
 
-    #[route("/notifications")]
+    #[route("/notifications", crate::app::RouterView)]
     Notifications,
 
-    #[route("/document")]
+    #[route("/document", crate::app::RouterView)]
     Document,
 
-    #[route("/document/:space_id")]
+    #[route("/document/:space_id", DocumentSpacePage)]
     DocumentSpace { space_id: String },
 
-    #[route("/call")]
+    #[route("/call", crate::app::RouterView)]
     Call,
+}
+
+#[component]
+fn TimelineSpacePage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn SettingsSectionPage(section: String) -> Element {
+    let _ = section;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn SpaceAdminPage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn KanbanSpacePage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn ChatSpacePage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn DocumentSpacePage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
 }
 
 impl Route {

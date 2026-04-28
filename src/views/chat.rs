@@ -20,16 +20,27 @@ struct ChatMessage {
 }
 
 #[component]
-pub fn ChatPanel(
-    base_url: String,
-    token: Signal<String>,
-    selected_space: String,
-) -> Element {
+pub fn ChatPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
     let mut channels = use_signal(|| {
         vec![
-            Channel { id: "dm-1".to_owned(), name: "Direct Messages".to_owned(), kind: "dm".to_owned(), unread: 0 },
-            Channel { id: "group-1".to_owned(), name: "Group Chat".to_owned(), kind: "group".to_owned(), unread: 2 },
-            Channel { id: "space-1".to_owned(), name: "Space Channel".to_owned(), kind: "space".to_owned(), unread: 0 },
+            Channel {
+                id: "dm-1".to_owned(),
+                name: "Direct Messages".to_owned(),
+                kind: "dm".to_owned(),
+                unread: 0,
+            },
+            Channel {
+                id: "group-1".to_owned(),
+                name: "Group Chat".to_owned(),
+                kind: "group".to_owned(),
+                unread: 2,
+            },
+            Channel {
+                id: "space-1".to_owned(),
+                name: "Space Channel".to_owned(),
+                kind: "space".to_owned(),
+                unread: 0,
+            },
         ]
     });
     let mut selected_channel = use_signal(|| "dm-1".to_owned());
@@ -152,7 +163,7 @@ pub fn ChatPanel(
                                 }
                                 messages.write().push(ChatMessage {
                                     id: format!("msg-{}", chrono::Utc::now().timestamp_millis()),
-                                    sender: "clientx".to_owned(),
+                                    sender: "chask".to_owned(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                 });

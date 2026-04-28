@@ -35,7 +35,11 @@ impl Hlc {
 
     /// Create an HLC from components.
     pub fn from_parts(physical_ms: u64, logical: u32, node_id: u32) -> Self {
-        Self { physical_ms, logical, node_id }
+        Self {
+            physical_ms,
+            logical,
+            node_id,
+        }
     }
 
     /// Parse an HLC from its canonical string format.
@@ -53,7 +57,11 @@ impl Hlc {
             .map_err(|_| HlcError::InvalidLogical(parts[1].to_owned()))?;
         let node_id = u32::from_str_radix(parts[2], 16)
             .map_err(|_| HlcError::InvalidNode(parts[2].to_owned()))?;
-        Ok(Self { physical_ms, logical, node_id })
+        Ok(Self {
+            physical_ms,
+            logical,
+            node_id,
+        })
     }
 
     /// Tick the clock: advance physical or logical based on wall clock.
@@ -62,7 +70,11 @@ impl Hlc {
         let wall = Utc::now().timestamp_millis().max(0) as u64;
         let node = hash_node_id(node_id);
         if wall > self.physical_ms {
-            Self { physical_ms: wall, logical: 0, node_id: node }
+            Self {
+                physical_ms: wall,
+                logical: 0,
+                node_id: node,
+            }
         } else if wall == self.physical_ms {
             Self {
                 physical_ms: self.physical_ms,
@@ -86,19 +98,38 @@ impl Hlc {
         let max_physical = wall.max(self.physical_ms.max(remote.physical_ms));
         if max_physical == self.physical_ms && max_physical == remote.physical_ms {
             let logical = self.logical.max(remote.logical).wrapping_add(1);
-            Self { physical_ms: max_physical, logical, node_id: node }
+            Self {
+                physical_ms: max_physical,
+                logical,
+                node_id: node,
+            }
         } else if max_physical == self.physical_ms {
-            Self { physical_ms: max_physical, logical: self.logical.wrapping_add(1), node_id: node }
+            Self {
+                physical_ms: max_physical,
+                logical: self.logical.wrapping_add(1),
+                node_id: node,
+            }
         } else if max_physical == remote.physical_ms {
-            Self { physical_ms: max_physical, logical: remote.logical.wrapping_add(1), node_id: node }
+            Self {
+                physical_ms: max_physical,
+                logical: remote.logical.wrapping_add(1),
+                node_id: node,
+            }
         } else {
-            Self { physical_ms: max_physical, logical: 0, node_id: node }
+            Self {
+                physical_ms: max_physical,
+                logical: 0,
+                node_id: node,
+            }
         }
     }
 
     /// Encode to canonical hex string format.
     pub fn encode(&self) -> String {
-        format!("{:012x}-{:08x}-{:08x}", self.physical_ms, self.logical, self.node_id)
+        format!(
+            "{:012x}-{:08x}-{:08x}",
+            self.physical_ms, self.logical, self.node_id
+        )
     }
 }
 
@@ -140,7 +171,9 @@ impl fmt::Display for HlcError {
         match self {
             Self::InvalidFormat(s) => write!(f, "invalid HLC format: {s}"),
             Self::InvalidPhysical(s) => write!(f, "invalid physical component: {s}"),
-            Self::InvalidPhysicalLength(n) => write!(f, "physical component must be 12 hex chars, got {n}"),
+            Self::InvalidPhysicalLength(n) => {
+                write!(f, "physical component must be 12 hex chars, got {n}")
+            }
             Self::InvalidLogical(s) => write!(f, "invalid logical component: {s}"),
             Self::InvalidNode(s) => write!(f, "invalid node component: {s}"),
         }
@@ -157,7 +190,7 @@ mod tests {
     fn round_trip_encode_parse() {
         let hlc = Hlc::from_parts(0x0001_8ef0_1234, 0x0000_0005, 0xdead_beef);
         let encoded = hlc.encode();
-        assert_eq!(encoded.len(), 29); // 12 + 1 + 8 + 1 + 8
+        assert_eq!(encoded.len(), 30); // 12 + 1 + 8 + 1 + 8
         let parsed = Hlc::parse(&encoded).unwrap();
         assert_eq!(hlc, parsed);
     }

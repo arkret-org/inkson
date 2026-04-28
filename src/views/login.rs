@@ -1,17 +1,12 @@
 use dioxus::prelude::*;
 
-use crate::{
-    api::ContrixApi,
-    config::LocalConfigStore,
-    views::helpers::persist_config,
-};
+use crate::{api::ContrixApi, config::LocalConfigStore, views::helpers::persist_config};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SessionState {
     Disconnected,
     Connected,
     SoftLogout,
-    TokenExpired,
 }
 
 #[component]
@@ -222,7 +217,6 @@ pub fn LoginPanel(
                         SessionState::Disconnected => "disconnected",
                         SessionState::Connected => "connected",
                         SessionState::SoftLogout => "soft-logout",
-                        SessionState::TokenExpired => "expired",
                     }}
                 }
                 if !session_info().is_empty() {

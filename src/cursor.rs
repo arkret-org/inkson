@@ -4,12 +4,10 @@
 //! - version, timestamp, space positions (frontier + HLC + state hash),
 //!   device positions, expiration.
 
+use crate::hlc::Hlc;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use crate::hlc::Hlc;
 
 /// A structured sync cursor per contrix-spec.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -106,7 +104,9 @@ impl Cursor {
 
     /// Get the HLC for a specific space, if available.
     pub fn space_hlc(&self, space_id: &str) -> Option<Hlc> {
-        self.spaces.get(space_id).and_then(|pos| Hlc::parse(&pos.hlc).ok())
+        self.spaces
+            .get(space_id)
+            .and_then(|pos| Hlc::parse(&pos.hlc).ok())
     }
 
     /// Get a simple string representation (the next_batch token from server).
@@ -162,11 +162,14 @@ mod tests {
         let cursor = Cursor::new()
             .with_space(
                 "cx:space:test",
-                SpacePosition::new("0000018ef01234-00000005-deadbeef")
+                SpacePosition::new("0018ef01234a-00000005-deadbeef")
                     .with_frontier(vec!["commit_1".into()])
                     .with_state_hash("abc123"),
             )
-            .with_device("device_1", DevicePosition::new(42).with_hlc("0000018ef01234-00000003-11111111"));
+            .with_device(
+                "device_1",
+                DevicePosition::new(42).with_hlc("0018ef01234a-00000003-11111111"),
+            );
 
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -183,10 +186,10 @@ mod tests {
     fn cursor_space_hlc_extraction() {
         let cursor = Cursor::new().with_space(
             "cx:space:test",
-            SpacePosition::new("0000018ef01234-00000005-deadbeef"),
+            SpacePosition::new("0018ef01234a-00000005-deadbeef"),
         );
         let hlc = cursor.space_hlc("cx:space:test").unwrap();
-        assert_eq!(hlc.physical_ms, 0x0000018ef01234);
+        assert_eq!(hlc.physical_ms, 0x0018ef01234a);
         assert_eq!(hlc.logical, 5);
     }
 
@@ -194,7 +197,7 @@ mod tests {
     fn base64url_transport_is_url_safe() {
         let cursor = Cursor::new().with_space(
             "cx:space:01js0sp0000000000000000000",
-            SpacePosition::new("0000018ef01234-00000001-aaaaaaaa"),
+            SpacePosition::new("0018ef01234a-00000001-aaaaaaaa"),
         );
         let encoded = cursor.encode().unwrap();
         assert!(!encoded.contains('+'));

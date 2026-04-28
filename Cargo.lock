@@ -532,6 +532,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "chask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "contrix-sdk",
+ "dioxus",
+ "dioxus-router",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "web-sys",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,26 +601,6 @@ dependencies = [
  "crypto-common",
  "inout",
  "zeroize",
-]
-
-[[package]]
-name = "clientx"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "chrono",
- "contrix-sdk",
- "dioxus",
- "dioxus-router",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "url",
- "web-sys",
 ]
 
 [[package]]

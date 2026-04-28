@@ -13,6 +13,6 @@ extend-exclude = [
 Dioxus = "Dioxus"
 OpenMLS = "OpenMLS"
 serverx = "serverx"
-clientx = "clientx"
+chask = "chask"
 authz = "authz"
 to_device = "to_device"

@@ -11,17 +11,17 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/clientx-web
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/chask-web
 
 jobs:
   image:
     name: Build web image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout clientx
+      - name: Checkout chask
         uses: actions/checkout@v4
         with:
-          path: clientx
+          path: chask
 
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
             --exclude node_modules \
             --exclude test-results \
             --exclude playwright-report \
-            clientx/ docker-context/clientx/
+            chask/ docker-context/chask/
           rsync -a --delete \
             --exclude .git \
             --exclude target \
@@ -69,7 +69,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker-context
-          file: docker-context/clientx/Dockerfile
+          file: docker-context/chask/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

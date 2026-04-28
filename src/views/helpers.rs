@@ -19,7 +19,7 @@ pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<Contri
 pub fn handle_from_did(did: &str) -> String {
     did.rsplit(':')
         .next()
-        .unwrap_or("clientx")
+        .unwrap_or("chask")
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {

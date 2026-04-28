@@ -26,16 +26,12 @@ struct ForumReply {
 }
 
 #[component]
-pub fn ForumPanel(
-    base_url: String,
-    token: Signal<String>,
-    selected_space: String,
-) -> Element {
+pub fn ForumPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
     let mut topics = use_signal(|| {
         vec![ForumTopic {
             id: "topic-1".to_owned(),
             title: "Welcome to the forum".to_owned(),
-            author: "clientx".to_owned(),
+            author: "chask".to_owned(),
             body: "This is the first topic in the forum. Start a discussion!".to_owned(),
             tags: vec!["welcome".to_owned(), "meta".to_owned()],
             reply_count: 0,
@@ -116,7 +112,7 @@ pub fn ForumPanel(
                                         topics.write().push(ForumTopic {
                                             id: format!("topic-{}", chrono::Utc::now().timestamp_millis()),
                                             title: title.clone(),
-                                            author: "clientx".to_owned(),
+                                            author: "chask".to_owned(),
                                             body: body.clone(),
                                             tags: tags,
                                             reply_count: 0,
@@ -227,7 +223,7 @@ pub fn ForumPanel(
                                                 if let Some(parent_reply) = topic.replies.iter_mut().find(|r| r.id == *pid) {
                                                     parent_reply.replies.push(ForumReply {
                                                         id: format!("reply-{}", chrono::Utc::now().timestamp_millis()),
-                                                        author: "clientx".to_owned(),
+                                                        author: "chask".to_owned(),
                                                         body: body,
                                                         created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
                                                         parent_id: parent,
@@ -237,7 +233,7 @@ pub fn ForumPanel(
                                             } else {
                                                 topic.replies.push(ForumReply {
                                                     id: format!("reply-{}", chrono::Utc::now().timestamp_millis()),
-                                                    author: "clientx".to_owned(),
+                                                    author: "chask".to_owned(),
                                                     body: body,
                                                     created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
                                                     parent_id: None,

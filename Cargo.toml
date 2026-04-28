@@ -1,7 +1,10 @@
 [package]
-name = "clientx"
+name = "chask"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+protocol-test-vectors = []
 
 [dependencies]
 anyhow = "1.0.100"
@@ -18,11 +21,11 @@ url = "2.5.7"
 contrix-sdk = { path = "../contrix-rust-sdk/crates/contrix-sdk" }
 dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
 reqwest = { version = "0.12.24", features = ["json", "rustls-tls"], default-features = false }
-tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 contrix-sdk = { path = "../contrix-rust-sdk/crates/contrix-sdk", default-features = false }
 dioxus = { version = "=0.7.5", features = ["web"] }
 reqwest = { version = "0.12.24", features = ["json"], default-features = false }
-tokio = { version = "1.48.0", features = ["macros", "rt", "time"] }
+tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }
 web-sys = { version = "0.3.82", features = ["Storage", "Window"] }

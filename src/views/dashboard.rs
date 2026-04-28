@@ -1,9 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::{
-    models::SpacePreview,
-    views::helpers::authed_api,
-};
+use crate::{models::SpacePreview, views::helpers::authed_api};
 
 #[component]
 pub fn DashboardPanel(

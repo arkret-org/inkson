@@ -39,6 +39,31 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/api/v1/auth/passkey/challenge") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        challenge: "playwright-passkey-challenge",
+        rp_id: "127.0.0.1",
+        user_did: body.user_did,
+        expires_at: "2026-04-28T12:05:00Z",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/oidc/authorize") {
+      return json(route, {
+        redirect_url: "https://idp.example/authorize?state=oidc-state-e2e",
+        state: "oidc-state-e2e",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/token/refresh") {
+      return json(route, {
+        access_token: "sx_playwright_refreshed",
+        token_type: "Bearer",
+        expires_at: "2026-04-28T13:00:00Z",
+      });
+    }
+
     if (url.pathname === "/api/v1/account/register") {
       const body = await route.request().postDataJSON();
       return json(route, {
@@ -49,11 +74,24 @@ export async function mockContrixApi(page: Page) {
       }, 201);
     }
 
+    if (url.pathname === "/api/v1/directory/search-users") {
+      return json(route, {
+        results: [
+          {
+            did: "did:web:bob.example",
+            handle: "bob.example",
+            display_name: "Bob Example",
+          },
+        ],
+        next_cursor: null,
+      });
+    }
+
     if (url.pathname === "/api/v1/account/me") {
       return json(route, {
         did: "did:web:alice.example",
         handle: "alice.example",
-        display_name: "clientx",
+        display_name: "chask",
         created_at: "2026-04-28T12:00:00Z",
       });
     }
@@ -90,6 +128,59 @@ export async function mockContrixApi(page: Page) {
       productSpaceDeleted = false;
       productMembers = ["did:web:alice.example", ...(body.invitees ?? [])];
       return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted), 201);
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+$/) && route.request().method() === "PATCH") {
+      const spaceId = decodeURIComponent(url.pathname.split("/").pop() ?? DEMO_SPACE);
+      return json(route, { ok: true, space_id: spaceId });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/policy$/) && route.request().method() === "PUT") {
+      const body = await route.request().postDataJSON();
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        ok: true,
+        space_id: spaceId,
+        join_rule: body.join_rule,
+        history_visibility: body.history_visibility,
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite$/) && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        ok: true,
+        invite_id: "cx:invite:e2e",
+        space_id: spaceId,
+        target: body.target,
+        state: "pending",
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/archive$/) && route.request().method() === "POST") {
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, { ok: true, space_id: spaceId, archived: true });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/leave$/) && route.request().method() === "POST") {
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, { ok: true, space_id: spaceId });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/members\/.+\/ban$/) && route.request().method() === "POST") {
+      const parts = url.pathname.split("/");
+      return json(route, {
+        ok: true,
+        space_id: decodeURIComponent(parts[4]),
+        member: decodeURIComponent(parts[6]),
+        banned: true,
+      });
+    }
+
+    if (url.pathname === "/api/v1/mls/rotate") {
+      const body = await route.request().postDataJSON();
+      return json(route, { ok: true, epoch: 2, group_id: body.group_id });
     }
 
     if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}/members` && route.request().method() === "POST") {
@@ -176,11 +267,32 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/repo/commits") {
-      return json(route, { commits: [], next_cursor: null, has_more: false });
+      return json(route, {
+        commits: [
+          {
+            commit_id: "cx:commit:e2e",
+            signatures: [{ alg: "none", signer: "did:web:serverx.local" }],
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      });
     }
 
     if (url.pathname === "/api/v1/repo/operations") {
-      return json(route, { operations: [], missing: [], unauthorized: [] });
+      return json(route, {
+        operations: [
+          {
+            operation_id: "cx:op:audit",
+            kind: "cx.message.send",
+            actor: "did:web:alice.example",
+            timestamp: "2026-04-28T12:00:00Z",
+            preview: "audit operation preview",
+          },
+        ],
+        missing: [],
+        unauthorized: [],
+      });
     }
 
     if (url.pathname === "/api/v1/repo/sync") {
@@ -281,7 +393,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname.startsWith("/api/v1/device_messages/")) {
-      return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_clientx"] }, unknown_devices: {} });
+      return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_chask"] }, unknown_devices: {} });
     }
 
     if (url.pathname === "/api/v1/push/register-device") {
@@ -303,7 +415,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/blob/get") {
-      return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "clientx encrypted bytes" });
+      return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "chask encrypted bytes" });
     }
 
     if (url.pathname === "/api/v1/moderation/report") {

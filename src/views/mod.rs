@@ -1,5 +1,4 @@
 pub mod agent_runs;
-pub mod helpers;
 pub mod audit;
 pub mod call;
 pub mod chat;
@@ -9,6 +8,7 @@ pub mod devices;
 pub mod directory;
 pub mod document;
 pub mod forum;
+pub mod helpers;
 pub mod kanban;
 pub mod login;
 pub mod memory_review;
@@ -21,7 +21,6 @@ pub mod social_feed;
 pub mod space_admin;
 pub mod timeline;
 pub mod verify_device;
-
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {

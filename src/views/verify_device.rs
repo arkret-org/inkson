@@ -1,10 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::{
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::{models::*, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifyMethod {
@@ -13,11 +10,7 @@ enum VerifyMethod {
 }
 
 #[component]
-pub fn VerifyDevicePanel(
-    base_url: String,
-    token: Signal<String>,
-    device_id: String,
-) -> Element {
+pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: String) -> Element {
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(|| String::new());

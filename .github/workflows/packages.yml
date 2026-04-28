@@ -21,23 +21,23 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            package_name: clientx-linux-x64
-            binary_name: clientx
-            artifact_path: target/release/clientx
+            package_name: chask-linux-x64
+            binary_name: chask
+            artifact_path: target/release/chask
           - os: windows-latest
-            package_name: clientx-windows-x64
-            binary_name: clientx.exe
-            artifact_path: target/release/clientx.exe
+            package_name: chask-windows-x64
+            binary_name: chask.exe
+            artifact_path: target/release/chask.exe
           - os: macos-latest
-            package_name: clientx-macos-arm64
-            binary_name: clientx
-            artifact_path: target/release/clientx
+            package_name: chask-macos-arm64
+            binary_name: chask
+            artifact_path: target/release/chask
 
     steps:
-      - name: Checkout clientx
+      - name: Checkout chask
         uses: actions/checkout@v4
         with:
-          path: clientx
+          path: chask
 
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v4
@@ -61,18 +61,18 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: clientx
+          workspaces: chask
 
       - name: Build release binary
-        working-directory: clientx
+        working-directory: chask
         run: cargo build --release
 
       - name: Prepare artifact directory
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_name }}"
-          Copy-Item -LiteralPath "clientx/${{ matrix.artifact_path }}" -Destination "dist/${{ matrix.package_name }}/${{ matrix.binary_name }}"
-          Copy-Item -LiteralPath "clientx/README.md" -Destination "dist/${{ matrix.package_name }}/README.md"
+          Copy-Item -LiteralPath "chask/${{ matrix.artifact_path }}" -Destination "dist/${{ matrix.package_name }}/${{ matrix.binary_name }}"
+          Copy-Item -LiteralPath "chask/README.md" -Destination "dist/${{ matrix.package_name }}/README.md"
 
       - name: Upload native package
         uses: actions/upload-artifact@v4

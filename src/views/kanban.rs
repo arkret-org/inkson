@@ -15,23 +15,17 @@ struct KanbanCard {
 }
 
 #[component]
-pub fn KanbanPanel(
-    base_url: String,
-    token: Signal<String>,
-    selected_space: String,
-) -> Element {
+pub fn KanbanPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
     let mut columns = use_signal(|| {
         vec![
             KanbanColumn {
                 id: "col-todo".to_owned(),
                 title: "To Do".to_owned(),
-                cards: vec![
-                    KanbanCard {
-                        id: "card-1".to_owned(),
-                        title: "Example task".to_owned(),
-                        description: "A sample card for the kanban board".to_owned(),
-                    },
-                ],
+                cards: vec![KanbanCard {
+                    id: "card-1".to_owned(),
+                    title: "Example task".to_owned(),
+                    description: "A sample card for the kanban board".to_owned(),
+                }],
             },
             KanbanColumn {
                 id: "col-progress".to_owned(),

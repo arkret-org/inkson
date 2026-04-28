@@ -25,10 +25,7 @@ struct AgentRun {
 }
 
 #[component]
-pub fn AgentRunsPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn AgentRunsPanel(base_url: String, token: Signal<String>) -> Element {
     let runs = use_signal(|| {
         vec![AgentRun {
             id: "run-1".to_owned(),

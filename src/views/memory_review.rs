@@ -20,10 +20,7 @@ struct MemoryEntry {
 }
 
 #[component]
-pub fn MemoryReviewPanel(
-    base_url: String,
-    token: Signal<String>,
-) -> Element {
+pub fn MemoryReviewPanel(base_url: String, token: Signal<String>) -> Element {
     let mut memories = use_signal(|| {
         vec![
             MemoryEntry {
