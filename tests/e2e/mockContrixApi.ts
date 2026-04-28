@@ -1,0 +1,248 @@
+import type { Page, Route } from "@playwright/test";
+
+const DEMO_SPACE = "cx:space:01js0sp0000000000000000000";
+
+export async function mockContrixApi(page: Page) {
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/health") {
+      return json(route, { ok: true, service: "serverx", storage: "memory" });
+    }
+    if (!url.pathname.startsWith("/api/v1/")) {
+      return route.continue();
+    }
+
+    if (url.pathname === "/api/v1/server/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        service_type: "principal_server",
+        protocol_version: "1.0",
+        supported_features: ["sync.client_sync", "directory.search_spaces"],
+        supported_operations: ["cx.sync.client_sync", "cx.directory.search_spaces"],
+        limits: { storage: "memory" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/dev-login") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        access_token: "sx_playwright_token",
+        token_type: "Bearer",
+        actor: body.actor,
+        device_id: body.device_id,
+        expires_at: "2026-04-28T12:00:00Z",
+      });
+    }
+
+    if (url.pathname === "/api/v1/sync") {
+      return json(route, {
+        next_batch: "sx:e2e:2",
+        spaces: {
+          [DEMO_SPACE]: {
+            summary: {
+              title: "Contrix Demo Space",
+              summary: "Shared demo Space served by mocked serverx",
+            },
+            timeline: { events: [], limited: false },
+            state: [],
+            ephemeral: [],
+            unread: { notification_count: 0, highlight_count: 0 },
+          },
+        },
+        to_device: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }],
+        account_data: [],
+        device_lists: { changed: [], left: [] },
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/search-spaces") {
+      return json(route, {
+        results: [spacePreview()],
+        next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/resolve-space") {
+      return json(route, {
+        space_preview: spacePreview(),
+        stripped_state: [],
+        join_rule: "public",
+        via_services: ["did:web:serverx.local"],
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        resource_types: ["space", "organization", "actor"],
+        discovery_profiles: ["cx.profile.directory.v1"],
+        restricted_query_proof: false,
+      });
+    }
+
+    if (url.pathname === "/api/v1/repo/describe") {
+      return json(route, {
+        repo_did: "did:web:serverx.local",
+        head_commit: "cx:commit:e2e",
+        supported_signatures: ["detached_jws"],
+        limits: { max_commits: 100 },
+      });
+    }
+
+    if (url.pathname === "/api/v1/repo/commits") {
+      return json(route, { commits: [], next_cursor: null, has_more: false });
+    }
+
+    if (url.pathname === "/api/v1/repo/operations") {
+      return json(route, { operations: [], missing: [], unauthorized: [] });
+    }
+
+    if (url.pathname === "/api/v1/repo/sync") {
+      return json(route, { operations: [], next_cursor: "sx:e2e:2", has_more: false });
+    }
+
+    if (url.pathname === "/api/v1/sync/backfill") {
+      return json(route, { events: [], prev_cursor: null, next_cursor: null, limited: false });
+    }
+
+    if (url.pathname === "/api/v1/sync/snapshot-head") {
+      return json(route, {
+        snapshot_ref: `cx:snapshot:${DEMO_SPACE}:head`,
+        state_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        frontier: { space_id: DEMO_SPACE },
+        signature: { alg: "none" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/identity/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        registry_mode: "development_local",
+        supported_receipts: ["local"],
+        protocol_version: "1.0",
+        profiles: ["cx.identity.local-dev.v1"],
+      });
+    }
+
+    if (url.pathname === "/api/v1/identity/resolve") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        did_document: { id: body.did },
+        key_log_head: null,
+        seq: 0,
+        receipts: [],
+        method_evidence: { mode: "development_local" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/sync/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        supported_sync_profiles: ["initial", "incremental"],
+        limits: {},
+        frontier: {},
+      });
+    }
+
+    if (url.pathname === "/api/v1/index/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        reducer_profiles: ["cx.reducer.v1"],
+        schema_profiles: ["cx.schema.core.v1"],
+        query_features: ["space_preview"],
+        frontier: {},
+      });
+    }
+
+    if (url.pathname === "/api/v1/index/query") {
+      return json(route, {
+        results: [{ kind: "space_preview", space_id: DEMO_SPACE, title: "Contrix Demo Space" }],
+        next_cursor: null,
+        frontier: {},
+      });
+    }
+
+    if (url.pathname === "/api/v1/authz/check") {
+      return json(route, { allowed: true, reason_code: null, grants: [], obligations: [] });
+    }
+
+    if (url.pathname === "/api/v1/authz/effective-grants") {
+      return json(route, { grants: [], state_hash: null, evaluated_at: "2026-04-28T12:00:00Z" });
+    }
+
+    if (url.pathname === "/api/v1/authz/invites") {
+      return json(route, { invites: [], next_cursor: null });
+    }
+
+    if (url.pathname === "/api/v1/profile/presence") {
+      return json(route, { actor: url.searchParams.get("did"), presence: "online" });
+    }
+
+    if (url.pathname === "/api/v1/keys/upload") {
+      return json(route, { one_time_key_counts: { signed_curve25519: 1 }, fallback_keys: {} });
+    }
+
+    if (url.pathname === "/api/v1/keys/query") {
+      return json(route, { device_keys: {}, failures: {} });
+    }
+
+    if (url.pathname === "/api/v1/keys/claim") {
+      return json(route, { one_time_keys: {}, failures: {} });
+    }
+
+    if (url.pathname === "/api/v1/device_messages" && route.request().method() === "GET") {
+      return json(route, { events: [], next_batch: "sx:devmsg:1", limited: false });
+    }
+
+    if (url.pathname.startsWith("/api/v1/device_messages/")) {
+      return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_clientx"] }, unknown_devices: {} });
+    }
+
+    if (url.pathname === "/api/v1/push/register-device") {
+      return json(route, { ok: true, registration_id: "cx:push:e2e", expires_at: null });
+    }
+
+    if (url.pathname === "/api/v1/push/unregister-device") {
+      return json(route, { ok: true });
+    }
+
+    if (url.pathname === "/api/v1/blob/upload") {
+      return json(route, {
+        blob_ref: "cx:blob:sha256:e2e",
+        size: 23,
+        media_type: "application/octet-stream",
+        sha256: "e2e",
+        upload_receipt: { service_did: "did:web:serverx.local" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/blob/get") {
+      return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "clientx encrypted bytes" });
+    }
+
+    if (url.pathname === "/api/v1/moderation/report") {
+      return json(route, { report_id: "cx:report:e2e", status: "queued", routed_to: ["did:web:serverx.local#moderation"] });
+    }
+
+    return json(route, { ok: false, error: { errcode: "not_found", error: `No e2e mock for ${url.pathname}` } }, 404);
+  });
+}
+
+function spacePreview() {
+  return {
+    space_id: DEMO_SPACE,
+    name: "Contrix Demo Space",
+    description: "Shared demo Space served by mocked serverx",
+    tags: ["demo"],
+    public: true,
+    category: "collaboration",
+  };
+}
+
+function json(route: Route, body: unknown, status = 200) {
+  return route.fulfill({
+    status,
+    contentType: "application/json",
+    body: JSON.stringify(body),
+  });
+}

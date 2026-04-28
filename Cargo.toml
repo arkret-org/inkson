@@ -1,0 +1,25 @@
+[package]
+name = "clientx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", features = ["serde"] }
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+url = "2.5.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+contrix-sdk = { path = "../contrix-rust-sdk/crates/contrix-sdk" }
+dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
+reqwest = { version = "0.12.24", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+contrix-sdk = { path = "../contrix-rust-sdk/crates/contrix-sdk", default-features = false }
+dioxus = { version = "=0.7.5", features = ["web"] }
+reqwest = { version = "0.12.24", features = ["json"], default-features = false }
+tokio = { version = "1.48.0", features = ["macros", "rt", "time"] }
