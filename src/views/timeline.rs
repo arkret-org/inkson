@@ -2,11 +2,9 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    api::ContrixApi,
     crypto::compose_local_encrypted_message,
     local_state::LocalStateStore,
-    models::*,
-    views::helpers::{authed_api, persist_config},
+    views::helpers::authed_api,
 };
 
 const EMOJI_GRID: &[&str] = &[
@@ -68,17 +66,19 @@ pub fn TimelinePanel(
     let mut reply_to_index = use_signal(|| Option::<usize>::None);
     let mut thread_open = use_signal(|| Option::<usize>::None);
     let mut encrypt_toggle = use_signal(|| false);
-    let mut typing_indicator = use_signal(|| String::new());
-    let mut read_receipts = use_signal(Vec::<String>::new);
+    let _typing_indicator = use_signal(|| String::new());
+    let read_receipts = use_signal(Vec::<String>::new);
     let mut blob_status = use_signal(|| String::new());
+    let mut search_query = use_signal(String::new);
+    let mut jump_to_event = use_signal(|| Option::<String>::None);
 
     // Clone String params so they can be used in multiple closures
-    let base_url_c = base_url.clone();
+    let _base_url_c = base_url.clone();
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
     let selected_space_c = selected_space.clone();
 
-    let events = use_memo(move || {
+    let events = use_signal(|| -> Vec<TimelineEvent> {
         timeline()
             .iter()
             .enumerate()
@@ -95,12 +95,30 @@ pub fn TimelinePanel(
                 thread_id: None,
                 blob_ref: None,
             })
-            .collect::<Vec<_>>()
+            .collect()
     });
+
+    let events_data: Vec<(usize, TimelineEvent)> = events()
+        .into_iter()
+        .enumerate()
+        .collect();
 
     rsx! {
         div { class: "timeline", "data-testid": "timeline",
-            for (idx, event) in events().iter().enumerate() {
+            // Message search bar
+            div { class: "composer", style: "margin-bottom: 8px;",
+                input {
+                    r#type: "text",
+                    "data-testid": "timeline-search",
+                    placeholder: "Search messages...",
+                    value: "{search_query}",
+                    oninput: move |evt| search_query.set(evt.value()),
+                }
+            }
+
+            for (idx, event) in events_data.into_iter() {
+                // Filter by search query
+                if search_query().is_empty() || event.body.to_lowercase().contains(&search_query().to_lowercase()) {
                 div {
                     class: "event",
                     "data-testid": "timeline-event",
@@ -128,7 +146,20 @@ pub fn TimelinePanel(
 
                         if let Some(blob_ref) = &event.blob_ref {
                             div { class: "muted", "data-testid": "blob-attachment",
-                                "\u{1f4ce} Blob: {blob_ref}"
+                                // Image preview for image blobs
+                                if blob_ref.ends_with(".png") || blob_ref.ends_with(".jpg") || blob_ref.ends_with(".jpeg") || blob_ref.ends_with(".gif") || blob_ref.ends_with(".webp") {
+                                    img {
+                                        src: "{base_url}/api/v1/blob/get?blob_ref={blob_ref}",
+                                        alt: "Attached image",
+                                        style: "max-width: 300px; max-height: 200px; border-radius: 4px; margin: 4px 0;",
+                                        loading: "lazy",
+                                    }
+                                }
+                                a {
+                                    href: "{base_url}/api/v1/blob/get?blob_ref={blob_ref}",
+                                    target: "_blank",
+                                    "\u{1f4ce} Blob: {blob_ref}"
+                                }
                             }
                         }
 
@@ -309,6 +340,7 @@ pub fn TimelinePanel(
                         }
                     }
                 }
+                } // end search filter
             }
 
             if timeline().is_empty() {
@@ -336,20 +368,22 @@ pub fn TimelinePanel(
                 "data-testid": "composer-input",
                 value: "{draft}",
                 placeholder: if encrypt_toggle() { "Write an encrypted message" } else { "Write a plaintext dev-mode message" },
-                oninput: move |event| {
+                oninput: {
+                    let sc = selected_space_c.clone();
+                    move |event| {
                     let value = event.value();
                     draft.set(value.clone());
-                    state_store.write().save_draft(selected_space_c.clone(), value);
+                    state_store.write().save_draft(sc.clone(), value);
                     // Send typing indicator
                     let base = base_url_sig();
                     let api_token = token();
-                    let space = selected_space_c.clone();
+                    let space = sc.clone();
                     spawn(async move {
                         if let Ok(api) = authed_api(&base, api_token) {
                             let _ = api.send_typing(&space, true).await;
                         }
                     });
-                },
+                }},
             }
 
             div { class: "actions",
@@ -385,19 +419,23 @@ pub fn TimelinePanel(
                 button {
                     class: "primary",
                     "data-testid": "send-button",
-                    onclick: move |_| {
+                    onclick: {
+                        let sc = selected_space_c.clone();
+                        let ac = account_did_c.clone();
+                        let dc = device_id_c.clone();
+                        move |_| {
                         let body = draft().trim().to_owned();
                         if body.is_empty() {
                             return;
                         }
 
-                        let space_for_encrypt = selected_space_c.clone();
-                        let space_for_plain = selected_space_c.clone();
-                        let space_for_draft = selected_space_c.clone();
+                        let space_for_encrypt = sc.clone();
+                        let space_for_plain = sc.clone();
+                        let space_for_draft = sc.clone();
                         if encrypt_toggle() {
                             match compose_local_encrypted_message(
-                                &account_did_c,
-                                &device_id_c,
+                                &ac,
+                                &dc,
                                 &space_for_encrypt,
                                 "cx:message:local-compose",
                                 &body,
@@ -440,26 +478,30 @@ pub fn TimelinePanel(
                             draft.set(String::new());
                             reply_to_index.set(None);
                         }
-                    },
+                    }},
                     "Send"
                 }
 
                 button {
                     class: "secondary",
                     "data-testid": "report-queue-button",
-                    onclick: move |_| {
+                    onclick: {
+                        let sc = selected_space_c.clone();
+                        let ac = account_did_c.clone();
+                        let dc = device_id_c.clone();
+                        move |_| {
                         let base = base_url_sig();
-                        let actor = account_did_c.clone();
-                        let dev = device_id_c.clone();
+                        let actor = ac.clone();
+                        let dev = dc.clone();
                         let api_token = token();
-                        let space = selected_space_c.clone();
+                        let space = sc.clone();
                         spawn(async move {
                             if let Ok(api) = authed_api(&base, api_token) {
                                 let _ = api.report_moderation(&space, "local:event", "spam", &actor).await;
                                 let _ = api.send_to_device(&actor, &dev).await;
                             }
                         });
-                    },
+                    }},
                     "Report / Queue"
                 }
             }

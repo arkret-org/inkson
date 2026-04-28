@@ -2,9 +2,8 @@ use dioxus::prelude::*;
 
 use crate::{
     api::ContrixApi,
-    config::{ClientConfig, LocalConfigStore},
-    models::*,
-    views::helpers::{authed_api, handle_from_did, persist_config},
+    config::LocalConfigStore,
+    views::helpers::persist_config,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

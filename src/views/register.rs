@@ -1,10 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::handle_from_did,
-};
+use crate::api::ContrixApi;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DidMethod {

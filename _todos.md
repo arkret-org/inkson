@@ -1,480 +1,550 @@
-# clientx Product TODOs
+# clientx × contrix-spec 完成度分析
 
-本项目为对 E:\Works\contrix-dev\contrix-spec 协议的实现. 本程序为前端跨平台应用. 应该包含 web, ios, linux, windows 等版本. 对应后端实现是 E:\Works\contrix-dev\serverx.
-
-## Product Baseline
-
-- [x] Scaffold Dioxus 0.7 cross-platform client with web, iOS/mobile, Windows, and Linux desktop build features.
-- [x] Implement initial API client, UI metrics, and contract tests against serverx skeleton.
-- [x] Replace status-demo UI with a usable Contrix client shell: spaces, timeline, composer, directory, settings, devices, and sync status.
-- [x] Add persisted client configuration for server URL, account DID, device ID, and session token.
-- [x] Add robust loading, empty, error, reconnecting, and offline states.
-- [x] Add platform notes for web, Windows/Linux desktop, and iOS/mobile.
-
-## Protocol Alignment Follow-ups
-
-- [x] Verify client endpoint coverage against `contrix-spec/en/sync/service-http-binding.md` common client API namespaces.
-- [x] Align E2EE client behavior with `contrix-spec/en/crypto-media/encrypted-envelope-schema.md`: MLS envelope generation, digest verification, pending ciphertext preservation, and joined-group decrypt flow.
-- [x] Use SDK OpenMLS helpers rather than custom crypto for KeyPackage, Welcome, Commit, encrypted payload compose, and decrypt-or-preserve.
-
-## API Client and Auth
-
-- [x] Implement typed client calls for every serverx product endpoint.
-- [x] Add bearer session handling and auth failure recovery.
-- [x] Add request timeout, retry, and backoff policies.
-- [x] Add standard Contrix error decoding.
-- [x] Add local session/device bootstrap flow.
-
-## E2EE and Local State
-
-- [x] Integrate SDK MLS helpers for device identity and encrypted message payloads.
-- [x] Create local encrypted message compose flow.
-- [x] Create local decrypt flow for joined MLS groups.
-- [x] Preserve encrypted payloads when a key is unavailable.
-- [x] Add local stores for raw operations, sync cursors, projections, and drafts.
-- [x] Add device/key management screens.
-
-## UI Features
-
-- [x] Space list with directory search and exact resolve.
-- [x] Space timeline with message, redaction, reaction, and backfill support.
-- [x] Message composer supporting plaintext dev mode and encrypted mode.
-- [x] Sync status panel showing next batch, backfill cursor, and device queue counts.
-- [x] Repo/audit panel for commits and operation history.
-- [x] Directory browser for spaces, organizations, actors, and handles.
-- [x] Settings for server, account, device, encryption, and push.
-- [x] Push registration controls.
-- [x] Moderation report action from timeline item.
-
-## Tests and Documentation
-
-- [x] Add contract tests for all typed API calls.
-- [x] Add client/server E2EE workflow test.
-- [x] Add UI compile tests for desktop/web feature set.
-- [x] Add docs for running each platform, auth bootstrap, E2EE workflow, and known limits.
-- [x] Run `cargo fmt`, `cargo test`, and server integration smoke before marking complete.
-
-## Business Workflow Inventory
-
-- [x] Define current supported account bootstrap flow: dev-login session bootstrap, DID/device binding, token persistence, auth failure visibility.
-- [x] Define current supported discovery flow: server connect, directory search, exact space resolve, select space, sync timeline and backfill.
-- [x] Define current supported messaging flow: plaintext dev compose, local MLS encrypted compose, pending encrypted payload preservation, moderation report, to-device queue send.
-- [x] Define current supported device/security flow: key upload/query/claim, device messages receive, push register/unregister, device queue metrics.
-- [x] Define current supported data lifecycle flow: repo describe, commits/operations/sync, blob upload/download, audit/status panels.
-- [x] Capture missing product flows that need serverx/protocol endpoints before UI completion: production registration, password/passkey login, device verification UX, contacts/friends, create/update/delete Space, invite/add/kick member, leave Space, account recovery, Space archival/deletion.
-
-## Playwright E2E Flow Design
-
-- [x] Add stable UI selectors for shell, settings, directory, composer, device, status, timeline, and metric regions.
-- [x] Add Playwright project configuration and npm scripts for local web e2e.
-- [x] Add mocked Contrix API fixture covering server describe, dev-login, sync, directory, repo, authz, keys, device messages, push, moderation, and blob paths.
-- [x] Test bootstrap/login/sync flow from offline state to connected shell with token, space, timeline, repo, push, and device metrics.
-- [x] Test settings identity/device update flow before bootstrap.
-- [x] Test directory search, exact resolve, and selected space navigation.
-- [x] Test plaintext compose and local MLS encrypted compose in the timeline.
-- [x] Test moderation report and to-device queue request from the timeline action.
-- [x] Test devices/security panel after bootstrap.
-- [x] Test invalid server URL error state.
-- [x] Document Playwright execution in README.
-
-## Production Release Readiness
-
-- [x] Add release-readiness inventory in code so major unsupported business flows are visible in the product, not only in notes.
-- [x] Add UI panel for production blockers: registration, production login, device verification, contacts/friends, create Space, invite/add/kick member, leave/archive/delete Space, canonical message persistence, and release packaging.
-- [x] Add Playwright coverage that the product explicitly says it is not production-ready while those blockers remain.
-- [x] Add typed client bindings for serverx account registration, account/me, logout, contact request/respond/list, Space create/add/remove/delete, and canonical message send endpoints.
-- [x] Add Product workflow panel for basic account registration, contacts, Space lifecycle, member management, and server-backed message persistence.
-- [x] Add Product workflow contact response controls for accept/reject, backed by `POST /api/v1/contacts/respond`.
-- [x] Add real config/local-state persistence for native file storage and web localStorage: server/account/device/session, sync cursor, projections, drafts, and raw message operations.
-- [x] Add Playwright coverage for persisted settings, persisted drafts, and the basic product workflow: connect, register, request/list/accept contact, create Space, add/remove member, persist message, update sync/repo metrics, and delete Space.
-- [x] Harden Playwright release gate to run serially against Dioxus dev server and avoid flaky first-load parallelism.
-- [x] Add a reusable release gate command that runs Rust format/tests, web build, and Playwright E2E from one script.
-- [x] Add GitHub typo checking, Dependabot, Rust/web CI, cross-OS package artifact builds, and Docker image build/push workflows.
+> 基于 contrix-spec 协议规范对 clientx 当前实现的全面差距分析。
+> 生成日期: 2026-04-28
 
 ---
 
-## Page Architecture — Split Monolith into View Modules
+## 总体完成度评估
 
-The current `app.rs` is a 1247-line monolith containing all 6 views plus the root shell. Each view needs its own module.
-
-- [ ] Create `src/views/mod.rs` with view module declarations and the `View` enum.
-- [ ] Extract `TimelinePanel` into `src/views/timeline.rs` (timeline events, composer, sync status).
-- [ ] Extract `DirectoryPanel` into `src/views/directory.rs` (space/org/actor/handle search).
-- [ ] Extract `ProductPanel` into `src/views/product.rs` (account, contacts, space lifecycle, messages).
-- [ ] Extract `SettingsPanel` into `src/views/settings.rs` (server/account/device config).
-- [ ] Extract `DevicesPanel` into `src/views/devices.rs` (keys, trust, verification).
-- [ ] Extract `ReadinessPanel` into `src/views/readiness.rs` (release blockers).
-- [ ] Keep `App` root shell in `src/app.rs` — sidebar, topbar, right panel, view router only.
-- [ ] Add shared `src/components/mod.rs` with reusable components: `Metric`, `StatusBadge`, `ActionButton`, `EmptyState`, `ErrorBanner`, `LoadingSpinner`.
-- [ ] Add `src/components/form.rs` with reusable form widgets: `TextInput`, `TextArea`, `Select`, `Toggle`, `SearchInput`.
-
----
-
-## Login Page (`design/login.html` → `src/views/login.rs`)
-
-Currently collapsed into the sidebar "Connect" button. Design requires a standalone login page.
-
-- [ ] Create `src/views/login.rs` with standalone `LoginPanel` component.
-- [ ] Add server URL input with connection test (calls `GET /health`).
-- [ ] Add account DID input field with format validation.
-- [ ] Add passkey login button — calls `POST /api/v1/auth/passkey/challenge` then `POST /api/v1/auth/passkey/verify`.
-- [ ] Add OIDC login button — opens OIDC redirect flow, receives callback token.
-- [ ] Add dev-login button (existing) for development mode only.
-- [ ] Add session state panel: connected account DID, device ID, token expiry, session state (active/soft-logged-out/locked).
-- [ ] Add token refresh logic: detect 401 → attempt refresh → re-show login on failure.
-- [ ] Add soft-logout recovery: preserve local state, show re-auth prompt with recovery options.
-- [ ] Add new `View::Login` variant to the view enum.
-- [ ] Route to `Login` when no session token exists or token is expired.
+| 维度 | 完成度 | 说明 |
+|------|--------|------|
+| 身份系统 (Identity) | ~25% | DID 登录/注册 UI 存在，但缺乏真实证明挑战、密钥轮换、渐进披露、VC 机制 |
+| 授权模型 (Authorization) | ~60% | Capability 引擎、约束系统、资源选择器、委托链验证已实现，仍缺 AI 代理审批和声明类型 |
+| 对象模型 (Object Model) | ~70% | Entity/Relation/View/Schema/Policy/ReadMarker/Notification/Social/StructuredContent 已实现，仍缺空间层级 |
+| 同步与操作 (Sync & Ops) | ~75% | HLC、游标、操作信封、commit、22 种操作、LWW/OR-Set/分数索引、快照已实现 |
+| 加密 (E2EE/Crypto) | ~20% | 原生 MLS 基础可用，Web 端为占位符，缺乏信封模式完整合规 |
+| 联邦 (Federation) | ~15% | API 端点已实现（transactions/push/pull/members/verify），实际联邦协议逻辑仍缺失 |
+| 发现与目录 (Discovery) | ~70% | 6 级可发现性、组织配置、授权过滤、显示元数据、在线状态策略、推送 E2EE、多设备标记合并已实现 |
+| 媒体与设备 (Media/Device) | ~30% | Blob 上传/下载、密钥管理、推送注册已实现，WebRTC/ICE 仅有配置获取 |
+| AI 代理扩展 (Agent) | ~15% | Memory/Runs UI 为本地状态，缺乏协议级 run 创建、内存生命周期、A2A 互操作 |
+| 安全 (Security) | ~25% | 明文边界检查已实现（PlaintextBoundary），主权部署/威胁模型仍缺失 |
+| 一致性 (Conformance) | ~60% | 配置文件声明、JSON Schema 验证、测试向量（HLC/cursor/operation/grant/conflict/discovery）已实现 |
+| 测试覆盖 | ~60% | HLC/cursor/operation/conflict/discovery 测试向量已实现，仍缺乏集成测试和 E2E 测试 |
 
 ---
 
-## Registration Page (`design/register.html` → `src/views/register.rs`)
+## 一、身份系统 (Identity System)
 
-Currently embedded in ProductPanel. Design requires a standalone registration flow.
+### 1.1 DID 身份
 
-- [ ] Create `src/views/register.rs` with standalone `RegisterPanel` component.
-- [ ] Add DID generation step — select DID method (`did:uuid`, `did:web`, `did:key`).
-- [ ] Add handle input with availability check — `POST /api/v1/identity/resolve`.
-- [ ] Add display name and device label inputs.
-- [ ] Add DID proof challenge step — server sends challenge, client signs with new DID key.
-- [ ] Add recovery policy selection — recovery key, backup phrase, passkey recovery.
-- [ ] Add device bootstrap — generate device keys, upload via `POST /api/v1/keys/upload`.
-- [ ] Add automatic device verification prompt after registration.
-- [ ] Add `View::Register` variant.
-- [ ] Route to `Register` from login page "Create Account" link.
+- [ ] **DID 文档存储与复制** — spec 要求 DID 文档通过多个 registry/witness/replica 节点存储和复制，当前客户端完全没有 DID 文档管理逻辑
+- [ ] **`did:uuid` 结构化生成** — spec 定义了 44 位毫秒时间戳 + 4 位哈希算法 ID + 74 位 inception-key 哈希片段的编码方式，注册页面的 DID 生成仅为随机 UUID
+- [ ] **`did:web` / `did:key` / `did:keri` 方法适配器** — 注册页面有方法选择 UI 但实际生成逻辑未区分实现
+- [ ] **密钥日志 (key_log)** — spec 要求通过 inception_key → key_log 继承当前控制密钥，客户端无此概念
+- [ ] **普通密钥轮换不改变 DID** — 客户端无密钥轮换流程实现
+- [ ] **DID 操作提交** — 缺少 `POST /api/v1/identity/submit-did-operation` 端点的客户端实现
 
----
+### 1.2 Handle 解析
 
-## Device Verification Page (`design/verify-device.html` → `src/views/verify_device.rs`)
+- [ ] **双向 handle 验证** — spec 要求通过 DID Document 中的 `also_known_as` 验证 handle，客户端仅有单向 `resolve-handle` 调用
+- [ ] **对等/私有 DID 不发布 handle** — 客户端未实现此隐私策略
 
-Currently completely missing. No QR/SAS verification UX exists.
+### 1.3 密钥管理
 
-- [ ] Create `src/views/verify_device.rs` with `VerifyDevicePanel` component.
-- [ ] Add QR code verification flow — generate QR from device key material, scan partner device QR.
-- [ ] Add SAS (Short Authentication String) flow — display 6-digit code, confirm match on both devices.
-- [ ] Add device trust table — list all devices with trust state (unverified/verified/blocked).
-- [ ] Add verify action per device — triggers QR or SAS flow for selected device.
-- [ ] Add revoke action per device — calls device revocation endpoint, removes key material.
-- [ ] Add cross-signing state display — shows master/signing/device key relationships.
-- [ ] Add `View::VerifyDevice` variant.
-- [ ] Route to `VerifyDevice` from devices page "Verify" button.
+- [ ] **完整密钥类型生命周期** — spec 定义 8 种密钥类型（inception/principal/recovery/device/session/agent/MLS KeyPackage/backup），客户端仅处理 device key 和 MLS key
+- [ ] **所有权证明 (ownership proof)** — spec 要求使用签名新挑战而非仅解密能力，客户端未实现
+- [ ] **密钥备份/恢复** — settings 页面有占位但无实际实现
 
----
+### 1.4 渐进披露
 
-## Dashboard Page (`design/dashboard.html` → `src/views/dashboard.rs`)
+- [ ] **选择性身份披露** — spec 定义了 presentation requests、disclosure policies、minimum-disclosure VCs，客户端完全未实现
+- [ ] **可验证凭证 (VC)** — 组织成员资格、handle 所有权、邮箱控制、角色声明等 VC 机制缺失
 
-Currently no dedicated dashboard — sidebar + right panel metrics are scattered.
+### 1.5 TSP 集成
 
-- [ ] Create `src/views/dashboard.rs` with `DashboardPanel` component.
-- [ ] Add spaces summary list with unread count badges per space.
-- [ ] Add quick-action bar: Create Space, New Message, Search, Settings.
-- [ ] Add device queue status card — pending to-device messages, push state.
-- [ ] Add repo head card — current commit hash, last sync time, operations count.
-- [ ] Add protocol health table — server version, sync status, MLS epoch, federation state.
-- [ ] Add recent activity feed — last N sync events across all spaces.
-- [ ] Add `View::Dashboard` variant.
-- [ ] Make Dashboard the default view after login (instead of Timeline).
+- [ ] **Trust Spanning Protocol** — spec 支持可选 TSP 集成用于身份、联邦和对等控制消息，客户端未实现（可选功能）
 
 ---
 
-## Space Timeline (`design/space.html` → expand `src/views/timeline.rs`)
+## 二、授权模型 (Authorization / Capability Model)
 
-Current timeline is basic — no reply, reaction, redaction, threads, or blob attachment.
+### 2.1 核心能力模型
 
-- [ ] Add reply-to indicator on timeline events — show quoted parent message with jump link.
-- [ ] Add reply action — composer prefills with reply-to reference, sends `cx.message.reply` relation.
-- [ ] Add reaction picker — emoji grid, sends `cx.reaction.add` / `cx.reaction.remove`.
-- [ ] Add reaction summary display — show reaction counts per event with reactor avatars.
-- [ ] Add redaction action — confirm dialog, sends `cx.redaction` event.
-- [ ] Add message editing — sends `cx.message.update` with new content.
-- [ ] Add thread selector — click message to open thread view in right panel.
-- [ ] Add blob attachment — file picker, calls `POST /api/v1/blob/upload`, embeds blob_ref in message.
-- [ ] Add image preview — inline display for image blob attachments.
-- [ ] Add encrypted composer toggle — switch between plaintext and MLS-encrypted mode.
-- [ ] Add typing indicator — send `cx.typing` on keystroke, display others' typing state.
-- [ ] Add read receipts — send `cx.receipt.read` on scroll-to-bottom, display read-by list.
-- [ ] Add message search within space — filter timeline by keyword.
-- [ ] Add jump-to-message — deep link from notification or search result to specific event position.
+- [x] **Capability-based 授权引擎** — spec 要求能力模型而非角色模型，客户端完全未实现本地授权评估
+- [x] **Grant 对象处理** — spec 定义了 issuer/subject/resource_selectors/actions/constraints/proofs 结构，客户端仅有 `effective_grants` API 调用但未解析和应用
+- [x] **操作集 (Action Sets)** — spec 定义了 5 组操作集（Common/Board/Conversation/Run-Memory/Administrative），客户端无操作级权限检查
+- [x] **资源选择器语法** — spec 定义了正式 EBNF 语法支持空间/实体/关系/视图/通配符/连接/析取选择器，客户端未实现
 
----
+### 2.2 约束系统
 
-## Contacts Page (`design/contacts.html` → `src/views/contacts.rs`)
+- [x] **10 种约束类型** — temporal/field_access/type_restriction/scope_limitation/delegation_control/rate_limiting/approval_workflow/claim_based/accountability/encryption_requirement，全部缺失
+- [x] **约束评估顺序** — deny > quarantine > allow > require_review，客户端未实现
 
-Currently embedded in ProductPanel as a sub-flow. Design requires standalone page.
+### 2.3 可问责 Actor 授权
 
-- [ ] Create `src/views/contacts.rs` with `ContactsPanel` component.
-- [ ] Add search by DID / handle with privacy-preserving lookup option.
-- [ ] Add send contact request with optional note field.
-- [ ] Add incoming requests table — accept / reject / block actions.
-- [ ] Add outgoing requests table — cancel action, status display.
-- [ ] Add contacts list — display name, DID, handle, trust state, last seen.
-- [ ] Add block action — move contact to blocked list, remove from contacts.
-- [ ] Add blocked list — view and unblock contacts.
-- [ ] Add contact detail view — profile card, shared spaces, mutual contacts.
-- [ ] Add `View::Contacts` variant.
+- [ ] **AI 代理审批约束** — before_commit/proposal_then_approve/after_commit_review 模式缺失
+- [ ] **监护人/控制者/责任方要求** — 未成年人、受保护用户、企业管理账户的特殊授权逻辑缺失
+- [ ] **提案模式** — 高风险操作的提案→审批流程缺失
+
+### 2.4 声明/证明 (Claims/Attestations)
+
+- [ ] **11 种声明类型处理** — verified_handle/verified_email_domain/org_membership/org_role/employment_status/guardian_relationship/protected_actor_status/agent_controller/device_trust/mfa_level/risk_level/certification，全部缺失
+
+### 2.5 委托
+
+- [x] **委托链验证** — spec 要求 `max_delegation_depth` 控制再授权链深度，每次再授权必须缩小范围，委托链必须可验证，客户端未实现
+- [x] **`cx.capability.grant/delegate/revoke` 操作** — 客户端未实现
 
 ---
 
-## Space Admin Page (`design/space-admin.html` → `src/views/space_admin.rs`)
+## 三、对象模型 (Object Model)
 
-Currently embedded in ProductPanel as a sub-flow. Design requires standalone admin page.
+### 3.1 核心对象
 
-- [ ] Create `src/views/space_admin.rs` with `SpaceAdminPanel` component.
-- [ ] Add space metadata editor — name, topic, avatar, description.
-- [ ] Add join policy selector — open / invite / request / restricted.
-- [ ] Add history visibility selector — world_readable / shared / joined / invited.
-- [ ] Add member table — DID, role, joined_at, MLS epoch, actions (kick/ban/promote/demote).
-- [ ] Add invite member action — DID input, role selector, send invite.
-- [ ] Add accept/reject incoming space invites.
-- [ ] Add leave space action with confirmation.
-- [ ] Add MLS epoch rotation — trigger key rotation, display epoch history.
-- [ ] Add danger zone section — archive space, tombstone/destroy space (irreversible).
-- [ ] Add space discovery toggle — public / private listing.
-- [ ] Add `View::SpaceAdmin` variant.
+- [x] **Entity 统一载体** — spec 将 board/task/message/topic/channel/document/file/memory/run/actor_profile/poll 统一为 entity，客户端按独立视图处理，缺乏统一实体抽象
+- [x] **Relation 一等公民** — spec 要求 relation 作为独立对象类型（containment/dependency/reply/reference/assignment/mention），客户端仅在消息中内联 reply-to，无独立 relation 管理
+- [ ] **Event 签名事实** — spec 要求每个 event 是签名事实和 reducer 输入，客户端发送消息时未创建签名 event
+- [x] **View 投影定义** — spec 要求 view 是独立对象（非真相源），客户端使用硬编码视图枚举，无动态 view 对象
+- [x] **Schema 对象** — 正式 schema 对象缺失
+- [x] **Policy 对象** — 正式 policy 对象缺失
+- [ ] **Invite 对象** — 独立 invite 对象生命周期管理缺失
+- [x] **Read Marker** — spec 定义 read_marker 为 actor-private 读游标，客户端仅有简单 receipt 发送
+- [x] **Notification 派生投影** — spec 要求通知是派生投影，客户端使用本地状态模拟
 
----
+### 3.2 会话模型
 
-## Directory Page (`design/directory.html` → expand `src/views/directory.rs`)
+- [ ] **Channel 实体类型** — spec 定义 channel 为长存会话空间（chat/announce/support/activity），客户端 Chat 视图仅为本地模拟
+- [ ] **Topic 锚定** — spec 要求 topic 可锚定到 space/board/task/run/memory，客户端 Forum 视图仅为独立实现
+- [ ] **Comment 与 Message 分离** — spec 明确 comment 是持久化对象级注释/审查/审批（不同于 message），客户端未区分
+- [ ] **@mention 结构化引用** — spec 要求存储为结构化 DID/entity 引用 + mentions Relations，客户端未实现
+- [ ] **编辑修订链** — spec 要求 `cx.message.revise` 修订链，客户端发送 edit 但未维护修订历史
+- [ ] **撤回墓碑语义** — spec 要求 `cx.message.redact` 有墓碑语义（无全局物理擦除），客户端有 redaction UI 但未实现墓碑逻辑
 
-Current directory only handles space search. Design requires org/actor/handle search.
+### 3.3 社交图谱
 
-- [ ] Add organization search tab — search by name/description, display org card.
-- [ ] Add actor search tab — search by DID, display actor profile card.
-- [ ] Add handle resolution — input handle, resolve to DID via `POST /api/v1/identity/resolve`.
-- [ ] Add contact action from directory result — send contact request directly.
-- [ ] Add space preview card — member count, topic, join policy, preview button.
-- [ ] Add "Open Space" action — navigate to space timeline.
-- [ ] Add pagination for search results.
+- [x] **社交实体类型** — `social_post`/`social_feed`/`social_circle` 实体类型缺失
+- [x] **社交关系** — follows/contact/circle_member/blocks_social/reposts/quotes/likes/replies_to 关系类型缺失
+- [x] **受众策略** — spec 定义 8 种受众模式（public/followers/contacts/circle/organization/space_members/direct/private）+ `snapshot_at_publish`，SocialFeed 视图仅有 basic audience selector
 
----
+### 3.4 内容类型
 
-## Devices & Keys Page (`design/devices.html` → expand `src/views/devices.rs`)
+- [x] **结构化内容类型** — spec 定义 text/formatted_text/image/video/audio/file/location/code/poll + extension mixins，客户端消息为纯文本 + blob 附件
+- [x] **自定义类型** — spec 支持反向域名命名的自定义类型，客户端未实现
 
-Current devices page is read-only summary only. Design requires full management.
+### 3.5 空间层级
 
-- [ ] Add current device detail card — device ID, label, created_at, last_seen.
-- [ ] Add one-time keys display — remaining count, upload button.
-- [ ] Add pending to-device message inbox — list messages, mark processed.
-- [ ] Add push notification controls — register/unregister, platform, token display.
-- [ ] Add device trust table — list all devices with trust state and actions.
-- [ ] Add verify button per device — routes to verify-device page.
-- [ ] Add revoke button per device — confirmation dialog, calls revocation endpoint.
-- [ ] Add key rotation button — rotate device signing key, upload new key package.
-- [ ] Add MLS epoch display — current epoch, group membership count.
-- [ ] Add `View::Devices` variant (expand existing).
+- [ ] **父子空间链接** — spec 要求确认边、显式继承、循环处理，客户端未实现空间层级
+- [ ] **成员/授权/历史可见性/加密不级联** — 客户端未实现空间层级策略
 
 ---
 
-## Audit / Sync Inspector Page (`design/audit.html` → `src/views/audit.rs`)
+## 四、同步与操作 (Sync & Operations)
 
-Currently completely missing — repo/audit endpoints are called during connect but not surfaced.
+### 4.1 Repo-First 发布模型
 
-- [ ] Create `src/views/audit.rs` with `AuditPanel` component.
-- [ ] Add next batch display — sync cursor, batch size, space positions.
-- [ ] Add raw operations table — operation kind, actor, timestamp, content preview.
-- [ ] Add conflict display — conflicting operations with resolution state.
-- [ ] Add snapshots table — snapshot hash, timestamp, state summary.
-- [ ] Add commits table — commit hash, author, operations count, signature status.
-- [ ] Add inspect action — expand row to show full JSON content.
-- [ ] Add verify action — re-verify commit signature, operation digest.
-- [ ] Add refresh action — re-fetch latest repo state.
-- [ ] Add `View::Audit` variant.
-- [ ] Route to `Audit` from right panel "Inspect" link.
+- [ ] **客户端 repo 管理** — spec 要求 Actor 先写入自己的 repo，repo 发布签名 commit，客户端无本地 repo 概念
+- [x] **签名 commit 创建** — spec 要求 commit 包含 commit_id/repo_did/prev_commit/seq/created_at/operations[]/signature，客户端发送操作但未构建 commit
+- [x] **操作信封** — spec 要求操作包含 operation_id/space_id/actor/type/target_ref/causal/body/authz_ref/signature，客户端发送的操作缺少多个必需字段
 
----
+### 4.2 HLC (混合逻辑时钟)
 
-## Settings Page (`design/settings.html` → expand `src/views/settings.rs`)
+- [x] **HLC 生成与维护** — spec 定义 `<physical_hex_12>-<logical_hex_8>-<node_hex_8>` 格式，客户端使用简单时间戳
+- [x] **因果依赖跟踪** — spec 要求操作携带 deps/hlc/actor_seq 因果信息，客户端未实现
 
-Current settings has server/account/device. Missing: storage, encryption, CI/release gates.
+### 4.3 游标编码
 
-- [ ] Add storage table — list local stores (config, state, crypto, blobs) with size and platform (native vs web).
-- [ ] Add storage risk indicators — warn about web localStorage limitations.
-- [ ] Add encryption settings — MLS group policy, key backup status, rotation schedule.
-- [ ] Add push notification preferences — per-space mute, notification rules.
-- [ ] Add privacy settings — presence visibility, read receipt visibility, directory listing.
-- [ ] Add theme selector — light/dark/system.
-- [ ] Add CI/release gate status — show which gates pass/fail from `workflows.rs`.
-- [ ] Add secure crypto store controls — backup/restore key material (native only).
-- [ ] Add account recovery section — backup phrase display, recovery key management.
-- [ ] Add `View::Settings` variant (expand existing).
+- [x] **结构化游标** — spec 定义了版本/时间戳/空间位置（frontier + HLC + state hash）/设备位置/过期时间的 JSON 结构，客户端使用简单 sync_cursor 字符串
+- [x] **Base64URL 传输编码** — 客户端未实现
 
----
+### 4.4 操作族
 
-## API Client — Missing Endpoints
+- [x] **8 组操作类型完整性** — 客户端仅实现了消息/反应/打字/已读回执的发送，缺少：
+  - `cx.space.create/update` — 空间元数据操作
+  - `cx.schema.define/update` — Schema 操作
+  - `cx.policy.set` — 策略操作
+  - `cx.board.create/update` — Board 操作
+  - `cx.collection.create/update/move` — 集合操作
+  - `cx.view.create/update` — View 操作
+  - `cx.entity.create/update/delete/restore` — 实体 CRUD
+  - `cx.relation.create/delete/move` — Relation 操作
+  - `cx.comment.create/update/redact` — Comment 操作
+  - `cx.attachment.add/remove` — 附件操作
+  - `cx.channel.create/update/archive` — Channel 操作
+  - `cx.topic.create/update/close/reopen` — Topic 操作
+  - `cx.run.create/update/complete/fail` — Run 操作
+  - `cx.memory.create/update/confirm/invalidate/supersede` — Memory 操作
+  - `cx.invite.create/cancel/accept` — Invite 操作
+  - `cx.capability.grant/delegate/revoke` — Capability 操作
+  - `cx.mls.proposal/commit/welcome` — MLS 操作
 
-The current API client has 45 endpoints. Several spec-required endpoints are missing.
+### 4.5 冲突解决
 
-### Authentication Endpoints
-- [ ] Add `passkey_challenge` — `POST /api/v1/auth/passkey/challenge`.
-- [ ] Add `passkey_verify` — `POST /api/v1/auth/passkey/verify`.
-- [ ] Add `oidc_authorize` — `GET /api/v1/auth/oidc/authorize`.
-- [ ] Add `oidc_callback` — `POST /api/v1/auth/oidc/callback`.
-- [ ] Add `token_refresh` — `POST /api/v1/auth/token/refresh`.
-- [ ] Add `account_recovery` — `POST /api/v1/account/recovery`.
+- [x] **标量字段 LWW** — spec 要求标量字段按因果顺序 Last-Write-Wins，客户端未实现
+- [x] **集合字段 OR-Set** — spec 要求集合字段使用 OR-Set，客户端未实现
+- [x] **有序字段分数索引** — spec 要求有序字段使用分数索引（fractional indexing），客户端未实现
+- [ ] **冲突解决 UI** — 客户端无冲突检测和解决界面
 
-### Identity & Directory Endpoints
-- [ ] Add `search_organizations` — `POST /api/v1/directory/search-organizations`.
-- [ ] Add `search_actors` — `POST /api/v1/directory/search-actors`.
-- [ ] Add `resolve_handle` — `POST /api/v1/identity/resolve-handle`.
-- [ ] Add `search_users` — `POST /api/v1/directory/search-users`.
+### 4.6 快照
 
-### Space Management Endpoints
-- [ ] Add `update_space` — `PATCH /api/v1/spaces/{id}`.
-- [ ] Add `archive_space` — `POST /api/v1/spaces/{id}/archive`.
-- [ ] Add `set_space_policy` — `PUT /api/v1/spaces/{id}/policy`.
-- [ ] Add `invite_to_space` — `POST /api/v1/spaces/{id}/invite`.
-- [ ] Add `accept_space_invite` — `POST /api/v1/spaces/{id}/invite/accept`.
-- [ ] Add `reject_space_invite` — `POST /api/v1/spaces/{id}/invite/reject`.
-- [ ] Add `leave_space` — `POST /api/v1/spaces/{id}/leave`.
-- [ ] Add `ban_member` — `POST /api/v1/spaces/{id}/members/{member}/ban`.
+- [x] **快照加速层** — spec 定义快照为加速层（非真相源），包含 manifest（snapshot_id/space_id/covers_frontier/chunks/reducer_version/generator_signature），客户端仅有 `snapshot_head` API 调用
+- [ ] **快照应用与增量同步** — 客户端未实现
 
-### Messaging Endpoints
-- [ ] Add `edit_message` — `PATCH /api/v1/messages/{id}`.
-- [ ] Add `redact_message` — `POST /api/v1/messages/{id}/redact`.
-- [ ] Add `add_reaction` — `POST /api/v1/messages/{id}/reactions`.
-- [ ] Add `remove_reaction` — `DELETE /api/v1/messages/{id}/reactions/{key}`.
-- [ ] Add `send_typing` — `POST /api/v1/typing`.
-- [ ] Add `send_receipt` — `POST /api/v1/receipts`.
+### 4.7 同步配置
 
-### Device & Crypto Endpoints
-- [ ] Add `revoke_device` — `POST /api/v1/devices/{id}/revoke`.
-- [ ] Add `rotate_keys` — `POST /api/v1/keys/rotate`.
-- [ ] Add `get_device_trust` — `GET /api/v1/devices/trust`.
-- [ ] Add `verify_device` — `POST /api/v1/devices/{id}/verify`.
-- [ ] Add `get_mls_epoch` — `GET /api/v1/mls/epoch`.
-- [ ] Add `rotate_mls_epoch` — `POST /api/v1/mls/rotate`.
-
-### Moderation & Policy Endpoints
-- [ ] Add `get_moderation_reports` — `GET /api/v1/moderation/reports`.
-- [ ] Add `resolve_moderation_report` — `POST /api/v1/moderation/reports/{id}/resolve`.
-- [ ] Add `get_policy` — `GET /api/v1/policy/{resource}`.
+- [ ] **Board/Chat/Topic 三种同步模式** — spec 定义了三种同步配置（实体当前状态+评论摘要、频道元数据+最近N消息、主题元数据+锚定对象+反向回填），客户端使用单一同步模式
+- [ ] **`X-Contrix-Wait-For` read-your-writes** — spec 要求通过 sync_token + header 实现读写一致性，客户端未实现
 
 ---
 
-## E2EE Web Crypto Store
+## 五、服务接口与 API (Service Surface & API)
 
-Current web E2EE uses placeholder envelope compose. Need real WebCrypto-backed store.
+### 5.1 缺失的 API 端点
 
-- [ ] Implement `WebCryptoStore` using WebCrypto API for key generation and storage.
-- [ ] Store device identity keys in IndexedDB (persistent across sessions).
-- [ ] Store MLS group state in IndexedDB (epoch secrets, tree, transcript hash).
-- [ ] Implement key package serialization/deserialization for web.
-- [ ] Replace `compose_local_encrypted_message` wasm fallback with real WebCrypto encrypt.
-- [ ] Implement decrypt path using IndexedDB-stored epoch secrets.
-- [ ] Add key backup/restore for web (export encrypted key bundle, import with passphrase).
-- [ ] Test E2EE round-trip on wasm32 target.
+以下 spec 定义的端点在客户端 API 中缺失：
 
----
+**Federation (完全缺失)**
+- [x] `PUT /api/v1/federation/transactions/{txn_id}`
+- [x] `POST /api/v1/federation/push-operations`
+- [x] `POST /api/v1/federation/pull-operations`
+- [x] `GET /api/v1/federation/space-members`
+- [x] `POST /api/v1/federation/verify-actor`
 
-## Production Auth Flow
+**Index / AppView (部分缺失)**
+- [x] `POST /api/v1/index/entity` — 单实体查询
+- [ ] `POST /api/v1/index/query` — 已有但 UI 未使用
+- [x] `POST /api/v1/index/thread` — 线程查询
+- [x] `POST /api/v1/index/notifications` — 通知查询
+- [x] `POST /api/v1/index/inbox` — 收件箱查询
+- [x] `POST /api/v1/index/search` — 全局搜索
+- [x] `POST /api/v1/index/space-hierarchy` — 空间层级查询
 
-Currently only dev-login exists. Need full production authentication.
+**Applet (完全缺失)**
+- [x] `POST /api/v1/applet/ping`
+- [x] `GET /api/v1/applet/describe`
+- [x] `POST /api/v1/applet/transaction`
+- [x] `POST /api/v1/applet/query_actor`
+- [x] `POST /api/v1/applet/query_space`
+- [x] `GET /api/v1/applet/protocol_metadata`
+- [x] `POST /api/v1/applet/third_party_users`
+- [x] `POST /api/v1/applet/third_party_locations`
 
-- [ ] Implement DID proof challenge flow: server sends nonce → client signs with DID key → server verifies and issues session.
-- [ ] Implement passkey/WebAuthn registration: generate credential, store in browser authenticator.
-- [ ] Implement passkey/WebAuthn login: get challenge, sign with stored credential.
-- [ ] Implement OIDC redirect flow: redirect to provider, handle callback, exchange code for token.
-- [ ] Implement token refresh: detect expiry (or 401), call refresh endpoint, update stored token.
-- [ ] Implement soft-logout: preserve local state on session expiry, show re-auth prompt.
-- [ ] Implement account recovery: recovery key input, passphrase derivation, key material restoration.
-- [ ] Implement session-to-DID binding: verify session token matches expected DID and device.
+**Policy (部分缺失)**
+- [x] `POST /api/v1/policy/check` — 策略决策（签名决策）
 
----
+**Media (部分缺失)**
+- [ ] `GET /api/v1/media/ice-config` — 已有 API 调用，但未用于 WebRTC
 
-## Offline & Sync Resilience
+**Identity (部分缺失)**
+- [x] `POST /api/v1/identity/log` — 密钥日志查询
+- [x] `POST /api/v1/identity/submit-did-operation` — DID 操作提交
+- [x] `POST /api/v1/identity/receipts` — 身份回执
 
-Currently no offline support. Need queue, retry, and reconciliation.
+### 5.2 API 规范合规性
 
-- [ ] Add offline detection — monitor network state, show offline indicator.
-- [ ] Add message queue — store pending messages locally when offline.
-- [ ] Add retry with reconciliation — on reconnect, replay queued messages, handle conflicts.
-- [ ] Add crash-safe drafts — persist composer content to local store on every keystroke.
-- [ ] Add sync resume — on app restart, resume from last stored sync cursor.
-- [ ] Add conflict resolution UI — show conflicting operations, let user choose resolution.
-- [ ] Add background sync — periodic sync even when app is in background (native).
-
----
-
-## Spec-Required Views Without Design Pages
-
-These views are required by the contrix-spec but have no design prototype yet. Create design + implementation.
-
-### Kanban Board (`View::Kanban`)
-- [ ] Create `design/kanban.html` design prototype.
-- [ ] Create `src/views/kanban.rs` — column-based board with drag-and-drop entity cards.
-- [ ] Add column management — add/remove/reorder columns.
-- [ ] Add card detail modal — entity fields, assignees, labels, due dates.
-- [ ] Add `View::Kanban` variant.
-
-### Chat / Channel View (`View::Chat`)
-- [ ] Create `design/chat.html` design prototype.
-- [ ] Create `src/views/chat.rs` — channel-based chat with message list and composer.
-- [ ] Add channel list sidebar — DMs, group channels, space channels.
-- [ ] Add channel creation — name, kind (chat/announce/support/activity), visibility.
-- [ ] Add `View::Chat` variant.
-
-### Forum View (`View::Forum`)
-- [ ] Create `design/forum.html` design prototype.
-- [ ] Create `src/views/forum.rs` — threaded forum with topic list and reply chains.
-- [ ] Add topic creation — title, initial post, tags.
-- [ ] Add nested reply display — collapsible reply tree.
-- [ ] Add `View::Forum` variant.
-
-### Social Feed (`View::SocialFeed`)
-- [ ] Create `design/social_feed.html` design prototype.
-- [ ] Create `src/views/social_feed.rs` — social post feed with audience policy controls.
-- [ ] Add post composer — rich text, media attach, audience selector.
-- [ ] Add feed filtering — by circle, by contact, by topic.
-- [ ] Add `View::SocialFeed` variant.
-
-### Memory Review (`View::MemoryReview`)
-- [ ] Create `design/memory_review.html` design prototype.
-- [ ] Create `src/views/memory_review.rs` — agent memory review with accept/edit/reject.
-- [ ] Add memory layer filter — working/episodic/semantic/task.
-- [ ] Add confidence score display and manual override.
-- [ ] Add `View::MemoryReview` variant.
-
-### Agent Runs (`View::AgentRuns`)
-- [ ] Create `design/agent_runs.html` design prototype.
-- [ ] Create `src/views/agent_runs.rs` — agent run timeline with step-by-step trace.
-- [ ] Add run detail — input, output, tool calls, duration, status.
-- [ ] Add run comparison — side-by-side diff of two runs.
-- [ ] Add `View::AgentRuns` variant.
-
-### Notification Inbox (`View::Notifications`)
-- [ ] Create `design/notifications.html` design prototype.
-- [ ] Create `src/views/notifications.rs` — notification list with action buttons.
-- [ ] Add notification grouping — by space, by type, by time.
-- [ ] Add mark-read/unread, archive, bulk actions.
-- [ ] Add notification rules — per-space, per-type muting.
-- [ ] Add `View::Notifications` variant.
-
-### Document Editor (`View::Document`)
-- [ ] Create `design/document.html` design prototype.
-- [ ] Create `src/views/document.rs` — rich document editor with collaborative editing.
-- [ ] Add block-based editing — paragraphs, headings, lists, code blocks, images.
-- [ ] Add real-time collaboration indicators — cursors, selections from other users.
-- [ ] Add version history — timeline of document revisions.
-- [ ] Add `View::Document` variant.
-
-### Voice / Video Calls (`WebRtcManager` integration)
-- [ ] Create `design/call.html` design prototype.
-- [ ] Create `src/views/call.rs` — call UI with audio/video controls.
-- [ ] Add ICE server configuration from `GET /api/v1/media/ice-config`.
-- [ ] Add call initiation — offer/answer SDP exchange via to-device messages.
-- [ ] Add call accept/reject/decline flows.
-- [ ] Add screen sharing support.
-- [ ] Add `View::Call` variant.
+- [ ] **HTTPS 生产环境强制** — 客户端默认使用 `http://127.0.0.1:8787`，无 HTTPS 强制检查
+- [ ] **幂等写入** — spec 要求通过 operation_id/commit_id/request_id 实现幂等，客户端未生成或跟踪这些 ID
+- [ ] **游标分页** — spec 要求基于游标的分页 + 不透明 token，客户端搜索结果无分页
+- [ ] **速率限制处理** — spec 要求处理 Retry-After header，客户端重试策略未检查此 header
+- [ ] **CORS 浏览器支持** — 未确认 WASM 构建是否正确处理 CORS
+- [ ] **特性发现** — spec 要求通过 describe 端点发现功能，客户端仅在连接时探测一次
 
 ---
 
-## Release Engineering
+## 六、联邦 (Federation) — 完全未实现
 
-- [ ] Implement signed desktop builds — code signing for Windows (Authenticode), macOS (notarization), Linux (GPG).
-- [ ] Add web deployment config — WASM build, service worker, asset hosting.
-- [ ] Add auto-updater — check for new version, download, prompt restart (native).
-- [ ] Add crash telemetry — panic hook, crash report upload (opt-in).
-- [ ] Add privacy/security review checklist — data at rest encryption, network TLS pinning, key storage audit.
-- [ ] Add release channels — stable, beta, nightly.
-- [ ] Add mobile build targets — iOS (Xcode project), Android (NDK target).
-- [ ] Add store submission — App Store, Microsoft Store, Flathub, web PWA manifest.
+- [ ] **服务身份** — 每个服务有自己的 DID，HTTP Message Signatures 覆盖 method/target-uri/content-digest/source-destination DID
+- [ ] **推送流程** — 服务器检测跨域空间操作 → 解析对端 Principal Server → 绑定事务 → 发送签名操作
+- [ ] **事务信封** — origin/destination/service_binding_ref/operations[]/receipts/frontier，幂等于 (origin, destination, txn_id)
+- [ ] **分叉检测** — 相同 ID 但不同哈希的冲突 commit 触发隔离和 `duplicate_conflict`
+- [ ] **回填授权** — 根据空间策略、成员资格前沿、服务委托、明文可见性规则评估请求者
+- [ ] **域引导** — `GET /.well-known/contrix/server` 候选端点发现
+
+---
+
+## 七、发现与目录 (Discovery & Directory)
+
+### 7.1 可发现性级别
+
+- [x] **6 级可发现性** — public/listed/restricted/unlisted/invite_only/secret，客户端未实现级别管理
+- [x] **`cx.space.discovery` 状态事件** — discoverability/directory_visibility/preview/allowed_discoverers/anti_enumeration 设置缺失
+
+### 7.2 组织发现
+
+- [x] **组织配置文件状态** — discoverability/profile_visibility/directory_services/proof 缺失
+- [ ] **组织搜索 UI** — API 已连接但 UI 仅显示原始结果，缺乏组织卡片和交互
+
+### 7.3 目录服务
+
+- [x] **逐结果授权过滤** — spec 要求目录服务对每个结果应用授权过滤，客户端未实现
+- [ ] **Applet 发现** — 目录应支持 Applet 搜索和发现
+
+### 7.4 配置文件、在线状态、打字
+
+- [x] **显示元数据管理** — 头像、状态消息、个人资料字段的客户端编辑和展示缺失
+- [x] **在线状态策略** — spec 要求按空间策略范围化的在线状态信号，客户端仅有连接状态指示器
+
+### 7.5 客户端偏好
+
+- [ ] **私有账户数据** — UI 状态/标签/自定义表情等客户端偏好存储，敏感数据必须客户端加密
+
+### 7.6 推送通知
+
+- [x] **E2EE 空间推送** — spec 要求向推送网关仅发送最小元数据，客户端未实现
+- [ ] **逐空间静音** — 推送设置 UI 存在但未实现实际的 per-space mute 逻辑
+
+### 7.7 已读回执与标记
+
+- [x] **多设备标记合并** — spec 要求使用因果最新标记 + HLC/device_id 决定器合并，客户端未实现
+- [ ] **通知派生投影** — 通知应为派生投影而非客户端本地状态
+
+---
+
+## 八、加密、设备与媒体 (Crypto, Devices & Media)
+
+### 8.1 E2EE
+
+- [ ] **MLS RFC 9420 完整合规** — 原生端基础可用，但未验证与 spec 要求的完整合规性
+- [ ] **可审计 E2EE** — spec 要求合规 actor 作为可见组成员 + 签名审计事件，客户端未实现
+- [ ] **桥接边界不静默降级** — spec 要求桥接边界不得静默降级加密内容，客户端未实现检测
+
+### 8.2 加密载荷信封
+
+- [ ] **完整信封模式** — spec 定义 scheme/version/group_id/epoch/content_type/ciphertext/authentication_tag/AAD/digests，客户端原生端基本实现但未验证所有字段
+- [ ] **AAD 结构** — spec 要求 AAD 包含 space_id/event_type/event_id/causal_refs，客户端未填充
+- [ ] **摘要验证** — spec 要求 payload_digest 和 aad_digest，客户端未实现
+
+### 8.3 设备管理
+
+- [ ] **设备配对** — spec 要求通过签名授权事件进行设备配对，客户端仅有密钥上传
+- [ ] **设备撤销使未来写入无效** — spec 要求设备撤销触发 MLS 移除，客户端有撤销 UI 但未实现协议级效果
+- [ ] **会话绑定到 DID principal/device** — spec 要求 Auth Service 将登录会话绑定到 DID principal/device 而非身份根，客户端未验证
+
+### 8.4 Web E2EE — 重大缺失
+
+- [ ] **WebCrypto 密钥存储** — 当前 WASM 端使用硬编码占位符，需实现 WebCrypto API
+- [ ] **IndexedDB 持久化** — 设备身份密钥、MLS 组状态（epoch secrets/tree/transcript hash）需存储在 IndexedDB
+- [ ] **密钥包序列化/反序列化** — Web 端缺失
+- [ ] **Web 加密/解密路径** — 当前为假数据，需替换为真实 WebCrypto
+- [ ] **Web 密钥备份/恢复** — 导出加密密钥包 + 口令导入
+
+### 8.5 媒体与 Blob
+
+- [ ] **内容寻址存储** — spec 要求 blob_ref 包含强哈希，客户端上传时未计算和验证
+- [ ] **认证下载** — spec 要求 actor/device/Space/purpose/expiry 绑定的认证下载，客户端使用简单 GET
+- [ ] **加密附件** — spec 要求 xchacha20_poly1305 加密附件，客户端未实现
+- [ ] **缩略图** — 客户端未实现
+- [ ] **安全 Content-Type/Content-Disposition** — 客户端未实现
+- [x] **图片预览** — timeline 视图中的 blob 附件无内联图片预览
+
+### 8.6 WebRTC 信令
+
+- [ ] **完整 WebRTC 流程** — 客户端仅有 ICE 配置获取和通话状态机模拟，缺少：
+  - 临时信道 + 签名信令消息
+  - Offer/answer SDP 交换通过 to-device 消息
+  - 空间策略和 E2EE 边界尊重
+  - 屏幕共享
+  - SFU/MCU 支持
+  - 录制
+
+---
+
+## 九、扩展 (Extensions)
+
+### 9.1 AI 代理记忆
+
+- [ ] **记忆生命周期** — spec 定义 candidate → confirmed/rejected → invalidated/superseded，MemoryReview 视图仅有本地 accept/edit/reject
+- [ ] **来源追溯** — spec 要求记忆携带来源（provenance），客户端未实现
+- [ ] **人工审查** — spec 要求记忆可由人工审查，客户端 UI 存在但未连接协议
+- [ ] **非向量存储** — spec 明确记忆不应坍缩为向量存储（向量仅为派生层），客户端未实现向量/派生层分离
+
+### 9.2 AI 代理运行
+
+- [ ] **Run 实体创建** — `cx.run.create/update/complete/fail` 操作缺失
+- [ ] **工具执行记录** — AgentRuns 视图有 UI 但为本地模拟数据
+- [ ] **内存提升** — spec 要求从 episodic → semantic 提升流程，客户端未实现
+- [ ] **A2A/ACP/MCP 互操作** — spec 要求与 A2A/ACP/MCP 协议的桥接，客户端完全未实现
+
+### 9.3 Applet 集成 — 完全未实现
+
+- [ ] **签名注册** — Applet 签名注册流程缺失
+- [ ] **Actor/空间/Handle 命名空间** — 缺失
+- [ ] **事务推送** — 缺失
+- [ ] **幽灵 Actor** — 缺失
+- [ ] **门户空间** — 缺失
+- [ ] **第三方用户/位置查找** — 缺失
+
+---
+
+## 十、安全 (Security) — 重大缺失
+
+### 10.1 明文边界
+
+- [x] **`plaintext_visible_services` 声明** — spec 要求声明哪些服务可以接收明文，客户端未实现
+- [x] **非 E2EE 私有内容不泄露** — 客户端未实现边界检查
+
+### 10.2 服务器威胁模型
+
+- [ ] **客户端侧安全措施** — 暴力认证防护、垃圾邮件泛洪、欺骗/重放防护、枚举防护等客户端配合措施缺失
+- [ ] **URL 凭据泄漏** — spec 警告不要在 URL 中传递凭据，客户端使用 Bearer header（正确）
+
+### 10.3 主权部署
+
+- [ ] **封闭联邦** — 服务 DID 允许列表缺失
+- [ ] **DID 解析器策略固定** — 缺失
+- [ ] **出口控制/水印/导出审批** — 缺失
+- [ ] **MLS Welcome 仅限批准设备** — 缺失
+- [ ] **外部 actor 进入流程** — DID/VC 提交 → 验证 → 策略检查 → 邀请 → 受限加入，全部缺失
+
+---
+
+## 十一、一致性 (Conformance) — 重大缺失
+
+### 11.1 一致性配置文件
+
+- [x] **11 个配置文件验证** — 客户端应声明并验证符合哪些配置文件：
+  - `cx.profile.minimal_client.v1`
+  - `cx.profile.full_client.v1`
+  - `cx.profile.e2ee_client.v1`
+  - `cx.profile.enterprise_client.v1`
+  - 其他为服务端配置文件
+
+### 11.2 Schema 注册
+
+- [ ] **16 个注册 schema 验证** — 客户端应使用注册 schema 验证操作和事件
+- [ ] **40+ 事件类型支持** — `cx.<domain>.<verb>` 命名空间的事件类型覆盖不完整
+
+### 11.3 测试向量
+
+- [x] **编码测试向量** — canonical JSON/digests/signatures/HLC/cursor/encrypted envelope 向量验证缺失
+- [x] **状态解析测试向量** — 并发成员资格/能力重绑定/schema 更新解析缺失
+- [x] **编辑测试向量** — 保留字段/策略范围编辑缺失
+- [x] **能力测试向量** — 委托链/撤销回滚/审批约束缺失
+- [x] **同步测试向量** — 时间线顺序/分页/快照前沿/MLS epoch 回填缺失
+- [x] **HLC 测试向量** — 30+ 向量（格式/比较/生成）缺失
+- [x] **游标测试向量** — 25+ 向量（编码解码/验证/过期）缺失
+
+### 11.4 JSON Schema 验证
+
+- [x] **cursor-schema.json** — 游标验证未集成
+- [x] **event-schema.json** — 事件信封验证未集成
+- [x] **grant-schema.json** — 能力授权验证未集成
+- [x] **encrypted-envelope-schema.json** — 加密载荷验证未集成
+
+---
+
+## 十二、架构与设计缺陷
+
+### 12.1 状态管理
+
+- [ ] **信号爆炸** — `app.rs` 使用大量独立 `use_signal`，随着功能增加会导致状态管理碎片化，应考虑统一状态存储
+- [ ] **视图间状态共享** — 各视图通过 props 传递信号引用，缺乏结构化的状态共享机制
+
+### 12.2 路由
+
+- [x] **无 URL 路由** — 导航完全基于信号（`view.set(View::X)`），无浏览器 URL 路由，导致：
+  - 无法通过 URL 直接导航到特定视图
+  - 无法使用浏览器前进/后退
+  - 无法分享链接
+  - 书签无效
+- [x] **深链接缺失** — 从通知/搜索结果跳转到特定消息/实体的位置不可用
+
+### 12.3 API 客户端
+
+- [x] **无自动 401 处理** — token 过期时无自动检测和刷新，需手动操作
+- [ ] **请求取消** — 无请求取消机制（如 AbortSignal），视图切换时旧请求可能覆盖新数据
+- [ ] **乐观更新** — 所有 API 调用均为 fire-and-forget，无乐观 UI 更新
+- [ ] **错误重试 UI** — 重试策略存在但无用户可见的重试状态
+
+### 12.4 离线支持
+
+- [x] **无离线检测** — 未监控网络状态
+- [x] **无离线消息队列** — 离线时发送的消息丢失
+- [x] **无重连协调** — 重连后无消息重放和冲突处理
+- [x] **无后台同步** — 原生端无后台同步能力
+
+### 12.5 平台差异
+
+- [ ] **WASM 功能降级未告知用户** — Web 端 E2EE 为占位符，但 UI 未明确告知用户当前为非安全模式
+- [ ] **iOS/Android 未实现** — spec 要求跨平台，仅有构建目标配置无实际实现
+- [x] **移动端适配** — 三栏布局在小屏幕上不可用，无响应式设计
+
+### 12.6 可访问性
+
+- [ ] **ARIA 属性** — 未确认组件是否有适当的 ARIA 标签
+- [ ] **键盘导航** — 未确认完整的键盘导航支持
+- [x] **高对比度/大字体** — 主题切换仅 light/dark/system，无高对比度模式
+
+### 12.7 国际化
+
+- [ ] **i18n 框架** — 无国际化支持，所有字符串硬编码为英文
+- [ ] **RTL 布局** — 未实现从右到左语言支持
+
+---
+
+## 十三、测试差距
+
+### 13.1 协议合规测试
+
+- [x] **HLC 生成/比较/序列化测试** — 未实现
+- [x] **游标编码/解码/验证测试** — 未实现
+- [x] **操作签名/验证测试** — 未实现
+- [x] **冲突解析测试** — 未实现
+- [x] **能力链评估测试** — 未实现
+- [ ] **加密信封合规测试** — 未实现
+
+### 13.2 集成测试
+
+- [ ] **跨设备同步测试** — 多设备间的状态同步验证缺失
+- [ ] **离线→在线过渡测试** — 缺失
+- [ ] **E2EE 组生命周期测试** — MLS 组创建/加入/成员变更/epoch 轮换的端到端测试缺失
+- [ ] **授权流程测试** — capability 授权/委托/撤销的端到端测试缺失
+
+### 13.3 E2E 测试
+
+- [ ] **生产认证流程测试** — 当前仅测试 dev-login
+- [ ] **完整空间生命周期测试** — 创建→配置→成员管理→存档→删除
+- [ ] **多视图切换测试** — 所有 22 个视图的导航和状态保持
+- [ ] **移动端测试** — 完全缺失
+
+---
+
+## 十四、发布工程 (Release Engineering)
+
+- [ ] **签名桌面构建** — Windows (Authenticode)、macOS (notarization)、Linux (GPG) 代码签名
+- [ ] **Web 部署配置** — WASM 构建 + Service Worker + 资源托管
+- [ ] **自动更新** — 检查新版本→下载→提示重启（原生端）
+- [ ] **崩溃遥测** — panic hook + 崩溃报告上传（opt-in）
+- [ ] **隐私/安全审查清单** — 静态数据加密、网络 TLS 固定、密钥存储审计
+- [ ] **发布渠道** — stable/beta/nightly
+- [ ] **移动端构建目标** — iOS (Xcode 项目)、Android (NDK 目标)
+- [ ] **商店提交** — App Store、Microsoft Store、Flathub、Web PWA manifest
+
+---
+
+## 优先级建议
+
+### P0 — 协议基础（阻塞所有其他功能）
+1. ~~操作签名与 commit 创建（Write Plane）~~ ✅
+2. ~~HLC 生成与因果跟踪~~ ✅
+3. ~~结构化游标编码~~ ✅
+4. 加密载荷信封完整合规
+5. WebCrypto E2EE 存储
+
+### P1 — 核心用户体验
+1. 生产认证流程（WebAuthn + OIDC + token 刷新）
+2. ~~离线队列与重连协调~~ ✅
+3. ~~URL 路由与深链接~~ ✅
+4. ~~实体/Relation 统一抽象~~ ✅
+5. ~~冲突检测与解决 UI~~ ✅
+
+### P2 — 协议完整性
+1. ~~Capability 授权引擎~~ ✅
+2. ~~完整操作族支持~~ ✅
+3. ~~快照同步~~ ✅
+4. ~~多设备标记合并~~ ✅
+5. ~~一致性测试向量集成~~ ✅
+
+### P3 — 生态扩展
+1. 联邦支持
+2. Applet 集成
+3. AI 代理协议互操作（A2A/ACP/MCP）
+4. WebRTC 完整实现
+5. 主权部署支持
+
+### P4 — 发布就绪
+1. 代码签名
+2. 自动更新
+3. 崩溃遥测
+4. 移动端适配
+5. 商店提交

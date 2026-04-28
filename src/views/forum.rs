@@ -1,11 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::views::helpers::authed_api;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ForumTopic {

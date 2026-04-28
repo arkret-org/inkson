@@ -1,10 +1,22 @@
 pub mod api;
 pub mod app;
+pub mod capability;
 pub mod components;
 pub mod config;
+pub mod conformance;
+pub mod conflict;
+pub mod cursor;
 pub mod crypto;
+pub mod discovery;
+pub mod entity;
+pub mod hlc;
 pub mod local_state;
 pub mod models;
+pub mod offline;
+pub mod operation;
+pub mod routes;
+pub mod social;
+pub mod test_vectors;
 pub mod views;
 pub mod workflows;
 

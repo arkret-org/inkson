@@ -1,0 +1,624 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::entity::CapabilityGrant;
+use crate::hlc::Hlc;
+
+/// Discoverability levels as defined by the spec.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Discoverability {
+    /// Visible in public directories and search results.
+    Public,
+    /// Listed in directories but not in general search.
+    Listed,
+    /// Restricted to organization members or specific groups.
+    Restricted,
+    /// Not listed, only accessible via direct link.
+    Unlisted,
+    /// Only accessible via explicit invitation.
+    InviteOnly,
+    /// Completely hidden, no directory presence.
+    Secret,
+}
+
+impl Discoverability {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Public => "public",
+            Self::Listed => "listed",
+            Self::Restricted => "restricted",
+            Self::Unlisted => "unlisted",
+            Self::InviteOnly => "invite_only",
+            Self::Secret => "secret",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "public" => Self::Public,
+            "listed" => Self::Listed,
+            "restricted" => Self::Restricted,
+            "unlisted" => Self::Unlisted,
+            "invite_only" => Self::InviteOnly,
+            "secret" => Self::Secret,
+            _ => Self::Unlisted,
+        }
+    }
+
+    /// Check if this level allows discovery by the given context.
+    pub fn allows_discovery(&self, is_member: bool, has_invite: bool) -> bool {
+        match self {
+            Self::Public => true,
+            Self::Listed => true,
+            Self::Restricted => is_member,
+            Self::Unlisted => false,
+            Self::InviteOnly => has_invite,
+            Self::Secret => false,
+        }
+    }
+}
+
+/// Space discovery configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SpaceDiscovery {
+    /// Space ID.
+    pub space_id: String,
+    /// Discoverability level.
+    pub discoverability: Discoverability,
+    /// Directory visibility settings.
+    pub directory_visibility: DirectoryVisibility,
+    /// Preview settings for non-members.
+    pub preview: PreviewSettings,
+    /// Who can discover this space.
+    pub allowed_discoverers: Vec<String>,
+    /// Anti-enumeration protection.
+    pub anti_enumeration: bool,
+    /// When this config was last updated.
+    pub updated_at: Hlc,
+}
+
+/// Directory visibility settings.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DirectoryVisibility {
+    /// Show in public directory.
+    pub show_in_directory: bool,
+    /// Show member count.
+    pub show_member_count: bool,
+    /// Show activity level.
+    pub show_activity: bool,
+    /// Custom directory tags.
+    pub tags: Vec<String>,
+}
+
+/// Preview settings for non-members.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreviewSettings {
+    /// Allow preview of recent messages.
+    pub allow_message_preview: bool,
+    /// Number of preview messages.
+    pub preview_message_count: u32,
+    /// Show member list preview.
+    pub show_member_preview: bool,
+    /// Number of preview members.
+    pub preview_member_count: u32,
+    /// Custom preview text.
+    pub preview_text: Option<String>,
+}
+
+/// Organization profile status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OrgProfileStatus {
+    /// Organization DID.
+    pub org_did: String,
+    /// Discoverability level.
+    pub discoverability: Discoverability,
+    /// Profile visibility.
+    pub profile_visibility: ProfileVisibility,
+    /// Directory services this org is registered with.
+    pub directory_services: Vec<String>,
+    /// Proofs of organization status.
+    pub proofs: Vec<OrgProof>,
+    /// When this profile was last updated.
+    pub updated_at: Hlc,
+}
+
+/// Profile visibility settings.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProfileVisibility {
+    /// Show organization name.
+    pub show_name: bool,
+    /// Show description.
+    pub show_description: bool,
+    /// Show member count.
+    pub show_member_count: bool,
+    /// Show domains.
+    pub show_domains: bool,
+    /// Show contact information.
+    pub show_contact: bool,
+}
+
+/// Proof of organization status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OrgProof {
+    /// Proof type (e.g., "dns_verification", "legal_entity").
+    pub proof_type: String,
+    /// Proof value.
+    pub value: String,
+    /// When the proof was verified.
+    pub verified_at: Hlc,
+    /// Who verified the proof.
+    pub verified_by: String,
+}
+
+/// Display metadata for actors.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DisplayMetadata {
+    /// Actor DID.
+    pub actor_did: String,
+    /// Display name.
+    pub display_name: Option<String>,
+    /// Avatar URL.
+    pub avatar_url: Option<String>,
+    /// Status message.
+    pub status_message: Option<String>,
+    /// Status emoji.
+    pub status_emoji: Option<String>,
+    /// Bio/description.
+    pub bio: Option<String>,
+    /// Location.
+    pub location: Option<String>,
+    /// Website URL.
+    pub website: Option<String>,
+    /// Custom fields.
+    pub custom_fields: HashMap<String, String>,
+    /// When this metadata was last updated.
+    pub updated_at: Hlc,
+}
+
+impl DisplayMetadata {
+    pub fn new(actor_did: &str) -> Self {
+        Self {
+            actor_did: actor_did.to_owned(),
+            display_name: None,
+            avatar_url: None,
+            status_message: None,
+            status_emoji: None,
+            bio: None,
+            location: None,
+            website: None,
+            custom_fields: HashMap::new(),
+            updated_at: Hlc::now(),
+        }
+    }
+}
+
+/// Presence policy as defined by the spec.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PresencePolicy {
+    /// Actor DID.
+    pub actor_did: String,
+    /// Whether presence is enabled.
+    pub enabled: bool,
+    /// Per-space presence settings.
+    pub space_policies: HashMap<String, SpacePresencePolicy>,
+    /// Default policy for new spaces.
+    pub default_policy: SpacePresencePolicy,
+    /// When this policy was last updated.
+    pub updated_at: Hlc,
+}
+
+/// Per-space presence policy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpacePresencePolicy {
+    /// Share online status.
+    pub share_online: bool,
+    /// Share typing indicators.
+    pub share_typing: bool,
+    /// Share read receipts.
+    pub share_read_receipts: bool,
+    /// Share last seen time.
+    pub share_last_seen: bool,
+}
+
+impl Default for SpacePresencePolicy {
+    fn default() -> Self {
+        Self {
+            share_online: true,
+            share_typing: true,
+            share_read_receipts: true,
+            share_last_seen: true,
+        }
+    }
+}
+
+/// Read marker for multi-device sync.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadMarker {
+    /// Space ID.
+    pub space_id: String,
+    /// Actor DID.
+    pub actor_did: String,
+    /// Device ID that set this marker.
+    pub device_id: String,
+    /// Last read event ID.
+    pub last_read_event_id: String,
+    /// HLC timestamp of the last read event.
+    pub last_read_hlc: Hlc,
+    /// Read count (number of events read).
+    pub read_count: u64,
+    /// When this marker was set.
+    pub set_at: Hlc,
+}
+
+/// Multi-device marker merge logic.
+#[derive(Clone, Debug, Default)]
+pub struct MarkerMerger {
+    /// Markers indexed by (space_id, actor_did) -> device_id -> marker.
+    markers: HashMap<(String, String), HashMap<String, ReadMarker>>,
+}
+
+impl MarkerMerger {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add or update a read marker.
+    pub fn set_marker(&mut self, marker: ReadMarker) {
+        let key = (marker.space_id.clone(), marker.actor_did.clone());
+        let device_markers = self.markers.entry(key).or_default();
+        device_markers.insert(marker.device_id.clone(), marker);
+    }
+
+    /// Get the merged read marker for a space/actor.
+    /// Uses the causal latest marker (highest HLC) across all devices.
+    pub fn get_merged_marker(&self, space_id: &str, actor_did: &str) -> Option<ReadMarker> {
+        let key = (space_id.to_owned(), actor_did.to_owned());
+        let device_markers = self.markers.get(&key)?;
+
+        device_markers
+            .values()
+            .max_by_key(|m| &m.last_read_hlc)
+            .cloned()
+    }
+
+    /// Get all device-specific markers for a space/actor.
+    pub fn get_device_markers(&self, space_id: &str, actor_did: &str) -> Vec<&ReadMarker> {
+        let key = (space_id.to_owned(), actor_did.to_owned());
+        self.markers
+            .get(&key)
+            .map(|m| m.values().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get the read position for a specific device.
+    pub fn get_device_marker(
+        &self,
+        space_id: &str,
+        actor_did: &str,
+        device_id: &str,
+    ) -> Option<&ReadMarker> {
+        let key = (space_id.to_owned(), actor_did.to_owned());
+        self.markers.get(&key)?.get(device_id)
+    }
+}
+
+/// Push notification E2EE metadata (minimal metadata sent to push gateway).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PushE2EEMetadata {
+    /// Space ID.
+    pub space_id: String,
+    /// Whether the message is encrypted.
+    pub is_encrypted: bool,
+    /// Message type hint (without content).
+    pub message_type: String,
+    /// Sender hint (minimal).
+    pub sender_hint: Option<String>,
+    /// Timestamp.
+    pub timestamp: Hlc,
+}
+
+/// Per-result authorization filter for directory searches.
+#[derive(Clone, Debug)]
+pub struct AuthorizationFilter {
+    /// Grants that apply to the requesting actor.
+    pub grants: Vec<CapabilityGrant>,
+}
+
+impl AuthorizationFilter {
+    pub fn new(grants: Vec<CapabilityGrant>) -> Self {
+        Self { grants }
+    }
+
+    /// Filter search results based on authorization.
+    pub fn filter_results<T>(&self, results: Vec<T>, get_space_id: impl Fn(&T) -> &str) -> Vec<T> {
+        results
+            .into_iter()
+            .filter(|result| {
+                let space_id = get_space_id(result);
+                self.can_access_space(space_id)
+            })
+            .collect()
+    }
+
+    /// Check if the actor can access a space.
+    fn can_access_space(&self, space_id: &str) -> bool {
+        // Check if any grant allows access to this space
+        self.grants.iter().any(|grant| {
+            grant.resource_selectors.iter().any(|selector| {
+                match selector {
+                    crate::capability::ResourceSelector::Space(id) => id == space_id,
+                    crate::capability::ResourceSelector::Wildcard => true,
+                    crate::capability::ResourceSelector::Any(selectors) => {
+                        selectors.iter().any(|s| match s {
+                            crate::capability::ResourceSelector::Space(id) => id == space_id,
+                            crate::capability::ResourceSelector::Wildcard => true,
+                            _ => false,
+                        })
+                    }
+                    _ => false,
+                }
+            })
+        })
+    }
+}
+
+/// Discovery manager for coordinating discovery features.
+#[derive(Clone, Debug, Default)]
+pub struct DiscoveryManager {
+    /// Space discovery configurations.
+    space_configs: HashMap<String, SpaceDiscovery>,
+    /// Organization profiles.
+    org_profiles: HashMap<String, OrgProfileStatus>,
+    /// Display metadata cache.
+    display_metadata: HashMap<String, DisplayMetadata>,
+    /// Presence policies.
+    presence_policies: HashMap<String, PresencePolicy>,
+    /// Marker merger.
+    marker_merger: MarkerMerger,
+}
+
+impl DiscoveryManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set space discovery configuration.
+    pub fn set_space_discovery(&mut self, config: SpaceDiscovery) {
+        self.space_configs.insert(config.space_id.clone(), config);
+    }
+
+    /// Get space discovery configuration.
+    pub fn get_space_discovery(&self, space_id: &str) -> Option<&SpaceDiscovery> {
+        self.space_configs.get(space_id)
+    }
+
+    /// Set organization profile.
+    pub fn set_org_profile(&mut self, profile: OrgProfileStatus) {
+        self.org_profiles
+            .insert(profile.org_did.clone(), profile);
+    }
+
+    /// Get organization profile.
+    pub fn get_org_profile(&self, org_did: &str) -> Option<&OrgProfileStatus> {
+        self.org_profiles.get(org_did)
+    }
+
+    /// Set display metadata.
+    pub fn set_display_metadata(&mut self, metadata: DisplayMetadata) {
+        self.display_metadata
+            .insert(metadata.actor_did.clone(), metadata);
+    }
+
+    /// Get display metadata.
+    pub fn get_display_metadata(&self, actor_did: &str) -> Option<&DisplayMetadata> {
+        self.display_metadata.get(actor_did)
+    }
+
+    /// Set presence policy.
+    pub fn set_presence_policy(&mut self, policy: PresencePolicy) {
+        self.presence_policies
+            .insert(policy.actor_did.clone(), policy);
+    }
+
+    /// Get presence policy.
+    pub fn get_presence_policy(&self, actor_did: &str) -> Option<&PresencePolicy> {
+        self.presence_policies.get(actor_did)
+    }
+
+    /// Get the marker merger.
+    pub fn marker_merger(&self) -> &MarkerMerger {
+        &self.marker_merger
+    }
+
+    /// Get a mutable reference to the marker merger.
+    pub fn marker_merger_mut(&mut self) -> &mut MarkerMerger {
+        &mut self.marker_merger
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discoverability_levels() {
+        assert_eq!(Discoverability::Public.as_str(), "public");
+        assert_eq!(Discoverability::Secret.as_str(), "secret");
+        assert_eq!(
+            Discoverability::from_str("invite_only"),
+            Discoverability::InviteOnly
+        );
+    }
+
+    #[test]
+    fn test_discoverability_allows_discovery() {
+        assert!(Discoverability::Public.allows_discovery(false, false));
+        assert!(Discoverability::Listed.allows_discovery(false, false));
+        assert!(!Discoverability::Restricted.allows_discovery(false, false));
+        assert!(Discoverability::Restricted.allows_discovery(true, false));
+        assert!(!Discoverability::Unlisted.allows_discovery(true, false));
+        assert!(Discoverability::InviteOnly.allows_discovery(false, true));
+        assert!(!Discoverability::Secret.allows_discovery(true, true));
+    }
+
+    #[test]
+    fn test_display_metadata() {
+        let metadata = DisplayMetadata::new("did:web:alice");
+        assert_eq!(metadata.actor_did, "did:web:alice");
+        assert!(metadata.display_name.is_none());
+    }
+
+    #[test]
+    fn test_presence_policy_default() {
+        let policy = SpacePresencePolicy::default();
+        assert!(policy.share_online);
+        assert!(policy.share_typing);
+        assert!(policy.share_read_receipts);
+        assert!(policy.share_last_seen);
+    }
+
+    #[test]
+    fn test_marker_merger_single_device() {
+        let mut merger = MarkerMerger::new();
+
+        merger.set_marker(ReadMarker {
+            space_id: "cx:space:test".to_owned(),
+            actor_did: "did:web:alice".to_owned(),
+            device_id: "device-1".to_owned(),
+            last_read_event_id: "event-5".to_owned(),
+            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_count: 5,
+            set_at: Hlc::now(),
+        });
+
+        let merged = merger.get_merged_marker("cx:space:test", "did:web:alice");
+        assert!(merged.is_some());
+        assert_eq!(merged.unwrap().last_read_event_id, "event-5");
+    }
+
+    #[test]
+    fn test_marker_merger_multi_device() {
+        let mut merger = MarkerMerger::new();
+
+        merger.set_marker(ReadMarker {
+            space_id: "cx:space:test".to_owned(),
+            actor_did: "did:web:alice".to_owned(),
+            device_id: "device-1".to_owned(),
+            last_read_event_id: "event-5".to_owned(),
+            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_count: 5,
+            set_at: Hlc::now(),
+        });
+
+        merger.set_marker(ReadMarker {
+            space_id: "cx:space:test".to_owned(),
+            actor_did: "did:web:alice".to_owned(),
+            device_id: "device-2".to_owned(),
+            last_read_event_id: "event-8".to_owned(),
+            last_read_hlc: Hlc::from_parts(8000, 0, 2),
+            read_count: 8,
+            set_at: Hlc::now(),
+        });
+
+        let merged = merger.get_merged_marker("cx:space:test", "did:web:alice").unwrap();
+        // Should use the device with the highest HLC (device-2)
+        assert_eq!(merged.last_read_event_id, "event-8");
+        assert_eq!(merged.device_id, "device-2");
+
+        let devices = merger.get_device_markers("cx:space:test", "did:web:alice");
+        assert_eq!(devices.len(), 2);
+    }
+
+    #[test]
+    fn test_marker_merger_per_device() {
+        let mut merger = MarkerMerger::new();
+
+        merger.set_marker(ReadMarker {
+            space_id: "cx:space:test".to_owned(),
+            actor_did: "did:web:alice".to_owned(),
+            device_id: "device-1".to_owned(),
+            last_read_event_id: "event-5".to_owned(),
+            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_count: 5,
+            set_at: Hlc::now(),
+        });
+
+        let marker =
+            merger.get_device_marker("cx:space:test", "did:web:alice", "device-1");
+        assert!(marker.is_some());
+        assert_eq!(marker.unwrap().last_read_event_id, "event-5");
+
+        assert!(
+            merger
+                .get_device_marker("cx:space:test", "did:web:alice", "device-99")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_authorization_filter() {
+        use crate::capability::{CapabilityGrant, GrantBuilder, ResourceSelector};
+
+        let grant = GrantBuilder::new("did:web:server", "did:web:alice")
+            .with_action("space.read")
+            .with_resource(ResourceSelector::Space("cx:space:public".to_owned()))
+            .build();
+
+        let filter = AuthorizationFilter::new(vec![grant]);
+
+        let results = vec![
+            ("Space A", "cx:space:public"),
+            ("Space B", "cx:space:private"),
+        ];
+
+        let filtered = filter.filter_results(results, |r| r.1);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "Space A");
+    }
+
+    #[test]
+    fn test_discovery_manager() {
+        let mut manager = DiscoveryManager::new();
+
+        manager.set_space_discovery(SpaceDiscovery {
+            space_id: "cx:space:test".to_owned(),
+            discoverability: Discoverability::Public,
+            directory_visibility: DirectoryVisibility {
+                show_in_directory: true,
+                show_member_count: true,
+                show_activity: true,
+                tags: vec!["test".to_owned()],
+            },
+            preview: PreviewSettings {
+                allow_message_preview: true,
+                preview_message_count: 5,
+                show_member_preview: true,
+                preview_member_count: 10,
+                preview_text: None,
+            },
+            allowed_discoverers: vec![],
+            anti_enumeration: false,
+            updated_at: Hlc::now(),
+        });
+
+        let config = manager.get_space_discovery("cx:space:test");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().discoverability, Discoverability::Public);
+    }
+
+    #[test]
+    fn test_push_e2ee_metadata() {
+        let metadata = PushE2EEMetadata {
+            space_id: "cx:space:test".to_owned(),
+            is_encrypted: true,
+            message_type: "message".to_owned(),
+            sender_hint: Some("alice".to_owned()),
+            timestamp: Hlc::now(),
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(json.contains("is_encrypted"));
+        assert!(json.contains("cx:space:test"));
+    }
+}

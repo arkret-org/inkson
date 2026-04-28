@@ -213,6 +213,59 @@ pub fn NotificationsPanel(
                     }
                 }
             }
+
+            // Notification rules section
+            div { class: "event", "data-testid": "notification-rules",
+                div { class: "event-head", span { "Notification Rules" } span { "" } }
+                div { class: "muted", "Configure per-space and per-type notification muting." }
+
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Mention notifications" }
+                        label {
+                            input {
+                                r#type: "checkbox",
+                                checked: true,
+                                onchange: move |_| {},
+                            }
+                            " Enabled"
+                        }
+                    }
+                    div { class: "metric",
+                        strong { "Reaction notifications" }
+                        label {
+                            input {
+                                r#type: "checkbox",
+                                checked: true,
+                                onchange: move |_| {},
+                            }
+                            " Enabled"
+                        }
+                    }
+                    div { class: "metric",
+                        strong { "Invite notifications" }
+                        label {
+                            input {
+                                r#type: "checkbox",
+                                checked: true,
+                                onchange: move |_| {},
+                            }
+                            " Enabled"
+                        }
+                    }
+                    div { class: "metric",
+                        strong { "Message notifications" }
+                        label {
+                            input {
+                                r#type: "checkbox",
+                                checked: false,
+                                onchange: move |_| {},
+                            }
+                            " Disabled (mentions only)"
+                        }
+                    }
+                }
+            }
         }
     }
 }

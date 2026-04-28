@@ -1,11 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::views::helpers::authed_api;
 
 #[component]
 pub fn AuditPanel(
@@ -15,8 +11,8 @@ pub fn AuditPanel(
     let mut next_batch = use_signal(|| String::new());
     let mut batch_size = use_signal(|| 0usize);
     let mut operations = use_signal(Vec::<Value>::new);
-    let mut conflicts = use_signal(Vec::<Value>::new);
-    let mut snapshots = use_signal(Vec::<Value>::new);
+    let conflicts = use_signal(Vec::<Value>::new);
+    let snapshots = use_signal(Vec::<Value>::new);
     let mut commits = use_signal(Vec::<Value>::new);
     let mut status_msg = use_signal(|| String::new());
     let mut head_commit = use_signal(|| String::new());

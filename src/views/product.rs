@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::{
     api::ContrixApi,
     local_state::LocalStateStore,
-    models::{SpacePreview, SpaceLifecycleResponse},
+    models::SpacePreview,
     views::helpers::{authed_api, handle_from_did},
 };
 

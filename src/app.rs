@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_router::prelude::*;
 
 use crate::{
     api::ContrixApi,
@@ -6,6 +7,7 @@ use crate::{
     config::LocalConfigStore,
     local_state::LocalStateStore,
     models::SpacePreview,
+    routes::Route,
     views::{
         ConnectionState, View,
         helpers::{handle_from_did, persist_config},
@@ -22,7 +24,7 @@ button, input, textarea { font: inherit; }
 .brand { font-size: 24px; font-weight: 700; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
 .search { display: grid; gap: 8px; }
-.search input, .settings input, .workflow-form input, .composer textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
+.search input, .settings input, .workflow-form input, .composer textarea, .composer input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
 .space-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
 .space-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
 .space-button.active { border-color: #5cc8a7; background: #284252; }
@@ -30,9 +32,10 @@ button, input, textarea { font: inherit; }
 .space-meta, .muted { color: #6b7787; font-size: 13px; }
 .sidebar .space-meta, .sidebar .muted { color: #cbd5e1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; }
+.primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
 .primary { background: #0b6bcb; color: white; }
 .secondary { background: #e7edf3; color: #18212f; }
+a.primary, a.secondary { line-height: 1.5; }
 .main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
 .topbar { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
 .title { font-size: 28px; font-weight: 750; overflow-wrap: anywhere; }
@@ -59,19 +62,66 @@ button, input, textarea { font: inherit; }
 .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .tab { border: 1px solid #cbd5df; border-radius: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; background: #e7edf3; }
 .tab.active { background: white; border-bottom-color: white; font-weight: 600; }
-@media (max-width: 980px) {
+
+/* Accessibility: focus styles */
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid #0b6bcb;
+  outline-offset: 2px;
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .event { border-width: 2px; border-color: #18212f; }
+  .primary { background: #0047b3; }
+  .secondary { border: 2px solid #18212f; }
+  .metric { border-width: 2px; }
+  .badge { border: 1px solid #18212f; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Responsive: tablet */
+@media (max-width: 1200px) {
+  .shell { grid-template-columns: 240px minmax(0, 1fr) 280px; }
+  .metric-grid { grid-template-columns: 1fr; }
+}
+
+/* Responsive: mobile */
+@media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
-  .sidebar, .panel { border: 0; }
-  .main { min-height: 620px; }
+  .sidebar { display: none; }
+  .panel { display: none; }
+  .main { min-height: 100vh; padding: 16px; }
+  .title { font-size: 22px; }
+  .actions { flex-direction: column; }
+  .actions button { width: 100%; }
+  .tabs { flex-wrap: wrap; }
+}
+
+/* Print styles */
+@media print {
+  .sidebar, .panel, .actions, .composer { display: none !important; }
+  .shell { grid-template-columns: 1fr; }
+  .event { break-inside: avoid; }
 }
 "#;
 
 #[component]
 pub fn App() -> Element {
+    rsx! {
+        Router::<Route> {}
+    }
+}
+
+#[component]
+fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_local_state = LocalStateStore::default().load();
     let config_store = use_signal(LocalConfigStore::default);
-    let mut state_store = use_signal(LocalStateStore::default);
+    let state_store = use_signal(LocalStateStore::default);
     let mut base_url = use_signal({
         let initial_config = initial_config.clone();
         move || initial_config.server_url
@@ -85,7 +135,9 @@ pub fn App() -> Element {
         move || initial_config.device_id
     });
     let token = use_signal(move || initial_config.session_token);
-    let mut view = use_signal(|| View::Dashboard);
+    let navigator = use_navigator();
+    let route = use_route::<Route>();
+    let view = use_signal(|| route.to_view());
     let status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let sync_cursor = use_signal({
         let initial_local_state = initial_local_state.clone();
@@ -98,8 +150,8 @@ pub fn App() -> Element {
     });
     let mut selected_space = use_signal(|| DEMO_SPACE.to_owned());
     let spaces = use_signal(Vec::<SpacePreview>::new);
-    let mut timeline = use_signal(Vec::<String>::new);
-    let mut draft = use_signal({
+    let timeline = use_signal(Vec::<String>::new);
+    let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
             initial_local_state
@@ -112,7 +164,7 @@ pub fn App() -> Element {
     let device_queue = use_signal(|| 0usize);
     let push_state = use_signal(|| "Not registered".to_owned());
     let repo_state = use_signal(|| "Not checked".to_owned());
-    let mut crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
+    let crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
 
     let selected_preview = spaces()
         .iter()
@@ -166,25 +218,23 @@ pub fn App() -> Element {
                             ),
                             "Connect"
                         }
-                        button {
+                        Link {
                             class: "secondary",
                             "data-testid": "directory-nav-button",
-                            onclick: move |_| view.set(View::Directory),
+                            to: Route::Directory,
                             "Directory"
                         }
                     }
                 }
                 div { class: "space-list", "data-testid": "space-list",
                     for space in spaces() {
-                        button {
+                        Link {
                             class: if space.space_id == selected_space() { "space-button active" } else { "space-button" },
                             "data-testid": "space-button",
+                            to: Route::TimelineSpace { space_id: space.space_id.clone() },
                             onclick: {
                                 let id = space.space_id.clone();
-                                move |_| {
-                                    selected_space.set(id.clone());
-                                    view.set(View::Timeline);
-                                }
+                                move |_| selected_space.set(id.clone())
                             },
                             div { class: "space-title", "{space.name}" }
                             div { class: "space-meta", "{space.space_id}" }
@@ -195,19 +245,19 @@ pub fn App() -> Element {
                     }
                 }
                 div { class: "actions",
-                    button { class: "secondary", onclick: move |_| view.set(View::Dashboard), "Dashboard" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Timeline), "Timeline" }
-                    button { class: "secondary", "data-testid": "product-nav-button", onclick: move |_| view.set(View::Product), "Product" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Contacts), "Contacts" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Directory), "Directory" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Kanban), "Kanban" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Chat), "Chat" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Forum), "Forum" }
-                    button { class: "secondary", onclick: move |_| view.set(View::Audit), "Audit" }
-                    button { class: "secondary", "data-testid": "settings-nav-button", onclick: move |_| view.set(View::Settings), "Settings" }
-                    button { class: "secondary", "data-testid": "devices-nav-button", onclick: move |_| view.set(View::Devices), "Devices" }
-                    button { class: "secondary", onclick: move |_| view.set(View::VerifyDevice), "Verify" }
-                    button { class: "secondary", "data-testid": "readiness-nav-button", onclick: move |_| view.set(View::Readiness), "Release" }
+                    Link { class: "secondary", to: Route::Dashboard, "Dashboard" }
+                    Link { class: "secondary", to: Route::Timeline, "Timeline" }
+                    Link { class: "secondary", "data-testid": "product-nav-button", to: Route::Product, "Product" }
+                    Link { class: "secondary", to: Route::Contacts, "Contacts" }
+                    Link { class: "secondary", to: Route::Directory, "Directory" }
+                    Link { class: "secondary", to: Route::Kanban, "Kanban" }
+                    Link { class: "secondary", to: Route::Chat, "Chat" }
+                    Link { class: "secondary", to: Route::Forum, "Forum" }
+                    Link { class: "secondary", to: Route::Audit, "Audit" }
+                    Link { class: "secondary", "data-testid": "settings-nav-button", to: Route::Settings, "Settings" }
+                    Link { class: "secondary", "data-testid": "devices-nav-button", to: Route::Devices, "Devices" }
+                    Link { class: "secondary", to: Route::VerifyDevice, "Verify" }
+                    Link { class: "secondary", "data-testid": "readiness-nav-button", to: Route::Readiness, "Release" }
                 }
             }
 
@@ -232,16 +282,16 @@ pub fn App() -> Element {
                             },
                             "Backfill"
                         }
-                        button {
+                        Link {
                             class: "secondary",
                             "data-testid": "resolve-nav-button",
-                            onclick: move |_| view.set(View::Directory),
+                            to: Route::Directory,
                             "Resolve"
                         }
                     }
                 }
-                match view() {
-                    View::Login => rsx! {
+                match route {
+                    Route::Login => rsx! {
                         crate::views::login::LoginPanel {
                             base_url,
                             account_did,
@@ -249,16 +299,16 @@ pub fn App() -> Element {
                             token,
                             status,
                             config_store,
-                            on_login: move |_| view.set(View::Dashboard),
+                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
                     },
-                    View::Register => rsx! {
+                    Route::Register => rsx! {
                         crate::views::register::RegisterPanel {
                             base_url: base_url(),
-                            on_register: move |_| view.set(View::Login),
+                            on_register: move |_| { let _ = navigator.push(Route::Login); },
                         }
                     },
-                    View::Dashboard => rsx! {
+                    Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {
                             base_url: base_url(),
                             token,
@@ -270,21 +320,26 @@ pub fn App() -> Element {
                             sync_cursor: sync_cursor(),
                         }
                     },
-                    View::Timeline => rsx! {
-                        crate::views::timeline::TimelinePanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            device_id: device_id(),
-                            token,
-                            selected_space: selected_space(),
-                            timeline,
-                            draft,
-                            state_store,
-                            crypto_state,
-                            base_url_sig: base_url,
+                    Route::Timeline | Route::TimelineSpace { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            selected_space.set(sid.to_owned());
+                        }
+                        rsx! {
+                            crate::views::timeline::TimelinePanel {
+                                base_url: base_url(),
+                                account_did: account_did(),
+                                device_id: device_id(),
+                                token,
+                                selected_space: selected_space(),
+                                timeline,
+                                draft,
+                                state_store,
+                                crypto_state,
+                                base_url_sig: base_url,
+                            }
                         }
                     },
-                    View::Directory => rsx! {
+                    Route::Directory => rsx! {
                         crate::views::directory::DirectoryPanel {
                             base_url: base_url(),
                             selected_space,
@@ -294,7 +349,7 @@ pub fn App() -> Element {
                             view,
                         }
                     },
-                    View::Product => rsx! {
+                    Route::Product => rsx! {
                         crate::views::product::ProductPanel {
                             base_url: base_url(),
                             account_did: account_did(),
@@ -309,7 +364,7 @@ pub fn App() -> Element {
                             state_store,
                         }
                     },
-                    View::Settings => rsx! {
+                    Route::Settings | Route::SettingsSection { .. } => rsx! {
                         crate::views::settings::SettingsPanel {
                             base_url,
                             account_did,
@@ -320,7 +375,7 @@ pub fn App() -> Element {
                             status,
                         }
                     },
-                    View::Devices => rsx! {
+                    Route::Devices => rsx! {
                         crate::views::devices::DevicesPanel {
                             base_url: base_url(),
                             token,
@@ -330,90 +385,105 @@ pub fn App() -> Element {
                             crypto_state,
                         }
                     },
-                    View::Readiness => rsx! {
+                    Route::Readiness => rsx! {
                         crate::views::readiness::ReadinessPanel {
                             status,
                         }
                     },
-                    View::VerifyDevice => rsx! {
+                    Route::VerifyDevice => rsx! {
                         crate::views::verify_device::VerifyDevicePanel {
                             base_url: base_url(),
                             token,
                             device_id: device_id(),
                         }
                     },
-                    View::Contacts => rsx! {
+                    Route::Contacts => rsx! {
                         crate::views::contacts::ContactsPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::SpaceAdmin => rsx! {
+                    Route::SpaceAdmin { .. } => rsx! {
                         crate::views::space_admin::SpaceAdminPanel {
                             base_url: base_url(),
                             token,
                             selected_space: selected_space(),
                         }
                     },
-                    View::Audit => rsx! {
+                    Route::Audit => rsx! {
                         crate::views::audit::AuditPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::Kanban => rsx! {
-                        crate::views::kanban::KanbanPanel {
-                            base_url: base_url(),
-                            token,
-                            selected_space: selected_space(),
+                    Route::Kanban | Route::KanbanSpace { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            selected_space.set(sid.to_owned());
+                        }
+                        rsx! {
+                            crate::views::kanban::KanbanPanel {
+                                base_url: base_url(),
+                                token,
+                                selected_space: selected_space(),
+                            }
                         }
                     },
-                    View::Chat => rsx! {
-                        crate::views::chat::ChatPanel {
-                            base_url: base_url(),
-                            token,
-                            selected_space: selected_space(),
+                    Route::Chat | Route::ChatSpace { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            selected_space.set(sid.to_owned());
+                        }
+                        rsx! {
+                            crate::views::chat::ChatPanel {
+                                base_url: base_url(),
+                                token,
+                                selected_space: selected_space(),
+                            }
                         }
                     },
-                    View::Forum => rsx! {
+                    Route::Forum => rsx! {
                         crate::views::forum::ForumPanel {
                             base_url: base_url(),
                             token,
                             selected_space: selected_space(),
                         }
                     },
-                    View::SocialFeed => rsx! {
+                    Route::SocialFeed => rsx! {
                         crate::views::social_feed::SocialFeedPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::MemoryReview => rsx! {
+                    Route::MemoryReview => rsx! {
                         crate::views::memory_review::MemoryReviewPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::AgentRuns => rsx! {
+                    Route::AgentRuns => rsx! {
                         crate::views::agent_runs::AgentRunsPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::Notifications => rsx! {
+                    Route::Notifications => rsx! {
                         crate::views::notifications::NotificationsPanel {
                             base_url: base_url(),
                             token,
                         }
                     },
-                    View::Document => rsx! {
-                        crate::views::document::DocumentPanel {
-                            base_url: base_url(),
-                            token,
-                            selected_space: selected_space(),
+                    Route::Document | Route::DocumentSpace { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            selected_space.set(sid.to_owned());
+                        }
+                        rsx! {
+                            crate::views::document::DocumentPanel {
+                                base_url: base_url(),
+                                token,
+                                selected_space: selected_space(),
+                            }
                         }
                     },
-                    View::Call => rsx! {
+                    Route::Call => rsx! {
                         crate::views::call::CallPanel {
                             base_url: base_url(),
                             token,

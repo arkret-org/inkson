@@ -90,7 +90,7 @@ pub fn KanbanPanel(
             // Columns
             div {
                 style: "display: flex; gap: 16px; overflow-x: auto; padding: 8px 0;",
-                for (col_idx, column) in columns().iter().enumerate() {
+                for (_col_idx, column) in columns().iter().enumerate() {
                     div {
                         class: "event",
                         "data-testid": "kanban-column",

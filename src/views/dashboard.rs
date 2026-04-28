@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 
 use crate::{
-    api::ContrixApi,
     models::SpacePreview,
     views::helpers::authed_api,
 };
@@ -17,7 +16,7 @@ pub fn DashboardPanel(
     repo_state: String,
     sync_cursor: String,
 ) -> Element {
-    let mut recent_activity = use_signal(Vec::<String>::new);
+    let recent_activity = use_signal(Vec::<String>::new);
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
 

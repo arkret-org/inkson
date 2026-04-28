@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::{
-    api::ContrixApi,
     models::*,
     views::helpers::authed_api,
 };
@@ -26,7 +25,7 @@ pub fn ContactsPanel(
     let mut search_results = use_signal(Vec::<Value>::new);
     let mut all_contacts = use_signal(Vec::<ContactResponse>::new);
     let mut incoming_requests = use_signal(Vec::<ContactResponse>::new);
-    let mut outgoing_requests = use_signal(Vec::<ContactResponse>::new);
+    let outgoing_requests = use_signal(Vec::<ContactResponse>::new);
     let mut contact_note = use_signal(String::new);
     let mut status_msg = use_signal(|| String::new());
     let mut detail_contact = use_signal(|| Option::<ContactResponse>::None);
@@ -366,8 +365,68 @@ pub fn ContactsPanel(
             // Blocked tab
             if active_tab() == ContactTab::Blocked {
                 div { class: "event",
-                    div { class: "event-head", span { "Blocked" } span { "" } }
-                    div { class: "muted", "Blocked contacts will appear here. Use the contact list to manage blocks." }
+                    div { class: "event-head",
+                        span { "Blocked Contacts" }
+                        span { "" }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            if let Ok(resp) = api.list_contacts().await {
+                                                let blocked: Vec<_> = resp.contacts.into_iter()
+                                                    .filter(|c| c.status == "blocked")
+                                                    .collect();
+                                                all_contacts.set(blocked);
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                            "Refresh Blocked"
+                        }
+                    }
+                    for contact in all_contacts() {
+                        if contact.status == "blocked" {
+                            div { class: "event", "data-testid": "blocked-contact",
+                                div { class: "event-head",
+                                    span { "{contact.target}" }
+                                    span { "blocked" }
+                                }
+                                div { class: "muted", "Blocked since: {contact.updated_at}" }
+                                div { class: "actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "unblock-button",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let target = contact.target.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let target = target.clone();
+                                                let api_token = token();
+                                                spawn(async move {
+                                                    if let Ok(api) = authed_api(&base, api_token) {
+                                                        let _ = api.respond_contact(&target, "unblock").await;
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Unblock"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !all_contacts().iter().any(|c| c.status == "blocked") {
+                        div { class: "muted", "No blocked contacts." }
+                    }
                 }
             }
 

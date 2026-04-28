@@ -564,3 +564,196 @@ pub struct PolicyResponse {
     pub resource: String,
     pub policy: Value,
 }
+
+// ── Index / AppView ──────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexEntityResponse {
+    pub entity: Value,
+    #[serde(default)]
+    pub relations: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexThreadResponse {
+    #[serde(default)]
+    pub messages: Vec<Value>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexNotificationsResponse {
+    #[serde(default)]
+    pub notifications: Vec<Value>,
+    pub next_cursor: Option<String>,
+    pub unread_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexInboxResponse {
+    #[serde(default)]
+    pub items: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexSearchResponse {
+    #[serde(default)]
+    pub results: Vec<Value>,
+    pub next_cursor: Option<String>,
+    pub total_estimate: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpaceHierarchyResponse {
+    #[serde(default)]
+    pub spaces: Vec<Value>,
+    #[serde(default)]
+    pub edges: Vec<Value>,
+}
+
+// ── Federation ───────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FederationTransactionResponse {
+    pub ok: bool,
+    pub txn_id: String,
+    #[serde(default)]
+    pub accepted: Vec<String>,
+    #[serde(default)]
+    pub rejected: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FederationOperationsResponse {
+    #[serde(default)]
+    pub operations: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FederationSpaceMembersResponse {
+    #[serde(default)]
+    pub members: Vec<Value>,
+    pub frontier: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FederationVerifyActorResponse {
+    pub verified: bool,
+    pub actor: String,
+    pub evidence: Value,
+}
+
+// ── Policy Check ─────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PolicyCheckResponse {
+    pub decision: String,
+    #[serde(default)]
+    pub obligations: Vec<Value>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub signed_decision: Option<Value>,
+}
+
+// ── Applet ───────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletPingResponse {
+    pub ok: bool,
+    pub latency_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletDescribeResponse {
+    pub applet_did: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub namespaces: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletTransactionResponse {
+    pub ok: bool,
+    pub txn_id: String,
+    #[serde(default)]
+    pub results: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletQueryActorResponse {
+    pub actor: Value,
+    #[serde(default)]
+    pub spaces: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletQuerySpaceResponse {
+    pub space: Value,
+    #[serde(default)]
+    pub members: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppletProtocolMetadataResponse {
+    pub protocol_version: String,
+    #[serde(default)]
+    pub supported_operations: Vec<String>,
+    #[serde(default)]
+    pub supported_schemas: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThirdPartyUsersResponse {
+    #[serde(default)]
+    pub users: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThirdPartyLocationsResponse {
+    #[serde(default)]
+    pub locations: Vec<Value>,
+}
+
+// ── Identity (extended) ──────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IdentityLogResponse {
+    #[serde(default)]
+    pub entries: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitDidOperationResponse {
+    pub ok: bool,
+    pub operation_id: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IdentityReceiptsResponse {
+    #[serde(default)]
+    pub receipts: Vec<Value>,
+}
+
+// ── Media ────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IceConfigResponse {
+    #[serde(default)]
+    pub ice_servers: Vec<IceServer>,
+    pub ttl_seconds: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IceServer {
+    pub urls: Vec<String>,
+    pub username: Option<String>,
+    pub credential: Option<String>,
+}

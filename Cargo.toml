@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+base64 = "0.22"
 chrono = { version = "0.4.42", features = ["serde"] }
+dioxus-router = "0.7"
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
 serde = { version = "1.0.228", features = ["derive"] }

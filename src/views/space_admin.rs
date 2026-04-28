@@ -1,11 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::views::helpers::authed_api;
 
 #[component]
 pub fn SpaceAdminPanel(
@@ -20,8 +16,8 @@ pub fn SpaceAdminPanel(
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(|| String::new());
-    let mut members = use_signal(Vec::<String>::new);
-    let mut space_invites = use_signal(Vec::<Value>::new);
+    let members = use_signal(Vec::<String>::new);
+    let space_invites = use_signal(Vec::<Value>::new);
     let mut discovery_enabled = use_signal(|| true);
 
     rsx! {

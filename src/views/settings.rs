@@ -156,6 +156,54 @@ pub fn SettingsPanel(
                         }
                     }
                 }
+
+                // Storage risk indicators
+                div { class: "event", "data-testid": "storage-risks",
+                    div { class: "event-head", span { "Storage Risks" } span { "warnings" } }
+                    if cfg!(target_arch = "wasm32") {
+                        div { class: "metric",
+                            strong { "Web localStorage Limit" }
+                            span { class: "badge", "data-testid": "risk-badge",
+                                style: "background: #e67e22; color: white; padding: 2px 8px; border-radius: 4px;",
+                                "Warning"
+                            }
+                        }
+                        div { class: "muted",
+                            "localStorage has a ~5MB limit. Large sync data, drafts, and cached operations may exceed this limit. Consider using IndexedDB for production."
+                        }
+                        div { class: "metric",
+                            strong { "No Encryption at Rest" }
+                            span { class: "badge",
+                                style: "background: #e74c3c; color: white; padding: 2px 8px; border-radius: 4px;",
+                                "Critical"
+                            }
+                        }
+                        div { class: "muted",
+                            "Web localStorage is not encrypted. Session tokens and cached data are accessible to any script on the same origin. Use secure httpOnly cookies or IndexedDB with encryption for production."
+                        }
+                        div { class: "metric",
+                            strong { "No Cross-Tab Sync" }
+                            span { class: "badge",
+                                style: "background: #f39c12; color: white; padding: 2px 8px; border-radius: 4px;",
+                                "Info"
+                            }
+                        }
+                        div { class: "muted",
+                            "localStorage changes in one tab are not automatically reflected in other tabs. Consider using BroadcastChannel or storage events for multi-tab sync."
+                        }
+                    } else {
+                        div { class: "metric",
+                            strong { "Filesystem Storage" }
+                            span { class: "badge",
+                                style: "background: #27ae60; color: white; padding: 2px 8px; border-radius: 4px;",
+                                "OK"
+                            }
+                        }
+                        div { class: "muted",
+                            "Native filesystem storage is used. Data persists across sessions. Ensure proper file permissions for security."
+                        }
+                    }
+                }
             }
 
             // ── Encryption settings ──────────────────────────────
@@ -278,8 +326,8 @@ pub fn SettingsPanel(
                                         class: "secondary",
                                         "data-testid": "blocked-workflow-button",
                                         onclick: {
-                                            let name = workflow.name.clone();
-                                            let dependency = workflow.server_dependency.clone();
+                                            let name = workflow.name;
+                                            let dependency = workflow.server_dependency;
                                             move |_| status.set(format!("Blocked: {name} requires {dependency}"))
                                         },
                                         "Show blocker"

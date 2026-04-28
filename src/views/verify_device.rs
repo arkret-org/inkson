@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    api::ContrixApi,
     models::*,
     views::helpers::authed_api,
 };

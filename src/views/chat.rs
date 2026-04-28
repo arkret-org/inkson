@@ -1,11 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::views::helpers::authed_api;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Channel {
@@ -41,7 +37,7 @@ pub fn ChatPanel(
     let mut chat_draft = use_signal(String::new);
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_kind = use_signal(|| "group".to_owned());
-    let mut status_msg = use_signal(|| String::new());
+    let status_msg = use_signal(|| String::new());
 
     rsx! {
         div { class: "timeline", "data-testid": "chat-panel",

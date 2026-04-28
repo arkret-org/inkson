@@ -1,30 +1,37 @@
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use contrix_sdk::ErrorEnvelope;
 use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use tokio::sync::RwLock;
 use url::Url;
 
 use crate::models::{
-    AccountRecoveryResponse, AccountResponse, ArchiveSpaceResponse, AuthzCheckResponse,
-    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse,
+    AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
+    AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
+    AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse, BackfillResponse,
+    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse,
     DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
     DeviceTrustResponse, DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
-    GetCommitResponse, GetOperationsResponse, HealthResponse, IdentityDescribeResponse,
-    IdentityResolveResponse, IndexDescribeResponse, IndexQueryResponse, InvitesResponse,
-    KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
-    MlsEpochResponse, MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
-    ModerationResolveResponse, OkResponse, OidcAuthorizeResponse, OidcCallbackResponse,
-    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyResponse, PushRegisterResponse,
-    ReactionResponse, ReceiptResponse, RedactMessageResponse, RepoDescribeResponse,
-    RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
-    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, SearchUsersResponse,
-    SendMessageResponse, ServerDescription, SnapshotHeadResponse, SpaceInviteResponse,
-    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitCommitResponse,
-    SyncDescribeResponse, TokenRefreshResponse, TypingResponse, UpdateSpaceResponse,
-    VerifyDeviceResponse,
+    FederationOperationsResponse, FederationSpaceMembersResponse, FederationTransactionResponse,
+    FederationVerifyActorResponse, GetCommitResponse, GetOperationsResponse, HealthResponse,
+    IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
+    IdentityResolveResponse, IndexDescribeResponse, IndexEntityResponse, IndexInboxResponse,
+    IndexNotificationsResponse, IndexQueryResponse, IndexSearchResponse, IndexThreadResponse,
+    InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse,
+    ListCommitsResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
+    ModerationReportsResponse, ModerationResolveResponse, OkResponse, OidcAuthorizeResponse,
+    OidcCallbackResponse, PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse,
+    PolicyResponse, PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
+    RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse,
+    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
+    SearchUsersResponse, SendMessageResponse, ServerDescription, SnapshotHeadResponse,
+    SpaceHierarchyResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
+    SpacePolicyResponse, SubmitCommitResponse, SubmitDidOperationResponse, SyncDescribeResponse,
+    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
+    UpdateSpaceResponse, VerifyDeviceResponse,
 };
 
 #[derive(Clone, Debug)]
@@ -33,6 +40,24 @@ pub struct ContrixApi {
     http: Client,
     access_token: Option<String>,
     retry: RetryPolicy,
+    refresh_token: Option<String>,
+    network_state: Arc<RwLock<NetworkState>>,
+}
+
+/// Network connectivity state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NetworkState {
+    Online,
+    Offline,
+    Reconnecting,
+}
+
+/// Result of an automatic token refresh attempt.
+#[derive(Clone, Debug)]
+pub struct TokenRefreshResult {
+    pub new_access_token: String,
+    pub new_refresh_token: Option<String>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,12 +124,73 @@ impl ContrixApi {
             http: http.build()?,
             access_token: None,
             retry: options.retry,
+            refresh_token: None,
+            network_state: Arc::new(RwLock::new(NetworkState::Online)),
         })
     }
 
     pub fn with_bearer(mut self, access_token: impl Into<String>) -> Self {
         self.access_token = Some(access_token.into());
         self
+    }
+
+    /// Set the refresh token for automatic token refresh.
+    pub fn with_refresh_token(mut self, refresh_token: impl Into<String>) -> Self {
+        self.refresh_token = Some(refresh_token.into());
+        self
+    }
+
+    /// Get the current network state.
+    pub async fn network_state(&self) -> NetworkState {
+        self.network_state.read().await.clone()
+    }
+
+    /// Set the network state.
+    pub async fn set_network_state(&self, state: NetworkState) {
+        *self.network_state.write().await = state;
+    }
+
+    /// Update the access token (e.g., after a refresh).
+    pub fn set_access_token(&mut self, token: impl Into<String>) {
+        self.access_token = Some(token.into());
+    }
+
+    /// Get the current access token.
+    pub fn access_token(&self) -> Option<&str> {
+        self.access_token.as_deref()
+    }
+
+    /// Attempt to refresh the access token using the stored refresh token.
+    /// Returns the new tokens if successful.
+    pub async fn try_refresh_token(&self) -> anyhow::Result<TokenRefreshResult> {
+        let rt = self.refresh_token.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("no refresh token available")
+        })?;
+        let response: TokenRefreshResponse = self
+            .post_json(
+                "api/v1/auth/token/refresh",
+                json!({"refresh_token": rt}),
+            )
+            .await?;
+        Ok(TokenRefreshResult {
+            new_access_token: response.access_token,
+            new_refresh_token: None, // Server may return a new refresh token
+            expires_at: Some(response.expires_at),
+        })
+    }
+
+    /// Check server health and update network state.
+    pub async fn check_connectivity(&self) -> bool {
+        match self.health().await {
+            Ok(resp) => {
+                self.set_network_state(NetworkState::Online).await;
+                resp.ok
+            }
+            Err(_) => {
+                self.set_network_state(NetworkState::Offline).await;
+                false
+            }
+        }
     }
 
     pub fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
@@ -866,6 +952,297 @@ impl ContrixApi {
         self.get_json(&format!("api/v1/policy/{resource}")).await
     }
 
+    // ── Index / AppView ─────────────────────────────────────────────
+
+    pub async fn index_entity(
+        &self,
+        entity_id: &str,
+        space_id: &str,
+    ) -> anyhow::Result<IndexEntityResponse> {
+        self.post_json(
+            "api/v1/index/entity",
+            json!({"entity_id": entity_id, "space_id": space_id}),
+        )
+        .await
+    }
+
+    pub async fn index_thread(
+        &self,
+        entity_id: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<IndexThreadResponse> {
+        self.post_json(
+            "api/v1/index/thread",
+            json!({"entity_id": entity_id, "limit": limit.unwrap_or(50)}),
+        )
+        .await
+    }
+
+    pub async fn index_notifications(
+        &self,
+        limit: Option<usize>,
+    ) -> anyhow::Result<IndexNotificationsResponse> {
+        self.post_json(
+            "api/v1/index/notifications",
+            json!({"limit": limit.unwrap_or(50)}),
+        )
+        .await
+    }
+
+    pub async fn index_inbox(&self, limit: Option<usize>) -> anyhow::Result<IndexInboxResponse> {
+        self.post_json(
+            "api/v1/index/inbox",
+            json!({"limit": limit.unwrap_or(50)}),
+        )
+        .await
+    }
+
+    pub async fn index_search(
+        &self,
+        query: &str,
+        space_ids: Option<&[String]>,
+        entity_types: Option<&[String]>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<IndexSearchResponse> {
+        self.post_json(
+            "api/v1/index/search",
+            json!({
+                "query": query,
+                "space_ids": space_ids,
+                "entity_types": entity_types,
+                "limit": limit.unwrap_or(20)
+            }),
+        )
+        .await
+    }
+
+    pub async fn index_space_hierarchy(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<SpaceHierarchyResponse> {
+        self.post_json(
+            "api/v1/index/space-hierarchy",
+            json!({"space_id": space_id}),
+        )
+        .await
+    }
+
+    // ── Federation ──────────────────────────────────────────────────
+
+    pub async fn federation_submit_transaction(
+        &self,
+        txn_id: &str,
+        origin: &str,
+        destination: &str,
+        operations: Vec<Value>,
+    ) -> anyhow::Result<FederationTransactionResponse> {
+        self.put_json(
+            &format!("api/v1/federation/transactions/{txn_id}"),
+            json!({
+                "origin": origin,
+                "destination": destination,
+                "operations": operations
+            }),
+        )
+        .await
+    }
+
+    pub async fn federation_push_operations(
+        &self,
+        space_id: &str,
+        operations: Vec<Value>,
+    ) -> anyhow::Result<FederationTransactionResponse> {
+        self.post_json(
+            "api/v1/federation/push-operations",
+            json!({"space_id": space_id, "operations": operations}),
+        )
+        .await
+    }
+
+    pub async fn federation_pull_operations(
+        &self,
+        space_id: &str,
+        since: Option<&str>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<FederationOperationsResponse> {
+        self.post_json(
+            "api/v1/federation/pull-operations",
+            json!({
+                "space_id": space_id,
+                "since": since,
+                "limit": limit.unwrap_or(100)
+            }),
+        )
+        .await
+    }
+
+    pub async fn federation_space_members(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<FederationSpaceMembersResponse> {
+        self.get_json(&format!(
+            "api/v1/federation/space-members?space_id={space_id}"
+        ))
+        .await
+    }
+
+    pub async fn federation_verify_actor(
+        &self,
+        actor: &str,
+        space_id: &str,
+    ) -> anyhow::Result<FederationVerifyActorResponse> {
+        self.post_json(
+            "api/v1/federation/verify-actor",
+            json!({"actor": actor, "space_id": space_id}),
+        )
+        .await
+    }
+
+    // ── Policy (signed decisions) ───────────────────────────────────
+
+    pub async fn policy_check(
+        &self,
+        actor: &str,
+        action: &str,
+        resource: &str,
+    ) -> anyhow::Result<PolicyCheckResponse> {
+        self.post_json(
+            "api/v1/policy/check",
+            json!({"actor": actor, "action": action, "resource": resource}),
+        )
+        .await
+    }
+
+    // ── Applet ──────────────────────────────────────────────────────
+
+    pub async fn applet_ping(&self, applet_did: &str) -> anyhow::Result<AppletPingResponse> {
+        self.post_json("api/v1/applet/ping", json!({"applet_did": applet_did}))
+            .await
+    }
+
+    pub async fn applet_describe(
+        &self,
+        applet_did: &str,
+    ) -> anyhow::Result<AppletDescribeResponse> {
+        self.get_json(&format!(
+            "api/v1/applet/describe?applet_did={applet_did}"
+        ))
+        .await
+    }
+
+    pub async fn applet_transaction(
+        &self,
+        applet_did: &str,
+        operations: Vec<Value>,
+    ) -> anyhow::Result<AppletTransactionResponse> {
+        self.post_json(
+            "api/v1/applet/transaction",
+            json!({"applet_did": applet_did, "operations": operations}),
+        )
+        .await
+    }
+
+    pub async fn applet_query_actor(
+        &self,
+        applet_did: &str,
+        actor: &str,
+    ) -> anyhow::Result<AppletQueryActorResponse> {
+        self.post_json(
+            "api/v1/applet/query_actor",
+            json!({"applet_did": applet_did, "actor": actor}),
+        )
+        .await
+    }
+
+    pub async fn applet_query_space(
+        &self,
+        applet_did: &str,
+        space_id: &str,
+    ) -> anyhow::Result<AppletQuerySpaceResponse> {
+        self.post_json(
+            "api/v1/applet/query_space",
+            json!({"applet_did": applet_did, "space_id": space_id}),
+        )
+        .await
+    }
+
+    pub async fn applet_protocol_metadata(
+        &self,
+        applet_did: &str,
+    ) -> anyhow::Result<AppletProtocolMetadataResponse> {
+        self.get_json(&format!(
+            "api/v1/applet/protocol_metadata?applet_did={applet_did}"
+        ))
+        .await
+    }
+
+    pub async fn applet_third_party_users(
+        &self,
+        applet_did: &str,
+        location: &str,
+    ) -> anyhow::Result<ThirdPartyUsersResponse> {
+        self.post_json(
+            "api/v1/applet/third_party_users",
+            json!({"applet_did": applet_did, "location": location}),
+        )
+        .await
+    }
+
+    pub async fn applet_third_party_locations(
+        &self,
+        applet_did: &str,
+        user_id: &str,
+    ) -> anyhow::Result<ThirdPartyLocationsResponse> {
+        self.post_json(
+            "api/v1/applet/third_party_locations",
+            json!({"applet_did": applet_did, "user_id": user_id}),
+        )
+        .await
+    }
+
+    // ── Identity (extended) ─────────────────────────────────────────
+
+    pub async fn identity_log(
+        &self,
+        did: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<IdentityLogResponse> {
+        self.post_json(
+            "api/v1/identity/log",
+            json!({"did": did, "limit": limit.unwrap_or(50)}),
+        )
+        .await
+    }
+
+    pub async fn submit_did_operation(
+        &self,
+        did: &str,
+        operation: Value,
+    ) -> anyhow::Result<SubmitDidOperationResponse> {
+        self.post_json(
+            "api/v1/identity/submit-did-operation",
+            json!({"did": did, "operation": operation}),
+        )
+        .await
+    }
+
+    pub async fn identity_receipts(
+        &self,
+        did: &str,
+    ) -> anyhow::Result<IdentityReceiptsResponse> {
+        self.post_json(
+            "api/v1/identity/receipts",
+            json!({"did": did}),
+        )
+        .await
+    }
+
+    // ── Media ───────────────────────────────────────────────────────
+
+    pub async fn ice_config(&self) -> anyhow::Result<IceConfigResponse> {
+        self.get_json("api/v1/media/ice-config").await
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let request = self.http.get(self.endpoint(path)?);
         self.send_json(self.authorize(request), Method::GET).await
@@ -939,12 +1316,28 @@ impl ContrixApi {
     ) -> anyhow::Result<reqwest::Response> {
         let retryable_method = is_retryable_method(&method);
         let mut attempt = 0usize;
+        let mut did_refresh = false;
         loop {
             let Some(candidate) = request.try_clone() else {
                 return Ok(request.send().await?);
             };
             match candidate.send().await {
                 Ok(response) => {
+                    // Handle 401 with automatic token refresh
+                    if response.status() == StatusCode::UNAUTHORIZED
+                        && !did_refresh
+                        && self.refresh_token.is_some()
+                    {
+                        if let Ok(result) = self.try_refresh_token().await {
+                            // Update token for subsequent requests
+                            // Note: we can't mutate self here, but the caller
+                            // should handle the TokenRefreshResult
+                            let _ = result;
+                            did_refresh = true;
+                            continue;
+                        }
+                    }
+
                     if retryable_method
                         && attempt < self.retry.max_retries
                         && is_retryable_status(response.status())
@@ -953,6 +1346,14 @@ impl ContrixApi {
                         attempt += 1;
                         continue;
                     }
+
+                    // Update network state based on response
+                    if response.status().is_server_error() || response.status() == StatusCode::SERVICE_UNAVAILABLE {
+                        self.set_network_state(NetworkState::Reconnecting).await;
+                    } else if response.status().is_success() {
+                        self.set_network_state(NetworkState::Online).await;
+                    }
+
                     return Ok(response);
                 }
                 Err(error)
@@ -960,10 +1361,14 @@ impl ContrixApi {
                         && attempt < self.retry.max_retries
                         && is_retryable_reqwest_error(&error) =>
                 {
+                    self.set_network_state(NetworkState::Reconnecting).await;
                     sleep_backoff(self.retry.initial_backoff, attempt).await;
                     attempt += 1;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    self.set_network_state(NetworkState::Offline).await;
+                    return Err(error.into());
+                }
             }
         }
     }

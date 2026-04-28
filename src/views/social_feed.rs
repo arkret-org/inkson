@@ -1,11 +1,6 @@
 use dioxus::prelude::*;
-use serde_json::json;
 
-use crate::{
-    api::ContrixApi,
-    models::*,
-    views::helpers::authed_api,
-};
+use crate::views::helpers::authed_api;
 
 #[derive(Clone, Debug, PartialEq)]
 struct SocialPost {
@@ -45,7 +40,7 @@ pub fn SocialFeedPanel(
     let mut composer_text = use_signal(String::new);
     let mut audience = use_signal(|| "public".to_owned());
     let mut filter = use_signal(|| FeedFilter::All);
-    let mut status_msg = use_signal(|| String::new());
+    let status_msg = use_signal(|| String::new());
     let mut media_status = use_signal(|| String::new());
 
     rsx! {
