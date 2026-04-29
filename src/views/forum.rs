@@ -54,7 +54,8 @@ pub fn ForumPanel(
             entity_id: "cx:topic:welcome".to_owned(),
             title: "Welcome to the forum".to_owned(),
             author: "chask".to_owned(),
-            body: "This is the first anchored topic in the forum. Start a structured discussion.".to_owned(),
+            body: "This is the first anchored topic in the forum. Start a structured discussion."
+                .to_owned(),
             tags: vec!["welcome".to_owned(), "meta".to_owned()],
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
             anchor_kind: "space".to_owned(),
@@ -542,10 +543,18 @@ fn expected_head(repo_state: String) -> Option<String> {
 }
 
 fn count_comments(comments: &[ForumComment]) -> usize {
-    comments.len() + comments.iter().map(|comment| count_comments(&comment.comments)).sum::<usize>()
+    comments.len()
+        + comments
+            .iter()
+            .map(|comment| count_comments(&comment.comments))
+            .sum::<usize>()
 }
 
-fn insert_comment(comments: &mut Vec<ForumComment>, parent_id: &str, comment: ForumComment) -> bool {
+fn insert_comment(
+    comments: &mut Vec<ForumComment>,
+    parent_id: &str,
+    comment: ForumComment,
+) -> bool {
     for existing in comments {
         if existing.entity_id == parent_id {
             existing.comments.push(comment);

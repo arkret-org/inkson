@@ -117,7 +117,11 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
         }
     }
 
-    mentions.sort_by(|left, right| left.target.cmp(&right.target).then(left.token.cmp(&right.token)));
+    mentions.sort_by(|left, right| {
+        left.target
+            .cmp(&right.target)
+            .then(left.token.cmp(&right.token))
+    });
     mentions.dedup_by(|left, right| left.kind == right.kind && left.target == right.target);
     mentions
 }
@@ -133,9 +137,25 @@ mod tests {
         );
 
         assert_eq!(mentions.len(), 4);
-        assert!(mentions.iter().any(|mention| mention.target == "did:web:bob.example"));
-        assert!(mentions.iter().any(|mention| mention.target == "did:web:carol.example"));
-        assert!(mentions.iter().any(|mention| mention.target == "cx:task:123"));
-        assert!(mentions.iter().any(|mention| mention.target == "topic-demo"));
+        assert!(
+            mentions
+                .iter()
+                .any(|mention| mention.target == "did:web:bob.example")
+        );
+        assert!(
+            mentions
+                .iter()
+                .any(|mention| mention.target == "did:web:carol.example")
+        );
+        assert!(
+            mentions
+                .iter()
+                .any(|mention| mention.target == "cx:task:123")
+        );
+        assert!(
+            mentions
+                .iter()
+                .any(|mention| mention.target == "topic-demo")
+        );
     }
 }

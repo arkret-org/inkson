@@ -214,11 +214,20 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.token_active", "Token active");
     dict.set("login.refresh_token", "Refresh Token");
     dict.set("login.re_login", "Re-Login");
-    dict.set("login.session_expired", "Your session has expired. Log in again to continue.");
+    dict.set(
+        "login.session_expired",
+        "Your session has expired. Log in again to continue.",
+    );
 
     // Timeline
-    dict.set("timeline.composer_placeholder", "Write a plaintext dev-mode message (Ctrl+Enter to send)");
-    dict.set("timeline.encrypted_placeholder", "Write an encrypted message (Ctrl+Enter to send)");
+    dict.set(
+        "timeline.composer_placeholder",
+        "Write a plaintext dev-mode message (Ctrl+Enter to send)",
+    );
+    dict.set(
+        "timeline.encrypted_placeholder",
+        "Write an encrypted message (Ctrl+Enter to send)",
+    );
     dict.set("timeline.send", "Send");
     dict.set("timeline.reply", "Reply");
     dict.set("timeline.react", "React");
@@ -231,7 +240,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("timeline.edited", "(edited)");
     dict.set("timeline.redacted", "[Message redacted]");
     dict.set("timeline.search_placeholder", "Search messages...");
-    dict.set("timeline.no_events", "No timeline events yet. Compose a dev-mode message.");
+    dict.set(
+        "timeline.no_events",
+        "No timeline events yet. Compose a dev-mode message.",
+    );
     dict.set("timeline.encrypt_local", "Encrypt Local");
     dict.set("timeline.attach_blob", "Attach Blob");
     dict.set("timeline.report_queue", "Report / Queue");
@@ -311,7 +323,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.token_active", "令牌活跃");
     dict.set("login.refresh_token", "刷新令牌");
     dict.set("login.re_login", "重新登录");
-    dict.set("login.session_expired", "您的会话已过期。请重新登录以继续。");
+    dict.set(
+        "login.session_expired",
+        "您的会话已过期。请重新登录以继续。",
+    );
 
     dict.set("timeline.send", "发送");
     dict.set("timeline.reply", "回复");

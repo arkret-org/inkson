@@ -3,11 +3,8 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    conformance::PlaintextBoundary,
-    crypto::compose_local_encrypted_message,
-    local_state::LocalStateStore,
-    operation::uuid_v8,
-    views::helpers::authed_api_with_sync,
+    conformance::PlaintextBoundary, crypto::compose_local_encrypted_message,
+    local_state::LocalStateStore, operation::uuid_v8, views::helpers::authed_api_with_sync,
 };
 
 const EMOJI_GRID: &[&str] = &[

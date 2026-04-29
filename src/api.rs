@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use chime::{RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
 use reqwest::{
     Client, Method, StatusCode,
@@ -395,13 +396,16 @@ impl ContrixApi {
         encrypted: bool,
     ) -> anyhow::Result<SendMessageResponse> {
         let request_id = uuid_v8();
-        let request = self.http.post(self.endpoint("api/v1/messages/send")?).json(&json!({
-            "space_id": space_id,
-            "thread_id": thread_id,
-            "content": content,
-            "encrypted": encrypted,
-            "request_id": request_id.clone(),
-        }));
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/messages/send")?)
+            .json(&json!({
+                "space_id": space_id,
+                "thread_id": thread_id,
+                "content": content,
+                "encrypted": encrypted,
+                "request_id": request_id.clone(),
+            }));
         let request = self.with_write_request_headers(request, &request_id);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
@@ -440,8 +444,7 @@ impl ContrixApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-spaces", body)
-            .await
+        self.post_json("api/v1/directory/search-spaces", body).await
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResponse> {
@@ -575,24 +578,33 @@ impl ContrixApi {
     }
 
     pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterResponse> {
+        let request = crate::push::build_register_request("dev_chask")?;
+        self.register_push_device_with_request(&request).await
+    }
+
+    pub async fn register_push_device_with_request(
+        &self,
+        request: &RegisterDeviceRequest,
+    ) -> anyhow::Result<PushRegisterResponse> {
         self.post_json(
             "api/v1/push/register-device",
-            json!({
-                "device_id": "dev_chask",
-                "push_gateway": "https://push.example",
-                "push_key": "opaque",
-                "platform": "desktop",
-                "app_id": "chask",
-                "display_name": "chask"
-            }),
+            serde_json::to_value(request)?,
         )
         .await
     }
 
     pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
+        let request = crate::push::build_unregister_request(device_id, None)?;
+        self.unregister_push_device_with_request(&request).await
+    }
+
+    pub async fn unregister_push_device_with_request(
+        &self,
+        request: &UnregisterDeviceRequest,
+    ) -> anyhow::Result<OkResponse> {
         self.post_json(
             "api/v1/push/unregister-device",
-            json!({"device_id": device_id, "push_key": null, "app_id": "chask"}),
+            serde_json::to_value(request)?,
         )
         .await
     }
@@ -794,8 +806,7 @@ impl ContrixApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-actors", body)
-            .await
+        self.post_json("api/v1/directory/search-actors", body).await
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
@@ -812,8 +823,7 @@ impl ContrixApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-users", body)
-            .await
+        self.post_json("api/v1/directory/search-users", body).await
     }
 
     // ── Space Management ────────────────────────────────────────────
@@ -1360,7 +1370,8 @@ impl ContrixApi {
 
     async fn put_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.put(self.endpoint(path)?).json(&body);
-        self.send_json(self.prepare_request(request), Method::PUT).await
+        self.send_json(self.prepare_request(request), Method::PUT)
+            .await
     }
 
     async fn patch_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
@@ -1441,11 +1452,7 @@ impl ContrixApi {
         let mut did_refresh = false;
         loop {
             // Check if request was cancelled
-            if self
-                .cancel_token
-                .as_ref()
-                .is_some_and(|t| t.is_cancelled())
-            {
+            if self.cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
                 return Err(anyhow::anyhow!("request cancelled"));
             }
 
@@ -1731,12 +1738,14 @@ mod tests {
             .with_bearer("sx_token")
             .with_wait_for("sx:123");
         let request = api
-            .prepare_request(api.with_write_request_headers(
-                api.http
-                    .post(api.endpoint("api/v1/messages/send").unwrap())
-                    .json(&json!({"body": "hello"})),
-                "req-123",
-            ))
+            .prepare_request(
+                api.with_write_request_headers(
+                    api.http
+                        .post(api.endpoint("api/v1/messages/send").unwrap())
+                        .json(&json!({"body": "hello"})),
+                    "req-123",
+                ),
+            )
             .build()
             .unwrap();
 

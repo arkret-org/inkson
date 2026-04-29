@@ -15,7 +15,10 @@ fn detect_conflicts(ops: &[Value]) -> Vec<ConflictGroup> {
     let mut by_target: HashMap<String, Vec<Value>> = HashMap::new();
     for op in ops {
         if let Some(target) = op.get("target_ref").and_then(|v| v.as_str()) {
-            by_target.entry(target.to_owned()).or_default().push(op.clone());
+            by_target
+                .entry(target.to_owned())
+                .or_default()
+                .push(op.clone());
         }
     }
     by_target
@@ -451,7 +454,10 @@ mod tests {
         });
 
         assert_eq!(json_text(&grant, "grant_id"), "cx:grant:test");
-        assert!(json_value(&grant, &["resource_selectors", "resources"]).contains("space:cx:space:test"));
+        assert!(
+            json_value(&grant, &["resource_selectors", "resources"])
+                .contains("space:cx:space:test")
+        );
         assert!(json_value(&grant, &["constraints"]).contains("temporal"));
         assert!(json_value(&grant, &["delegation_chain", "proofs"]).contains("cx:grant:root"));
     }

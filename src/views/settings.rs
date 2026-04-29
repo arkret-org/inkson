@@ -4,7 +4,7 @@ use crate::{
     config::LocalConfigStore,
     i18n::Locale,
     local_state::LocalStateStore,
-    views::helpers::persist_config,
+    views::helpers::{authed_api, persist_config},
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
 
@@ -29,6 +29,7 @@ pub fn SettingsPanel(
     crypto_state: String,
     mut config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    push_state: Signal<String>,
     mut locale: Signal<Locale>,
     status: Signal<String>,
 ) -> Element {
@@ -44,6 +45,8 @@ pub fn SettingsPanel(
     let active_locale = locale();
     let active_locale_code = active_locale.code();
     let active_direction = active_locale.direction().as_str();
+    let push_registration = state_store.read().push_registration();
+    let push_label = crate::push::push_status_label(push_registration.as_ref());
 
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
@@ -245,20 +248,84 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "push-settings",
                     div { class: "event-head", span { "Push Notifications" } span { "configure" } }
                     div { class: "muted", "Push notification preferences and gateway registration." }
+                    div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
                     div { class: "actions",
                         button {
                             class: "secondary",
                             "data-testid": "push-register-button",
-                            onclick: move |_| {
-                                // Push register is handled elsewhere
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    let dev = device_id();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match crate::push::build_register_request(&dev) {
+                                                Ok(request) => match api.register_push_device_with_request(&request).await {
+                                                    Ok(push) => {
+                                                        let local_push = chime::RegisterDeviceResponse {
+                                                            ok: push.ok,
+                                                            registration_id: push.registration_id.clone(),
+                                                            expires_at: push.expires_at.clone(),
+                                                        };
+                                                        let local_state = crate::push::registration_state_from_response(
+                                                            &request,
+                                                            &local_push,
+                                                        );
+                                                        state_store.write().save_push_registration(local_state);
+                                                        let label = push.registration_id.unwrap_or_else(|| "registered".to_owned());
+                                                        push_state.set(label.clone());
+                                                        status.set(format!("Push registered: {label}"));
+                                                    }
+                                                    Err(error) => {
+                                                        let message = format!("push register failed: {error}");
+                                                        push_state.set(message.clone());
+                                                        status.set(message);
+                                                    }
+                                                },
+                                                Err(error) => {
+                                                    let message = format!("push unavailable: {error}");
+                                                    push_state.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("push API unavailable: {error}")),
+                                        }
+                                    });
+                                }
                             },
                             "Register Push"
                         }
                         button {
                             class: "secondary",
                             "data-testid": "push-unregister-button",
-                            onclick: move |_| {
-                                // Push unregister
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    let dev = device_id();
+                                    let existing = state_store.read().push_registration();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match crate::push::build_unregister_request(&dev, existing.as_ref()) {
+                                                Ok(request) => match api.unregister_push_device_with_request(&request).await {
+                                                    Ok(_) => {
+                                                        state_store.write().clear_push_registration();
+                                                        push_state.set("Not registered".to_owned());
+                                                        status.set("Push unregistered".to_owned());
+                                                    }
+                                                    Err(error) => {
+                                                        let message = format!("push unregister failed: {error}");
+                                                        push_state.set(message.clone());
+                                                        status.set(message);
+                                                    }
+                                                },
+                                                Err(error) => status.set(format!("push unregister unavailable: {error}")),
+                                            },
+                                            Err(error) => status.set(format!("push API unavailable: {error}")),
+                                        }
+                                    });
+                                }
                             },
                             "Unregister Push"
                         }

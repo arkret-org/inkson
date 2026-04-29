@@ -9,6 +9,7 @@ protocol-test-vectors = []
 [dependencies]
 anyhow = "1.0.100"
 base64 = "0.22"
+chime = { path = "../chime" }
 chrono = { version = "0.4.42", features = ["serde"] }
 dioxus-router = "0.7"
 getrandom = { version = "0.3.4", features = ["wasm_js"] }

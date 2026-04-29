@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use contrix_sdk::EncryptedPayload;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,8 @@ pub struct ClientLocalState {
     pub muted_spaces: BTreeMap<String, bool>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub push_registration: Option<PushRegistrationState>,
     /// Encrypted private account data (preferences, tags, custom emojis).
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
@@ -243,6 +246,22 @@ impl LocalStateStore {
 
     pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
         self.load().muted_notification_kinds
+    }
+
+    pub fn push_registration(&self) -> Option<PushRegistrationState> {
+        self.load().push_registration
+    }
+
+    pub fn save_push_registration(&mut self, state: PushRegistrationState) {
+        self.ensure_cached_loaded();
+        self.cached.push_registration = Some(state);
+        let _ = self.flush();
+    }
+
+    pub fn clear_push_registration(&mut self) {
+        self.ensure_cached_loaded();
+        self.cached.push_registration = None;
+        let _ = self.flush();
     }
 
     /// Save a private preference encrypted with the account key.
@@ -457,6 +476,30 @@ mod tests {
         assert!(reader.notification_state_for("notif-1").archived);
         assert!(reader.is_space_muted("cx:space:demo"));
         assert!(!reader.notification_kind_enabled("message"));
+    }
+
+    #[test]
+    fn local_state_store_persists_push_registration_state() {
+        let path = temp_state_path("push-registration");
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.save_push_registration(PushRegistrationState {
+            registration_id: Some("cx:push:local".to_owned()),
+            device_id: "dev_chask".to_owned(),
+            app_id: Some("chask".to_owned()),
+            push_gateway: "https://push.example/api/v1/push/notify".to_owned(),
+            push_key_hash: "sha256:abc".to_owned(),
+            push_key_preview: "desktop:<redacted,len=5>".to_owned(),
+            registered_at: Some("2026-04-29T00:00:00Z".to_owned()),
+            expires_at: None,
+        });
+
+        let mut reader = LocalStateStore::with_path(path);
+        let state = reader.push_registration().expect("push registration");
+        assert_eq!(state.registration_id.as_deref(), Some("cx:push:local"));
+        assert_eq!(state.device_id, "dev_chask");
+
+        reader.clear_push_registration();
+        assert!(reader.push_registration().is_none());
     }
 
     fn temp_state_path(name: &str) -> PathBuf {

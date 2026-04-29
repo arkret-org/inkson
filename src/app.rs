@@ -179,7 +179,10 @@ pub fn RouterView() -> Element {
         }
     });
     let device_queue = use_signal(|| 0usize);
-    let push_state = use_signal(|| "Not registered".to_owned());
+    let push_state = use_signal({
+        let initial_local_state = initial_local_state.clone();
+        move || crate::push::push_status_label(initial_local_state.push_registration.as_ref())
+    });
     let repo_state = use_signal(|| "Not checked".to_owned());
     let crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
     let network_state = use_signal(|| "online".to_owned());
@@ -471,6 +474,7 @@ pub fn RouterView() -> Element {
                             crypto_state: crypto_state(),
                             config_store,
                             state_store,
+                            push_state,
                             locale,
                             status,
                         }
@@ -482,6 +486,7 @@ pub fn RouterView() -> Element {
                             device_id: device_id(),
                             device_queue: device_queue(),
                             push_state,
+                            state_store,
                             crypto_state,
                         }
                     },
@@ -818,15 +823,28 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 if let Ok(blob) = authed.upload_blob(b"chask encrypted bytes").await {
                     let _ = authed.get_blob_bytes(&blob.blob_ref).await;
                 }
-                match authed.register_push_device().await {
-                    Ok(push) => {
-                        push_state.set(
-                            push.registration_id
-                                .unwrap_or_else(|| "registered".to_owned()),
-                        );
-                        let _ = authed.unregister_push_device(&device).await;
-                    }
-                    Err(error) => push_state.set(format!("push failed: {error}")),
+                match crate::push::build_register_request(&device) {
+                    Ok(request) => match authed.register_push_device_with_request(&request).await {
+                        Ok(push) => {
+                            let local_push = chime::RegisterDeviceResponse {
+                                ok: push.ok,
+                                registration_id: push.registration_id.clone(),
+                                expires_at: push.expires_at.clone(),
+                            };
+                            state_store.write().save_push_registration(
+                                crate::push::registration_state_from_response(
+                                    &request,
+                                    &local_push,
+                                ),
+                            );
+                            push_state.set(
+                                push.registration_id
+                                    .unwrap_or_else(|| "registered".to_owned()),
+                            );
+                        }
+                        Err(error) => push_state.set(format!("push failed: {error}")),
+                    },
+                    Err(error) => push_state.set(format!("push unavailable: {error}")),
                 }
             }
             Err(error) => {

@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{models::*, views::helpers::authed_api};
+use crate::{local_state::LocalStateStore, models::*, views::helpers::authed_api};
 
 #[component]
 pub fn DevicesPanel(
@@ -10,6 +10,7 @@ pub fn DevicesPanel(
     device_id: String,
     device_queue: usize,
     push_state: Signal<String>,
+    state_store: Signal<LocalStateStore>,
     crypto_state: Signal<String>,
 ) -> Element {
     let mut one_time_keys = use_signal(|| Value::Null);
@@ -158,14 +159,32 @@ pub fn DevicesPanel(
                         "data-testid": "push-register-button",
                         onclick: {
                             let base = base_url_c.clone();
+                            let dev = device_id_c.clone();
                             move |_| {
                                 let base = base.clone();
                                 let api_token = token();
+                                let dev = dev.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.register_push_device().await {
-                                            Ok(push) => push_state.set(push.registration_id.unwrap_or_else(|| "registered".to_owned())),
-                                            Err(e) => push_state.set(format!("push failed: {e}")),
+                                        match crate::push::build_register_request(&dev) {
+                                            Ok(request) => match api.register_push_device_with_request(&request).await {
+                                                Ok(push) => {
+                                                    let local_push = chime::RegisterDeviceResponse {
+                                                        ok: push.ok,
+                                                        registration_id: push.registration_id.clone(),
+                                                        expires_at: push.expires_at.clone(),
+                                                    };
+                                                    state_store.write().save_push_registration(
+                                                        crate::push::registration_state_from_response(
+                                                            &request,
+                                                            &local_push,
+                                                        ),
+                                                    );
+                                                    push_state.set(push.registration_id.unwrap_or_else(|| "registered".to_owned()));
+                                                }
+                                                Err(e) => push_state.set(format!("push failed: {e}")),
+                                            },
+                                            Err(e) => push_state.set(format!("push unavailable: {e}")),
                                         }
                                     }
                                 });
@@ -183,11 +202,18 @@ pub fn DevicesPanel(
                                 let base = base.clone();
                                 let api_token = token();
                                 let dev = dev.clone();
+                                let existing = state_store.read().push_registration();
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.unregister_push_device(&dev).await {
-                                            Ok(_) => push_state.set("Not registered".to_owned()),
-                                            Err(e) => push_state.set(format!("unregister failed: {e}")),
+                                        match crate::push::build_unregister_request(&dev, existing.as_ref()) {
+                                            Ok(request) => match api.unregister_push_device_with_request(&request).await {
+                                                Ok(_) => {
+                                                    state_store.write().clear_push_registration();
+                                                    push_state.set("Not registered".to_owned());
+                                                }
+                                                Err(e) => push_state.set(format!("unregister failed: {e}")),
+                                            },
+                                            Err(e) => push_state.set(format!("unregister unavailable: {e}")),
                                         }
                                     }
                                 });

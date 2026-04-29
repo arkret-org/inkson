@@ -15,6 +15,7 @@ pub mod local_state;
 pub mod models;
 pub mod offline;
 pub mod operation;
+pub mod push;
 pub mod routes;
 pub mod social;
 #[cfg(feature = "protocol-test-vectors")]
