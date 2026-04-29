@@ -525,11 +525,30 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/authz/check") {
-      return json(route, { allowed: true, reason_code: null, grants: [], obligations: [] });
+      return json(route, {
+        allowed: true,
+        reason_code: "frontier_current",
+        grants: ["cx:grant:e2e"],
+        obligations: [{ type: "audit", reason_required: false }],
+      });
     }
 
     if (url.pathname === "/api/v1/authz/effective-grants") {
-      return json(route, { grants: [], state_hash: null, evaluated_at: "2026-04-28T12:00:00Z" });
+      return json(route, {
+        grants: [
+          {
+            grant_id: "cx:grant:e2e",
+            issuer: "did:web:admin.example",
+            subject: url.searchParams.get("subject"),
+            actions: ["space.read", "message.send"],
+            resource_selectors: ["space:cx:space:01js0sp0000000000000000000/**"],
+            constraints: [{ type: "temporal", not_after: "2026-12-31T00:00:00Z" }],
+            delegation_chain: ["cx:grant:root", "cx:grant:e2e"],
+          },
+        ],
+        state_hash: "cx:statehash:e2e",
+        evaluated_at: "2026-04-28T12:00:00Z",
+      });
     }
 
     if (url.pathname === "/api/v1/authz/invites") {

@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
+    conformance::PlaintextBoundary,
     crypto::compose_local_encrypted_message,
     local_state::LocalStateStore,
     operation::uuid_v8,
@@ -198,6 +199,8 @@ pub fn TimelinePanel(
     let mut blob_status = use_signal(|| String::new());
     let mut write_status = use_signal(|| String::new());
     let mut search_query = use_signal(String::new);
+    let mut private_plaintext = use_signal(|| false);
+    let mut plaintext_ack = use_signal(|| false);
 
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
@@ -211,9 +214,21 @@ pub fn TimelinePanel(
         .enumerate()
         .map(|(i, event)| (i, event.clone()))
         .collect();
+    let plaintext_service = plaintext_visible_service(&base_url);
+    let plaintext_boundary = PlaintextBoundary {
+        allowed_services: vec![plaintext_service.clone()],
+        is_e2ee: encrypt_toggle(),
+    };
+    let plaintext_can_leave = plaintext_boundary.can_send_plaintext(&plaintext_service);
+    let plaintext_blocked = private_plaintext() && !encrypt_toggle() && !plaintext_ack();
 
     rsx! {
-        div { class: "timeline", "data-testid": "timeline",
+        div {
+            class: "timeline",
+            "data-testid": "timeline",
+            role: "feed",
+            "aria-label": "Timeline events",
+            "aria-live": "polite",
             div { class: "composer", style: "margin-bottom: 8px;",
                 input {
                     r#type: "text",
@@ -237,6 +252,8 @@ pub fn TimelinePanel(
                     div {
                         class: "event",
                         "data-testid": "timeline-event",
+                        role: "article",
+                        "aria-label": "Timeline event from {event.sender_display}",
                         key: "{event.id}",
 
                         div { class: "event-head",
@@ -606,6 +623,52 @@ pub fn TimelinePanel(
         }
 
         div { class: "composer", "data-testid": "composer",
+            div {
+                class: "event",
+                "data-testid": "plaintext-boundary-panel",
+                role: "note",
+                "aria-label": "Plaintext boundary",
+                div { class: "event-head",
+                    span { "Plaintext boundary" }
+                    span {
+                        "data-testid": "plaintext-boundary-state",
+                        if encrypt_toggle() { "encrypted local" } else if plaintext_blocked { "private plaintext blocked" } else if plaintext_can_leave { "plaintext visible" } else { "blocked" }
+                    }
+                }
+                div { class: "muted", "data-testid": "plaintext-visible-services",
+                    "Visible service: {plaintext_service}"
+                }
+                div { class: "muted", "data-testid": "plaintext-preview-disclosure",
+                    "Plaintext messages may be visible to the configured server and may feed server-side search, previews, moderation, and notification snippets."
+                }
+                label {
+                    input {
+                        r#type: "checkbox",
+                        "data-testid": "private-plaintext-toggle",
+                        checked: private_plaintext(),
+                        onchange: move |evt| {
+                            private_plaintext.set(evt.value() == "true");
+                            plaintext_ack.set(false);
+                        },
+                    }
+                    " Mark draft as private"
+                }
+                if private_plaintext() && !encrypt_toggle() {
+                    div {
+                        class: "muted",
+                        "data-testid": "plaintext-boundary-warning",
+                        "Private plaintext is not E2EE. Enable Encrypt Local or acknowledge that this server may see the body."
+                    }
+                    if !plaintext_ack() {
+                        button {
+                            class: "secondary",
+                            "data-testid": "plaintext-boundary-ack",
+                            onclick: move |_| plaintext_ack.set(true),
+                            "Acknowledge plaintext exposure"
+                        }
+                    }
+                }
+            }
             if let Some(reply_idx) = reply_to_index() {
                 div { class: "muted", "data-testid": "reply-to-banner",
                     "Replying to {reply_target_label(&timeline(), reply_idx)}"
@@ -643,6 +706,10 @@ pub fn TimelinePanel(
                     if event.key().to_string() == "Enter" && event.modifiers().ctrl() {
                         let body = draft().trim().to_owned();
                         if body.is_empty() {
+                            return;
+                        }
+                        if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
+                            write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                             return;
                         }
                         let reply_target = reply_to_index()
@@ -724,6 +791,7 @@ pub fn TimelinePanel(
                         draft.set(String::new());
                         state_store.write().save_draft(space_for_draft, String::new());
                         reply_to_index.set(None);
+                        plaintext_ack.set(false);
                     }
                 },
             }
@@ -770,6 +838,10 @@ pub fn TimelinePanel(
                             if body.is_empty() {
                                 return;
                             }
+                            if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
+                                write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
+                                return;
+                            }
 
                             let reply_target = reply_to_index()
                                 .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
@@ -804,6 +876,7 @@ pub fn TimelinePanel(
                                         state_store.write().save_draft(space_for_encrypt, "");
                                         draft.set(String::new());
                                         reply_to_index.set(None);
+                                        plaintext_ack.set(false);
                                     }
                                     Err(error) => crypto_state.set(format!("encrypt failed: {error}")),
                                 }
@@ -820,6 +893,7 @@ pub fn TimelinePanel(
                                 state_store.write().save_draft(space_for_draft, "");
                                 draft.set(String::new());
                                 reply_to_index.set(None);
+                                plaintext_ack.set(false);
 
                                 let base = base_url_sig();
                                 let space = space_for_plain;
@@ -947,4 +1021,13 @@ fn reply_target_label(events: &[TimelineEvent], reply_idx: usize) -> String {
 
 fn timestamp_now() -> String {
     Utc::now().format("%Y-%m-%d %H:%M").to_string()
+}
+
+fn plaintext_visible_service(base_url: &str) -> String {
+    base_url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split('/').next())
+        .filter(|host| !host.is_empty())
+        .map(|host| format!("configured server {host}"))
+        .unwrap_or_else(|| "configured server".to_owned())
 }

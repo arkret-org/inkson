@@ -115,6 +115,24 @@ test("mobile viewport collapses shell chrome and keeps timeline usable", async (
   await expect(page.getByTestId("composer-input")).toBeVisible();
 });
 
+test("accessibility smoke exposes landmarks and live timeline feed", async ({ page }) => {
+  await expect(page.getByTestId("sidebar")).toHaveAttribute("role", "navigation");
+  await expect(page.getByTestId("main-view")).toHaveAttribute("role", "main");
+  await expect(page.getByTestId("right-panel")).toHaveAttribute("role", "complementary");
+
+  await page.getByRole("link", { name: "Timeline" }).click();
+  await expect(page.getByTestId("timeline")).toHaveAttribute("role", "feed");
+  await expect(page.getByTestId("timeline")).toHaveAttribute("aria-live", "polite");
+
+  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
+  await page.getByTestId("composer-input").fill("a11y smoke message");
+  await page.getByTestId("send-button").click();
+  await sendRequest;
+
+  await expect(page.getByTestId("timeline-event").last()).toHaveAttribute("role", "article");
+  await expect(page.getByTestId("timeline-event").last()).toHaveAttribute("aria-label", /Timeline event from/);
+});
+
 test("directory search resolve and space selection flow works", async ({ page }) => {
   await page.getByTestId("directory-nav-button").click();
   await expect(page.getByTestId("directory-panel")).toBeVisible();
@@ -374,6 +392,25 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await expect(page.getByTestId("right-panel")).toContainText("encrypted local payload");
 });
 
+test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {
+  await page.getByRole("link", { name: "Timeline" }).click();
+  await expect(page.getByTestId("plaintext-boundary-panel")).toBeVisible();
+  await expect(page.getByTestId("plaintext-visible-services")).toContainText("configured server");
+  await expect(page.getByTestId("plaintext-preview-disclosure")).toContainText("search");
+
+  await page.getByTestId("private-plaintext-toggle").check();
+  await page.getByTestId("composer-input").fill("private plaintext body");
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("write-status")).toContainText("plaintext blocked");
+  await expect(page.getByTestId("plaintext-boundary-warning")).toContainText("not E2EE");
+
+  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
+  await page.getByTestId("plaintext-boundary-ack").click();
+  await page.getByTestId("send-button").click();
+  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:e2e-message-1");
+});
+
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   const report = page.waitForRequest("**/api/v1/moderation/report");
@@ -448,6 +485,20 @@ test("audit page loads repo operations commits conflicts and snapshots", async (
   await expect(page.getByTestId("audit-status")).toContainText("loaded");
   await expect(page.getByTestId("operation-row")).toContainText("cx:op:audit");
   await expect(page.getByTestId("commit-row")).toContainText("cx:commit:e2e");
+});
+
+test("audit capability explanation shows grants constraints and frontier reason", async ({ page }) => {
+  await page.getByRole("link", { name: "Audit" }).click();
+  await expect(page.getByTestId("capability-explanation")).toBeVisible();
+
+  await page.getByTestId("load-capabilities-button").click();
+  await expect(page.getByTestId("capability-decision")).toContainText("allowed");
+  await expect(page.getByTestId("capability-frontier")).toContainText("cx:statehash:e2e");
+  await expect(page.getByTestId("capability-reason")).toContainText("frontier_current");
+  await expect(page.getByTestId("capability-grant-row")).toContainText("cx:grant:e2e");
+  await expect(page.getByTestId("capability-resource-selectors")).toContainText("space:cx:space");
+  await expect(page.getByTestId("capability-constraints")).toContainText("temporal");
+  await expect(page.getByTestId("capability-delegation-chain")).toContainText("cx:grant:root");
 });
 
 test("devices panel reflects key queue push and crypto state after bootstrap", async ({ page }) => {

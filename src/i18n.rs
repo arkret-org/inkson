@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +109,72 @@ pub fn translate(locale: Locale, dicts: &HashMap<String, TranslationDict>, key: 
 /// Get the current text direction.
 pub fn text_direction(signal: &I18nSignal) -> TextDirection {
     signal.read().0.direction()
+}
+
+/// Format a UTC timestamp with locale-specific ordering.
+pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
+    match locale {
+        Locale::En => timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
+        Locale::Zh => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
+        Locale::Ar => timestamp.format("%Y/%m/%d %H:%M UTC").to_string(),
+    }
+}
+
+/// Format a non-negative integer with locale-appropriate grouping.
+pub fn format_number(locale: Locale, value: u64) -> String {
+    let grouped = group_decimal(value);
+    match locale {
+        Locale::En | Locale::Ar => grouped,
+        Locale::Zh => grouped.replace(',', " "),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TranslationCompleteness {
+    pub locale: Locale,
+    pub total_keys: usize,
+    pub missing_keys: Vec<String>,
+}
+
+impl TranslationCompleteness {
+    pub fn is_complete(&self) -> bool {
+        self.missing_keys.is_empty()
+    }
+
+    pub fn missing_count(&self) -> usize {
+        self.missing_keys.len()
+    }
+}
+
+/// Compare a locale dictionary against a reference dictionary.
+pub fn translation_completeness(
+    reference: &TranslationDict,
+    candidate: &TranslationDict,
+) -> TranslationCompleteness {
+    let mut missing_keys: Vec<String> = reference
+        .strings
+        .keys()
+        .filter(|key| !candidate.strings.contains_key(*key))
+        .cloned()
+        .collect();
+    missing_keys.sort();
+    TranslationCompleteness {
+        locale: candidate.locale,
+        total_keys: reference.strings.len(),
+        missing_keys,
+    }
+}
+
+fn group_decimal(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (idx, ch) in digits.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
 }
 
 /// Build the default English translation dictionary.
@@ -367,5 +434,45 @@ mod tests {
             translate(Locale::En, &HashMap::new(), "nonexistent.key"),
             "nonexistent.key"
         );
+    }
+
+    #[test]
+    fn locale_formatters_are_stable() {
+        let timestamp = DateTime::parse_from_rfc3339("2026-04-29T07:08:09Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert_eq!(
+            format_datetime(Locale::En, timestamp),
+            "Apr 29, 2026 07:08 UTC"
+        );
+        assert_eq!(
+            format_datetime(Locale::Zh, timestamp),
+            "2026年04月29日 07:08 UTC"
+        );
+        assert_eq!(
+            format_datetime(Locale::Ar, timestamp),
+            "2026/04/29 07:08 UTC"
+        );
+        assert_eq!(format_number(Locale::En, 1234567), "1,234,567");
+        assert_eq!(format_number(Locale::Zh, 1234567), "1 234 567");
+    }
+
+    #[test]
+    fn translation_completeness_reports_missing_keys() {
+        let en = english_translations();
+        let zh = chinese_translations();
+        let report = translation_completeness(&en, &zh);
+        assert_eq!(report.locale, Locale::Zh);
+        assert_eq!(report.total_keys, en.strings.len());
+        assert!(report.missing_count() > 0);
+        assert!(
+            report
+                .missing_keys
+                .contains(&"directory.applet.metadata".to_owned())
+        );
+
+        let complete = translation_completeness(&en, &en);
+        assert!(complete.is_complete());
     }
 }

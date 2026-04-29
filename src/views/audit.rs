@@ -48,6 +48,13 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
     let mut status_msg = use_signal(|| String::new());
     let mut head_commit = use_signal(|| String::new());
     let mut resolved_target = use_signal(|| Option::<String>::None);
+    let mut capability_actor = use_signal(|| "did:web:alice.example".to_owned());
+    let mut capability_action = use_signal(|| "space.read".to_owned());
+    let mut capability_resource = use_signal(|| "cx:space:01js0sp0000000000000000000".to_owned());
+    let mut capability_grants = use_signal(Vec::<Value>::new);
+    let mut capability_state_hash = use_signal(|| Option::<String>::None);
+    let mut capability_decision = use_signal(|| String::new());
+    let mut capability_reason = use_signal(|| String::new());
 
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel",
@@ -104,6 +111,108 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                         },
                         "Refresh"
                     }
+                }
+            }
+
+            div { class: "event", "data-testid": "capability-explanation",
+                div { class: "event-head", span { "Capability explanation" } span { "{capability_grants().len()} grants" } }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Actor" }
+                        input {
+                            "data-testid": "capability-actor-input",
+                            value: "{capability_actor}",
+                            oninput: move |event| capability_actor.set(event.value()),
+                        }
+                    }
+                    div { class: "metric",
+                        strong { "Action" }
+                        input {
+                            "data-testid": "capability-action-input",
+                            value: "{capability_action}",
+                            oninput: move |event| capability_action.set(event.value()),
+                        }
+                    }
+                    div { class: "metric",
+                        strong { "Resource" }
+                        input {
+                            "data-testid": "capability-resource-input",
+                            value: "{capability_resource}",
+                            oninput: move |event| capability_resource.set(event.value()),
+                        }
+                    }
+                    div { class: "metric", "data-testid": "capability-decision",
+                        strong { "Decision" }
+                        span { if capability_decision().is_empty() { "not checked" } else { "{capability_decision}" } }
+                    }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "load-capabilities-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let api_token = token();
+                                let actor = capability_actor();
+                                let action = capability_action();
+                                let resource = capability_resource();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api.effective_grants(&actor).await {
+                                            Ok(resp) => {
+                                                capability_state_hash.set(resp.state_hash.clone());
+                                                capability_grants.set(resp.grants);
+                                            }
+                                            Err(error) => capability_reason.set(format!("effective grants failed: {error}")),
+                                        }
+                                        match api.authz_check(&actor, &action, &resource).await {
+                                            Ok(decision) => {
+                                                capability_decision.set(if decision.allowed { "allowed".to_owned() } else { "denied".to_owned() });
+                                                capability_reason.set(decision.reason_code.unwrap_or_else(|| "frontier current".to_owned()));
+                                            }
+                                            Err(error) => {
+                                                capability_decision.set("error".to_owned());
+                                                capability_reason.set(format!("check failed: {error}"));
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        "Load Capabilities"
+                    }
+                }
+                if let Some(state_hash) = capability_state_hash() {
+                    div { class: "muted", "data-testid": "capability-frontier",
+                        "state frontier {state_hash}"
+                    }
+                }
+                if !capability_reason().is_empty() {
+                    div { class: "muted", "data-testid": "capability-reason",
+                        "reason {capability_reason}"
+                    }
+                }
+                for grant in capability_grants() {
+                    div { class: "event", "data-testid": "capability-grant-row",
+                        div { class: "event-head",
+                            span { "{json_text(&grant, \"grant_id\")}" }
+                            span { "{json_text(&grant, \"issuer\")}" }
+                        }
+                        div { class: "muted", "data-testid": "capability-resource-selectors",
+                            "selectors {json_value(&grant, &[\"resource_selectors\", \"resources\", \"resource\"])}"
+                        }
+                        div { class: "muted", "data-testid": "capability-constraints",
+                            "constraints {json_value(&grant, &[\"constraints\", \"obligations\"])}"
+                        }
+                        div { class: "muted", "data-testid": "capability-delegation-chain",
+                            "delegation {json_value(&grant, &[\"delegation_chain\", \"proofs\"])}"
+                        }
+                    }
+                }
+                if capability_grants().is_empty() {
+                    div { class: "muted", "No grants loaded. Click Load Capabilities." }
                 }
             }
 
@@ -296,5 +405,54 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "muted", "data-testid": "audit-status", "{status_msg}" }
             }
         }
+    }
+}
+
+fn json_text(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("-")
+        .to_owned()
+}
+
+fn json_value(value: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|key| value.get(*key))
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "[]".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn detects_multi_actor_conflicts_by_target_ref() {
+        let ops = vec![
+            json!({"operation_id": "op1", "target_ref": "cx:task:1", "actor": "did:web:alice"}),
+            json!({"operation_id": "op2", "target_ref": "cx:task:1", "actor": "did:web:bob"}),
+            json!({"operation_id": "op3", "target_ref": "cx:task:2", "actor": "did:web:alice"}),
+        ];
+
+        let conflicts = detect_conflicts(&ops);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].target_ref, "cx:task:1");
+    }
+
+    #[test]
+    fn capability_explanation_helpers_extract_fallback_fields() {
+        let grant = json!({
+            "grant_id": "cx:grant:test",
+            "resources": ["space:cx:space:test/**"],
+            "constraints": [{"type": "temporal"}],
+            "proofs": ["cx:grant:root"]
+        });
+
+        assert_eq!(json_text(&grant, "grant_id"), "cx:grant:test");
+        assert!(json_value(&grant, &["resource_selectors", "resources"]).contains("space:cx:space:test"));
+        assert!(json_value(&grant, &["constraints"]).contains("temporal"));
+        assert!(json_value(&grant, &["delegation_chain", "proofs"]).contains("cx:grant:root"));
     }
 }
