@@ -56,6 +56,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **消息写路径改为结构化事件并接入写一致性骨架** — Timeline/Product 现在保留 `event_id`/`operation_id`/`commit_id` 事实摘要，编辑维护 revision chain，撤回保留 tombstone，请求自动携带 `x-contrix-request-id`/`idempotency-key`，显式 backfill 读取会转发 `x-contrix-wait-for`。
 - [x] **Chat / Forum 接入会话对象骨架** — Chat 现在提交 `cx.channel.create` 并带结构化 mentions；Forum topic 带 anchor 元数据并提交 `cx.topic.create`，回复改走 `cx.comment.create`，Playwright 校验相关 commit payload。
 - [x] **Invite 对象生命周期接入 Space Admin** — Space Admin 发起/接受/取消邀请现在会维护本地 invite row，并提交 `cx.invite.create` / `cx.invite.accept` / `cx.invite.cancel` fact。
+- [x] **Agent Run / Memory 生命周期接入协议事实** — Agent Runs 现在提交 `cx.run.create/update/complete/fail`；Memory Review 现在提交 `cx.memory.create/update/confirm/invalidate/supersede`，并保留来源、状态与 commit 摘要。
 
 ### 仍未达到产品发布级的阻塞项
 
@@ -415,15 +416,15 @@ chask 做 UI/E2E 集成验证。
 
 ### 9.1 AI 代理记忆
 
-- [ ] **记忆生命周期** — spec 定义 candidate → confirmed/rejected → invalidated/superseded，MemoryReview 视图仅有本地 accept/edit/reject
-- [ ] **来源追溯** — spec 要求记忆携带来源（provenance），客户端未实现
-- [ ] **人工审查** — spec 要求记忆可由人工审查，客户端 UI 存在但未连接协议
+- [x] **记忆生命周期** — MemoryReview 现在用 `cx.memory.create/update/confirm/invalidate/supersede` 表达 candidate → confirmed / invalidated / superseded 生命周期
+- [x] **来源追溯** — Memory fact body 现在携带 `source`、`confidence`、`state` 并在 UI 展示 operation/commit 摘要
+- [x] **人工审查** — Accept/Edit/Reject/Supersede 操作现在会提交 repo commit，而不是只改本地状态
 - [ ] **非向量存储** — spec 明确记忆不应坍缩为向量存储（向量仅为派生层），客户端未实现向量/派生层分离
 
 ### 9.2 AI 代理运行
 
-- [ ] **Run 实体创建** — `cx.run.create/update/complete/fail` 操作缺失
-- [ ] **工具执行记录** — AgentRuns 视图有 UI 但为本地模拟数据
+- [x] **Run 实体创建** — AgentRuns 现在创建 `cx:run:*` 并提交 `cx.run.create/update/complete/fail` 操作
+- [x] **工具执行记录** — Record Step 会把工具执行摘要作为 `cx.run.update` step fact 提交并展示 operation/commit 摘要
 - [ ] **内存提升** — spec 要求从 episodic → semantic 提升流程，客户端未实现
 - [ ] **A2A/ACP/MCP 互操作** — spec 要求与 A2A/ACP/MCP 协议的桥接，客户端完全未实现
 

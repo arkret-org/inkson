@@ -1,2 +1,4 @@
 /target
 /docker-context
+
+/node_modules

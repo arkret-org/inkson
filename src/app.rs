@@ -254,6 +254,8 @@ pub fn RouterView() -> Element {
                     Link { class: "secondary", to: Route::Kanban, "Kanban" }
                     Link { class: "secondary", to: Route::Chat, "Chat" }
                     Link { class: "secondary", to: Route::Forum, "Forum" }
+                    Link { class: "secondary", "data-testid": "memory-review-nav-button", to: Route::MemoryReview, "Memory" }
+                    Link { class: "secondary", "data-testid": "agent-runs-nav-button", to: Route::AgentRuns, "Agents" }
                     Link { class: "secondary", to: Route::Audit, "Audit" }
                     Link { class: "secondary", "data-testid": "notifications-nav-button", to: Route::Notifications, "Notifications" }
                     Link { class: "secondary", "data-testid": "settings-nav-button", to: Route::Settings, "Settings" }
@@ -489,13 +491,23 @@ pub fn RouterView() -> Element {
                     Route::MemoryReview => rsx! {
                         crate::views::memory_review::MemoryReviewPanel {
                             base_url: base_url(),
+                            account_did: account_did(),
                             token,
+                            selected_space: selected_space(),
+                            sync_cursor,
+                            repo_state,
+                            state_store,
                         }
                     },
                     Route::AgentRuns => rsx! {
                         crate::views::agent_runs::AgentRunsPanel {
                             base_url: base_url(),
+                            account_did: account_did(),
                             token,
+                            selected_space: selected_space(),
+                            sync_cursor,
+                            repo_state,
+                            state_store,
                         }
                     },
                     Route::Notifications => rsx! {

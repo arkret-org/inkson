@@ -228,6 +228,77 @@ test("forum anchors topics and stores comments separately from chat messages", a
   await expect(page.getByTestId("forum-status")).toContainText("comment committed");
 });
 
+test("agent runs and memory review submit lifecycle fact commits", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+
+  await page.getByTestId("agent-runs-nav-button").click();
+  await expect(page.getByTestId("agent-runs-panel")).toBeVisible();
+  await page.getByTestId("run-agent-input").fill("release-agent");
+  await page.getByTestId("run-input").fill("Find blocker tasks");
+  const createRun = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("start-run-button").click();
+  const createRunBody = await createRun.then((request) => request.postDataJSON());
+  expect(createRunBody.commit.operations[0].type).toBe("cx.run.create");
+  expect(createRunBody.commit.operations[0].body.run_id).toContain("cx:run:");
+  expect(createRunBody.commit.operations[0].body.status).toBe("running");
+  await expect(page.getByTestId("agent-run-status")).toContainText("run created");
+  await expect(page.getByTestId("agent-run").last()).toContainText("release-agent");
+
+  const updateRun = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("update-run-button").last().click();
+  const updateRunBody = await updateRun.then((request) => request.postDataJSON());
+  expect(updateRunBody.commit.operations[0].type).toBe("cx.run.update");
+  expect(updateRunBody.commit.operations[0].body.step.output).toBe("tool step recorded");
+  await expect(page.getByTestId("agent-run-status")).toContainText("run updated");
+
+  const completeRun = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("complete-run-button").last().click();
+  const completeRunBody = await completeRun.then((request) => request.postDataJSON());
+  expect(completeRunBody.commit.operations[0].type).toBe("cx.run.complete");
+  expect(completeRunBody.commit.operations[0].body.status).toBe("completed");
+  await expect(page.getByTestId("agent-run").last()).toContainText("completed");
+
+  await page.getByTestId("memory-review-nav-button").click();
+  await expect(page.getByTestId("memory-review-panel")).toBeVisible();
+  await page.getByTestId("new-memory-input").fill("Agent should preserve provenance");
+  const createMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("capture-memory-button").click();
+  const createMemoryBody = await createMemory.then((request) => request.postDataJSON());
+  expect(createMemoryBody.commit.operations[0].type).toBe("cx.memory.create");
+  expect(createMemoryBody.commit.operations[0].body.state).toBe("candidate");
+  await expect(page.getByTestId("memory-status")).toContainText("memory captured");
+  await expect(page.getByTestId("memory-entry").last()).toContainText("Agent should preserve provenance");
+
+  await page.getByTestId("edit-memory-button").last().click();
+  await page.getByTestId("memory-edit-input").fill("Agent should preserve provenance and source");
+  const updateMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("save-memory-edit").click();
+  const updateMemoryBody = await updateMemory.then((request) => request.postDataJSON());
+  expect(updateMemoryBody.commit.operations[0].type).toBe("cx.memory.update");
+  expect(updateMemoryBody.commit.operations[0].body.content).toBe("Agent should preserve provenance and source");
+  await expect(page.getByTestId("memory-status")).toContainText("memory updated");
+
+  const confirmMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("accept-memory-button").last().click();
+  const confirmMemoryBody = await confirmMemory.then((request) => request.postDataJSON());
+  expect(confirmMemoryBody.commit.operations[0].type).toBe("cx.memory.confirm");
+  expect(confirmMemoryBody.commit.operations[0].target_ref).toContain("cx:memory:");
+  await expect(page.getByTestId("memory-entry").last()).toContainText("confirmed");
+
+  const supersedeMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("supersede-memory-button").last().click();
+  const supersedeMemoryBody = await supersedeMemory.then((request) => request.postDataJSON());
+  expect(supersedeMemoryBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.memory.create")).toBeTruthy();
+  expect(supersedeMemoryBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.memory.supersede")).toBeTruthy();
+  await expect(page.getByTestId("memory-status")).toContainText("memory superseded");
+
+  const invalidateMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("reject-memory-button").last().click();
+  const invalidateMemoryBody = await invalidateMemory.then((request) => request.postDataJSON());
+  expect(invalidateMemoryBody.commit.operations[0].type).toBe("cx.memory.invalidate");
+  await expect(page.getByTestId("memory-status")).toContainText("memory invalidated");
+});
+
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   await page.getByTestId("composer-input").fill("draft survives reload");

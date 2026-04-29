@@ -450,6 +450,51 @@ pub mod cx_ops {
             .body(json!({"agent_name": agent_name, "input": input}))
     }
 
+    pub fn run_create_structured(
+        space_id: &str,
+        actor: &str,
+        run_id: &str,
+        agent_name: &str,
+        input: Value,
+        status: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.run.create").body(json!({
+            "run_id": run_id,
+            "agent_name": agent_name,
+            "input": input,
+            "status": status,
+        }))
+    }
+
+    pub fn run_update(
+        space_id: &str,
+        actor: &str,
+        run_id: &str,
+        status: &str,
+        step: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.run.update")
+            .target_ref(run_id)
+            .body(json!({"status": status, "step": step}))
+    }
+
+    pub fn run_complete(
+        space_id: &str,
+        actor: &str,
+        run_id: &str,
+        output: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.run.complete")
+            .target_ref(run_id)
+            .body(json!({"status": "completed", "output": output}))
+    }
+
+    pub fn run_fail(space_id: &str, actor: &str, run_id: &str, reason: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.run.fail")
+            .target_ref(run_id)
+            .body(json!({"status": "failed", "reason": reason}))
+    }
+
     pub fn memory_create(
         space_id: &str,
         actor: &str,
@@ -458,6 +503,65 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.memory.create")
             .body(json!({"content": content, "layer": layer}))
+    }
+
+    pub fn memory_create_structured(
+        space_id: &str,
+        actor: &str,
+        memory_id: &str,
+        content: &str,
+        layer: &str,
+        source: &str,
+        confidence: f64,
+        state: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.memory.create").body(json!({
+            "memory_id": memory_id,
+            "content": content,
+            "layer": layer,
+            "source": source,
+            "confidence": confidence,
+            "state": state,
+        }))
+    }
+
+    pub fn memory_update(
+        space_id: &str,
+        actor: &str,
+        memory_id: &str,
+        changes: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.memory.update")
+            .target_ref(memory_id)
+            .body(changes)
+    }
+
+    pub fn memory_confirm(space_id: &str, actor: &str, memory_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.memory.confirm")
+            .target_ref(memory_id)
+            .body(json!({"state": "confirmed"}))
+    }
+
+    pub fn memory_invalidate(
+        space_id: &str,
+        actor: &str,
+        memory_id: &str,
+        reason: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.memory.invalidate")
+            .target_ref(memory_id)
+            .body(json!({"state": "invalidated", "reason": reason}))
+    }
+
+    pub fn memory_supersede(
+        space_id: &str,
+        actor: &str,
+        memory_id: &str,
+        superseded_by: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.memory.supersede")
+            .target_ref(memory_id)
+            .body(json!({"state": "superseded", "superseded_by": superseded_by}))
     }
 
     // Invite
@@ -661,15 +765,9 @@ mod tests {
                 .op_type,
             "cx.channel.create"
         );
-        let channel_entity = cx_ops::channel_create_entity(
-            "s",
-            "a",
-            "cx:channel:1",
-            "c",
-            "announce",
-            Some("topic"),
-        )
-        .build("n");
+        let channel_entity =
+            cx_ops::channel_create_entity("s", "a", "cx:channel:1", "c", "announce", Some("topic"))
+                .build("n");
         assert_eq!(channel_entity.body["channel_id"], "cx:channel:1");
         assert_eq!(channel_entity.body["kind"], "announce");
         assert_eq!(
@@ -713,11 +811,77 @@ mod tests {
                 .op_type,
             "cx.run.create"
         );
+        let run = cx_ops::run_create_structured(
+            "s",
+            "a",
+            "cx:run:1",
+            "agent",
+            json!({"prompt": "demo"}),
+            "running",
+        )
+        .build("n");
+        assert_eq!(run.body["run_id"], "cx:run:1");
+        assert_eq!(run.body["status"], "running");
+        assert_eq!(
+            cx_ops::run_update("s", "a", "cx:run:1", "running", json!({"name": "tool"}))
+                .build("n")
+                .op_type,
+            "cx.run.update"
+        );
+        assert_eq!(
+            cx_ops::run_complete("s", "a", "cx:run:1", json!({"summary": "done"}))
+                .build("n")
+                .op_type,
+            "cx.run.complete"
+        );
+        assert_eq!(
+            cx_ops::run_fail("s", "a", "cx:run:1", "timeout")
+                .build("n")
+                .op_type,
+            "cx.run.fail"
+        );
         assert_eq!(
             cx_ops::memory_create("s", "a", "fact", "semantic")
                 .build("n")
                 .op_type,
             "cx.memory.create"
+        );
+        let memory = cx_ops::memory_create_structured(
+            "s",
+            "a",
+            "cx:memory:1",
+            "fact",
+            "semantic",
+            "review",
+            0.92,
+            "candidate",
+        )
+        .build("n");
+        assert_eq!(memory.body["memory_id"], "cx:memory:1");
+        assert_eq!(memory.body["state"], "candidate");
+        assert_eq!(
+            cx_ops::memory_update("s", "a", "cx:memory:1", json!({"content": "updated"}))
+                .build("n")
+                .op_type,
+            "cx.memory.update"
+        );
+        assert_eq!(
+            cx_ops::memory_confirm("s", "a", "cx:memory:1")
+                .build("n")
+                .op_type,
+            "cx.memory.confirm"
+        );
+        assert_eq!(
+            cx_ops::memory_invalidate("s", "a", "cx:memory:1", "bad source")
+                .build("n")
+                .op_type,
+            "cx.memory.invalidate"
+        );
+        assert_eq!(
+            cx_ops::memory_supersede("s", "a", "cx:memory:1", "cx:memory:2")
+                .build("n")
+                .op_type,
+            "cx.memory.supersede"
         );
         assert_eq!(
             cx_ops::invite_create("s", "a", "t").build("n").op_type,
