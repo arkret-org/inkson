@@ -75,7 +75,7 @@ jobs:
           Copy-Item -LiteralPath "chask/README.md" -Destination "dist/${{ matrix.package_name }}/README.md"
 
       - name: Upload native package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.package_name }}
           path: dist/${{ matrix.package_name }}
