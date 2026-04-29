@@ -456,16 +456,24 @@ pub fn RouterView() -> Element {
                         rsx! {
                             crate::views::chat::ChatPanel {
                                 base_url: base_url(),
+                                account_did: account_did(),
                                 token,
                                 selected_space: selected_space(),
+                                sync_cursor,
+                                repo_state,
+                                state_store,
                             }
                         }
                     },
                     Route::Forum => rsx! {
                         crate::views::forum::ForumPanel {
                             base_url: base_url(),
+                            account_did: account_did(),
                             token,
                             selected_space: selected_space(),
+                            sync_cursor,
+                            repo_state,
+                            state_store,
                         }
                     },
                     Route::SocialFeed => rsx! {

@@ -365,10 +365,47 @@ pub mod cx_ops {
             .body(json!({"name": name, "kind": kind}))
     }
 
+    pub fn channel_create_entity(
+        space_id: &str,
+        actor: &str,
+        channel_id: &str,
+        name: &str,
+        kind: &str,
+        topic: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.channel.create").body(json!({
+            "channel_id": channel_id,
+            "name": name,
+            "kind": kind,
+            "topic": topic,
+            "lifecycle": "active",
+        }))
+    }
+
     // Topic
     pub fn topic_create(space_id: &str, actor: &str, title: &str, body: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.topic.create")
             .body(json!({"title": title, "body": body}))
+    }
+
+    pub fn topic_create_anchored(
+        space_id: &str,
+        actor: &str,
+        topic_id: &str,
+        title: &str,
+        body: &str,
+        anchor_ref: Value,
+        tags: Vec<String>,
+        mentions: Vec<Value>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.topic.create").body(json!({
+            "topic_id": topic_id,
+            "title": title,
+            "body": body,
+            "anchor_ref": anchor_ref,
+            "tags": tags,
+            "mentions": mentions,
+        }))
     }
 
     // Comment
@@ -381,6 +418,25 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.comment.create")
             .target_ref(target)
             .body(json!({"body": body}))
+    }
+
+    pub fn comment_create_structured(
+        space_id: &str,
+        actor: &str,
+        comment_id: &str,
+        target: &str,
+        body: &str,
+        parent_comment_id: Option<&str>,
+        mentions: Vec<Value>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.comment.create")
+            .target_ref(target)
+            .body(json!({
+                "comment_id": comment_id,
+                "body": body,
+                "parent_comment_id": parent_comment_id,
+                "mentions": mentions,
+            }))
     }
 
     // Run/Memory
@@ -572,16 +628,52 @@ mod tests {
                 .op_type,
             "cx.channel.create"
         );
+        let channel_entity = cx_ops::channel_create_entity(
+            "s",
+            "a",
+            "cx:channel:1",
+            "c",
+            "announce",
+            Some("topic"),
+        )
+        .build("n");
+        assert_eq!(channel_entity.body["channel_id"], "cx:channel:1");
+        assert_eq!(channel_entity.body["kind"], "announce");
         assert_eq!(
             cx_ops::topic_create("s", "a", "t", "b").build("n").op_type,
             "cx.topic.create"
         );
+        let topic = cx_ops::topic_create_anchored(
+            "s",
+            "a",
+            "cx:topic:1",
+            "t",
+            "b",
+            json!({"kind": "run", "target": "cx:run:1"}),
+            vec!["ops".to_owned()],
+            vec![json!({"kind": "actor", "target": "did:web:bob.example"})],
+        )
+        .build("n");
+        assert_eq!(topic.body["topic_id"], "cx:topic:1");
+        assert_eq!(topic.body["anchor_ref"]["kind"], "run");
         assert_eq!(
             cx_ops::comment_create("s", "a", "e", "b")
                 .build("n")
                 .op_type,
             "cx.comment.create"
         );
+        let comment = cx_ops::comment_create_structured(
+            "s",
+            "a",
+            "cx:comment:1",
+            "cx:topic:1",
+            "b",
+            Some("cx:comment:0"),
+            vec![json!({"kind": "entity", "target": "cx:task:1"})],
+        )
+        .build("n");
+        assert_eq!(comment.body["comment_id"], "cx:comment:1");
+        assert_eq!(comment.body["parent_comment_id"], "cx:comment:0");
         assert_eq!(
             cx_ops::run_create("s", "a", "agent", json!({}))
                 .build("n")

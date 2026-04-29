@@ -167,6 +167,67 @@ test("product account contacts space lifecycle and canonical message flow works"
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("deleted true");
 });
 
+test("chat creates channel entities and sends structured mention payloads", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Chat" }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+
+  await page.getByTestId("new-channel-name").fill("Ops Announce");
+  await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
+  await page.getByTestId("channel-kind-announce").click();
+  const channelCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("create-channel-button").click();
+  const channelBody = await channelCommit.then((request) => request.postDataJSON());
+  expect(channelBody.commit.operations[0].type).toBe("cx.channel.create");
+  expect(channelBody.commit.operations[0].body.kind).toBe("announce");
+  expect(channelBody.commit.operations[0].body.channel_id).toContain("cx:channel:");
+  await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
+  await expect(page.getByTestId("chat-status")).toContainText("channel committed");
+
+  const chatSend = page.waitForRequest("**/api/v1/messages/send");
+  await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
+  await page.getByTestId("send-chat-button").click();
+  const chatBody = await chatSend.then((request) => request.postDataJSON());
+  expect(chatBody.content.channel_id).toContain("cx:channel:");
+  expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
+  expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
+  await expect(page.getByTestId("chat-mentions").last()).toContainText("did:web:bob.example");
+});
+
+test("forum anchors topics and stores comments separately from chat messages", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Forum" }).click();
+  await expect(page.getByTestId("forum-panel")).toBeVisible();
+
+  await page.getByTestId("new-topic-button").click();
+  await page.getByTestId("topic-title-input").fill("Runbook Review");
+  await page.getByTestId("topic-body-input").fill("Review this with @carol.example before #cx:task:follow-up");
+  await page.getByTestId("topic-tags-input").fill("ops, review");
+  await page.getByTestId("anchor-kind-run").click();
+  await page.getByTestId("topic-anchor-target-input").fill("cx:run:incident-7");
+  const topicCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("submit-topic-button").click();
+  const topicBody = await topicCommit.then((request) => request.postDataJSON());
+  expect(topicBody.commit.operations[0].type).toBe("cx.topic.create");
+  expect(topicBody.commit.operations[0].body.anchor_ref.kind).toBe("run");
+  expect(topicBody.commit.operations[0].body.anchor_ref.target).toBe("cx:run:incident-7");
+  expect(topicBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.relation.create")).toBeTruthy();
+  await expect(page.getByTestId("forum-topic").last()).toContainText("Runbook Review");
+  await expect(page.getByTestId("forum-topic").last()).toContainText("cx:run:incident-7");
+
+  await page.getByTestId("forum-topic").last().click();
+  await expect(page.getByTestId("topic-anchor")).toContainText("cx:run:incident-7");
+  const commentCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("reply-input").fill("Looks good, track #cx:task:follow-up");
+  await page.getByTestId("submit-reply-button").click();
+  const commentBody = await commentCommit.then((request) => request.postDataJSON());
+  expect(commentBody.commit.operations[0].type).toBe("cx.comment.create");
+  expect(commentBody.commit.operations[0].target_ref).toContain("cx:topic:");
+  await expect(page.getByTestId("forum-comment")).toContainText("Looks good, track #cx:task:follow-up");
+  await expect(page.getByTestId("forum-status")).toContainText("comment committed");
+});
+
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   await page.getByTestId("composer-input").fill("draft survives reload");

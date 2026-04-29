@@ -34,7 +34,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **修复默认 Rust 测试门禁** — 默认 `cargo test` 现在通过；过时协议向量改为 `protocol-test-vectors` 显式 opt-in，避免默认发布门禁被未维护草稿阻塞。
 - [x] **修复 Web/WASM 构建门禁** — 补齐 tokio `sync` feature，`dx build --platform web` 通过。
 - [x] **落地真实页面路由覆盖** — 当前 Dioxus app 已有 `/login`、`/register`、`/` dashboard、`/timeline`、`/contacts`、`/directory`、`/devices`、`/devices/verify`、`/space/:space_id/admin`、`/audit`、`/settings`、`/readiness` 等页面。
-- [x] **补全 Playwright 主要业务流测试** — 17 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
+- [x] **补全 Playwright 主要业务流测试** — 19 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、channel entity / anchored topic / comment entity / structured mention、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
 - [x] **修复 Timeline 实时渲染 bug** — 发送明文或本地 MLS 消息后，Timeline 现在从 `timeline()` 派生事件列表并立即更新。
 - [x] **补齐审计表展示关键 ID** — Audit 页面现在显示 `operation_id`，Playwright 能验证 repo operation/commit 可见。
 - [x] **注册向导接入 DID 操作提交** — 注册流程在账号创建前显式调用 `POST /api/v1/identity/submit-did-operation`，Playwright 验证提交成功摘要可见。
@@ -44,6 +44,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **Web 非安全模式显式告警** — WASM 构建顶部增加非生产安全横幅，明确说明缺失 WebCrypto/IndexedDB/安全恢复。
 - [x] **通知面板改为派生投影并落地静音规则** — Notifications 现在从 `POST /api/v1/index/notifications` 派生渲染，本地持久化已读/归档/类型开关/逐空间静音，Push Settings 可查看和清除静音空间。
 - [x] **消息写路径改为结构化事件并接入写一致性骨架** — Timeline/Product 现在保留 `event_id`/`operation_id`/`commit_id` 事实摘要，编辑维护 revision chain，撤回保留 tombstone，请求自动携带 `x-contrix-request-id`/`idempotency-key`，显式 backfill 读取会转发 `x-contrix-wait-for`。
+- [x] **Chat / Forum 接入会话对象骨架** — Chat 现在提交 `cx.channel.create` 并带结构化 mentions；Forum topic 带 anchor 元数据并提交 `cx.topic.create`，回复改走 `cx.comment.create`，Playwright 校验相关 commit payload。
 
 ### 仍未达到产品发布级的阻塞项
 
@@ -164,10 +165,10 @@ chask 做 UI/E2E 集成验证。
 
 ### 3.2 会话模型
 
-- [ ] **Channel 实体类型** — spec 定义 channel 为长存会话空间（chat/announce/support/activity），客户端 Chat 视图仅为本地模拟
-- [ ] **Topic 锚定** — spec 要求 topic 可锚定到 space/board/task/run/memory，客户端 Forum 视图仅为独立实现
-- [ ] **Comment 与 Message 分离** — spec 明确 comment 是持久化对象级注释/审查/审批（不同于 message），客户端未区分
-- [ ] **@mention 结构化引用** — spec 要求存储为结构化 DID/entity 引用 + mentions Relations，客户端未实现
+- [x] **Channel 实体类型** — Chat 面板现在使用 `chat/announce/support/activity` 长存 channel entity 模型，并通过 `cx.channel.create` commit 提交新频道
+- [x] **Topic 锚定** — Forum 新 topic 现在显式选择并提交 `space/board/task/run/memory` anchor 元数据，UI 会展示 anchor 目标
+- [x] **Comment 与 Message 分离** — Forum 回复现在走 `cx.comment.create` commit，并以 comment object 渲染，不再复用 chat message 流
+- [x] **@mention 结构化引用** — Chat/Forum 现在会把 `@did` / `@handle` / `#entity` 解析为结构化 mention，并提交 mentions relation 元数据
 - [x] **编辑修订链** — Timeline 现在会把旧正文和旧 operation/commit 追加到 revision chain，并在 UI 中展示修订历史
 - [x] **撤回墓碑语义** — Timeline 现在对 `cx.message.redact` 保留 tombstone、撤回原因和 redaction fact，而不是直接物理移除消息
 

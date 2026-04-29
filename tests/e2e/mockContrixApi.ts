@@ -8,6 +8,7 @@ export async function mockContrixApi(page: Page) {
   let productSpaceDeleted = false;
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
+  let commitCounter = 0;
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -370,6 +371,17 @@ export async function mockContrixApi(page: Page) {
         next_cursor: null,
         has_more: false,
       });
+    }
+
+    if (url.pathname === "/api/v1/repo/submit-commit") {
+      const body = await route.request().postDataJSON();
+      commitCounter += 1;
+      return json(route, {
+        status: "accepted",
+        commit_id: body.commit?.commit_id ?? `cx:commit:e2e-submit-${commitCounter}`,
+        head_commit: body.commit?.commit_id ?? `cx:commit:e2e-submit-${commitCounter}`,
+        sync_token: `sx:e2e:commit-${commitCounter}`,
+      }, 202);
     }
 
     if (url.pathname === "/api/v1/repo/operations") {
