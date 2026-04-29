@@ -427,8 +427,12 @@ pub fn RouterView() -> Element {
                     Route::SpaceAdmin { .. } => rsx! {
                         crate::views::space_admin::SpaceAdminPanel {
                             base_url: base_url(),
+                            account_did: account_did(),
                             token,
                             selected_space: selected_space(),
+                            sync_cursor,
+                            repo_state,
+                            state_store,
                         }
                     },
                     Route::Audit => rsx! {

@@ -1,10 +1,32 @@
 use dioxus::prelude::*;
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::views::helpers::authed_api;
+use crate::{
+    local_state::LocalStateStore,
+    operation::{CommitBuilder, cx_ops},
+    views::helpers::{active_sync_token, authed_api, authed_api_with_sync},
+};
+
+#[derive(Clone, Debug, PartialEq)]
+struct InviteRecord {
+    invite_id: String,
+    target: String,
+    role: Option<String>,
+    state: String,
+    operation_id: Option<String>,
+    commit_id: Option<String>,
+}
 
 #[component]
-pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
+pub fn SpaceAdminPanel(
+    base_url: String,
+    account_did: String,
+    token: Signal<String>,
+    selected_space: String,
+    sync_cursor: Signal<String>,
+    repo_state: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
     let mut space_name = use_signal(|| String::new());
     let mut space_topic = use_signal(|| String::new());
     let mut space_description = use_signal(|| String::new());
@@ -13,7 +35,7 @@ pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: 
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(|| String::new());
     let members = use_signal(Vec::<String>::new);
-    let space_invites = use_signal(Vec::<Value>::new);
+    let mut space_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
 
     rsx! {
@@ -174,18 +196,95 @@ pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: 
                             "data-testid": "send-invite-button",
                             onclick: {
                                 let base = base_url.clone();
+                                let actor = account_did.clone();
                                 let space = selected_space.clone();
                                 move |_| {
                                     let base = base.clone();
+                                    let actor = actor.clone();
                                     let space = space.clone();
                                     let api_token = token();
-                                    let target = invite_target();
+                                    let target = invite_target().trim().to_owned();
+                                    if target.is_empty() {
+                                        status_msg.set("invite target is required".to_owned());
+                                        return;
+                                    }
+                                    let wait_for = active_sync_token(&sync_cursor());
+                                    let expected_head = expected_head(repo_state());
                                     spawn(async move {
-                                        if let Ok(api) = authed_api(&base, api_token) {
-                                            match api.invite_to_space(&space, &target, None).await {
-                                                Ok(resp) => status_msg.set(format!("invited {} ({})", resp.target, resp.state)),
+                                        match authed_api_with_sync(&base, api_token, wait_for) {
+                                            Ok(api) => match api.invite_to_space(&space, &target, None).await {
+                                                Ok(resp) => {
+                                                    let op = cx_ops::invite_create_structured(
+                                                        &space,
+                                                        &actor,
+                                                        &resp.invite_id,
+                                                        &resp.target,
+                                                        None,
+                                                        &resp.state,
+                                                    )
+                                                    .build("chask");
+                                                    let commit = CommitBuilder::new(actor.clone())
+                                                        .add_operation(op.clone())
+                                                        .build();
+                                                    let commit_value = match serde_json::to_value(&commit) {
+                                                        Ok(value) => value,
+                                                        Err(error) => {
+                                                            status_msg.set(format!("invite serialize failed: {error}"));
+                                                            return;
+                                                        }
+                                                    };
+                                                    match api
+                                                        .submit_commit(
+                                                            &actor,
+                                                            commit_value,
+                                                            expected_head.as_deref(),
+                                                            Some(&op.operation_id),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(submitted) => {
+                                                            space_invites.write().push(InviteRecord {
+                                                                invite_id: resp.invite_id.clone(),
+                                                                target: resp.target.clone(),
+                                                                role: None,
+                                                                state: resp.state.clone(),
+                                                                operation_id: Some(op.operation_id.clone()),
+                                                                commit_id: Some(submitted.commit_id.clone()),
+                                                            });
+                                                            repo_state.set(
+                                                                submitted
+                                                                    .head_commit
+                                                                    .clone()
+                                                                    .unwrap_or(submitted.commit_id.clone()),
+                                                            );
+                                                            sync_cursor.set(submitted.sync_token.clone());
+                                                            {
+                                                                let mut store = state_store.write();
+                                                                store.save_sync_cursor(submitted.sync_token.clone());
+                                                                store.append_raw_operation(
+                                                                    op.operation_id.clone(),
+                                                                    Some(space.clone()),
+                                                                    json!({
+                                                                        "kind": "cx.invite.create",
+                                                                        "invite_id": resp.invite_id,
+                                                                        "target": resp.target,
+                                                                        "state": resp.state,
+                                                                        "commit_id": submitted.commit_id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                            invite_target.set(String::new());
+                                                            status_msg.set(format!(
+                                                                "invited {} ({}) fact {}",
+                                                                target, "pending", op.operation_id
+                                                            ));
+                                                        }
+                                                        Err(error) => status_msg.set(format!("invite fact failed: {error}")),
+                                                    }
+                                                }
                                                 Err(e) => status_msg.set(format!("invite failed: {e}")),
                                             }
+                                            Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                         }
                                     });
                                 }
@@ -288,25 +387,101 @@ pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: 
 
             // Space invites
             div { class: "event", "data-testid": "space-invites",
-                div { class: "event-head", span { "Invites" } span { "incoming" } }
+                div { class: "event-head", span { "Invites" } span { "lifecycle" } }
                 for invite in space_invites() {
                     div { class: "event", "data-testid": "invite-row",
-                        div { class: "muted", "{invite}" }
+                        div { class: "event-head",
+                            span { "{invite.target}" }
+                            span { "{invite.state}" }
+                        }
+                        div { class: "muted", "data-testid": "invite-id", "{invite.invite_id}" }
+                        if let Some(role) = &invite.role {
+                            div { class: "muted", "role {role}" }
+                        }
+                        if let Some(operation_id) = &invite.operation_id {
+                            div { class: "muted", "fact {operation_id}" }
+                        }
+                        if let Some(commit_id) = &invite.commit_id {
+                            div { class: "muted", "commit {commit_id}" }
+                        }
                         div { class: "actions",
                             button {
                                 class: "primary",
+                                "data-testid": "accept-invite-button",
                                 onclick: {
                                     let base = base_url.clone();
+                                    let actor = account_did.clone();
                                     let space = selected_space.clone();
-                                    let invite_id = invite.get("invite_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                                    let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
+                                        let actor = actor.clone();
                                         let space = space.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
+                                        let wait_for = active_sync_token(&sync_cursor());
+                                        let expected_head = expected_head(repo_state());
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                let _ = api.accept_space_invite(&space, &invite_id).await;
+                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                Ok(api) => match api.accept_space_invite(&space, &invite_id).await {
+                                                    Ok(resp) => {
+                                                        let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("chask");
+                                                        let commit = CommitBuilder::new(actor.clone())
+                                                            .add_operation(op.clone())
+                                                            .build();
+                                                        let commit_value = match serde_json::to_value(&commit) {
+                                                            Ok(value) => value,
+                                                            Err(error) => {
+                                                                status_msg.set(format!("accept serialize failed: {error}"));
+                                                                return;
+                                                            }
+                                                        };
+                                                        match api
+                                                            .submit_commit(
+                                                                &actor,
+                                                                commit_value,
+                                                                expected_head.as_deref(),
+                                                                Some(&op.operation_id),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(submitted) => {
+                                                                for row in space_invites.write().iter_mut() {
+                                                                    if row.invite_id == invite_id {
+                                                                        row.state = resp.state.clone();
+                                                                        row.operation_id = Some(op.operation_id.clone());
+                                                                        row.commit_id = Some(submitted.commit_id.clone());
+                                                                    }
+                                                                }
+                                                                repo_state.set(
+                                                                    submitted
+                                                                        .head_commit
+                                                                        .clone()
+                                                                        .unwrap_or(submitted.commit_id.clone()),
+                                                                );
+                                                                sync_cursor.set(submitted.sync_token.clone());
+                                                                {
+                                                                    let mut store = state_store.write();
+                                                                    store.save_sync_cursor(submitted.sync_token.clone());
+                                                                    store.append_raw_operation(
+                                                                        op.operation_id.clone(),
+                                                                        Some(space.clone()),
+                                                                        json!({
+                                                                            "kind": "cx.invite.accept",
+                                                                            "invite_id": invite_id,
+                                                                            "state": resp.state,
+                                                                            "commit_id": submitted.commit_id,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                                status_msg.set(format!("accepted invite fact {}", op.operation_id));
+                                                            }
+                                                            Err(error) => status_msg.set(format!("accept fact failed: {error}")),
+                                                        }
+                                                    }
+                                                    Err(error) => status_msg.set(format!("accept failed: {error}")),
+                                                }
+                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                             }
                                         });
                                     }
@@ -315,23 +490,92 @@ pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: 
                             }
                             button {
                                 class: "secondary",
+                                "data-testid": "cancel-invite-button",
                                 onclick: {
                                     let base = base_url.clone();
+                                    let actor = account_did.clone();
                                     let space = selected_space.clone();
-                                    let invite_id = invite.get("invite_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                                    let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
+                                        let actor = actor.clone();
                                         let space = space.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
+                                        let wait_for = active_sync_token(&sync_cursor());
+                                        let expected_head = expected_head(repo_state());
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                let _ = api.reject_space_invite(&space, &invite_id).await;
+                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                Ok(api) => match api.reject_space_invite(&space, &invite_id).await {
+                                                    Ok(resp) => {
+                                                        let op = cx_ops::invite_cancel(
+                                                            &space,
+                                                            &actor,
+                                                            &invite_id,
+                                                            Some("declined"),
+                                                        )
+                                                        .build("chask");
+                                                        let commit = CommitBuilder::new(actor.clone())
+                                                            .add_operation(op.clone())
+                                                            .build();
+                                                        let commit_value = match serde_json::to_value(&commit) {
+                                                            Ok(value) => value,
+                                                            Err(error) => {
+                                                                status_msg.set(format!("cancel serialize failed: {error}"));
+                                                                return;
+                                                            }
+                                                        };
+                                                        match api
+                                                            .submit_commit(
+                                                                &actor,
+                                                                commit_value,
+                                                                expected_head.as_deref(),
+                                                                Some(&op.operation_id),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(submitted) => {
+                                                                for row in space_invites.write().iter_mut() {
+                                                                    if row.invite_id == invite_id {
+                                                                        row.state = resp.state.clone();
+                                                                        row.operation_id = Some(op.operation_id.clone());
+                                                                        row.commit_id = Some(submitted.commit_id.clone());
+                                                                    }
+                                                                }
+                                                                repo_state.set(
+                                                                    submitted
+                                                                        .head_commit
+                                                                        .clone()
+                                                                        .unwrap_or(submitted.commit_id.clone()),
+                                                                );
+                                                                sync_cursor.set(submitted.sync_token.clone());
+                                                                {
+                                                                    let mut store = state_store.write();
+                                                                    store.save_sync_cursor(submitted.sync_token.clone());
+                                                                    store.append_raw_operation(
+                                                                        op.operation_id.clone(),
+                                                                        Some(space.clone()),
+                                                                        json!({
+                                                                            "kind": "cx.invite.cancel",
+                                                                            "invite_id": invite_id,
+                                                                            "state": resp.state,
+                                                                            "commit_id": submitted.commit_id,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                                status_msg.set(format!("canceled invite fact {}", op.operation_id));
+                                                            }
+                                                            Err(error) => status_msg.set(format!("cancel fact failed: {error}")),
+                                                        }
+                                                    }
+                                                    Err(error) => status_msg.set(format!("cancel failed: {error}")),
+                                                }
+                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                             }
                                         });
                                     }
                                 },
-                                "Reject"
+                                "Cancel"
                             }
                         }
                     }
@@ -468,4 +712,8 @@ pub fn SpaceAdminPanel(base_url: String, token: Signal<String>, selected_space: 
             }
         }
     }
+}
+
+fn expected_head(repo_state: String) -> Option<String> {
+    repo_state.starts_with("cx:commit:").then_some(repo_state)
 }

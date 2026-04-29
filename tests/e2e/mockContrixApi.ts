@@ -160,6 +160,30 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite\/accept$/) && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        ok: true,
+        invite_id: body.invite_id,
+        space_id: spaceId,
+        target: "did:web:carol.example",
+        state: "accepted",
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite\/reject$/) && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        ok: true,
+        invite_id: body.invite_id,
+        space_id: spaceId,
+        target: "did:web:carol.example",
+        state: "canceled",
+      });
+    }
+
     if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/archive$/) && route.request().method() === "POST") {
       const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
       return json(route, { ok: true, space_id: spaceId, archived: true });

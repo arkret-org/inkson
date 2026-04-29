@@ -309,8 +309,25 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("updated");
 
   await page.getByTestId("invite-target-input").fill("did:web:carol.example");
+  const inviteCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
   await page.getByTestId("send-invite-button").click();
+  const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
+  expect(inviteBody.commit.operations[0].type).toBe("cx.invite.create");
+  expect(inviteBody.commit.operations[0].body.invite_id).toBe("cx:invite:e2e");
   await expect(page.getByTestId("space-admin-status")).toContainText("invited did:web:carol.example");
+  await expect(page.getByTestId("invite-row")).toContainText("pending");
+
+  const acceptCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("accept-invite-button").click();
+  const acceptBody = await acceptCommit.then((request) => request.postDataJSON());
+  expect(acceptBody.commit.operations[0].type).toBe("cx.invite.accept");
+  await expect(page.getByTestId("invite-row")).toContainText("accepted");
+
+  const cancelCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  await page.getByTestId("cancel-invite-button").click();
+  const cancelBody = await cancelCommit.then((request) => request.postDataJSON());
+  expect(cancelBody.commit.operations[0].type).toBe("cx.invite.cancel");
+  await expect(page.getByTestId("invite-row")).toContainText("canceled");
 
   await page.getByTestId("rotate-space-epoch").click();
   await expect(page.getByTestId("space-admin-status")).toContainText("rotated to epoch");

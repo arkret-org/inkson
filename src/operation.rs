@@ -465,6 +465,39 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.invite.create").body(json!({"target": target}))
     }
 
+    pub fn invite_create_structured(
+        space_id: &str,
+        actor: &str,
+        invite_id: &str,
+        target: &str,
+        role: Option<&str>,
+        state: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.invite.create").body(json!({
+            "invite_id": invite_id,
+            "target": target,
+            "role": role,
+            "state": state,
+        }))
+    }
+
+    pub fn invite_accept(space_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.invite.accept")
+            .target_ref(invite_id)
+            .body(json!({"state": "accepted"}))
+    }
+
+    pub fn invite_cancel(
+        space_id: &str,
+        actor: &str,
+        invite_id: &str,
+        reason: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.invite.cancel")
+            .target_ref(invite_id)
+            .body(json!({"state": "canceled", "reason": reason}))
+    }
+
     // Read marker
     pub fn read_marker(
         space_id: &str,
@@ -689,6 +722,29 @@ mod tests {
         assert_eq!(
             cx_ops::invite_create("s", "a", "t").build("n").op_type,
             "cx.invite.create"
+        );
+        let invite = cx_ops::invite_create_structured(
+            "s",
+            "a",
+            "cx:invite:1",
+            "did:web:bob.example",
+            Some("member"),
+            "pending",
+        )
+        .build("n");
+        assert_eq!(invite.body["invite_id"], "cx:invite:1");
+        assert_eq!(invite.body["role"], "member");
+        assert_eq!(
+            cx_ops::invite_accept("s", "a", "cx:invite:1")
+                .build("n")
+                .op_type,
+            "cx.invite.accept"
+        );
+        assert_eq!(
+            cx_ops::invite_cancel("s", "a", "cx:invite:1", Some("expired"))
+                .build("n")
+                .op_type,
+            "cx.invite.cancel"
         );
         assert_eq!(
             cx_ops::read_marker("s", "a", "e", "p").build("n").op_type,

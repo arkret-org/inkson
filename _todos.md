@@ -13,11 +13,21 @@
 chask 做 UI/E2E 集成验证。
 
 - [ ] **[SDK] 生产认证与身份底座** — WebAuthn/passkey ceremony、OIDC callback/token verification、refresh token 安全存储、账户恢复真实证明、DID control proof verifier。
+  - [x] SDK 已完成: provider-backed password/OIDC/passkey/DID proof verifier contract。
+  - [x] SDK 已完成: 账户恢复 proof verification 与 DID control proof verifier。
+  - [ ] SDK 待完成: refresh-token 安全存储与持久会话绑定。
 - [ ] **[SDK] DID / Handle / Key Log 能力** — `did:uuid` 结构化生成、`did:web`/`did:key`/`did:keri` adapter、key log 验证、普通密钥轮换、双向 handle 验证、pairwise/private DID 可见性控制。
+  - [x] SDK 已完成: `did:uuid` 结构化生成与 bit layout validation。
+  - [x] SDK 已完成: `did:web`/`did:key`/`did:keri` resolver adapter trait。
+  - [x] SDK 已完成: DID key log inception/rotate/recover/deactivate verification。
+  - [x] SDK 已完成: 不改变 DID 的 key rotation。
+  - [ ] SDK 待完成: 双向 handle 验证与 pairwise/private DID 可见性控制。
 - [ ] **[SDK] Claims / VC / 渐进披露** — presentation request、disclosure policy、verified_handle、verified_email_domain、org_membership、device_trust、mfa_level 等 claim/attestation 类型与验证。
 - [ ] **[SDK] 事件与写入事实链** — Event detached signature、canonical reducer input、operation/commit proof binding、服务端验证后 fact chain 回显模型。
 - [ ] **[SDK] 对象与操作族补齐** — Invite、Channel、Topic、Comment、Attachment、Run、Memory、MLS proposal/commit/welcome 等对象模型与 operation builder。
 - [ ] **[SDK] Snapshot / Sync 模式** — 快照 manifest/chunk 校验、增量应用、Board/Chat/Topic 同步配置、limited timeline/backfill gap 语义。
+  - [x] SDK 已完成: reducer snapshot manifest/signature model、chunk digest、state hash/Merkle helper、失败回退 repo replay。
+  - [ ] SDK 待完成: 完整 bootstrap sequence、Board/Chat/Topic 同步配置、limited timeline/backfill gap 语义。
 - [ ] **[SDK] Web E2EE 基础设施** — WebCrypto、IndexedDB crypto store、MLS group state 持久化、KeyPackage 序列化、密钥备份/恢复。
 - [ ] **[SDK] 加密信封合规** — AAD 包含 space/event/causal refs、payload_digest/aad_digest 验证、MLS epoch recovery、设备撤销触发未来写入 fail-closed。
 - [ ] **[SDK] Federation / Service DID 安全** — HTTP Message Signatures、service DID allowlist、事务信封、fork/quarantine、backfill 授权、`.well-known` 服务发现。
@@ -45,6 +55,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **通知面板改为派生投影并落地静音规则** — Notifications 现在从 `POST /api/v1/index/notifications` 派生渲染，本地持久化已读/归档/类型开关/逐空间静音，Push Settings 可查看和清除静音空间。
 - [x] **消息写路径改为结构化事件并接入写一致性骨架** — Timeline/Product 现在保留 `event_id`/`operation_id`/`commit_id` 事实摘要，编辑维护 revision chain，撤回保留 tombstone，请求自动携带 `x-contrix-request-id`/`idempotency-key`，显式 backfill 读取会转发 `x-contrix-wait-for`。
 - [x] **Chat / Forum 接入会话对象骨架** — Chat 现在提交 `cx.channel.create` 并带结构化 mentions；Forum topic 带 anchor 元数据并提交 `cx.topic.create`，回复改走 `cx.comment.create`，Playwright 校验相关 commit payload。
+- [x] **Invite 对象生命周期接入 Space Admin** — Space Admin 发起/接受/取消邀请现在会维护本地 invite row，并提交 `cx.invite.create` / `cx.invite.accept` / `cx.invite.cancel` fact。
 
 ### 仍未达到产品发布级的阻塞项
 
@@ -159,7 +170,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **View 投影定义** — spec 要求 view 是独立对象（非真相源），客户端使用硬编码视图枚举，无动态 view 对象
 - [x] **Schema 对象** — 正式 schema 对象缺失
 - [x] **Policy 对象** — 正式 policy 对象缺失
-- [ ] **Invite 对象** — 独立 invite 对象生命周期管理缺失
+- [x] **Invite 对象** — Space Admin 现在将 invite 作为独立对象生命周期展示，发起/接受/取消均提交对应 `cx.invite.*` 操作
 - [x] **Read Marker** — spec 定义 read_marker 为 actor-private 读游标，客户端仅有简单 receipt 发送
 - [x] **Notification 派生投影** — spec 要求通知是派生投影，客户端使用本地状态模拟
 
