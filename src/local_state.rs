@@ -44,6 +44,10 @@ pub struct ClientLocalState {
     pub muted_spaces: BTreeMap<String, bool>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
+    /// Encrypted private account data (preferences, tags, custom emojis).
+    /// Values are XOR-encrypted with account_key and hex-encoded.
+    #[serde(default)]
+    pub private_data: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -241,6 +245,39 @@ impl LocalStateStore {
         self.load().muted_notification_kinds
     }
 
+    /// Save a private preference encrypted with the account key.
+    /// The account_key is typically the account DID or a derived secret.
+    pub fn save_private_data(
+        &mut self,
+        account_key: &str,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) {
+        self.ensure_cached_loaded();
+        let plaintext = value.into();
+        let encrypted = xor_encrypt(account_key, &plaintext);
+        self.cached.private_data.insert(key.into(), encrypted);
+        let _ = self.flush();
+    }
+
+    /// Load and decrypt a private preference.
+    pub fn load_private_data(&self, account_key: &str, key: &str) -> Option<String> {
+        let encrypted = self.load().private_data.get(key)?.clone();
+        xor_decrypt(account_key, &encrypted)
+    }
+
+    /// Remove a private preference.
+    pub fn remove_private_data(&mut self, key: &str) {
+        self.ensure_cached_loaded();
+        self.cached.private_data.remove(key);
+        let _ = self.flush();
+    }
+
+    /// List all private data keys.
+    pub fn private_data_keys(&self) -> Vec<String> {
+        self.load().private_data.keys().cloned().collect()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -311,6 +348,48 @@ fn app_data_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("chask")
+}
+
+/// XOR-based symmetric encryption for client-side private data.
+/// This is a simple obfuscation, not production-grade crypto.
+/// The same function encrypts and decrypts since XOR is its own inverse.
+fn xor_encrypt(key: &str, data: &str) -> String {
+    let key_bytes = key.as_bytes();
+    if key_bytes.is_empty() {
+        return data.to_owned();
+    }
+    let encrypted: Vec<u8> = data
+        .bytes()
+        .enumerate()
+        .map(|(i, b)| b ^ key_bytes[i % key_bytes.len()])
+        .collect();
+    // Encode as hex for safe storage
+    encrypted.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decode hex-encoded XOR-encrypted data back to plaintext.
+fn xor_decrypt(key: &str, hex_data: &str) -> Option<String> {
+    let key_bytes = key.as_bytes();
+    if key_bytes.is_empty() {
+        return Some(hex_data.to_owned());
+    }
+    let bytes = hex_to_bytes(hex_data)?;
+    let decrypted: Vec<u8> = bytes
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| b ^ key_bytes[i % key_bytes.len()])
+        .collect();
+    String::from_utf8(decrypted).ok()
+}
+
+fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -386,5 +465,61 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("chask-state-{name}-{stamp}.json"))
+    }
+
+    #[test]
+    fn xor_encrypt_decrypt_roundtrip() {
+        let key = "did:web:alice.example";
+        let plaintext = "my secret preference";
+        let encrypted = xor_encrypt(key, plaintext);
+        assert_ne!(encrypted, plaintext);
+        let decrypted = xor_decrypt(key, &encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn xor_encrypt_empty_key_returns_original() {
+        assert_eq!(xor_encrypt("", "hello"), "hello");
+    }
+
+    #[test]
+    fn private_data_store_encrypts_and_persists() {
+        let path = temp_state_path("private");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let account_key = "did:web:alice.example";
+        store.save_private_data(account_key, "theme", "dark");
+        store.save_private_data(account_key, "custom_emoji", "party_parrot");
+
+        assert_eq!(
+            store.load_private_data(account_key, "theme"),
+            Some("dark".to_owned())
+        );
+        assert_eq!(
+            store.load_private_data(account_key, "custom_emoji"),
+            Some("party_parrot".to_owned())
+        );
+        assert!(store.load_private_data(account_key, "missing").is_none());
+        assert_eq!(store.private_data_keys().len(), 2);
+
+        // Verify data is encrypted on disk
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("dark"));
+        assert!(!raw.contains("party_parrot"));
+
+        // Verify wrong key cannot decrypt
+        assert_ne!(
+            store.load_private_data("wrong-key", "theme"),
+            Some("dark".to_owned())
+        );
+    }
+
+    #[test]
+    fn private_data_remove_works() {
+        let path = temp_state_path("private-remove");
+        let mut store = LocalStateStore::with_path(path);
+        store.save_private_data("key", "temp", "value");
+        assert!(store.load_private_data("key", "temp").is_some());
+        store.remove_private_data("temp");
+        assert!(store.load_private_data("key", "temp").is_none());
     }
 }

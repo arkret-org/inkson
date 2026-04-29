@@ -5,6 +5,7 @@ use crate::{
     api::ContrixApi,
     components::Metric,
     config::LocalConfigStore,
+    i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
     models::SpacePreview,
     routes::Route,
@@ -21,6 +22,13 @@ const STYLE: &str = r#"
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #f4f6f8; color: #18212f; }
 button, input, textarea { font: inherit; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
+.shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
+.shell.rtl .sidebar { grid-column: 3; }
+.shell.rtl .main { grid-column: 2; }
+.shell.rtl .panel { grid-column: 1; border-left: 0; border-right: 1px solid #d8e0e8; }
+.shell.rtl .actions { direction: rtl; }
+.shell.rtl .event-head, .shell.rtl .topbar { flex-direction: row-reverse; }
+.shell.rtl .space-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
 .sidebar { background: #192330; color: #f7fafc; padding: 22px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 18px; }
 .brand { font-size: 24px; font-weight: 700; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
@@ -87,12 +95,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Responsive: tablet */
 @media (max-width: 1200px) {
   .shell { grid-template-columns: 240px minmax(0, 1fr) 280px; }
+  .shell.rtl { grid-template-columns: 280px minmax(0, 1fr) 240px; }
   .metric-grid { grid-template-columns: 1fr; }
 }
 
 /* Responsive: mobile */
 @media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
+  .shell.rtl { grid-template-columns: 1fr; }
+  .shell.rtl .sidebar, .shell.rtl .main, .shell.rtl .panel { grid-column: auto; }
   .sidebar { display: none; }
   .panel { display: none; }
   .main { min-height: 100vh; padding: 16px; }
@@ -120,7 +131,12 @@ pub fn App() -> Element {
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
-    let initial_local_state = LocalStateStore::default().load();
+    let initial_state_store = LocalStateStore::default();
+    let initial_local_state = initial_state_store.load();
+    let initial_locale = initial_state_store
+        .load_private_data(&initial_config.account_did, "locale")
+        .map(|code| Locale::from_code(&code))
+        .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let state_store = use_signal(LocalStateStore::default);
     let mut base_url = use_signal({
@@ -166,6 +182,9 @@ pub fn RouterView() -> Element {
     let push_state = use_signal(|| "Not registered".to_owned());
     let repo_state = use_signal(|| "Not checked".to_owned());
     let crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
+    let network_state = use_signal(|| "online".to_owned());
+    let last_error = use_signal(|| Option::<String>::None);
+    let locale = use_signal(move || initial_locale);
 
     let selected_preview = spaces()
         .iter()
@@ -175,15 +194,70 @@ pub fn RouterView() -> Element {
         .as_ref()
         .map(|space| space.name.clone())
         .unwrap_or_else(|| "Contrix Demo Space".to_owned());
+    let active_locale = locale();
+    let active_direction = active_locale.direction();
+    let direction_attr = active_direction.as_str();
+    let locale_attr = active_locale.code();
+    let shell_class = if active_direction == TextDirection::Rtl {
+        "shell rtl"
+    } else {
+        "shell"
+    };
 
     rsx! {
         style { "{STYLE}" }
-        div { class: "shell", "data-testid": "client-shell",
-            aside { class: "sidebar", "data-testid": "sidebar",
+        div {
+            class: shell_class,
+            "dir": direction_attr,
+            "lang": locale_attr,
+            "data-direction": direction_attr,
+            "data-locale": locale_attr,
+            "data-testid": "client-shell",
+            aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
                 div { class: "brand", "chask" }
-                div { class: "status", "data-testid": "connection-status",
+                div { class: "status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
                     div { class: "space-title", "data-testid": "status-label", "{status}" }
                     div { class: "muted", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
+                    div { class: "actions", style: "margin-top: 8px;",
+                        span {
+                            class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
+                            "data-testid": "network-state-badge",
+                            "{network_state}"
+                        }
+                        if network_state() != "online" {
+                            button {
+                                class: "secondary",
+                                "data-testid": "retry-connection-button",
+                                style: "font-size: 12px; padding: 4px 8px;",
+                                onclick: move |_| {
+                                    let base = base_url();
+                                    let actor = account_did();
+                                    let device = device_id();
+                                    connect(base, actor, device, ConnectContext {
+                                        status,
+                                        sync_cursor,
+                                        token,
+                                        spaces,
+                                        timeline,
+                                        device_queue,
+                                        repo_state,
+                                        crypto_state,
+                                        push_state,
+                                        config_store,
+                                        state_store,
+                                        network_state,
+                                        last_error,
+                                    });
+                                },
+                                "Retry"
+                            }
+                        }
+                    }
+                    if let Some(ref err) = last_error() {
+                        div { class: "muted", style: "color: #721c24; font-size: 11px; margin-top: 4px;", "data-testid": "last-error",
+                            "{err}"
+                        }
+                    }
                 }
                 div { class: "search",
                     input {
@@ -215,6 +289,8 @@ pub fn RouterView() -> Element {
                                     push_state,
                                     config_store,
                                     state_store,
+                                    network_state,
+                                    last_error,
                                 },
                             ),
                             "Connect"
@@ -265,7 +341,7 @@ pub fn RouterView() -> Element {
                 }
             }
 
-            main { class: "main", "data-testid": "main-view",
+            main { class: "main", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar",
                     div {
                         div { class: "title", "data-testid": "space-title", "{title}" }
@@ -395,6 +471,7 @@ pub fn RouterView() -> Element {
                             crypto_state: crypto_state(),
                             config_store,
                             state_store,
+                            locale,
                             status,
                         }
                     },
@@ -538,7 +615,7 @@ pub fn RouterView() -> Element {
                 }
             }
 
-            section { class: "panel", "data-testid": "right-panel",
+            section { class: "panel", "data-testid": "right-panel", role: "complementary", "aria-label": "Sync and device info",
                 div { class: "section",
                     h2 { "Sync" }
                     div { class: "metric-grid", "data-testid": "sync-metrics",
@@ -581,6 +658,8 @@ struct ConnectContext {
     push_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    network_state: Signal<String>,
+    last_error: Signal<Option<String>>,
 }
 
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
@@ -596,21 +675,32 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut push_state = ctx.push_state;
         let config_store = ctx.config_store;
         let mut state_store = ctx.state_store;
+        let mut network_state = ctx.network_state;
+        let mut last_error = ctx.last_error;
 
         status.set(ConnectionState::Loading.label().to_owned());
+        network_state.set("reconnecting".to_owned());
+        last_error.set(None);
         match ContrixApi::new(&base) {
             Ok(api) => {
                 match api.describe().await {
-                    Ok(description) => status.set(format!(
-                        "{}: {} / {}",
-                        ConnectionState::Online.label(),
-                        description.service_type,
-                        description.protocol_version
-                    )),
-                    Err(error) => status.set(format!(
-                        "{}: describe failed: {error}",
-                        ConnectionState::Reconnecting.label()
-                    )),
+                    Ok(description) => {
+                        status.set(format!(
+                            "{}: {} / {}",
+                            ConnectionState::Online.label(),
+                            description.service_type,
+                            description.protocol_version
+                        ));
+                        network_state.set("online".to_owned());
+                    }
+                    Err(error) => {
+                        status.set(format!(
+                            "{}: describe failed: {error}",
+                            ConnectionState::Reconnecting.label()
+                        ));
+                        network_state.set("reconnecting".to_owned());
+                        last_error.set(Some(format!("describe: {error}")));
+                    }
                 }
                 let authed = match api.dev_login(&actor, &device).await {
                     Ok(session) => {
@@ -660,7 +750,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         }
                     }
                 };
-                match api.search_spaces("").await {
+                match api.search_spaces("", None).await {
                     Ok(search) if search.results.is_empty() => {
                         status.set(ConnectionState::Empty.label().to_owned());
                         spaces.set(search.results);
@@ -739,10 +829,14 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     Err(error) => push_state.set(format!("push failed: {error}")),
                 }
             }
-            Err(error) => status.set(format!(
-                "{}: invalid URL: {error}",
-                ConnectionState::Error.label()
-            )),
+            Err(error) => {
+                status.set(format!(
+                    "{}: invalid URL: {error}",
+                    ConnectionState::Error.label()
+                ));
+                network_state.set("offline".to_owned());
+                last_error.set(Some(format!("invalid URL: {error}")));
+            }
         }
     });
 }

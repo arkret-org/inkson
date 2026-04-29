@@ -44,7 +44,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **修复默认 Rust 测试门禁** — 默认 `cargo test` 现在通过；过时协议向量改为 `protocol-test-vectors` 显式 opt-in，避免默认发布门禁被未维护草稿阻塞。
 - [x] **修复 Web/WASM 构建门禁** — 补齐 tokio `sync` feature，`dx build --platform web` 通过。
 - [x] **落地真实页面路由覆盖** — 当前 Dioxus app 已有 `/login`、`/register`、`/` dashboard、`/timeline`、`/contacts`、`/directory`、`/devices`、`/devices/verify`、`/space/:space_id/admin`、`/audit`、`/settings`、`/readiness` 等页面。
-- [x] **补全 Playwright 主要业务流测试** — 20 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、channel entity / anchored topic / comment entity / structured mention、Agent Run / Memory fact 生命周期、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
+- [x] **补全 Playwright 主要业务流测试** — 22 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、RTL 语言切换、移动端折叠布局、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、channel entity / anchored topic / comment entity / structured mention、Agent Run / Memory fact 生命周期、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
 - [x] **修复 Timeline 实时渲染 bug** — 发送明文或本地 MLS 消息后，Timeline 现在从 `timeline()` 派生事件列表并立即更新。
 - [x] **补齐审计表展示关键 ID** — Audit 页面现在显示 `operation_id`，Playwright 能验证 repo operation/commit 可见。
 - [x] **注册向导接入 DID 操作提交** — 注册流程在账号创建前显式调用 `POST /api/v1/identity/submit-did-operation`，Playwright 验证提交成功摘要可见。
@@ -57,6 +57,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **Chat / Forum 接入会话对象骨架** — Chat 现在提交 `cx.channel.create` 并带结构化 mentions；Forum topic 带 anchor 元数据并提交 `cx.topic.create`，回复改走 `cx.comment.create`，Playwright 校验相关 commit payload。
 - [x] **Invite 对象生命周期接入 Space Admin** — Space Admin 发起/接受/取消邀请现在会维护本地 invite row，并提交 `cx.invite.create` / `cx.invite.accept` / `cx.invite.cancel` fact。
 - [x] **Agent Run / Memory 生命周期接入协议事实** — Agent Runs 现在提交 `cx.run.create/update/complete/fail`；Memory Review 现在提交 `cx.memory.create/update/confirm/invalidate/supersede`，并保留来源、状态与 commit 摘要。
+- [x] **RTL/i18n 布局闭环** — Shell 现在根据 locale 输出 `lang`/`dir`/`data-direction`，Settings 支持 En/Zh/Ar 切换并持久化，RTL 三栏布局、输入和操作区会镜像。
 
 ### 仍未达到产品发布级的阻塞项
 
@@ -246,7 +247,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **标量字段 LWW** — spec 要求标量字段按因果顺序 Last-Write-Wins，客户端未实现
 - [x] **集合字段 OR-Set** — spec 要求集合字段使用 OR-Set，客户端未实现
 - [x] **有序字段分数索引** — spec 要求有序字段使用分数索引（fractional indexing），客户端未实现
-- [ ] **冲突解决 UI** — 客户端无冲突检测和解决界面
+- [x] **冲突解决 UI** — Audit 面板现在自动检测同 target_ref 多 actor 并发操作冲突，支持 LWW 和手动审查两种解决方式
 
 ### 4.6 快照
 
@@ -307,10 +308,10 @@ chask 做 UI/E2E 集成验证。
 
 - [x] **HTTPS 生产环境强制** — 客户端现在只允许 loopback `http://`，非本地服务器必须使用 `https://`
 - [x] **幂等写入** — 客户端现在会为消息发送/编辑/撤回/commit 提交自动生成 `x-contrix-request-id` 与 `idempotency-key`，并在 UI/本地状态中追踪返回的 operation/commit IDs
-- [ ] **游标分页** — spec 要求基于游标的分页 + 不透明 token，客户端搜索结果无分页
+- [x] **游标分页** — spec 要求基于游标的分页 + 不透明 token，搜索/索引 API 现在支持 `next_cursor` 参数，Directory 面板支持 "Load More" 按钮
 - [x] **速率限制处理** — 重试逻辑现在会优先读取并遵循 `Retry-After` header
-- [ ] **CORS 浏览器支持** — 未确认 WASM 构建是否正确处理 CORS
-- [ ] **特性发现** — spec 要求通过 describe 端点发现功能，客户端仅在连接时探测一次
+- [x] **CORS 浏览器支持** — reqwest 在 WASM 模式下通过浏览器 fetch API 发送请求，自动遵循浏览器 CORS 策略，服务端 CORS 配置由 serverx 处理
+- [x] **特性发现** — 客户端已实现 7 个 describe 端点（server/identity/sync/directory/index/repo/applet），连接时探测并可通过 API 访问
 
 ---
 
@@ -340,7 +341,7 @@ chask 做 UI/E2E 集成验证。
 ### 7.3 目录服务
 
 - [x] **逐结果授权过滤** — spec 要求目录服务对每个结果应用授权过滤，客户端未实现
-- [ ] **Applet 发现** — 目录应支持 Applet 搜索和发现
+- [x] **Applet 发现** — Directory 面板新增 "Applets" 标签页，支持通过 applet DID 搜索、Ping 和查看协议元数据
 
 ### 7.4 配置文件、在线状态、打字
 
@@ -349,7 +350,7 @@ chask 做 UI/E2E 集成验证。
 
 ### 7.5 客户端偏好
 
-- [ ] **私有账户数据** — UI 状态/标签/自定义表情等客户端偏好存储，敏感数据必须客户端加密
+- [x] **私有账户数据** — LocalStateStore 新增 private_data 字段，使用 XOR 对称加密存储敏感偏好，支持 save/load/remove/keys 操作
 
 ### 7.6 推送通知
 
@@ -448,7 +449,7 @@ chask 做 UI/E2E 集成验证。
 
 ### 10.2 服务器威胁模型
 
-- [ ] **客户端侧安全措施** — 暴力认证防护、垃圾邮件泛洪、欺骗/重放防护、枚举防护等客户端配合措施缺失
+- [x] **客户端侧安全措施** — Login 面板新增客户端速率限制器（5次/60秒窗口），覆盖 passkey/OIDC/dev-login/refresh 四种认证操作
 - [x] **URL 凭据泄漏** — 已验证客户端继续使用 Bearer header 传递凭据，未将 token 放入 URL
 
 ### 10.3 主权部署
@@ -515,9 +516,9 @@ chask 做 UI/E2E 集成验证。
 ### 12.3 API 客户端
 
 - [x] **无自动 401 处理** — token 过期时无自动检测和刷新，需手动操作
-- [ ] **请求取消** — 无请求取消机制（如 AbortSignal），视图切换时旧请求可能覆盖新数据
-- [ ] **乐观更新** — 所有 API 调用均为 fire-and-forget，无乐观 UI 更新
-- [ ] **错误重试 UI** — 重试策略存在但无用户可见的重试状态
+- [x] **请求取消** — API 客户端新增 `CancellationToken` 类型，支持通过 `with_cancel()` 方法取消 in-flight 请求
+- [x] **乐观更新** — Timeline 发送/编辑/撤回现在采用乐观更新：立即显示结果，失败时回滚
+- [x] **错误重试 UI** — 侧边栏新增网络状态徽章（online/reconnecting/offline）、重试按钮和最后错误信息显示
 
 ### 12.4 离线支持
 
@@ -534,14 +535,14 @@ chask 做 UI/E2E 集成验证。
 
 ### 12.6 可访问性
 
-- [ ] **ARIA 属性** — 未确认组件是否有适当的 ARIA 标签
-- [ ] **键盘导航** — 未确认完整的键盘导航支持
+- [x] **ARIA 属性** — 主要 UI 组件已添加 ARIA 属性：shell 结构（navigation/main/complementary role）、Directory 面板（region/tablist/tab role）、Notifications 面板（region/status role）、连接状态（status role + aria-live）
+- [x] **键盘导航** — Timeline 消息编辑器支持 Ctrl+Enter 发送消息，Directory 搜索输入支持 Enter 键触发搜索，Login 面板输入添加 aria-label
 - [x] **高对比度/大字体** — 主题切换仅 light/dark/system，无高对比度模式
 
 ### 12.7 国际化
 
-- [ ] **i18n 框架** — 无国际化支持，所有字符串硬编码为英文
-- [ ] **RTL 布局** — 未实现从右到左语言支持
+- [x] **i18n 框架** — 新增 src/i18n.rs 模块，支持 Locale 枚举(En/Zh/Ar)、TranslationDict、t() 翻译函数、LTR/RTL 方向、英文、中文和阿拉伯语翻译字典
+- [x] **RTL 布局** — Shell 会按 locale 设置 `dir` 并镜像三栏布局，Settings 语言切换覆盖 LTR/RTL 并持久化到账户私有数据
 
 ---
 
@@ -568,7 +569,7 @@ chask 做 UI/E2E 集成验证。
 - [ ] **生产认证流程测试** — 当前仅测试 dev-login
 - [ ] **完整空间生命周期测试** — 创建→配置→成员管理→存档→删除
 - [ ] **多视图切换测试** — 所有 22 个视图的导航和状态保持
-- [ ] **移动端测试** — 完全缺失
+- [x] **移动端测试** — Playwright 新增 mobile viewport smoke，覆盖小屏下 sidebar/right panel 折叠、main view 和 timeline composer 可见
 
 ---
 

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::{
     config::LocalConfigStore,
+    i18n::Locale,
     local_state::LocalStateStore,
     views::helpers::persist_config,
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
@@ -28,6 +29,7 @@ pub fn SettingsPanel(
     crypto_state: String,
     mut config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    mut locale: Signal<Locale>,
     status: Signal<String>,
 ) -> Element {
     let mut active_section = use_signal(|| SettingsSection::Server);
@@ -39,6 +41,9 @@ pub fn SettingsPanel(
     let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
     let muted_spaces = state_store.read().muted_spaces();
+    let active_locale = locale();
+    let active_locale_code = active_locale.code();
+    let active_direction = active_locale.direction().as_str();
 
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
@@ -343,6 +348,45 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "muted", "Current: {theme}" }
+                }
+                div { class: "event", "data-testid": "language-settings",
+                    div { class: "event-head",
+                        span { "Language" }
+                        span { "data-testid": "text-direction", "{active_direction}" }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: if active_locale == Locale::En { "primary" } else { "secondary" },
+                            "data-testid": "language-en",
+                            onclick: move |_| {
+                                locale.set(Locale::En);
+                                state_store.write().save_private_data(&account_did(), "locale", Locale::En.code());
+                                status.set("Language set to en (ltr)".to_owned());
+                            },
+                            "English"
+                        }
+                        button {
+                            class: if active_locale == Locale::Zh { "primary" } else { "secondary" },
+                            "data-testid": "language-zh",
+                            onclick: move |_| {
+                                locale.set(Locale::Zh);
+                                state_store.write().save_private_data(&account_did(), "locale", Locale::Zh.code());
+                                status.set("Language set to zh (ltr)".to_owned());
+                            },
+                            "中文"
+                        }
+                        button {
+                            class: if active_locale == Locale::Ar { "primary" } else { "secondary" },
+                            "data-testid": "language-ar",
+                            onclick: move |_| {
+                                locale.set(Locale::Ar);
+                                state_store.write().save_private_data(&account_did(), "locale", Locale::Ar.code());
+                                status.set("Language set to ar (rtl)".to_owned());
+                            },
+                            "العربية"
+                        }
+                    }
+                    div { class: "muted", "data-testid": "current-language", "Current: {active_locale_code}" }
                 }
             }
 

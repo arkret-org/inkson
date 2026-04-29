@@ -1,18 +1,53 @@
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::views::helpers::authed_api;
+
+#[derive(Clone, Debug, PartialEq)]
+struct ConflictGroup {
+    target_ref: String,
+    operations: Vec<Value>,
+}
+
+fn detect_conflicts(ops: &[Value]) -> Vec<ConflictGroup> {
+    let mut by_target: HashMap<String, Vec<Value>> = HashMap::new();
+    for op in ops {
+        if let Some(target) = op.get("target_ref").and_then(|v| v.as_str()) {
+            by_target.entry(target.to_owned()).or_default().push(op.clone());
+        }
+    }
+    by_target
+        .into_iter()
+        .filter(|(_, ops)| {
+            if ops.len() < 2 {
+                return false;
+            }
+            let actors: std::collections::HashSet<_> = ops
+                .iter()
+                .filter_map(|o| o.get("actor").and_then(|v| v.as_str()))
+                .collect();
+            actors.len() > 1
+        })
+        .map(|(target_ref, operations)| ConflictGroup {
+            target_ref,
+            operations,
+        })
+        .collect()
+}
 
 #[component]
 pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
     let mut next_batch = use_signal(|| String::new());
     let mut batch_size = use_signal(|| 0usize);
     let mut operations = use_signal(Vec::<Value>::new);
-    let conflicts = use_signal(Vec::<Value>::new);
+    let mut conflicts = use_signal(Vec::<ConflictGroup>::new);
     let snapshots = use_signal(Vec::<Value>::new);
     let mut commits = use_signal(Vec::<Value>::new);
     let mut status_msg = use_signal(|| String::new());
     let mut head_commit = use_signal(|| String::new());
+    let mut resolved_target = use_signal(|| Option::<String>::None);
 
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel",
@@ -56,7 +91,10 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                                             Err(e) => status_msg.set(format!("commits failed: {e}")),
                                         }
                                         match api.get_operations(&[]).await {
-                                            Ok(resp) => operations.set(resp.operations),
+                                            Ok(resp) => {
+                                                conflicts.set(detect_conflicts(&resp.operations));
+                                                operations.set(resp.operations);
+                                            }
                                             Err(e) => status_msg.set(format!("operations failed: {e}")),
                                         }
                                         status_msg.set("Audit data loaded".to_owned());
@@ -117,16 +155,72 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
-            // Conflicts display
+            // Conflicts display with resolution
             div { class: "event", "data-testid": "conflicts-display",
                 div { class: "event-head", span { "Conflicts" } span { "{conflicts().len()}" } }
                 for conflict in conflicts() {
                     div { class: "event", "data-testid": "conflict-row",
-                        div { class: "muted", "{conflict}" }
+                        div { class: "event-head",
+                            span { "target" }
+                            span { class: "muted", "{conflict.target_ref}" }
+                        }
+                        div { class: "muted",
+                            "{conflict.operations.len()} competing operations from different actors"
+                        }
+                        for op in &conflict.operations {
+                            div { class: "event", style: "margin-left: 16px; border-left: 2px solid var(--warning, #f59e0b); padding-left: 8px;",
+                                div { class: "event-head",
+                                    span { "{op.get(\"kind\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
+                                    span { class: "muted", "{op.get(\"actor\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
+                                }
+                                div { class: "muted",
+                                    "op: {op.get(\"operation_id\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
+                                }
+                                div { class: "muted",
+                                    "ts: {op.get(\"timestamp\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
+                                }
+                            }
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "primary",
+                                "data-testid": "resolve-conflict-lww",
+                                onclick: {
+                                    let target = conflict.target_ref.clone();
+                                    move |_| {
+                                        resolved_target.set(Some(target.clone()));
+                                        status_msg.set(format!(
+                                            "Resolved {} via LWW (last-write-wins): accepting most recent operation",
+                                            target
+                                        ));
+                                    }
+                                },
+                                "Resolve LWW"
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "resolve-conflict-manual",
+                                onclick: {
+                                    let target = conflict.target_ref.clone();
+                                    move |_| {
+                                        resolved_target.set(Some(target.clone()));
+                                        status_msg.set(format!(
+                                            "Manual resolution selected for {target}. Review operations above and apply the correct state."
+                                        ));
+                                    }
+                                },
+                                "Manual Review"
+                            }
+                        }
+                        if resolved_target() == Some(conflict.target_ref.clone()) {
+                            div { class: "muted", style: "color: var(--success, #10b981);",
+                                "Conflict marked as resolved"
+                            }
+                        }
                     }
                 }
                 if conflicts().is_empty() {
-                    div { class: "muted", "No conflicts detected." }
+                    div { class: "muted", "No conflicts detected. Click Refresh to scan operations." }
                 }
             }
 

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use chrono::Utc;
 use dioxus::prelude::*;
 
 use crate::{api::ContrixApi, config::LocalConfigStore, views::helpers::persist_config};
@@ -7,6 +10,50 @@ enum SessionState {
     Disconnected,
     Connected,
     SoftLogout,
+}
+
+/// Client-side rate limiter for auth attempts.
+/// Tracks failures per action key and enforces a cooldown window.
+#[derive(Clone, Debug)]
+struct AuthRateLimiter {
+    failures: HashMap<String, Vec<f64>>,
+    max_attempts: usize,
+    window_secs: f64,
+}
+
+impl AuthRateLimiter {
+    fn new(max_attempts: usize, window_secs: f64) -> Self {
+        Self {
+            failures: HashMap::new(),
+            max_attempts,
+            window_secs,
+        }
+    }
+
+    fn check(&self, key: &str, now: f64) -> Result<(), f64> {
+        if let Some(attempts) = self.failures.get(key) {
+            let recent: Vec<_> = attempts
+                .iter()
+                .filter(|&&t| now - t < self.window_secs)
+                .collect();
+            if recent.len() >= self.max_attempts {
+                let oldest = recent.first().unwrap();
+                let cooldown_remaining = self.window_secs - (now - *oldest);
+                return Err(cooldown_remaining.max(0.0));
+            }
+        }
+        Ok(())
+    }
+
+    fn record_failure(&mut self, key: &str, now: f64) {
+        let attempts = self.failures.entry(key.to_owned()).or_default();
+        attempts.push(now);
+        attempts.retain(|&t| now - t < self.window_secs);
+    }
+
+    fn clear(&mut self, key: &str) {
+        self.failures.remove(key);
+    }
 }
 
 #[component]
@@ -28,9 +75,10 @@ pub fn LoginPanel(
     let mut oidc_status = use_signal(|| String::new());
     let mut dev_login_status = use_signal(|| String::new());
     let mut refresh_status = use_signal(|| String::new());
+    let mut rate_limiter = use_signal(|| AuthRateLimiter::new(5, 60.0));
 
     rsx! {
-        div { class: "timeline", "data-testid": "login-panel",
+        div { class: "timeline", "data-testid": "login-panel", role: "region", "aria-label": "Login",
             // Connection test
             div { class: "event", "data-testid": "connection-test",
                 div { class: "event-head", span { "Server" } span { "connection test" } }
@@ -38,6 +86,7 @@ pub fn LoginPanel(
                     label { "Server URL" }
                     input {
                         "data-testid": "login-server-url",
+                        "aria-label": "Server URL",
                         value: "{base_url}",
                         oninput: move |evt| base_url.set(evt.value()),
                     }
@@ -111,16 +160,28 @@ pub fn LoginPanel(
                         "data-testid": "passkey-login-button",
                         onclick: {
                             move |_| {
+                                let now = Utc::now().timestamp() as f64;
+                                if let Err(cooldown) = rate_limiter.read().check("passkey", now) {
+                                    passkey_status.set(format!("Rate limited. Try again in {cooldown:.0}s"));
+                                    return;
+                                }
                                 let base = base_url();
                                 let did = account_did();
                                 spawn(async move {
                                     match ContrixApi::new(&base) {
                                         Ok(api) => match api.passkey_challenge(&did).await {
-                                            Ok(challenge) => passkey_status.set(format!(
-                                                "Challenge received: rp={}, expires={}",
-                                                challenge.rp_id, challenge.expires_at
-                                            )),
-                                            Err(e) => passkey_status.set(format!("Passkey challenge failed: {e}")),
+                                            Ok(challenge) => {
+                                                rate_limiter.write().clear("passkey");
+                                                passkey_status.set(format!(
+                                                    "Challenge received: rp={}, expires={}",
+                                                    challenge.rp_id, challenge.expires_at
+                                                ))
+                                            }
+                                            Err(e) => {
+                                                let now = Utc::now().timestamp() as f64;
+                                                rate_limiter.write().record_failure("passkey", now);
+                                                passkey_status.set(format!("Passkey challenge failed: {e}"))
+                                            }
                                         },
                                         Err(e) => passkey_status.set(format!("Invalid URL: {e}")),
                                     }
@@ -134,15 +195,27 @@ pub fn LoginPanel(
                         "data-testid": "oidc-login-button",
                         onclick: {
                             move |_| {
+                                let now = Utc::now().timestamp() as f64;
+                                if let Err(cooldown) = rate_limiter.read().check("oidc", now) {
+                                    oidc_status.set(format!("Rate limited. Try again in {cooldown:.0}s"));
+                                    return;
+                                }
                                 let base = base_url();
                                 spawn(async move {
                                     match ContrixApi::new(&base) {
                                         Ok(api) => match api.oidc_authorize("default", "http://localhost:3000/callback").await {
-                                            Ok(resp) => oidc_status.set(format!(
-                                                "Redirect: {} (state: {})",
-                                                resp.redirect_url, resp.state
-                                            )),
-                                            Err(e) => oidc_status.set(format!("OIDC failed: {e}")),
+                                            Ok(resp) => {
+                                                rate_limiter.write().clear("oidc");
+                                                oidc_status.set(format!(
+                                                    "Redirect: {} (state: {})",
+                                                    resp.redirect_url, resp.state
+                                                ))
+                                            }
+                                            Err(e) => {
+                                                let now = Utc::now().timestamp() as f64;
+                                                rate_limiter.write().record_failure("oidc", now);
+                                                oidc_status.set(format!("OIDC failed: {e}"))
+                                            }
                                         },
                                         Err(e) => oidc_status.set(format!("Invalid URL: {e}")),
                                     }
@@ -156,6 +229,11 @@ pub fn LoginPanel(
                         "data-testid": "dev-login-button",
                         onclick: {
                             move |_| {
+                                let now = Utc::now().timestamp() as f64;
+                                if let Err(cooldown) = rate_limiter.read().check("dev-login", now) {
+                                    dev_login_status.set(format!("Rate limited. Try again in {cooldown:.0}s"));
+                                    return;
+                                }
                                 let base = base_url();
                                 let did = account_did();
                                 let dev = device_id();
@@ -169,6 +247,7 @@ pub fn LoginPanel(
                                             };
                                             match result {
                                                 Ok(session) => {
+                                                    rate_limiter.write().clear("dev-login");
                                                     token.set(session.access_token.clone());
                                                     persist_config(
                                                         config_store,
@@ -187,7 +266,11 @@ pub fn LoginPanel(
                                                     status.set(format!("Online: dev-login as {}", session.actor));
                                                     on_login.call(());
                                                 }
-                                                Err(e) => dev_login_status.set(format!("Dev login failed: {e}")),
+                                                Err(e) => {
+                                                    let now = Utc::now().timestamp() as f64;
+                                                    rate_limiter.write().record_failure("dev-login", now);
+                                                    dev_login_status.set(format!("Dev login failed: {e}"))
+                                                }
                                             }
                                         }
                                         Err(e) => dev_login_status.set(format!("Invalid URL: {e}")),
@@ -239,12 +322,18 @@ pub fn LoginPanel(
                         "data-testid": "refresh-token-button",
                         onclick: {
                             move |_| {
+                                let now = Utc::now().timestamp() as f64;
+                                if let Err(cooldown) = rate_limiter.read().check("refresh", now) {
+                                    refresh_status.set(format!("Rate limited. Try again in {cooldown:.0}s"));
+                                    return;
+                                }
                                 let base = base_url();
                                 let current_token = token();
                                 spawn(async move {
                                     match ContrixApi::new(&base) {
                                         Ok(api) => match api.token_refresh(&current_token).await {
                                             Ok(resp) => {
+                                                rate_limiter.write().clear("refresh");
                                                 token.set(resp.access_token.clone());
                                                 refresh_status.set(format!(
                                                     "Refreshed; expires={}",
@@ -252,7 +341,11 @@ pub fn LoginPanel(
                                                 ));
                                                 token_expiry.set(resp.expires_at);
                                             }
-                                            Err(e) => refresh_status.set(format!("Refresh failed: {e}")),
+                                            Err(e) => {
+                                                let now = Utc::now().timestamp() as f64;
+                                                rate_limiter.write().record_failure("refresh", now);
+                                                refresh_status.set(format!("Refresh failed: {e}"))
+                                            }
                                         },
                                         Err(e) => refresh_status.set(format!("Invalid URL: {e}")),
                                     }

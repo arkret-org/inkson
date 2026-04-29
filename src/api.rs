@@ -1,4 +1,11 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use contrix_sdk::ErrorEnvelope;
 use reqwest::{
@@ -10,6 +17,36 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use url::Url;
+
+/// A token that can be used to cancel in-flight API requests.
+#[derive(Clone, Debug)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Cancel all requests using this token.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Check if cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 use crate::config::validate_server_url;
 use crate::models::{
@@ -48,6 +85,7 @@ pub struct ContrixApi {
     retry: RetryPolicy,
     refresh_token: Option<String>,
     network_state: Arc<RwLock<NetworkState>>,
+    cancel_token: Option<CancellationToken>,
 }
 
 /// Network connectivity state.
@@ -134,6 +172,7 @@ impl ContrixApi {
             retry: options.retry,
             refresh_token: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
+            cancel_token: None,
         })
     }
 
@@ -155,6 +194,13 @@ impl ContrixApi {
     /// Set the refresh token for automatic token refresh.
     pub fn with_refresh_token(mut self, refresh_token: impl Into<String>) -> Self {
         self.refresh_token = Some(refresh_token.into());
+        self
+    }
+
+    /// Set a cancellation token for this API client.
+    /// When the token is cancelled, in-flight requests will be aborted.
+    pub fn with_cancel(mut self, token: CancellationToken) -> Self {
+        self.cancel_token = Some(token);
         self
     }
 
@@ -385,12 +431,17 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn search_spaces(&self, query: &str) -> anyhow::Result<SearchSpacesResponse> {
-        self.post_json(
-            "api/v1/directory/search-spaces",
-            json!({"query": query, "limit": 20}),
-        )
-        .await
+    pub async fn search_spaces(
+        &self,
+        query: &str,
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<SearchSpacesResponse> {
+        let mut body = json!({"query": query, "limit": 20});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/directory/search-spaces", body)
+            .await
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResponse> {
@@ -405,12 +456,16 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn index_query(&self, space_ids: &[String]) -> anyhow::Result<IndexQueryResponse> {
-        self.post_json(
-            "api/v1/index/query",
-            json!({"space_ids": space_ids, "entity_types": [], "limit": 20}),
-        )
-        .await
+    pub async fn index_query(
+        &self,
+        space_ids: &[String],
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<IndexQueryResponse> {
+        let mut body = json!({"space_ids": space_ids, "entity_types": [], "limit": 20});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/index/query", body).await
     }
 
     pub async fn index_describe(&self) -> anyhow::Result<IndexDescribeResponse> {
@@ -720,20 +775,27 @@ impl ContrixApi {
     pub async fn search_organizations(
         &self,
         query: &str,
+        next_cursor: Option<&str>,
     ) -> anyhow::Result<SearchOrganizationsResponse> {
-        self.post_json(
-            "api/v1/directory/search-organizations",
-            json!({"query": query, "limit": 20}),
-        )
-        .await
+        let mut body = json!({"query": query, "limit": 20});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/directory/search-organizations", body)
+            .await
     }
 
-    pub async fn search_actors(&self, query: &str) -> anyhow::Result<SearchActorsResponse> {
-        self.post_json(
-            "api/v1/directory/search-actors",
-            json!({"query": query, "limit": 20}),
-        )
-        .await
+    pub async fn search_actors(
+        &self,
+        query: &str,
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<SearchActorsResponse> {
+        let mut body = json!({"query": query, "limit": 20});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/directory/search-actors", body)
+            .await
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
@@ -741,12 +803,17 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn search_users(&self, query: &str) -> anyhow::Result<SearchUsersResponse> {
-        self.post_json(
-            "api/v1/directory/search-users",
-            json!({"query": query, "limit": 20}),
-        )
-        .await
+    pub async fn search_users(
+        &self,
+        query: &str,
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<SearchUsersResponse> {
+        let mut body = json!({"query": query, "limit": 20});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/directory/search-users", body)
+            .await
     }
 
     // ── Space Management ────────────────────────────────────────────
@@ -1007,28 +1074,37 @@ impl ContrixApi {
         &self,
         entity_id: &str,
         limit: Option<usize>,
+        next_cursor: Option<&str>,
     ) -> anyhow::Result<IndexThreadResponse> {
-        self.post_json(
-            "api/v1/index/thread",
-            json!({"entity_id": entity_id, "limit": limit.unwrap_or(50)}),
-        )
-        .await
+        let mut body = json!({"entity_id": entity_id, "limit": limit.unwrap_or(50)});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/index/thread", body).await
     }
 
     pub async fn index_notifications(
         &self,
         limit: Option<usize>,
+        next_cursor: Option<&str>,
     ) -> anyhow::Result<IndexNotificationsResponse> {
-        self.post_json(
-            "api/v1/index/notifications",
-            json!({"limit": limit.unwrap_or(50)}),
-        )
-        .await
+        let mut body = json!({"limit": limit.unwrap_or(50)});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/index/notifications", body).await
     }
 
-    pub async fn index_inbox(&self, limit: Option<usize>) -> anyhow::Result<IndexInboxResponse> {
-        self.post_json("api/v1/index/inbox", json!({"limit": limit.unwrap_or(50)}))
-            .await
+    pub async fn index_inbox(
+        &self,
+        limit: Option<usize>,
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<IndexInboxResponse> {
+        let mut body = json!({"limit": limit.unwrap_or(50)});
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/index/inbox", body).await
     }
 
     pub async fn index_search(
@@ -1037,17 +1113,18 @@ impl ContrixApi {
         space_ids: Option<&[String]>,
         entity_types: Option<&[String]>,
         limit: Option<usize>,
+        next_cursor: Option<&str>,
     ) -> anyhow::Result<IndexSearchResponse> {
-        self.post_json(
-            "api/v1/index/search",
-            json!({
-                "query": query,
-                "space_ids": space_ids,
-                "entity_types": entity_types,
-                "limit": limit.unwrap_or(20)
-            }),
-        )
-        .await
+        let mut body = json!({
+            "query": query,
+            "space_ids": space_ids,
+            "entity_types": entity_types,
+            "limit": limit.unwrap_or(20)
+        });
+        if let Some(cursor) = next_cursor {
+            body["next_cursor"] = json!(cursor);
+        }
+        self.post_json("api/v1/index/search", body).await
     }
 
     pub async fn index_space_hierarchy(
@@ -1363,6 +1440,15 @@ impl ContrixApi {
         let mut attempt = 0usize;
         let mut did_refresh = false;
         loop {
+            // Check if request was cancelled
+            if self
+                .cancel_token
+                .as_ref()
+                .is_some_and(|t| t.is_cancelled())
+            {
+                return Err(anyhow::anyhow!("request cancelled"));
+            }
+
             let Some(candidate) = request.try_clone() else {
                 return Ok(request.send().await?);
             };

@@ -82,6 +82,39 @@ test("settings can update account and device before session bootstrap", async ({
   await expect(page.getByTestId("right-panel")).toContainText("dev_bob_1");
 });
 
+test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
+  await page.getByTestId("settings-nav-button").click();
+  await page.getByTestId("section-theme").click();
+  await expect(page.getByTestId("language-settings")).toBeVisible();
+
+  await page.getByTestId("language-ar").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "rtl");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "ar");
+  await expect(page.getByTestId("text-direction")).toContainText("rtl");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
+
+  await page.getByTestId("settings-nav-button").click();
+  await page.getByTestId("section-theme").click();
+  await page.getByTestId("language-en").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
+});
+
+test("mobile viewport collapses shell chrome and keeps timeline usable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/timeline", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await expect(page.getByTestId("sidebar")).toBeHidden();
+  await expect(page.getByTestId("right-panel")).toBeHidden();
+  await expect(page.getByTestId("main-view")).toBeVisible();
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+});
+
 test("directory search resolve and space selection flow works", async ({ page }) => {
   await page.getByTestId("directory-nav-button").click();
   await expect(page.getByTestId("directory-panel")).toBeVisible();

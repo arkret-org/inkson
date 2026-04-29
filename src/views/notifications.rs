@@ -101,8 +101,8 @@ pub fn NotificationsPanel(
     let total_notifications = notifications().len();
 
     rsx! {
-        div { class: "timeline", "data-testid": "notifications-panel",
-            div { class: "event",
+        div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
+            div { class: "event", role: "status", "aria-live": "polite",
                 div { class: "event-head",
                     span { "Notifications" }
                     span { "{unread_visible} visible unread / {server_unread()} server unread" }
@@ -383,7 +383,7 @@ fn refresh_notifications(
 ) {
     spawn(async move {
         match authed_api(&base_url, access_token) {
-            Ok(api) => match api.index_notifications(Some(50)).await {
+            Ok(api) => match api.index_notifications(Some(50), None).await {
                 Ok(response) => {
                     let raw_notifications = response.notifications;
                     server_unread.set(response.unread_count);

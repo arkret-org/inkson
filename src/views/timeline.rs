@@ -161,11 +161,11 @@ impl TimelineEvent {
             self.commit_id.as_deref(),
             self.redaction_id.as_deref(),
         ) {
+            (_, _, Some(redaction_id)) => Some(format!("tombstone {redaction_id}")),
             (Some(operation_id), Some(commit_id), _) => {
                 Some(format!("fact {operation_id} / commit {commit_id}"))
             }
             (Some(operation_id), None, _) => Some(format!("fact {operation_id}")),
-            (None, None, Some(redaction_id)) => Some(format!("tombstone {redaction_id}")),
             _ => None,
         }
     }
@@ -202,6 +202,9 @@ pub fn TimelinePanel(
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
     let selected_space_c = selected_space.clone();
+    let account_did_key = account_did.clone();
+    let device_id_key = device_id.clone();
+    let selected_space_key = selected_space.clone();
 
     let events_data: Vec<(usize, TimelineEvent)> = timeline()
         .iter()
@@ -399,6 +402,25 @@ pub fn TimelinePanel(
                                                         editing_index.set(None);
                                                         return;
                                                     }
+                                                    // Optimistic: apply revision immediately
+                                                    let _original_body = timeline.write().iter_mut()
+                                                        .find(|c| c.id == eid)
+                                                        .map(|found| {
+                                                            let orig = found.body.clone();
+                                                            found.revisions.push(TimelineRevision {
+                                                                body: found.body.clone(),
+                                                                timestamp: found.timestamp.clone(),
+                                                                operation_id: found.operation_id.clone(),
+                                                                commit_id: found.commit_id.clone(),
+                                                            });
+                                                            found.body = content.clone();
+                                                            found.timestamp = timestamp_now();
+                                                            found.edited = true;
+                                                            found.pending = true;
+                                                            orig
+                                                        });
+                                                    editing_index.set(None);
+
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => match api
@@ -407,11 +429,9 @@ pub fn TimelinePanel(
                                                             {
                                                                 Ok(updated) => {
                                                                     if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
-                                                                        found.apply_revision(
-                                                                            content.clone(),
-                                                                            Some(updated.operation_id.clone()),
-                                                                            Some(updated.commit_id.clone()),
-                                                                        );
+                                                                        found.operation_id = Some(updated.operation_id.clone());
+                                                                        found.commit_id = Some(updated.commit_id.clone());
+                                                                        found.pending = false;
                                                                     }
                                                                     state_store.write().append_raw_operation(
                                                                         updated.operation_id.clone(),
@@ -425,12 +445,24 @@ pub fn TimelinePanel(
                                                                     repo_state.set(updated.commit_id.clone());
                                                                     write_status.set(format!("revised {}", updated.operation_id));
                                                                 }
-                                                                Err(error) => write_status.set(format!("edit failed: {error}")),
+                                                                Err(error) => {
+                                                                    // Rollback optimistic edit
+                                                                    if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
+                                                                        if let Some(rev) = found.revisions.pop() {
+                                                                            found.body = rev.body;
+                                                                            found.timestamp = rev.timestamp;
+                                                                            found.operation_id = rev.operation_id;
+                                                                            found.commit_id = rev.commit_id;
+                                                                        }
+                                                                        found.edited = !found.revisions.is_empty();
+                                                                        found.pending = false;
+                                                                    }
+                                                                    write_status.set(format!("edit failed: {error}"));
+                                                                }
                                                             },
                                                             Err(error) => write_status.set(format!("invalid server URL: {error}")),
                                                         }
                                                     });
-                                                    editing_index.set(None);
                                                 }
                                             },
                                             "Save"
@@ -462,6 +494,23 @@ pub fn TimelinePanel(
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
                                                     let reason = Some("user requested tombstone".to_owned());
+                                                    // Optimistic: apply redaction immediately
+                                                    let original = timeline.write().iter_mut()
+                                                        .find(|c| c.id == eid)
+                                                        .map(|found| {
+                                                            let orig = found.clone();
+                                                            found.redacted = true;
+                                                            found.body = String::new();
+                                                            found.operation_id = None;
+                                                            found.commit_id = None;
+                                                            found.redaction_id = None;
+                                                            found.tombstone_reason = reason.clone();
+                                                            found.timestamp = timestamp_now();
+                                                            found.pending = true;
+                                                            orig
+                                                        });
+                                                    redact_confirm.set(None);
+
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => match api.redact_message(&eid, reason.as_deref()).await {
@@ -480,12 +529,19 @@ pub fn TimelinePanel(
                                                                     );
                                                                     write_status.set(format!("tombstoned {}", redacted.redaction_id));
                                                                 }
-                                                                Err(error) => write_status.set(format!("redact failed: {error}")),
+                                                                Err(error) => {
+                                                                    // Rollback optimistic redaction
+                                                                    if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
+                                                                        if let Some(original) = original {
+                                                                            *found = original;
+                                                                        }
+                                                                    }
+                                                                    write_status.set(format!("redact failed: {error}"));
+                                                                }
                                                             },
                                                             Err(error) => write_status.set(format!("invalid server URL: {error}")),
                                                         }
                                                     });
-                                                    redact_confirm.set(None);
                                                 }
                                             },
                                             "Confirm Redact"
@@ -563,8 +619,9 @@ pub fn TimelinePanel(
 
             textarea {
                 "data-testid": "composer-input",
+                "aria-label": "Message composer",
                 value: "{draft}",
-                placeholder: if encrypt_toggle() { "Write an encrypted message" } else { "Write a plaintext dev-mode message" },
+                placeholder: if encrypt_toggle() { "Write an encrypted message (Ctrl+Enter to send)" } else { "Write a plaintext dev-mode message (Ctrl+Enter to send)" },
                 oninput: {
                     let sc = selected_space_c.clone();
                     move |event| {
@@ -580,6 +637,93 @@ pub fn TimelinePanel(
                                 let _ = api.send_typing(&space, true).await;
                             }
                         });
+                    }
+                },
+                onkeydown: move |event| {
+                    if event.key().to_string() == "Enter" && event.modifiers().ctrl() {
+                        let body = draft().trim().to_owned();
+                        if body.is_empty() {
+                            return;
+                        }
+                        let reply_target = reply_to_index()
+                            .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
+                        let thread_id = reply_target.clone();
+                        let space_for_encrypt = selected_space_key.clone();
+                        let space_for_plain = selected_space_key.clone();
+                        let space_for_draft = selected_space_key.clone();
+                        if encrypt_toggle() {
+                            match compose_local_encrypted_message(
+                                &account_did_key,
+                                &device_id_key,
+                                &space_for_encrypt,
+                                "cx:message:local-compose",
+                                &body,
+                            ) {
+                                Ok(message) => {
+                                    timeline.write().push(TimelineEvent::system_notice(
+                                        format!("local-encrypted-{}", uuid_v8()),
+                                        "local",
+                                        format!(
+                                            "encrypted {} epoch {} digest {}",
+                                            message.payload.scheme.as_str(),
+                                            message.payload.epoch,
+                                            message.payload.payload_digest
+                                        ),
+                                    ));
+                                }
+                                Err(error) => {
+                                    timeline.write().push(TimelineEvent::system_notice(
+                                        format!("encrypt-error-{}", uuid_v8()),
+                                        "local",
+                                        format!("encryption failed: {error}"),
+                                    ));
+                                }
+                            }
+                        } else {
+                            let event_id = format!("ev:local:{}", uuid_v8());
+                            timeline.write().push(TimelineEvent {
+                                id: event_id.clone(),
+                                sender: account_did_key.clone(),
+                                sender_display: "you".to_owned(),
+                                body: body.clone(),
+                                timestamp: Utc::now().to_rfc3339(),
+                                reply_to: reply_target,
+                                reactions: Vec::new(),
+                                redacted: false,
+                                edited: false,
+                                thread_id: thread_id.clone(),
+                                blob_ref: None,
+                                operation_id: None,
+                                commit_id: None,
+                                redaction_id: None,
+                                tombstone_reason: None,
+                                revisions: Vec::new(),
+                                pending: true,
+                            });
+                            let base = base_url_sig();
+                            let api_token = token();
+                            let space = space_for_plain.clone();
+                            let wait_for = active_sync_token(sync_cursor());
+                            spawn(async move {
+                                if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
+                                    let content = json!({"body": body, "format": "plain"});
+                                    match api.send_message(&space, thread_id.as_deref(), content, false).await {
+                                        Ok(resp) => {
+                                            if let Some(event) = timeline.write().iter_mut().find(|e| e.id == event_id) {
+                                                event.apply_send_ack(resp.event_id.clone(), resp.operation_id.clone(), resp.commit_id.clone());
+                                            }
+                                        }
+                                        Err(error) => {
+                                            timeline.write().retain(|e| e.id != event_id);
+                                            write_status.set(format!("send failed: {error}"));
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        draft.set(String::new());
+                        state_store.write().save_draft(space_for_draft, String::new());
+                        reply_to_index.set(None);
                     }
                 },
             }

@@ -95,7 +95,7 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                                         let api_token = token();
                                         spawn(async move {
                                             if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.search_users(&q).await {
+                                                match api.search_users(&q, None).await {
                                                     Ok(resp) => search_results.set(resp.results),
                                                     Err(e) => status_msg.set(format!("search failed: {e}")),
                                                 }

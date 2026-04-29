@@ -10,6 +10,7 @@ pub mod cursor;
 pub mod discovery;
 pub mod entity;
 pub mod hlc;
+pub mod i18n;
 pub mod local_state;
 pub mod models;
 pub mod offline;
