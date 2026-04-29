@@ -35,12 +35,12 @@ jobs:
 
     steps:
       - name: Checkout chask
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: chask
 
       - name: Checkout contrix-rust-sdk
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/contrix-rust-sdk
           path: contrix-rust-sdk
