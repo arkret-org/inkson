@@ -74,15 +74,14 @@ fn chask_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: chask::models::IdentityResolveResponse =
-        serde_json::from_value(json!({
-            "did_document": {"id": "did:web:alice.example"},
-            "key_log_head": null,
-            "seq": 0,
-            "receipts": [],
-            "method_evidence": {"mode": "development_local"}
-        }))
-        .unwrap();
+    let resolved_identity: chask::models::IdentityResolveResponse = serde_json::from_value(json!({
+        "did_document": {"id": "did:web:alice.example"},
+        "key_log_head": null,
+        "seq": 0,
+        "receipts": [],
+        "method_evidence": {"mode": "development_local"}
+    }))
+    .unwrap();
     assert_eq!(
         resolved_identity.did_document["id"],
         "did:web:alice.example"

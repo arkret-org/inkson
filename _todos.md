@@ -6,6 +6,25 @@
 
 ---
 
+## SDK 侧接管/同步项
+
+以下任务不应在 chask 中重复实现协议底座；已同步到
+`E:\Works\contrix-dev\contrix-rust-sdk\_todos.md`，由 SDK 侧完成并通过
+chask 做 UI/E2E 集成验证。
+
+- [ ] **[SDK] 生产认证与身份底座** — WebAuthn/passkey ceremony、OIDC callback/token verification、refresh token 安全存储、账户恢复真实证明、DID control proof verifier。
+- [ ] **[SDK] DID / Handle / Key Log 能力** — `did:uuid` 结构化生成、`did:web`/`did:key`/`did:keri` adapter、key log 验证、普通密钥轮换、双向 handle 验证、pairwise/private DID 可见性控制。
+- [ ] **[SDK] Claims / VC / 渐进披露** — presentation request、disclosure policy、verified_handle、verified_email_domain、org_membership、device_trust、mfa_level 等 claim/attestation 类型与验证。
+- [ ] **[SDK] 事件与写入事实链** — Event detached signature、canonical reducer input、operation/commit proof binding、服务端验证后 fact chain 回显模型。
+- [ ] **[SDK] 对象与操作族补齐** — Invite、Channel、Topic、Comment、Attachment、Run、Memory、MLS proposal/commit/welcome 等对象模型与 operation builder。
+- [ ] **[SDK] Snapshot / Sync 模式** — 快照 manifest/chunk 校验、增量应用、Board/Chat/Topic 同步配置、limited timeline/backfill gap 语义。
+- [ ] **[SDK] Web E2EE 基础设施** — WebCrypto、IndexedDB crypto store、MLS group state 持久化、KeyPackage 序列化、密钥备份/恢复。
+- [ ] **[SDK] 加密信封合规** — AAD 包含 space/event/causal refs、payload_digest/aad_digest 验证、MLS epoch recovery、设备撤销触发未来写入 fail-closed。
+- [ ] **[SDK] Federation / Service DID 安全** — HTTP Message Signatures、service DID allowlist、事务信封、fork/quarantine、backfill 授权、`.well-known` 服务发现。
+- [ ] **[SDK] Blob / Media / WebRTC 协议底座** — 内容寻址 blob、认证下载、加密附件、thumbnail metadata、安全 Content-Disposition、to-device WebRTC 信令模型。
+- [ ] **[SDK] Applet / Agent / Sovereign 扩展模型** — applet signed registration、namespace、ghost actor、portal mapping、agent run/memory lifecycle、A2A/ACP/MCP bridge metadata、主权部署策略模型。
+- [ ] **[SDK] Conformance / Schema / 测试向量** — registered schemas、encrypted envelope vectors、cross-device/offline/E2EE integration vectors、privacy/security regression vectors。
+
 ## 2026-04-29 发布级补强进展
 
 ### 已完成并验证
@@ -15,9 +34,16 @@
 - [x] **修复默认 Rust 测试门禁** — 默认 `cargo test` 现在通过；过时协议向量改为 `protocol-test-vectors` 显式 opt-in，避免默认发布门禁被未维护草稿阻塞。
 - [x] **修复 Web/WASM 构建门禁** — 补齐 tokio `sync` feature，`dx build --platform web` 通过。
 - [x] **落地真实页面路由覆盖** — 当前 Dioxus app 已有 `/login`、`/register`、`/` dashboard、`/timeline`、`/contacts`、`/directory`、`/devices`、`/devices/verify`、`/space/:space_id/admin`、`/audit`、`/settings`、`/readiness` 等页面。
-- [x] **补全 Playwright 主要业务流测试** — 14 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、Product 兼容流程、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、发布阻塞清单。
+- [x] **补全 Playwright 主要业务流测试** — 17 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
 - [x] **修复 Timeline 实时渲染 bug** — 发送明文或本地 MLS 消息后，Timeline 现在从 `timeline()` 派生事件列表并立即更新。
 - [x] **补齐审计表展示关键 ID** — Audit 页面现在显示 `operation_id`，Playwright 能验证 repo operation/commit 可见。
+- [x] **注册向导接入 DID 操作提交** — 注册流程在账号创建前显式调用 `POST /api/v1/identity/submit-did-operation`，Playwright 验证提交成功摘要可见。
+- [x] **目录接入 Index Query 与组织卡片** — Space 搜索后会补拉 `POST /api/v1/index/query` 结果；组织搜索改为结构化卡片并提供成员搜索/handle 解析交互。
+- [x] **Call 面板消费真实 ICE 配置** — `/call` 现在可从 `GET /api/v1/media/ice-config` 加载服务端 STUN/TURN 配置并显示 TTL。
+- [x] **客户端收紧传输安全与限流处理** — 非 loopback `http://` 服务器现在会被拒绝；重试逻辑会读取 `Retry-After` header。
+- [x] **Web 非安全模式显式告警** — WASM 构建顶部增加非生产安全横幅，明确说明缺失 WebCrypto/IndexedDB/安全恢复。
+- [x] **通知面板改为派生投影并落地静音规则** — Notifications 现在从 `POST /api/v1/index/notifications` 派生渲染，本地持久化已读/归档/类型开关/逐空间静音，Push Settings 可查看和清除静音空间。
+- [x] **消息写路径改为结构化事件并接入写一致性骨架** — Timeline/Product 现在保留 `event_id`/`operation_id`/`commit_id` 事实摘要，编辑维护 revision chain，撤回保留 tombstone，请求自动携带 `x-contrix-request-id`/`idempotency-key`，显式 backfill 读取会转发 `x-contrix-wait-for`。
 
 ### 仍未达到产品发布级的阻塞项
 
@@ -33,7 +59,7 @@
 - [x] `cargo check`
 - [x] `cargo test`
 - [x] `dx build --platform web`
-- [x] `CLIENTX_E2E_BASE_URL=http://127.0.0.1:4527 npx playwright test tests/e2e/chask.flows.spec.ts --project=chromium --reporter=list --timeout=90000`
+- [x] `npx playwright test tests/e2e/clientx.flows.spec.ts --project=chromium --reporter=list --timeout=90000`
 
 ---
 
@@ -65,7 +91,7 @@
 - [ ] **`did:web` / `did:key` / `did:keri` 方法适配器** — 注册页面有方法选择 UI 但实际生成逻辑未区分实现
 - [ ] **密钥日志 (key_log)** — spec 要求通过 inception_key → key_log 继承当前控制密钥，客户端无此概念
 - [ ] **普通密钥轮换不改变 DID** — 客户端无密钥轮换流程实现
-- [ ] **DID 操作提交** — 缺少 `POST /api/v1/identity/submit-did-operation` 端点的客户端实现
+- [x] **DID 操作提交** — 注册向导现在会在账号创建前提交 `POST /api/v1/identity/submit-did-operation`。
 
 ### 1.2 Handle 解析
 
@@ -126,7 +152,9 @@
 
 - [x] **Entity 统一载体** — spec 将 board/task/message/topic/channel/document/file/memory/run/actor_profile/poll 统一为 entity，客户端按独立视图处理，缺乏统一实体抽象
 - [x] **Relation 一等公民** — spec 要求 relation 作为独立对象类型（containment/dependency/reply/reference/assignment/mention），客户端仅在消息中内联 reply-to，无独立 relation 管理
-- [ ] **Event 签名事实** — spec 要求每个 event 是签名事实和 reducer 输入，客户端发送消息时未创建签名 event
+- [ ] **Event 签名事实** — spec 要求每个 event 是签名事实和 reducer 输入，客户端尚未生成真正可验证的 detached signature / canonical reducer input
+  - [x] Timeline/Product 写路径已升级为结构化事件，并保留 `event_id`/`operation_id`/`commit_id` 事实摘要供 UI 与本地缓存追踪
+  - [ ] 仍缺事件签名、规范化输入摘要、服务端验证后的 fact chain 回显
 - [x] **View 投影定义** — spec 要求 view 是独立对象（非真相源），客户端使用硬编码视图枚举，无动态 view 对象
 - [x] **Schema 对象** — 正式 schema 对象缺失
 - [x] **Policy 对象** — 正式 policy 对象缺失
@@ -140,8 +168,8 @@
 - [ ] **Topic 锚定** — spec 要求 topic 可锚定到 space/board/task/run/memory，客户端 Forum 视图仅为独立实现
 - [ ] **Comment 与 Message 分离** — spec 明确 comment 是持久化对象级注释/审查/审批（不同于 message），客户端未区分
 - [ ] **@mention 结构化引用** — spec 要求存储为结构化 DID/entity 引用 + mentions Relations，客户端未实现
-- [ ] **编辑修订链** — spec 要求 `cx.message.revise` 修订链，客户端发送 edit 但未维护修订历史
-- [ ] **撤回墓碑语义** — spec 要求 `cx.message.redact` 有墓碑语义（无全局物理擦除），客户端有 redaction UI 但未实现墓碑逻辑
+- [x] **编辑修订链** — Timeline 现在会把旧正文和旧 operation/commit 追加到 revision chain，并在 UI 中展示修订历史
+- [x] **撤回墓碑语义** — Timeline 现在对 `cx.message.redact` 保留 tombstone、撤回原因和 redaction fact，而不是直接物理移除消息
 
 ### 3.3 社交图谱
 
@@ -215,7 +243,7 @@
 ### 4.7 同步配置
 
 - [ ] **Board/Chat/Topic 三种同步模式** — spec 定义了三种同步配置（实体当前状态+评论摘要、频道元数据+最近N消息、主题元数据+锚定对象+反向回填），客户端使用单一同步模式
-- [ ] **`X-Contrix-Wait-For` read-your-writes** — spec 要求通过 sync_token + header 实现读写一致性，客户端未实现
+- [x] **`X-Contrix-Wait-For` read-your-writes** — 客户端 helper 现在会在携带最新 `sync_token` 的显式读取上发送 `x-contrix-wait-for`；Product 流程后的 backfill 已通过 Playwright 校验
 
 ---
 
@@ -234,7 +262,7 @@
 
 **Index / AppView (部分缺失)**
 - [x] `POST /api/v1/index/entity` — 单实体查询
-- [ ] `POST /api/v1/index/query` — 已有但 UI 未使用
+- [x] `POST /api/v1/index/query` — Directory 的 Space 搜索现在会显示 Index Query 返回的结构化投影结果
 - [x] `POST /api/v1/index/thread` — 线程查询
 - [x] `POST /api/v1/index/notifications` — 通知查询
 - [x] `POST /api/v1/index/inbox` — 收件箱查询
@@ -255,7 +283,7 @@
 - [x] `POST /api/v1/policy/check` — 策略决策（签名决策）
 
 **Media (部分缺失)**
-- [ ] `GET /api/v1/media/ice-config` — 已有 API 调用，但未用于 WebRTC
+- [x] `GET /api/v1/media/ice-config` — `/call` 面板现在可加载服务端 ICE 配置并显示 TTL
 
 **Identity (部分缺失)**
 - [x] `POST /api/v1/identity/log` — 密钥日志查询
@@ -264,10 +292,10 @@
 
 ### 5.2 API 规范合规性
 
-- [ ] **HTTPS 生产环境强制** — 客户端默认使用 `http://127.0.0.1:8787`，无 HTTPS 强制检查
-- [ ] **幂等写入** — spec 要求通过 operation_id/commit_id/request_id 实现幂等，客户端未生成或跟踪这些 ID
+- [x] **HTTPS 生产环境强制** — 客户端现在只允许 loopback `http://`，非本地服务器必须使用 `https://`
+- [x] **幂等写入** — 客户端现在会为消息发送/编辑/撤回/commit 提交自动生成 `x-contrix-request-id` 与 `idempotency-key`，并在 UI/本地状态中追踪返回的 operation/commit IDs
 - [ ] **游标分页** — spec 要求基于游标的分页 + 不透明 token，客户端搜索结果无分页
-- [ ] **速率限制处理** — spec 要求处理 Retry-After header，客户端重试策略未检查此 header
+- [x] **速率限制处理** — 重试逻辑现在会优先读取并遵循 `Retry-After` header
 - [ ] **CORS 浏览器支持** — 未确认 WASM 构建是否正确处理 CORS
 - [ ] **特性发现** — spec 要求通过 describe 端点发现功能，客户端仅在连接时探测一次
 
@@ -294,7 +322,7 @@
 ### 7.2 组织发现
 
 - [x] **组织配置文件状态** — discoverability/profile_visibility/directory_services/proof 缺失
-- [ ] **组织搜索 UI** — API 已连接但 UI 仅显示原始结果，缺乏组织卡片和交互
+- [x] **组织搜索 UI** — 组织结果现在渲染为结构化卡片，并提供成员搜索与 handle 解析交互
 
 ### 7.3 目录服务
 
@@ -313,12 +341,12 @@
 ### 7.6 推送通知
 
 - [x] **E2EE 空间推送** — spec 要求向推送网关仅发送最小元数据，客户端未实现
-- [ ] **逐空间静音** — 推送设置 UI 存在但未实现实际的 per-space mute 逻辑
+- [x] **逐空间静音** — Notifications/Push Settings 现在支持持久化的 per-space mute / unmute / clear-all 逻辑
 
 ### 7.7 已读回执与标记
 
 - [x] **多设备标记合并** — spec 要求使用因果最新标记 + HLC/device_id 决定器合并，客户端未实现
-- [ ] **通知派生投影** — 通知应为派生投影而非客户端本地状态
+- [x] **通知派生投影** — Notifications 现在从 `POST /api/v1/index/notifications` 派生渲染，不再依赖硬编码本地列表
 
 ---
 
@@ -408,7 +436,7 @@
 ### 10.2 服务器威胁模型
 
 - [ ] **客户端侧安全措施** — 暴力认证防护、垃圾邮件泛洪、欺骗/重放防护、枚举防护等客户端配合措施缺失
-- [ ] **URL 凭据泄漏** — spec 警告不要在 URL 中传递凭据，客户端使用 Bearer header（正确）
+- [x] **URL 凭据泄漏** — 已验证客户端继续使用 Bearer header 传递凭据，未将 token 放入 URL
 
 ### 10.3 主权部署
 
@@ -487,7 +515,7 @@
 
 ### 12.5 平台差异
 
-- [ ] **WASM 功能降级未告知用户** — Web 端 E2EE 为占位符，但 UI 未明确告知用户当前为非安全模式
+- [x] **WASM 功能降级未告知用户** — Web 顶部横幅现在明确提示浏览器端为非生产安全模式
 - [ ] **iOS/Android 未实现** — spec 要求跨平台，仅有构建目标配置无实际实现
 - [x] **移动端适配** — 三栏布局在小屏幕上不可用，无响应式设计
 

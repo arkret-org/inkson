@@ -5,7 +5,10 @@ use crate::{
     api::ContrixApi,
     local_state::LocalStateStore,
     models::SpacePreview,
-    views::helpers::{authed_api, handle_from_did},
+    views::{
+        helpers::{authed_api, authed_api_with_sync, handle_from_did},
+        timeline::TimelineEvent,
+    },
 };
 
 #[component]
@@ -16,7 +19,7 @@ pub fn ProductPanel(
     token: Signal<String>,
     mut selected_space: Signal<String>,
     mut spaces: Signal<Vec<SpacePreview>>,
-    mut timeline: Signal<Vec<String>>,
+    mut timeline: Signal<Vec<TimelineEvent>>,
     mut status: Signal<String>,
     mut sync_cursor: Signal<String>,
     mut repo_state: Signal<String>,
@@ -358,13 +361,16 @@ pub fn ProductPanel(
                             "data-testid": "persist-message-button",
                             onclick: {
                                 let base = base_url;
+                                let actor = account_did.clone();
                                 move |_| {
                                     let api_token = token();
                                     let base = base.clone();
+                                    let actor = actor.clone();
                                     let space = selected_space();
                                     let body = message_body();
+                                    let wait_for = active_sync_token(sync_cursor());
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
+                                        match authed_api_with_sync(&base, api_token, wait_for) {
                                             Ok(api) => match api.send_message(
                                                 &space,
                                                 None,
@@ -384,10 +390,25 @@ pub fn ProductPanel(
                                                                 "event_id": sent.event_id.clone(),
                                                                 "commit_id": sent.commit_id.clone(),
                                                                 "head_commit": sent.head_commit.clone(),
+                                                                "kind": "cx.message.create",
                                                             }),
                                                         );
                                                     }
-                                                    timeline.write().push(format!("persisted event {} commit {}", sent.event_id, sent.commit_id));
+                                                    timeline.write().push(TimelineEvent {
+                                                        id: sent.event_id.clone(),
+                                                        sender: actor,
+                                                        sender_display: "product".to_owned(),
+                                                        body: format!(
+                                                            "persisted event {} commit {}",
+                                                            sent.event_id, sent.commit_id
+                                                        ),
+                                                        timestamp: chrono::Utc::now()
+                                                            .format("%Y-%m-%d %H:%M")
+                                                            .to_string(),
+                                                        operation_id: Some(sent.operation_id.clone()),
+                                                        commit_id: Some(sent.commit_id.clone()),
+                                                        ..TimelineEvent::default()
+                                                    });
                                                     message_state.set(format!("persisted {} via {}", sent.operation_id, sent.commit_id));
                                                 }
                                                 Err(error) => message_state.set(format!("persist failed: {error}")),
@@ -404,4 +425,8 @@ pub fn ProductPanel(
             }
         }
     }
+}
+
+fn active_sync_token(sync_cursor: String) -> Option<String> {
+    (!sync_cursor.trim().is_empty() && sync_cursor != "-").then_some(sync_cursor)
 }

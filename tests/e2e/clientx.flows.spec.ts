@@ -8,6 +8,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {
+  await expect(page.getByTestId("web-security-banner")).toContainText("non-production");
   await page.getByTestId("connect-button").click();
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
@@ -59,6 +60,7 @@ test("registration wizard completes account bootstrap", async ({ page }) => {
   await page.getByTestId("complete-registration-button").click();
 
   await expect(page.getByTestId("registration-complete")).toContainText("Account registered successfully");
+  await expect(page.getByTestId("register-summary-status")).toContainText("cx:didop:e2e");
 });
 
 test("settings can update account and device before session bootstrap", async ({ page }) => {
@@ -87,11 +89,42 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
   await expect(page.getByTestId("directory-result")).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("index-query-results")).toContainText("Contrix Demo Space");
 
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0sp0000000000000000000");
+
+  await page.getByTestId("tab-organizations").click();
+  await page.getByTestId("directory-search-input").fill("contrix");
+  await page.getByTestId("directory-search-button").click();
+  await expect(page.getByTestId("org-result")).toContainText("Contrix Labs");
+  await expect(page.getByTestId("org-result")).toContainText("listed");
+  await page.getByTestId("org-search-members").click();
+  await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
+  await expect(page.getByTestId("directory-search-input")).toHaveValue("contrix.example");
+});
+
+test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByTestId("notifications-nav-button").click();
+
+  await expect(page.getByTestId("notifications-panel")).toBeVisible();
+  await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
+  await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification projection");
+
+  await page.getByTestId("mute-space-button").first().click();
+  await expect(page.getByTestId("notifications-muted-empty")).toContainText("hidden by archive, type, or per-space mute rules");
+
+  await page.getByTestId("settings-nav-button").click();
+  await page.getByTestId("section-push").click();
+  await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:01js0sp0000000000000000000");
+  await page.getByTestId("settings-unmute-space").click();
+  await expect(page.getByTestId("status-label")).toContainText("Unmuted");
+
+  await page.getByTestId("notifications-nav-button").click();
+  await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 
 test("product account contacts space lifecycle and canonical message flow works", async ({ page }) => {
@@ -119,6 +152,9 @@ test("product account contacts space lifecycle and canonical message flow works"
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
   await page.getByTestId("persist-message-button").click();
   await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted cx:operation:e2e-product");
+  const backfill = page.waitForRequest("**/api/v1/sync/backfill?space_id=*");
+  await page.getByTestId("backfill-button").click();
+  expect((await backfill).headers()["x-contrix-wait-for"]).toBe("sx:e2e:product");
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:e2e-product");
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:product");
@@ -131,7 +167,7 @@ test("product account contacts space lifecycle and canonical message flow works"
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("deleted true");
 });
 
-test("plaintext and local MLS compose add timeline entries", async ({ page }) => {
+test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   await page.getByTestId("composer-input").fill("draft survives reload");
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -139,9 +175,32 @@ test("plaintext and local MLS compose add timeline entries", async ({ page }) =>
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
 
+  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
   await page.getByTestId("composer-input").fill("plain e2e message");
   await page.getByTestId("send-button").click();
+  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message");
+  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:e2e-message-1");
+
+  const editRequest = page.waitForRequest(
+    (request) => request.url().includes("/api/v1/messages/") && request.method() === "PATCH",
+  );
+  await page.getByTestId("edit-button").last().click();
+  await page.getByTestId("edit-composer").locator("textarea").fill("plain e2e message edited");
+  await page.getByTestId("save-edit-button").click();
+  expect((await editRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  await expect(page.getByTestId("timeline")).toContainText("plain e2e message edited");
+  await expect(page.getByTestId("revision-chain")).toContainText("plain e2e message");
+  await expect(page.getByTestId("event-fact").last()).toContainText("cx:operation:e2e-edit");
+
+  const redactRequest = page.waitForRequest(
+    (request) => request.url().includes("/redact") && request.method() === "POST",
+  );
+  await page.getByTestId("redact-button").last().click();
+  await page.getByTestId("confirm-redact-button").click();
+  expect((await redactRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  await expect(page.getByTestId("redacted-tombstone")).toContainText("[Message redacted]");
+  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone cx:redaction:e2e:");
 
   await page.getByTestId("composer-input").fill("secret e2e message");
   await page.getByTestId("encrypt-local-button").click();
@@ -225,6 +284,22 @@ test("invalid server URL surfaces an error state", async ({ page }) => {
   await page.getByTestId("connect-button").click();
 
   await expect(page.getByTestId("status-label")).toContainText("Error: invalid URL");
+});
+
+test("insecure remote http endpoint is rejected before connect", async ({ page }) => {
+  await page.getByTestId("server-url-input").fill("http://contrix.example");
+  await page.getByTestId("connect-button").click();
+
+  await expect(page.getByTestId("status-label")).toContainText("HTTPS is required for non-local servers");
+});
+
+test("call panel loads server ICE configuration", async ({ page }) => {
+  await page.goto("/call", { waitUntil: "domcontentloaded" });
+  await page.getByTestId("refresh-ice-config").click();
+
+  await expect(page.getByTestId("ice-config")).toContainText("stun:stun.serverx.local:3478");
+  await expect(page.getByTestId("ice-config")).toContainText("turn:turn.serverx.local:3478?transport=udp");
+  await expect(page.getByTestId("ice-ttl")).toContainText("600s");
 });
 
 test("release readiness panel keeps production blockers visible", async ({ page }) => {

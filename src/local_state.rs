@@ -22,12 +22,28 @@ pub struct RawOperationRecord {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationClientState {
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     pub raw_operations: Vec<RawOperationRecord>,
     pub space_projections: BTreeMap<String, Value>,
     pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
+    #[serde(default)]
+    pub notification_projection: Vec<Value>,
+    #[serde(default)]
+    pub notification_client_state: BTreeMap<String, NotificationClientState>,
+    #[serde(default)]
+    pub muted_spaces: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub muted_notification_kinds: BTreeMap<String, bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +81,7 @@ impl LocalStateStore {
     }
 
     pub fn save_sync_cursor(&mut self, cursor: impl Into<String>) {
+        self.ensure_cached_loaded();
         self.cached.sync_cursor = Some(cursor.into());
         let _ = self.flush();
     }
@@ -75,6 +92,7 @@ impl LocalStateStore {
         space_id: Option<String>,
         payload: Value,
     ) {
+        self.ensure_cached_loaded();
         self.cached.raw_operations.push(RawOperationRecord {
             operation_id: operation_id.into(),
             space_id,
@@ -85,6 +103,7 @@ impl LocalStateStore {
     }
 
     pub fn save_space_projection(&mut self, space_id: impl Into<String>, projection: Value) {
+        self.ensure_cached_loaded();
         self.cached
             .space_projections
             .insert(space_id.into(), projection);
@@ -92,6 +111,7 @@ impl LocalStateStore {
     }
 
     pub fn save_draft(&mut self, space_id: impl Into<String>, draft: impl Into<String>) {
+        self.ensure_cached_loaded();
         let space_id = space_id.into();
         let draft = draft.into();
         if draft.trim().is_empty() {
@@ -115,6 +135,7 @@ impl LocalStateStore {
         message_id: impl Into<String>,
         payload: EncryptedPayload,
     ) {
+        self.ensure_cached_loaded();
         self.cached
             .pending_encrypted_messages
             .insert(message_id.into(), payload);
@@ -123,6 +144,101 @@ impl LocalStateStore {
 
     pub fn pending_encrypted_count(&self) -> usize {
         self.cached.pending_encrypted_messages.len()
+    }
+
+    pub fn save_notification_projection(&mut self, notifications: Vec<Value>) {
+        self.ensure_cached_loaded();
+        self.cached.notification_projection = notifications;
+        let _ = self.flush();
+    }
+
+    pub fn notification_projection(&self) -> Vec<Value> {
+        self.load().notification_projection
+    }
+
+    pub fn set_notification_read(&mut self, notification_id: impl Into<String>, read: bool) {
+        self.ensure_cached_loaded();
+        self.cached
+            .notification_client_state
+            .entry(notification_id.into())
+            .or_default()
+            .read = read;
+        let _ = self.flush();
+    }
+
+    pub fn set_notification_archived(
+        &mut self,
+        notification_id: impl Into<String>,
+        archived: bool,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached
+            .notification_client_state
+            .entry(notification_id.into())
+            .or_default()
+            .archived = archived;
+        let _ = self.flush();
+    }
+
+    pub fn notification_state_for(&self, notification_id: &str) -> NotificationClientState {
+        self.load()
+            .notification_client_state
+            .get(notification_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_space_muted(&mut self, space_id: impl Into<String>, muted: bool) {
+        self.ensure_cached_loaded();
+        let space_id = space_id.into();
+        if muted {
+            self.cached.muted_spaces.insert(space_id, true);
+        } else {
+            self.cached.muted_spaces.remove(&space_id);
+        }
+        let _ = self.flush();
+    }
+
+    pub fn clear_muted_spaces(&mut self) {
+        self.ensure_cached_loaded();
+        self.cached.muted_spaces.clear();
+        let _ = self.flush();
+    }
+
+    pub fn is_space_muted(&self, space_id: &str) -> bool {
+        self.load()
+            .muted_spaces
+            .get(space_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn muted_spaces(&self) -> Vec<String> {
+        self.load()
+            .muted_spaces
+            .into_iter()
+            .filter_map(|(space_id, muted)| muted.then_some(space_id))
+            .collect()
+    }
+
+    pub fn set_notification_kind_enabled(&mut self, kind: impl Into<String>, enabled: bool) {
+        self.ensure_cached_loaded();
+        self.cached
+            .muted_notification_kinds
+            .insert(kind.into(), enabled);
+        let _ = self.flush();
+    }
+
+    pub fn notification_kind_enabled(&self, kind: &str) -> bool {
+        self.load()
+            .muted_notification_kinds
+            .get(kind)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
+        self.load().muted_notification_kinds
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -164,6 +280,14 @@ impl LocalStateStore {
             .set_item(LOCAL_STATE_STORAGE_KEY, &serde_json::to_string(state)?)
             .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
         Ok(())
+    }
+
+    fn ensure_cached_loaded(&mut self) {
+        if self.cached == ClientLocalState::default() {
+            if let Some(state) = self.read_persisted_state() {
+                self.cached = state;
+            }
+        }
     }
 }
 
@@ -231,6 +355,29 @@ mod tests {
         let state = reader.load();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:persisted"));
         assert_eq!(state.drafts["cx:space:persisted"], "draft survives restart");
+    }
+
+    #[test]
+    fn local_state_store_persists_notifications_and_mute_preferences() {
+        let path = temp_state_path("notifications");
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.save_notification_projection(vec![serde_json::json!({
+            "notification_id": "notif-1",
+            "space_id": "cx:space:demo",
+            "kind": "message",
+            "body": "Hello"
+        })]);
+        store.set_notification_read("notif-1", true);
+        store.set_notification_archived("notif-1", true);
+        store.set_space_muted("cx:space:demo", true);
+        store.set_notification_kind_enabled("message", false);
+
+        let reader = LocalStateStore::with_path(path);
+        assert_eq!(reader.notification_projection().len(), 1);
+        assert!(reader.notification_state_for("notif-1").read);
+        assert!(reader.notification_state_for("notif-1").archived);
+        assert!(reader.is_space_muted("cx:space:demo"));
+        assert!(!reader.notification_kind_enabled("message"));
     }
 
     fn temp_state_path(name: &str) -> PathBuf {

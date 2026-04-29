@@ -1,13 +1,17 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use contrix_sdk::ErrorEnvelope;
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{
+    Client, Method, StatusCode,
+    header::{HeaderMap, RETRY_AFTER},
+};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use url::Url;
 
+use crate::config::validate_server_url;
 use crate::models::{
     AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
     AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
@@ -33,12 +37,14 @@ use crate::models::{
     ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
     UpdateSpaceResponse, VerifyDeviceResponse,
 };
+use crate::operation::uuid_v8;
 
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
     base_url: Url,
     pub(crate) http: Client,
     access_token: Option<String>,
+    wait_for_sync_token: Option<String>,
     retry: RetryPolicy,
     refresh_token: Option<String>,
     network_state: Arc<RwLock<NetworkState>>,
@@ -115,14 +121,16 @@ impl ContrixApi {
     }
 
     pub fn new_with_options(base_url: &str, options: ContrixApiOptions) -> anyhow::Result<Self> {
+        let base_url = validate_server_url(base_url)?;
         let http = Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
         let http = http.timeout(options.timeout);
 
         Ok(Self {
-            base_url: Url::parse(base_url)?,
+            base_url,
             http: http.build()?,
             access_token: None,
+            wait_for_sync_token: None,
             retry: options.retry,
             refresh_token: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
@@ -131,6 +139,16 @@ impl ContrixApi {
 
     pub fn with_bearer(mut self, access_token: impl Into<String>) -> Self {
         self.access_token = Some(access_token.into());
+        self
+    }
+
+    pub fn with_wait_for(mut self, sync_token: impl Into<String>) -> Self {
+        let sync_token = sync_token.into();
+        self.wait_for_sync_token = if sync_token.trim().is_empty() || sync_token == "-" {
+            None
+        } else {
+            Some(sync_token)
+        };
         self
     }
 
@@ -330,16 +348,17 @@ impl ContrixApi {
         content: Value,
         encrypted: bool,
     ) -> anyhow::Result<SendMessageResponse> {
-        self.post_json(
-            "api/v1/messages/send",
-            json!({
-                "space_id": space_id,
-                "thread_id": thread_id,
-                "content": content,
-                "encrypted": encrypted
-            }),
-        )
-        .await
+        let request_id = uuid_v8();
+        let request = self.http.post(self.endpoint("api/v1/messages/send")?).json(&json!({
+            "space_id": space_id,
+            "thread_id": thread_id,
+            "content": content,
+            "encrypted": encrypted,
+            "request_id": request_id.clone(),
+        }));
+        let request = self.with_write_request_headers(request, &request_id);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
+            .await
     }
 
     pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResponse> {
@@ -442,16 +461,21 @@ impl ContrixApi {
         expected_head: Option<&str>,
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<SubmitCommitResponse> {
-        self.post_json(
-            "api/v1/repo/submit-commit",
-            json!({
+        let idempotency_key = idempotency_key
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(uuid_v8);
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/repo/submit-commit")?)
+            .json(&json!({
                 "repo_id": repo_id,
                 "commit": commit,
                 "expected_head": expected_head,
-                "idempotency_key": idempotency_key
-            }),
-        )
-        .await
+                "idempotency_key": idempotency_key.clone()
+            }));
+        let request = self.with_write_request_headers(request, &idempotency_key);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
+            .await
     }
 
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResponse> {
@@ -588,14 +612,16 @@ impl ContrixApi {
             .post(self.endpoint("api/v1/blob/upload")?)
             .header("content-type", "application/octet-stream")
             .body(bytes);
-        self.send_json(self.authorize(request), Method::POST).await
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
     }
 
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let request = self
             .http
             .get(self.endpoint(&format!("api/v1/blob/get?blob_ref={blob_ref}"))?);
-        self.send_bytes(self.authorize(request), Method::GET).await
+        self.send_bytes(self.prepare_request(request), Method::GET)
+            .await
     }
 
     pub async fn report_moderation(
@@ -813,11 +839,17 @@ impl ContrixApi {
         message_id: &str,
         content: Value,
     ) -> anyhow::Result<EditMessageResponse> {
-        self.patch_json(
-            &format!("api/v1/messages/{message_id}"),
-            json!({"content": content}),
-        )
-        .await
+        let request_id = uuid_v8();
+        let request = self
+            .http
+            .patch(self.endpoint(&format!("api/v1/messages/{message_id}"))?)
+            .json(&json!({
+                "content": content,
+                "request_id": request_id.clone(),
+            }));
+        let request = self.with_write_request_headers(request, &request_id);
+        self.send_json_retryable(self.prepare_request(request), Method::PATCH)
+            .await
     }
 
     pub async fn redact_message(
@@ -825,11 +857,17 @@ impl ContrixApi {
         message_id: &str,
         reason: Option<&str>,
     ) -> anyhow::Result<RedactMessageResponse> {
-        self.post_json(
-            &format!("api/v1/messages/{message_id}/redact"),
-            json!({"reason": reason}),
-        )
-        .await
+        let request_id = uuid_v8();
+        let request = self
+            .http
+            .post(self.endpoint(&format!("api/v1/messages/{message_id}/redact"))?)
+            .json(&json!({
+                "reason": reason,
+                "request_id": request_id.clone(),
+            }));
+        let request = self.with_write_request_headers(request, &request_id);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
+            .await
     }
 
     pub async fn add_reaction(
@@ -1233,27 +1271,30 @@ impl ContrixApi {
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let request = self.http.get(self.endpoint(path)?);
-        self.send_json(self.authorize(request), Method::GET).await
+        self.send_json(self.prepare_request(request), Method::GET)
+            .await
     }
 
     async fn post_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.post(self.endpoint(path)?).json(&body);
-        self.send_json(self.authorize(request), Method::POST).await
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
     }
 
     async fn put_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.put(self.endpoint(path)?).json(&body);
-        self.send_json(self.authorize(request), Method::PUT).await
+        self.send_json(self.prepare_request(request), Method::PUT).await
     }
 
     async fn patch_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.patch(self.endpoint(path)?).json(&body);
-        self.send_json(self.authorize(request), Method::PATCH).await
+        self.send_json(self.prepare_request(request), Method::PATCH)
+            .await
     }
 
     async fn delete_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let request = self.http.delete(self.endpoint(path)?);
-        self.send_json(self.authorize(request), Method::DELETE)
+        self.send_json(self.prepare_request(request), Method::DELETE)
             .await
     }
 
@@ -1262,7 +1303,25 @@ impl ContrixApi {
         request: reqwest::RequestBuilder,
         method: Method,
     ) -> anyhow::Result<T> {
-        let response = self.send_with_retry(request, method).await?;
+        self.send_json_internal(request, method.clone(), is_retryable_method(&method))
+            .await
+    }
+
+    async fn send_json_retryable<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        method: Method,
+    ) -> anyhow::Result<T> {
+        self.send_json_internal(request, method, true).await
+    }
+
+    async fn send_json_internal<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        method: Method,
+        retryable: bool,
+    ) -> anyhow::Result<T> {
+        let response = self.send_with_retry(request, method, retryable).await?;
         let status = response.status();
         if !status.is_success() {
             let bytes = response.bytes().await?;
@@ -1280,7 +1339,9 @@ impl ContrixApi {
         request: reqwest::RequestBuilder,
         method: Method,
     ) -> anyhow::Result<Vec<u8>> {
-        let response = self.send_with_retry(request, method).await?;
+        let response = self
+            .send_with_retry(request, method.clone(), is_retryable_method(&method))
+            .await?;
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {
@@ -1296,9 +1357,9 @@ impl ContrixApi {
     async fn send_with_retry(
         &self,
         request: reqwest::RequestBuilder,
-        method: Method,
+        _method: Method,
+        retryable: bool,
     ) -> anyhow::Result<reqwest::Response> {
-        let retryable_method = is_retryable_method(&method);
         let mut attempt = 0usize;
         let mut did_refresh = false;
         loop {
@@ -1322,11 +1383,13 @@ impl ContrixApi {
                         }
                     }
 
-                    if retryable_method
+                    if retryable
                         && attempt < self.retry.max_retries
                         && is_retryable_status(response.status())
                     {
-                        sleep_backoff(self.retry.initial_backoff, attempt).await;
+                        self.set_network_state(NetworkState::Reconnecting).await;
+                        sleep_retry_delay(response.headers(), self.retry.initial_backoff, attempt)
+                            .await;
                         attempt += 1;
                         continue;
                     }
@@ -1343,7 +1406,7 @@ impl ContrixApi {
                     return Ok(response);
                 }
                 Err(error)
-                    if retryable_method
+                    if retryable
                         && attempt < self.retry.max_retries
                         && is_retryable_reqwest_error(&error) =>
                 {
@@ -1364,6 +1427,27 @@ impl ContrixApi {
             Some(token) => request.bearer_auth(token),
             None => request,
         }
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.attach_wait_for(self.authorize(request))
+    }
+
+    fn attach_wait_for(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.wait_for_sync_token.as_deref() {
+            Some(sync_token) => request.header("x-contrix-wait-for", sync_token),
+            None => request,
+        }
+    }
+
+    fn with_write_request_headers(
+        &self,
+        request: reqwest::RequestBuilder,
+        request_id: &str,
+    ) -> reqwest::RequestBuilder {
+        request
+            .header("x-contrix-request-id", request_id)
+            .header("idempotency-key", request_id)
     }
 }
 
@@ -1403,8 +1487,35 @@ fn is_retryable_reqwest_error(error: &reqwest::Error) -> bool {
 }
 
 async fn sleep_backoff(initial: Duration, attempt: usize) {
+    tokio::time::sleep(backoff_duration(initial, attempt)).await;
+}
+
+fn backoff_duration(initial: Duration, attempt: usize) -> Duration {
     let factor = 1u32.checked_shl(attempt as u32).unwrap_or(u32::MAX);
-    tokio::time::sleep(initial.saturating_mul(factor)).await;
+    initial.saturating_mul(factor)
+}
+
+async fn sleep_retry_delay(headers: &HeaderMap, initial: Duration, attempt: usize) {
+    let delay = parse_retry_after(headers).unwrap_or_else(|| backoff_duration(initial, attempt));
+    tokio::time::sleep(delay).await;
+}
+
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+
+    chrono::DateTime::parse_from_rfc2822(value)
+        .ok()
+        .and_then(|deadline| {
+            deadline
+                .with_timezone(&chrono::Utc)
+                .signed_duration_since(chrono::Utc::now())
+                .to_std()
+                .ok()
+        })
 }
 
 pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescription> {
@@ -1438,6 +1549,7 @@ pub fn parse_index_describe(value: Value) -> anyhow::Result<IndexDescribeRespons
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue};
 
     #[test]
     fn endpoint_join_keeps_api_paths_under_base_url() {
@@ -1517,5 +1629,61 @@ mod tests {
         assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
         assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
         assert!(!is_retryable_status(StatusCode::CONFLICT));
+    }
+
+    #[test]
+    fn retry_after_prefers_seconds_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("3"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn write_requests_include_request_identity_and_wait_for_headers() {
+        let api = ContrixApi::new("http://127.0.0.1:8787/")
+            .unwrap()
+            .with_bearer("sx_token")
+            .with_wait_for("sx:123");
+        let request = api
+            .prepare_request(api.with_write_request_headers(
+                api.http
+                    .post(api.endpoint("api/v1/messages/send").unwrap())
+                    .json(&json!({"body": "hello"})),
+                "req-123",
+            ))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-contrix-request-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("req-123")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("idempotency-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("req-123")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-contrix-wait-for")
+                .and_then(|value| value.to_str().ok()),
+            Some("sx:123")
+        );
+    }
+
+    #[test]
+    fn insecure_remote_http_is_rejected() {
+        let error = ContrixApi::new("http://contrix.example").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("HTTPS is required for non-local servers")
+        );
     }
 }

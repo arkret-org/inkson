@@ -24,6 +24,7 @@ pub fn DirectoryPanel(
     let mut query = use_signal(String::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
+    let mut index_results = use_signal(Vec::<Value>::new);
     let mut handle_result = use_signal(|| Option::<ResolveHandleResponse>::None);
     let mut contact_status = use_signal(|| String::new());
 
@@ -96,7 +97,31 @@ pub fn DirectoryPanel(
                                             match tab {
                                                 DirectoryTab::Spaces => {
                                                     match api.search_spaces(&q).await {
-                                                        Ok(search) => spaces.set(search.results),
+                                                        Ok(search) => {
+                                                            let results = search.results;
+                                                            let space_ids = results
+                                                                .iter()
+                                                                .map(|space| space.space_id.clone())
+                                                                .collect::<Vec<_>>();
+                                                            spaces.set(results);
+                                                            if space_ids.is_empty() {
+                                                                index_results.set(Vec::new());
+                                                            } else {
+                                                                match api.index_query(&space_ids).await {
+                                                                    Ok(index) => {
+                                                                        status.set(format!(
+                                                                            "indexed {} space projection(s)",
+                                                                            index.results.len()
+                                                                        ));
+                                                                        index_results.set(index.results);
+                                                                    }
+                                                                    Err(error) => {
+                                                                        index_results.set(Vec::new());
+                                                                        status.set(format!("index query failed: {error}"));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                         Err(error) => status.set(format!("search failed: {error}")),
                                                     }
                                                 }
@@ -212,18 +237,90 @@ pub fn DirectoryPanel(
                         }
                     }
                 }
+                if !index_results().is_empty() {
+                    div { class: "event", "data-testid": "index-query-results",
+                        div { class: "event-head",
+                            span { "Indexed Views" }
+                            span { "{index_results().len()} result(s)" }
+                        }
+                        for result in index_results() {
+                            div { class: "metric", "data-testid": "index-result",
+                                strong { "{value_str(&result, \"kind\", \"view\")}" }
+                                span { "{value_str(&result, \"title\", value_str(&result, \"space_id\", \"untitled\"))}" }
+                            }
+                        }
+                    }
+                }
             }
 
             // Organizations tab results
             if active_tab() == DirectoryTab::Organizations {
                 for org in org_results() {
-                    div { class: "event", "data-testid": "org-result",
-                        div { class: "event-head",
-                            span { "organization" }
-                            span { "{org.get(\"id\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
+                    {
+                        let org_id = value_str(&org, "id", "-");
+                        let org_did = value_str(&org, "did", org_id.as_str());
+                        let org_name = value_str(&org, "name", "unknown");
+                        let org_description = value_str(&org, "description", "");
+                        let org_handle = value_str(&org, "handle", "");
+                        let discoverability = value_str(&org, "discoverability", "unknown");
+                        let profile_visibility = value_str(&org, "profile_visibility", "unknown");
+                        let directory_services = value_vec(&org, "directory_services");
+                        let proof_count = value_vec(&org, "proofs").len();
+                        let actor_lookup_seed = if !org_handle.is_empty() {
+                            org_handle.clone()
+                        } else {
+                            org_name.clone()
+                        };
+                        rsx! {
+                            div { class: "event", "data-testid": "org-result",
+                                div { class: "event-head",
+                                    span { "organization" }
+                                    span { "{org_did}" }
+                                }
+                                div { class: "space-title", "{org_name}" }
+                                if !org_handle.is_empty() {
+                                    div { class: "muted", "Handle: {org_handle}" }
+                                }
+                                div { class: "muted", "{org_description}" }
+                                div { class: "actions",
+                                    span { class: "badge badge-info", "Discoverability: {discoverability}" }
+                                    span { class: "badge badge-info", "Profile: {profile_visibility}" }
+                                    span { class: "badge badge-success", "{directory_services.len()} directory service(s)" }
+                                    span { class: "badge badge-warning", "{proof_count} proof(s)" }
+                                }
+                                if !directory_services.is_empty() {
+                                    div { class: "muted", "Directory services: {directory_services.join(\", \")}" }
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "org-search-members",
+                                        onclick: {
+                                            let seed = actor_lookup_seed.clone();
+                                            move |_| {
+                                                query.set(seed.clone());
+                                                active_tab.set(DirectoryTab::Actors);
+                                            }
+                                        },
+                                        "Search Members"
+                                    }
+                                    if !org_handle.is_empty() {
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "org-resolve-handle",
+                                            onclick: {
+                                                let handle = org_handle.clone();
+                                                move |_| {
+                                                    query.set(handle.clone());
+                                                    active_tab.set(DirectoryTab::Handles);
+                                                }
+                                            },
+                                            "Resolve Handle"
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        div { class: "space-title", "{org.get(\"name\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
-                        div { class: "muted", "{org.get(\"description\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
                     }
                 }
                 if org_results().is_empty() {
@@ -305,4 +402,25 @@ pub fn DirectoryPanel(
             }
         }
     }
+}
+
+fn value_str(value: &Value, key: &str, fallback: impl Into<String>) -> String {
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| fallback.into())
+}
+
+fn value_vec(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }

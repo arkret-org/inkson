@@ -10,7 +10,8 @@ use crate::{
     routes::Route,
     views::{
         ConnectionState,
-        helpers::{handle_from_did, persist_config},
+        helpers::{authed_api_with_sync, handle_from_did, persist_config},
+        timeline::TimelineEvent,
     },
 };
 
@@ -150,7 +151,7 @@ pub fn RouterView() -> Element {
     });
     let mut selected_space = use_signal(|| DEMO_SPACE.to_owned());
     let spaces = use_signal(Vec::<SpacePreview>::new);
-    let timeline = use_signal(Vec::<String>::new);
+    let timeline = use_signal(Vec::<TimelineEvent>::new);
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
@@ -254,6 +255,7 @@ pub fn RouterView() -> Element {
                     Link { class: "secondary", to: Route::Chat, "Chat" }
                     Link { class: "secondary", to: Route::Forum, "Forum" }
                     Link { class: "secondary", to: Route::Audit, "Audit" }
+                    Link { class: "secondary", "data-testid": "notifications-nav-button", to: Route::Notifications, "Notifications" }
                     Link { class: "secondary", "data-testid": "settings-nav-button", to: Route::Settings, "Settings" }
                     Link { class: "secondary", "data-testid": "devices-nav-button", to: Route::Devices, "Devices" }
                     Link { class: "secondary", to: Route::VerifyDevice, "Verify" }
@@ -274,8 +276,10 @@ pub fn RouterView() -> Element {
                             onclick: move |_| {
                                 let base = base_url();
                                 let id = selected_space();
+                                let api_token = token();
+                                let wait_for = active_sync_token(sync_cursor());
                                 spawn(async move {
-                                    if let Ok(api) = ContrixApi::new(&base) {
+                                    if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         let _ = api.backfill(&id).await;
                                     }
                                 });
@@ -287,6 +291,20 @@ pub fn RouterView() -> Element {
                             "data-testid": "resolve-nav-button",
                             to: Route::Directory,
                             "Resolve"
+                        }
+                    }
+                }
+                if cfg!(target_arch = "wasm32") {
+                    div { class: "event error-banner", "data-testid": "web-security-banner",
+                        div { class: "event-head",
+                            span { "Web Security Mode" }
+                            span { "non-production" }
+                        }
+                        div { class: "space-title",
+                            "Browser builds are running in compatibility mode, not production-secure E2EE."
+                        }
+                        div { class: "muted",
+                            "WebCrypto-backed keys, IndexedDB MLS state, and secure backup/recovery are not implemented yet. Treat browser encryption as development-only."
                         }
                     }
                 }
@@ -335,6 +353,8 @@ pub fn RouterView() -> Element {
                                 draft,
                                 state_store,
                                 crypto_state,
+                                sync_cursor,
+                                repo_state,
                                 base_url_sig: base_url,
                             }
                         }
@@ -372,6 +392,7 @@ pub fn RouterView() -> Element {
                             token,
                             crypto_state: crypto_state(),
                             config_store,
+                            state_store,
                             status,
                         }
                     },
@@ -469,6 +490,7 @@ pub fn RouterView() -> Element {
                         crate::views::notifications::NotificationsPanel {
                             base_url: base_url(),
                             token,
+                            state_store,
                         }
                     },
                     Route::Document | Route::DocumentSpace { .. } => {
@@ -528,7 +550,7 @@ struct ConnectContext {
     sync_cursor: Signal<String>,
     token: Signal<String>,
     spaces: Signal<Vec<SpacePreview>>,
-    timeline: Signal<Vec<String>>,
+    timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
     repo_state: Signal<String>,
     crypto_state: Signal<String>,
@@ -638,7 +660,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     timeline.set(
                         sync.spaces
                             .into_iter()
-                            .map(|(id, body)| format!("{id}: {}", body["summary"]["summary"]))
+                            .map(|(id, body)| {
+                                TimelineEvent::system_notice(
+                                    format!("summary-{id}"),
+                                    "serverx",
+                                    format!(
+                                        "{id}: {}",
+                                        body["summary"]["summary"]
+                                            .as_str()
+                                            .unwrap_or("No summary available")
+                                    ),
+                                )
+                            })
                             .collect(),
                     );
                 } else {
@@ -688,4 +721,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
             )),
         }
     });
+}
+
+fn active_sync_token(sync_cursor: String) -> Option<String> {
+    (!sync_cursor.trim().is_empty() && sync_cursor != "-").then_some(sync_cursor)
 }

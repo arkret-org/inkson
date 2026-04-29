@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8787";
 const DEFAULT_ACCOUNT_DID: &str = "did:web:alice.example";
@@ -45,6 +46,26 @@ impl ClientConfig {
             session_token: session_token.into(),
         }
     }
+}
+
+pub fn validate_server_url(server_url: &str) -> anyhow::Result<Url> {
+    let url = Url::parse(server_url)?;
+    let scheme = url.scheme();
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("server URL must include a host"))?;
+
+    if scheme == "https" || is_loopback_host(host) {
+        return Ok(url);
+    }
+
+    Err(anyhow::anyhow!(
+        "HTTPS is required for non-local servers; use https:// or a loopback host"
+    ))
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +196,38 @@ mod tests {
         assert_eq!(config.account_did, "did:web:alice.example");
         assert_eq!(config.device_id, "dev_chask");
         assert!(config.session_token.is_empty());
+    }
+
+    #[test]
+    fn validate_server_url_allows_https_and_loopback_http() {
+        assert_eq!(
+            validate_server_url("https://contrix.example")
+                .unwrap()
+                .as_str(),
+            "https://contrix.example/"
+        );
+        assert_eq!(
+            validate_server_url("http://127.0.0.1:8787")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8787/"
+        );
+        assert_eq!(
+            validate_server_url("http://localhost:8787")
+                .unwrap()
+                .as_str(),
+            "http://localhost:8787/"
+        );
+    }
+
+    #[test]
+    fn validate_server_url_rejects_insecure_remote_http() {
+        let error = validate_server_url("http://contrix.example").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("HTTPS is required for non-local servers")
+        );
     }
 
     #[test]

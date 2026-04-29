@@ -1,4 +1,6 @@
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use dioxus::prelude::*;
+use serde_json::json;
 
 use crate::api::ContrixApi;
 
@@ -7,6 +9,16 @@ enum DidMethod {
     DidUuid,
     DidWeb,
     DidKey,
+}
+
+impl DidMethod {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DidUuid => "did:uuid",
+            Self::DidWeb => "did:web",
+            Self::DidKey => "did:key",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,12 +98,7 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                             class: "primary",
                             "data-testid": "generate-did-button",
                             onclick: move |_| {
-                                let uuid = format!("{:032x}", 0u128); // placeholder UUID
-                                let did = match did_method() {
-                                    DidMethod::DidUuid => format!("did:uuid:{uuid}"),
-                                    DidMethod::DidWeb => format!("did:web:{}", &uuid[..16]),
-                                    DidMethod::DidKey => format!("did:key:z{}", &uuid[..32]),
-                                };
+                                let did = generate_did(did_method());
                                 generated_did.set(did);
                                 step.set(RegisterStep::HandleInput);
                             },
@@ -287,20 +294,47 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                                     let h = handle();
                                     let name = display_name();
                                     let device = device_label();
+                                    let recovery = recovery_method();
+                                    let proof = proof_challenge();
+                                    let did_method_name = did_method().label().to_owned();
                                     spawn(async move {
                                         match ContrixApi::new(&base) {
-                                            Ok(api) => match api.register_account(
-                                                &did,
-                                                &h,
-                                                Some(&name),
-                                                Some(&device),
-                                            ).await {
-                                                Ok(account) => {
-                                                    register_status.set(format!("Registered: {}", account.did));
-                                                    step.set(RegisterStep::Complete);
+                                            Ok(api) => {
+                                                let did_operation = json!({
+                                                    "type": "cx.did.create",
+                                                    "did_method": did_method_name,
+                                                    "handle": h.clone(),
+                                                    "display_name": name.clone(),
+                                                    "device_label": device.clone(),
+                                                    "recovery_method": recovery,
+                                                    "proof": {
+                                                        "kind": "development_placeholder",
+                                                        "challenge": proof,
+                                                    },
+                                                    "submitted_at": chrono::Utc::now().to_rfc3339(),
+                                                });
+
+                                                match api.submit_did_operation(&did, did_operation).await {
+                                                    Ok(operation) => match api.register_account(
+                                                        &did,
+                                                        &h,
+                                                        Some(&name),
+                                                        Some(&device),
+                                                    ).await {
+                                                        Ok(account) => {
+                                                            register_status.set(format!(
+                                                                "Registered: {} via {} ({})",
+                                                                account.did, operation.operation_id, operation.status
+                                                            ));
+                                                            step.set(RegisterStep::Complete);
+                                                        }
+                                                        Err(e) => register_status.set(format!("Registration failed: {e}")),
+                                                    },
+                                                    Err(error) => register_status.set(format!(
+                                                        "DID operation submit failed: {error}"
+                                                    )),
                                                 }
-                                                Err(e) => register_status.set(format!("Registration failed: {e}")),
-                                            },
+                                            }
                                             Err(e) => register_status.set(format!("Invalid URL: {e}")),
                                         }
                                     });
@@ -327,6 +361,9 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                     div { class: "space-title", "Account registered successfully!" }
                     div { class: "muted", "DID: {generated_did}" }
                     div { class: "muted", "Handle: {handle}" }
+                    if !register_status().is_empty() {
+                        div { class: "muted", "data-testid": "register-summary-status", "{register_status}" }
+                    }
                     div { class: "actions",
                         button {
                             class: "primary",
@@ -338,5 +375,21 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                 }
             }
         }
+    }
+}
+
+fn generate_did(method: DidMethod) -> String {
+    let timestamp = (chrono::Utc::now().timestamp_millis() as u64) & 0x0fff_ffff_ffff;
+    let mut seed = [0u8; 16];
+    let _ = getrandom::fill(&mut seed);
+    let random_hex = seed
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    match method {
+        DidMethod::DidUuid => format!("did:uuid:{timestamp:011x}1{}", &random_hex[..19]),
+        DidMethod::DidWeb => format!("did:web:user-{:011x}.example", timestamp),
+        DidMethod::DidKey => format!("did:key:z{}", URL_SAFE_NO_PAD.encode(seed)),
     }
 }

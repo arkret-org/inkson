@@ -7,6 +7,7 @@ export async function mockContrixApi(page: Page) {
   let contactRequested = false;
   let productSpaceDeleted = false;
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
+  let messageCounter = 0;
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -202,13 +203,61 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/messages/send") {
+      if (!route.request().headers()["x-contrix-request-id"]) {
+        return json(route, {
+          ok: false,
+          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
+        }, 428);
+      }
+
+      const body = await route.request().postDataJSON();
+      if (body.content?.body === "persisted product flow message") {
+        return json(route, {
+          event_id: "cx:event:e2e-product",
+          operation_id: "cx:operation:e2e-product",
+          commit_id: "cx:commit:e2e-product",
+          head_commit: "cx:commit:e2e-product",
+          sync_token: "sx:e2e:product",
+        }, 201);
+      }
+
+      messageCounter += 1;
       return json(route, {
-        event_id: "cx:event:e2e-product",
-        operation_id: "cx:operation:e2e-product",
-        commit_id: "cx:commit:e2e-product",
-        head_commit: "cx:commit:e2e-product",
-        sync_token: "sx:e2e:product",
+        event_id: `cx:event:e2e-message-${messageCounter}`,
+        operation_id: `cx:operation:e2e-message-${messageCounter}`,
+        commit_id: `cx:commit:e2e-message-${messageCounter}`,
+        head_commit: `cx:commit:e2e-message-${messageCounter}`,
+        sync_token: `sx:e2e:message-${messageCounter}`,
       }, 201);
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/messages\/[^/]+$/) && route.request().method() === "PATCH") {
+      if (!route.request().headers()["x-contrix-request-id"]) {
+        return json(route, {
+          ok: false,
+          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
+        }, 428);
+      }
+      const messageId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        event_id: messageId,
+        operation_id: `cx:operation:e2e-edit:${messageId}`,
+        commit_id: `cx:commit:e2e-edit:${messageId}`,
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/messages\/[^/]+\/redact$/) && route.request().method() === "POST") {
+      if (!route.request().headers()["x-contrix-request-id"]) {
+        return json(route, {
+          ok: false,
+          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
+        }, 428);
+      }
+      const messageId = decodeURIComponent(url.pathname.split("/")[4]);
+      return json(route, {
+        event_id: messageId,
+        redaction_id: `cx:redaction:e2e:${messageId}`,
+      });
     }
 
     if (url.pathname === "/api/v1/sync") {
@@ -236,6 +285,50 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         results: [spacePreview()],
         next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/search-organizations") {
+      return json(route, {
+        results: [
+          {
+            id: "did:web:org.contrix.example",
+            did: "did:web:org.contrix.example",
+            handle: "contrix.example",
+            name: "Contrix Labs",
+            description: "Protocol and product engineering for Contrix deployments.",
+            discoverability: "listed",
+            profile_visibility: "public",
+            directory_services: ["did:web:serverx.local"],
+            proofs: [{ type: "org_membership" }],
+          },
+        ],
+        next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/search-actors") {
+      return json(route, {
+        results: [
+          {
+            did: "did:web:bob.example",
+            handle: "bob.example",
+            display_name: "Bob Example",
+          },
+        ],
+        next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/api/v1/directory/resolve-handle") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        did: "did:web:alice.example",
+        handle: body.handle,
+        did_document: {
+          id: "did:web:alice.example",
+          alsoKnownAs: [`acct:${body.handle}`],
+        },
       });
     }
 
@@ -333,6 +426,14 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/api/v1/identity/submit-did-operation") {
+      return json(route, {
+        ok: true,
+        operation_id: "cx:didop:e2e",
+        status: "accepted",
+      }, 202);
+    }
+
     if (url.pathname === "/api/v1/sync/describe") {
       return json(route, {
         service_did: "did:web:serverx.local",
@@ -357,6 +458,33 @@ export async function mockContrixApi(page: Page) {
         results: [{ kind: "space_preview", space_id: DEMO_SPACE, title: "Contrix Demo Space" }],
         next_cursor: null,
         frontier: {},
+      });
+    }
+
+    if (url.pathname === "/api/v1/index/notifications") {
+      return json(route, {
+        notifications: [
+          {
+            notification_id: "notif-msg-1",
+            title: "New message",
+            body: "Alice sent a message in Demo Space",
+            space_id: DEMO_SPACE,
+            kind: "message",
+            timestamp: "2026-04-28T12:01:00Z",
+            read: false,
+          },
+          {
+            notification_id: "notif-invite-1",
+            title: "New invite",
+            body: "You were invited to review Demo Space",
+            space_id: DEMO_SPACE,
+            kind: "invite",
+            timestamp: "2026-04-28T12:02:00Z",
+            read: false,
+          },
+        ],
+        next_cursor: null,
+        unread_count: 2,
       });
     }
 
@@ -411,6 +539,20 @@ export async function mockContrixApi(page: Page) {
         media_type: "application/octet-stream",
         sha256: "e2e",
         upload_receipt: { service_did: "did:web:serverx.local" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/media/ice-config") {
+      return json(route, {
+        ice_servers: [
+          { urls: ["stun:stun.serverx.local:3478"] },
+          {
+            urls: ["turn:turn.serverx.local:3478?transport=udp"],
+            username: "turn-user",
+            credential: "turn-secret",
+          },
+        ],
+        ttl_seconds: 600,
       });
     }
 

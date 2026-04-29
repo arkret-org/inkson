@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::{
     config::LocalConfigStore,
+    local_state::LocalStateStore,
     views::helpers::persist_config,
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
@@ -26,6 +27,7 @@ pub fn SettingsPanel(
     token: Signal<String>,
     crypto_state: String,
     mut config_store: Signal<LocalConfigStore>,
+    state_store: Signal<LocalStateStore>,
     status: Signal<String>,
 ) -> Element {
     let mut active_section = use_signal(|| SettingsSection::Server);
@@ -36,6 +38,7 @@ pub fn SettingsPanel(
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
+    let muted_spaces = state_store.read().muted_spaces();
 
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
@@ -253,6 +256,42 @@ pub fn SettingsPanel(
                                 // Push unregister
                             },
                             "Unregister Push"
+                        }
+                    }
+                    div { class: "event", "data-testid": "push-mute-summary",
+                        div { class: "event-head",
+                            span { "Per-space mute rules" }
+                            span { "{muted_spaces.len()} muted" }
+                        }
+                        if muted_spaces.is_empty() {
+                            div { class: "muted", "No spaces muted. Use the Notifications view to mute a noisy space." }
+                        } else {
+                            for space_id in muted_spaces {
+                                div { class: "actions", "data-testid": "settings-muted-space-row",
+                                    span { "{space_id}" }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "settings-unmute-space",
+                                        onclick: {
+                                            let space_id = space_id.clone();
+                                            move |_| {
+                                                state_store.write().set_space_muted(space_id.clone(), false);
+                                                status.set(format!("Unmuted {space_id} from push preferences"));
+                                            }
+                                        },
+                                        "Unmute"
+                                    }
+                                }
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "settings-clear-muted-spaces",
+                                onclick: move |_| {
+                                    state_store.write().clear_muted_spaces();
+                                    status.set("Cleared all per-space mute rules".to_owned());
+                                },
+                                "Clear All Mutes"
+                            }
                         }
                     }
                 }
