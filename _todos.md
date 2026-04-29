@@ -44,7 +44,7 @@ chask 做 UI/E2E 集成验证。
 - [x] **修复默认 Rust 测试门禁** — 默认 `cargo test` 现在通过；过时协议向量改为 `protocol-test-vectors` 显式 opt-in，避免默认发布门禁被未维护草稿阻塞。
 - [x] **修复 Web/WASM 构建门禁** — 补齐 tokio `sync` feature，`dx build --platform web` 通过。
 - [x] **落地真实页面路由覆盖** — 当前 Dioxus app 已有 `/login`、`/register`、`/` dashboard、`/timeline`、`/contacts`、`/directory`、`/devices`、`/devices/verify`、`/space/:space_id/admin`、`/audit`、`/settings`、`/readiness` 等页面。
-- [x] **补全 Playwright 主要业务流测试** — 19 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、channel entity / anchored topic / comment entity / structured mention、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
+- [x] **补全 Playwright 主要业务流测试** — 20 条浏览器流程全绿，覆盖连接同步、登录、注册、设置持久化、目录搜索/解析、组织卡片交互、通知派生投影/静音、Product 兼容流程、channel entity / anchored topic / comment entity / structured mention、Agent Run / Memory fact 生命周期、明文/本地 MLS 消息、moderation/to-device、通讯录、空间管理、审计、设备、错误 URL、HTTPS 拒绝、ICE 配置加载、发布阻塞清单。
 - [x] **修复 Timeline 实时渲染 bug** — 发送明文或本地 MLS 消息后，Timeline 现在从 `timeline()` 派生事件列表并立即更新。
 - [x] **补齐审计表展示关键 ID** — Audit 页面现在显示 `operation_id`，Playwright 能验证 repo operation/commit 可见。
 - [x] **注册向导接入 DID 操作提交** — 注册流程在账号创建前显式调用 `POST /api/v1/identity/submit-did-operation`，Playwright 验证提交成功摘要可见。
@@ -72,7 +72,7 @@ chask 做 UI/E2E 集成验证。
 - [x] `cargo check`
 - [x] `cargo test`
 - [x] `dx build --platform web`
-- [x] `npx playwright test tests/e2e/clientx.flows.spec.ts --project=chromium --reporter=list --timeout=90000`
+- [x] `CLIENTX_E2E_BASE_URL=http://127.0.0.1:4527 npx playwright test tests/e2e/clientx.flows.spec.ts --project=chromium --reporter=list --timeout=180000`
 
 ---
 
