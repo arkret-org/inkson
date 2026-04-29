@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/workspace/chask/target \
     dx build --platform web --release
 
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 
 COPY --from=build /workspace/chask/target/dx/chask/release/web/public /usr/share/nginx/html
 
