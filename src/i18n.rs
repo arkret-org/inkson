@@ -182,7 +182,7 @@ pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::En);
 
     // Navigation & Shell
-    dict.set("app.title", "chask");
+    dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "Dashboard");
     dict.set("nav.timeline", "Timeline");
     dict.set("nav.chat", "Chat");
@@ -292,7 +292,7 @@ pub fn english_translations() -> TranslationDict {
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Zh);
 
-    dict.set("app.title", "chask");
+    dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "仪表盘");
     dict.set("nav.timeline", "时间线");
     dict.set("nav.chat", "聊天");
@@ -356,7 +356,7 @@ pub fn chinese_translations() -> TranslationDict {
 pub fn arabic_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ar);
 
-    dict.set("app.title", "chask");
+    dict.set("app.title", "yougen");
     dict.set("nav.dashboard", "لوحة التحكم");
     dict.set("nav.timeline", "الخط الزمني");
     dict.set("nav.chat", "الدردشة");

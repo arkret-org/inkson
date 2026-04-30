@@ -102,8 +102,12 @@ pub enum Constraint {
         allowed_fields: Vec<String>,
         denied_fields: Vec<String>,
     },
-    /// Restrict to specific entity types.
-    TypeRestriction { allowed_types: Vec<String> },
+    /// Restrict to specific entity types or facets. Facets are the protocol capability path.
+    TypeRestriction {
+        allowed_types: Vec<String>,
+        #[serde(default)]
+        allowed_entity_facets: Vec<String>,
+    },
     /// Limit scope to specific spaces or collections.
     ScopeLimitation {
         space_ids: Vec<String>,
@@ -177,12 +181,24 @@ impl Constraint {
                 }
                 ConstraintResult::Allow
             }
-            Self::TypeRestriction { allowed_types } => {
+            Self::TypeRestriction {
+                allowed_types,
+                allowed_entity_facets,
+            } => {
                 if let Some(ref entity_type) = ctx.entity_type {
                     if !allowed_types.contains(entity_type) {
                         return ConstraintResult::Deny(format!(
                             "entity type {entity_type} not allowed"
                         ));
+                    }
+                }
+                if !allowed_entity_facets.is_empty() {
+                    for facet in allowed_entity_facets {
+                        if !ctx.entity_facets.contains(facet) {
+                            return ConstraintResult::Deny(format!(
+                                "entity facet {facet} not allowed or unavailable"
+                            ));
+                        }
                     }
                 }
                 ConstraintResult::Allow
@@ -307,6 +323,7 @@ pub struct EvalContext {
     pub current_time: String,
     pub requested_fields: Option<Vec<String>>,
     pub entity_type: Option<String>,
+    pub entity_facets: Vec<String>,
     pub space_id: Option<String>,
     pub collection_id: Option<String>,
     pub action: Option<String>,
@@ -369,6 +386,7 @@ pub struct ResourceRef {
     pub space_id: Option<String>,
     pub entity_id: Option<String>,
     pub entity_type: Option<String>,
+    pub entity_facets: Vec<String>,
     pub relation_id: Option<String>,
     pub view_id: Option<String>,
 }
@@ -681,7 +699,7 @@ impl GrantBuilder {
                 actions: Vec::new(),
                 constraints: Vec::new(),
                 proofs: Vec::new(),
-                issued_at: Hlc::now("chask"),
+                issued_at: Hlc::now("yougen"),
                 max_delegation_depth: 0,
                 parent_grant_id: None,
                 revocable: true,
@@ -950,7 +968,7 @@ mod tests {
         engine.revoke(CapabilityRevocation {
             grant_id: grant_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("chask"),
+            revoked_at: Hlc::now("yougen"),
             reason: Some("test revocation".to_owned()),
             cascade: false,
         });
@@ -1025,7 +1043,7 @@ mod tests {
         engine.revoke(CapabilityRevocation {
             grant_id: parent_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("chask"),
+            revoked_at: Hlc::now("yougen"),
             reason: Some("test cascade".to_owned()),
             cascade: true,
         });
@@ -1096,6 +1114,31 @@ mod tests {
     }
 
     #[test]
+    fn test_constraint_type_restriction_checks_facets() {
+        let constraint = Constraint::TypeRestriction {
+            allowed_types: vec!["task".to_owned()],
+            allowed_entity_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
+        };
+
+        let ctx_allowed = EvalContext {
+            entity_type: Some("task".to_owned()),
+            entity_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
+            ..Default::default()
+        };
+        assert_eq!(constraint.evaluate(&ctx_allowed), ConstraintResult::Allow);
+
+        let ctx_denied = EvalContext {
+            entity_type: Some("task".to_owned()),
+            entity_facets: vec!["stateful".to_owned()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            constraint.evaluate(&ctx_denied),
+            ConstraintResult::Deny(_)
+        ));
+    }
+
+    #[test]
     fn test_constraint_rate_limiting() {
         let constraint = Constraint::RateLimiting {
             max_operations: 10,
@@ -1128,7 +1171,7 @@ mod tests {
         let revocation = CapabilityRevocation {
             grant_id: grant.grant_id.clone(),
             revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("chask"),
+            revoked_at: Hlc::now("yougen"),
             reason: Some("test".to_owned()),
             cascade: false,
         };

@@ -25,7 +25,7 @@ function Copy-CleanDirectory {
     }
 }
 
-Copy-CleanDirectory -Source (Join-Path $parent "chask") -Destination (Join-Path $context "chask")
+Copy-CleanDirectory -Source (Join-Path $parent "yougen") -Destination (Join-Path $context "yougen")
 Copy-CleanDirectory -Source (Join-Path $parent "contrix-rust-sdk") -Destination (Join-Path $context "contrix-rust-sdk")
 
 Write-Host "Prepared Docker context at $context"

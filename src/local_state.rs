@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(target_arch = "wasm32")]
-const LOCAL_STATE_STORAGE_KEY: &str = "chask.local_state.v1";
+const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
@@ -366,7 +366,7 @@ fn app_data_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("chask")
+        .join("yougen")
 }
 
 /// XOR-based symmetric encryption for client-side private data.
@@ -484,8 +484,8 @@ mod tests {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_push_registration(PushRegistrationState {
             registration_id: Some("cx:push:local".to_owned()),
-            device_id: "dev_chask".to_owned(),
-            app_id: Some("chask".to_owned()),
+            device_id: "dev_yougen".to_owned(),
+            app_id: Some("yougen".to_owned()),
             push_gateway: "https://push.example/api/v1/push/notify".to_owned(),
             push_key_hash: "sha256:abc".to_owned(),
             push_key_preview: "desktop:<redacted,len=5>".to_owned(),
@@ -496,7 +496,7 @@ mod tests {
         let mut reader = LocalStateStore::with_path(path);
         let state = reader.push_registration().expect("push registration");
         assert_eq!(state.registration_id.as_deref(), Some("cx:push:local"));
-        assert_eq!(state.device_id, "dev_chask");
+        assert_eq!(state.device_id, "dev_yougen");
 
         reader.clear_push_registration();
         assert!(reader.push_registration().is_none());
@@ -507,7 +507,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("chask-state-{name}-{stamp}.json"))
+        std::env::temp_dir().join(format!("yougen-state-{name}-{stamp}.json"))
     }
 
     #[test]

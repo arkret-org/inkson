@@ -528,7 +528,7 @@ pub mod social_ops {
             author: author.to_owned(),
             content,
             audience,
-            published_at: Hlc::now("chask"),
+            published_at: Hlc::now("yougen"),
             space_id: space_id.map(|s| s.to_owned()),
             thread_id: None,
             parent_post_id: None,
@@ -742,7 +742,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now("chask"),
+            registered_at: Hlc::now("yougen"),
         };
 
         registry.register_entity_type(def).unwrap();
@@ -761,7 +761,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now("chask"),
+            registered_at: Hlc::now("yougen"),
         };
 
         assert!(registry.register_entity_type(def).is_err());
@@ -778,7 +778,7 @@ mod tests {
             schema: None,
             is_public: true,
             creator: "did:web:alice".to_owned(),
-            registered_at: Hlc::now("chask"),
+            registered_at: Hlc::now("yougen"),
         };
 
         assert!(registry.register_entity_type(def).is_err());

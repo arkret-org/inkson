@@ -39,7 +39,7 @@ pub fn authed_api_with_sync(
 pub fn handle_from_did(did: &str) -> String {
     did.rsplit(':')
         .next()
-        .unwrap_or("chask")
+        .unwrap_or("yougen")
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {

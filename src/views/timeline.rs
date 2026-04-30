@@ -56,7 +56,7 @@ impl Default for TimelineEvent {
     fn default() -> Self {
         Self {
             id: String::new(),
-            sender: "chask".to_owned(),
+            sender: "yougen".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),
             timestamp: String::new(),
@@ -813,7 +813,7 @@ pub fn TimelinePanel(
                         let wait_for = active_sync_token(sync_cursor());
                         spawn(async move {
                             if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                match api.upload_blob(b"chask attached bytes").await {
+                                match api.upload_blob(b"yougen attached bytes").await {
                                     Ok(blob) => blob_status.set(format!("attached {}", blob.blob_ref)),
                                     Err(error) => blob_status.set(format!("attach failed: {error}")),
                                 }

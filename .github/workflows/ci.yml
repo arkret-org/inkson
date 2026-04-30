@@ -17,10 +17,10 @@ jobs:
     name: Rust tests and web build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout chask
+      - name: Checkout yougen
         uses: actions/checkout@v6
         with:
-          path: chask
+          path: yougen
 
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v6
@@ -45,34 +45,34 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: chask
+          workspaces: yougen
 
       - name: Install Node
         uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: chask/package-lock.json
+          cache-dependency-path: yougen/package-lock.json
 
       - name: Install npm dependencies
-        working-directory: chask
+        working-directory: yougen
         run: npm ci
 
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
       - name: Format check
-        working-directory: chask
+        working-directory: yougen
         run: cargo fmt --check
 
       - name: Clippy
-        working-directory: chask
+        working-directory: yougen
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Rust tests
-        working-directory: chask
+        working-directory: yougen
         run: cargo test
 
       - name: Web build
-        working-directory: chask
+        working-directory: yougen
         run: dx build --platform web

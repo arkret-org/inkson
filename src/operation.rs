@@ -303,6 +303,71 @@ pub mod cx_ops {
             .body(json!({}))
     }
 
+    // Canonical ordered-field and container operations.
+    pub fn field_position_move(
+        space_id: &str,
+        actor: &str,
+        field_id: &str,
+        container_ref: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.field_position.move")
+            .target_ref(field_id)
+            .body(json!({
+                "field_id": field_id,
+                "container_ref": container_ref,
+                "before": before,
+                "after": after,
+            }))
+    }
+
+    pub fn field_position_reorder(
+        space_id: &str,
+        actor: &str,
+        container_ref: &str,
+        ordered_field_ids: Vec<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.field_position.reorder")
+            .target_ref(container_ref)
+            .body(json!({
+                "container_ref": container_ref,
+                "ordered_field_ids": ordered_field_ids,
+            }))
+    }
+
+    pub fn container_move_item(
+        space_id: &str,
+        actor: &str,
+        container_id: &str,
+        item_id: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.container.move_item")
+            .target_ref(container_id)
+            .body(json!({
+                "container_id": container_id,
+                "item_id": item_id,
+                "before": before,
+                "after": after,
+            }))
+    }
+
+    pub fn container_rebalance(
+        space_id: &str,
+        actor: &str,
+        container_id: &str,
+        positions: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.container.rebalance")
+            .target_ref(container_id)
+            .body(json!({
+                "container_id": container_id,
+                "positions": positions,
+            }))
+    }
+
     // Message
     pub fn message_create(
         space_id: &str,
@@ -731,6 +796,25 @@ mod tests {
             cx_ops::relation_delete("s", "a", "r").build("n").op_type,
             "cx.relation.delete"
         );
+        let field_move =
+            cx_ops::field_position_move("s", "a", "cx:field:1", "cx:view:1", Some("f0"), None)
+                .build("n");
+        assert_eq!(field_move.op_type, "cx.field_position.move");
+        assert_eq!(field_move.body["before"], "f0");
+        let field_reorder =
+            cx_ops::field_position_reorder("s", "a", "cx:view:1", vec!["f1", "f2"]).build("n");
+        assert_eq!(field_reorder.op_type, "cx.field_position.reorder");
+        assert_eq!(field_reorder.body["ordered_field_ids"][1], "f2");
+        let move_item =
+            cx_ops::container_move_item("s", "a", "cx:container:1", "cx:item:1", None, Some("i2"))
+                .build("n");
+        assert_eq!(move_item.op_type, "cx.container.move_item");
+        assert_eq!(move_item.body["after"], "i2");
+        let rebalance =
+            cx_ops::container_rebalance("s", "a", "cx:container:1", json!({"cx:item:1": "a0"}))
+                .build("n");
+        assert_eq!(rebalance.op_type, "cx.container.rebalance");
+        assert_eq!(rebalance.body["positions"]["cx:item:1"], "a0");
         assert_eq!(
             cx_ops::message_create("s", "a", "c", "b")
                 .build("n")

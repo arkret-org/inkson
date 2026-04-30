@@ -1,3 +1,3 @@
 fn main() {
-    dioxus::launch(chask::App);
+    dioxus::launch(yougen::App);
 }

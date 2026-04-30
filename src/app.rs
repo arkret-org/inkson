@@ -217,7 +217,7 @@ pub fn RouterView() -> Element {
             "data-locale": locale_attr,
             "data-testid": "client-shell",
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
-                div { class: "brand", "chask" }
+                div { class: "brand", "yougen" }
                 div { class: "status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
                     div { class: "space-title", "data-testid": "status-label", "{status}" }
                     div { class: "muted", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
@@ -723,7 +723,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     Err(error) => {
                         let handle = handle_from_did(&actor);
                         match api
-                            .register_account(&actor, &handle, Some("chask"), Some(&device))
+                            .register_account(&actor, &handle, Some("yougen"), Some(&device))
                             .await
                         {
                             Ok(_) => match api.dev_login(&actor, &device).await {
@@ -820,7 +820,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     .claim_keys(&actor, &device, "signed_curve25519")
                     .await;
                 let _ = authed.receive_device_messages().await;
-                if let Ok(blob) = authed.upload_blob(b"chask encrypted bytes").await {
+                if let Ok(blob) = authed.upload_blob(b"yougen encrypted bytes").await {
                     let _ = authed.get_blob_bytes(&blob.blob_ref).await;
                 }
                 match crate::push::build_register_request(&device) {

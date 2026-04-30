@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 /// Unified entity carrier per contrix-spec section 4.2.
@@ -20,6 +20,9 @@ pub struct Entity {
     pub space_id: String,
     /// Entity type (one of the 11 standard types or custom).
     pub entity_type: EntityType,
+    /// Capability facets advertised by the server. `entity_type` is a label; facets drive behavior.
+    #[serde(default)]
+    pub facets: Vec<EntityFacet>,
     /// The actor that created this entity.
     pub creator: String,
     /// ISO 8601 creation timestamp.
@@ -58,6 +61,55 @@ pub enum EntityType {
     Custom(String),
 }
 
+/// Standard entity capability facets from contrix-spec.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EntityFacet {
+    Container,
+    Replyable,
+    Schedulable,
+    Assignable,
+    Stateful,
+    Rankable,
+    Reviewable,
+    Notifiable,
+    Documentable,
+    Renderable,
+    /// Server extension facet. Preserve it for debug/forward compatibility.
+    Unknown(String),
+}
+
+/// Preferred renderer hint for a view/query result.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ViewRenderer {
+    Board,
+    Card,
+    Row,
+    Table,
+    Calendar,
+    Gantt,
+    Timeline,
+    Thread,
+    Chat,
+    Forum,
+    Graph,
+    Tree,
+    Document,
+    Dashboard,
+    Custom,
+    /// Server extension renderer. Preserve it for debug/forward compatibility.
+    Unknown(String),
+}
+
+/// The compact shape used by generic entity cards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EntityRenderKind {
+    Card,
+    Row,
+    Table,
+    Message,
+    Node,
+}
+
 impl EntityType {
     pub fn as_str(&self) -> &str {
         match self {
@@ -91,6 +143,181 @@ impl EntityType {
             "poll" => Self::Poll,
             other => Self::Custom(other.to_owned()),
         }
+    }
+}
+
+impl EntityFacet {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Container => "container",
+            Self::Replyable => "replyable",
+            Self::Schedulable => "schedulable",
+            Self::Assignable => "assignable",
+            Self::Stateful => "stateful",
+            Self::Rankable => "rankable",
+            Self::Reviewable => "reviewable",
+            Self::Notifiable => "notifiable",
+            Self::Documentable => "documentable",
+            Self::Renderable => "renderable",
+            Self::Unknown(facet) => facet,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "container" => Self::Container,
+            "replyable" => Self::Replyable,
+            "schedulable" => Self::Schedulable,
+            "assignable" => Self::Assignable,
+            "stateful" => Self::Stateful,
+            "rankable" => Self::Rankable,
+            "reviewable" => Self::Reviewable,
+            "notifiable" => Self::Notifiable,
+            "documentable" => Self::Documentable,
+            "renderable" => Self::Renderable,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
+
+    pub fn is_known(&self) -> bool {
+        !matches!(self, Self::Unknown(_))
+    }
+}
+
+impl Serialize for EntityFacet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for EntityFacet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&value))
+    }
+}
+
+impl ViewRenderer {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Board => "board",
+            Self::Card => "card",
+            Self::Row => "row",
+            Self::Table => "table",
+            Self::Calendar => "calendar",
+            Self::Gantt => "gantt",
+            Self::Timeline => "timeline",
+            Self::Thread => "thread",
+            Self::Chat => "chat",
+            Self::Forum => "forum",
+            Self::Graph => "graph",
+            Self::Tree => "tree",
+            Self::Document => "document",
+            Self::Dashboard => "dashboard",
+            Self::Custom => "custom",
+            Self::Unknown(renderer) => renderer,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "board" => Self::Board,
+            "card" => Self::Card,
+            "row" => Self::Row,
+            "table" => Self::Table,
+            "calendar" => Self::Calendar,
+            "gantt" => Self::Gantt,
+            "timeline" => Self::Timeline,
+            "thread" => Self::Thread,
+            "chat" => Self::Chat,
+            "forum" => Self::Forum,
+            "graph" => Self::Graph,
+            "tree" => Self::Tree,
+            "document" => Self::Document,
+            "dashboard" => Self::Dashboard,
+            "custom" => Self::Custom,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
+}
+
+impl Serialize for ViewRenderer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ViewRenderer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&value))
+    }
+}
+
+impl EntityRenderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Card => "card",
+            Self::Row => "row",
+            Self::Table => "table",
+            Self::Message => "message",
+            Self::Node => "node",
+        }
+    }
+}
+
+pub fn choose_entity_render_kind(
+    facets: &[EntityFacet],
+    renderer: Option<&ViewRenderer>,
+) -> EntityRenderKind {
+    if let Some(renderer) = renderer {
+        return match renderer {
+            ViewRenderer::Row => EntityRenderKind::Row,
+            ViewRenderer::Table => EntityRenderKind::Table,
+            ViewRenderer::Timeline
+            | ViewRenderer::Thread
+            | ViewRenderer::Chat
+            | ViewRenderer::Forum => EntityRenderKind::Message,
+            ViewRenderer::Graph | ViewRenderer::Tree => EntityRenderKind::Node,
+            ViewRenderer::Board
+            | ViewRenderer::Card
+            | ViewRenderer::Calendar
+            | ViewRenderer::Gantt
+            | ViewRenderer::Document
+            | ViewRenderer::Dashboard => EntityRenderKind::Card,
+            ViewRenderer::Custom | ViewRenderer::Unknown(_) => fallback_render_kind(facets),
+        };
+    }
+    fallback_render_kind(facets)
+}
+
+pub fn unknown_entity_facets(facets: &[EntityFacet]) -> Vec<String> {
+    facets
+        .iter()
+        .filter_map(|facet| match facet {
+            EntityFacet::Unknown(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn fallback_render_kind(facets: &[EntityFacet]) -> EntityRenderKind {
+    if facets.contains(&EntityFacet::Renderable) {
+        EntityRenderKind::Card
+    } else {
+        EntityRenderKind::Row
     }
 }
 
@@ -227,6 +454,12 @@ pub struct ViewQuery {
     /// Entity type filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_type: Option<String>,
+    /// Facet filter. All listed facets must match.
+    #[serde(default)]
+    pub facets: Vec<EntityFacet>,
+    /// Preferred server projection renderer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renderer: Option<ViewRenderer>,
     /// Additional filters.
     #[serde(default)]
     pub filters: BTreeMap<String, Value>,
@@ -381,6 +614,7 @@ impl Entity {
             entity_id: entity_id.into(),
             space_id: space_id.into(),
             entity_type,
+            facets: Vec::new(),
             creator: creator.into(),
             created_at: now.clone(),
             updated_at: now,
@@ -400,6 +634,12 @@ impl Entity {
     /// Add a tag.
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
+        self
+    }
+
+    /// Set capability facets advertised for this entity.
+    pub fn with_facets(mut self, facets: impl IntoIterator<Item = EntityFacet>) -> Self {
+        self.facets = facets.into_iter().collect();
         self
     }
 }
@@ -431,6 +671,8 @@ impl ViewQuery {
     pub fn new() -> Self {
         Self {
             entity_type: None,
+            facets: Vec::new(),
+            renderer: None,
             filters: BTreeMap::new(),
             group_by: None,
             order_by: None,
@@ -441,6 +683,16 @@ impl ViewQuery {
 
     pub fn entity_type(mut self, t: impl Into<String>) -> Self {
         self.entity_type = Some(t.into());
+        self
+    }
+
+    pub fn facets(mut self, facets: impl IntoIterator<Item = EntityFacet>) -> Self {
+        self.facets = facets.into_iter().collect();
+        self
+    }
+
+    pub fn renderer(mut self, renderer: ViewRenderer) -> Self {
+        self.renderer = Some(renderer);
         self
     }
 
@@ -481,11 +733,34 @@ mod tests {
         let entity = Entity::new("e1", "cx:space:s1", EntityType::Task, "did:web:alice")
             .with_data("title", json!("Buy milk"))
             .with_data("priority", json!("high"))
-            .with_tag("shopping");
+            .with_tag("shopping")
+            .with_facets([EntityFacet::Stateful, EntityFacet::Rankable]);
 
         let json = serde_json::to_string(&entity).unwrap();
         let parsed: Entity = serde_json::from_str(&json).unwrap();
         assert_eq!(entity, parsed);
+        assert_eq!(
+            parsed.facets,
+            vec![EntityFacet::Stateful, EntityFacet::Rankable]
+        );
+    }
+
+    #[test]
+    fn entity_unknown_facets_round_trip() {
+        let entity = Entity::new("e1", "cx:space:s1", EntityType::Task, "did:web:alice")
+            .with_facets([
+                EntityFacet::Renderable,
+                EntityFacet::Unknown("com.example.searchable".to_owned()),
+            ]);
+
+        let json = serde_json::to_string(&entity).unwrap();
+        assert!(json.contains("com.example.searchable"));
+        let parsed: Entity = serde_json::from_str(&json).unwrap();
+        assert_eq!(entity, parsed);
+        assert_eq!(
+            unknown_entity_facets(&parsed.facets),
+            vec!["com.example.searchable".to_owned()]
+        );
     }
 
     #[test]
@@ -538,13 +813,51 @@ mod tests {
     fn view_query_builder() {
         let q = ViewQuery::new()
             .entity_type("task")
+            .facets([EntityFacet::Stateful, EntityFacet::Rankable])
+            .renderer(ViewRenderer::Board)
             .filter("status", json!("open"))
             .order_by("created_at")
             .limit(50);
 
         assert_eq!(q.entity_type.as_deref(), Some("task"));
+        assert_eq!(q.facets, vec![EntityFacet::Stateful, EntityFacet::Rankable]);
+        assert_eq!(q.renderer, Some(ViewRenderer::Board));
         assert_eq!(q.filters.get("status").unwrap(), &json!("open"));
         assert_eq!(q.limit, Some(50));
+    }
+
+    #[test]
+    fn view_renderer_unknown_round_trip() {
+        let q = ViewQuery::new().renderer(ViewRenderer::Unknown("swimlane".to_owned()));
+
+        let json = serde_json::to_string(&q).unwrap();
+        assert!(json.contains("swimlane"));
+        let parsed: ViewQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.renderer,
+            Some(ViewRenderer::Unknown("swimlane".to_owned()))
+        );
+    }
+
+    #[test]
+    fn entity_render_kind_prefers_server_renderer_then_renderable_facet() {
+        assert_eq!(
+            choose_entity_render_kind(&[EntityFacet::Renderable], Some(&ViewRenderer::Thread)),
+            EntityRenderKind::Message
+        );
+        assert_eq!(
+            choose_entity_render_kind(&[EntityFacet::Renderable], Some(&ViewRenderer::Graph)),
+            EntityRenderKind::Node
+        );
+        assert_eq!(
+            choose_entity_render_kind(&[EntityFacet::Renderable], Some(&ViewRenderer::Table)),
+            EntityRenderKind::Table
+        );
+        assert_eq!(
+            choose_entity_render_kind(&[EntityFacet::Renderable], None),
+            EntityRenderKind::Card
+        );
+        assert_eq!(choose_entity_render_kind(&[], None), EntityRenderKind::Row);
     }
 
     #[test]

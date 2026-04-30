@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Build context must contain both `chask/` and sibling `contrix-rust-sdk/`.
+# Build context must contain both `yougen/` and sibling `contrix-rust-sdk/`.
 # From the parent directory run:
-#   docker build -f chask/Dockerfile -t chask-web .
+#   docker build -f yougen/Dockerfile -t yougen-web .
 
 FROM rust:1-bookworm AS build
 
@@ -14,18 +14,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 WORKDIR /workspace
 
 COPY contrix-rust-sdk ./contrix-rust-sdk
-COPY chask ./chask
+COPY yougen ./yougen
 
-WORKDIR /workspace/chask
+WORKDIR /workspace/yougen
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/workspace/chask/target \
+    --mount=type=cache,target=/workspace/yougen/target \
     dx build --platform web --release
 
 FROM nginx:1.29-alpine
 
-COPY --from=build /workspace/chask/target/dx/chask/release/web/public /usr/share/nginx/html
+COPY --from=build /workspace/yougen/target/dx/yougen/release/web/public /usr/share/nginx/html
 
 EXPOSE 80
 

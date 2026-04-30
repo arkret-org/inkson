@@ -94,7 +94,7 @@ impl LwwResolver {
             return ConflictResolution {
                 winner: serde_json::Value::Null,
                 strategy: ConflictStrategy::LastWriteWins,
-                winner_hlc: Hlc::now("chask"),
+                winner_hlc: Hlc::now("yougen"),
                 had_conflict: false,
                 losers: vec![],
             };
@@ -500,7 +500,7 @@ impl SnapshotManager {
             chunks: Vec::new(),
             reducer_version: reducer_version.to_owned(),
             generator_signature: None,
-            created_at: Hlc::now("chask"),
+            created_at: Hlc::now("yougen"),
             operation_count,
             size_bytes: 0,
         }

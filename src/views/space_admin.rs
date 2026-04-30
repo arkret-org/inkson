@@ -222,7 +222,7 @@ pub fn SpaceAdminPanel(
                                                         None,
                                                         &resp.state,
                                                     )
-                                                    .build("chask");
+                                                    .build("yougen");
                                                     let commit = CommitBuilder::new(actor.clone())
                                                         .add_operation(op.clone())
                                                         .build();
@@ -425,7 +425,7 @@ pub fn SpaceAdminPanel(
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => match api.accept_space_invite(&space, &invite_id).await {
                                                     Ok(resp) => {
-                                                        let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("chask");
+                                                        let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
                                                         let commit = CommitBuilder::new(actor.clone())
                                                             .add_operation(op.clone())
                                                             .build();
@@ -514,7 +514,7 @@ pub fn SpaceAdminPanel(
                                                             &invite_id,
                                                             Some("declined"),
                                                         )
-                                                        .build("chask");
+                                                        .build("yougen");
                                                         let commit = CommitBuilder::new(actor.clone())
                                                             .add_operation(op.clone())
                                                             .build();

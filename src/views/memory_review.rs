@@ -152,7 +152,7 @@ pub fn MemoryReviewPanel(
                                     0.91,
                                     "candidate",
                                 )
-                                .build("chask");
+                                .build("yougen");
                                 let commit = CommitBuilder::new(actor.clone())
                                     .add_operation(op.clone())
                                     .build();
@@ -311,7 +311,7 @@ pub fn MemoryReviewPanel(
                                                 &memory_id,
                                                 json!({"content": text.clone(), "state": "candidate"}),
                                             )
-                                            .build("chask");
+                                            .build("yougen");
                                             let commit = CommitBuilder::new(actor.clone())
                                                 .add_operation(op.clone())
                                                 .build();
@@ -402,7 +402,7 @@ pub fn MemoryReviewPanel(
                                     let space = selected_space.clone();
                                     let memory_id = memory.id.clone();
                                     move |_| {
-                                        let op = cx_ops::memory_confirm(&space, &actor, &memory_id).build("chask");
+                                        let op = cx_ops::memory_confirm(&space, &actor, &memory_id).build("yougen");
                                         let commit = CommitBuilder::new(actor.clone())
                                             .add_operation(op.clone())
                                             .build();
@@ -509,14 +509,14 @@ pub fn MemoryReviewPanel(
                                             0.88,
                                             "candidate",
                                         )
-                                        .build("chask");
+                                        .build("yougen");
                                         let supersede_op = cx_ops::memory_supersede(
                                             &space,
                                             &actor,
                                             &memory_id,
                                             &replacement_id,
                                         )
-                                        .build("chask");
+                                        .build("yougen");
                                         let commit = CommitBuilder::new(actor.clone())
                                             .add_operation(create_op.clone())
                                             .add_operation(supersede_op.clone())
@@ -611,7 +611,7 @@ pub fn MemoryReviewPanel(
                                     let space = selected_space.clone();
                                     let memory_id = memory.id.clone();
                                     move |_| {
-                                        let op = cx_ops::memory_invalidate(&space, &actor, &memory_id, "review rejected").build("chask");
+                                        let op = cx_ops::memory_invalidate(&space, &actor, &memory_id, "review rejected").build("yougen");
                                         let commit = CommitBuilder::new(actor.clone())
                                             .add_operation(op.clone())
                                             .build();

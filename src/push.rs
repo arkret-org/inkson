@@ -5,8 +5,8 @@ use chime::{
 };
 use chrono::Utc;
 
-const APP_ID: &str = "chask";
-const DISPLAY_NAME: &str = "chask";
+const APP_ID: &str = "yougen";
+const DISPLAY_NAME: &str = "yougen";
 const DEFAULT_PUSH_GATEWAY: &str = "https://push.example/api/v1/push/notify";
 
 pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
@@ -23,7 +23,7 @@ pub fn build_register_request(device_id: &str) -> anyhow::Result<RegisterDeviceR
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
     let prefs = push_preferences();
-    let idempotency_key = format!("chask-push-register-{device_id}");
+    let idempotency_key = format!("yougen-push-register-{device_id}");
     let config = PushDeviceConfig {
         device_id,
         push_key: Some(&push_key),
@@ -45,7 +45,7 @@ pub fn build_unregister_request(
     existing: Option<&PushRegistrationState>,
 ) -> anyhow::Result<UnregisterDeviceRequest> {
     let platform = current_platform();
-    let idempotency_key = format!("chask-push-unregister-{device_id}");
+    let idempotency_key = format!("yougen-push-unregister-{device_id}");
     let registration_id = existing.and_then(|state| state.registration_id.as_deref());
     let app_id = existing
         .and_then(|state| state.app_id.as_deref())
@@ -134,7 +134,7 @@ fn acquire_platform_push_key() -> String {
     std::env::var("CHASK_PUSH_KEY").unwrap_or_else(|_| {
         // TODO(push): replace this development token with OS/Web push token
         // acquisition (APNs, FCM, Web Push, or desktop bridge) before release.
-        "desktop:chask-dev-placeholder-token".to_owned()
+        "desktop:yougen-dev-placeholder-token".to_owned()
     })
 }
 
@@ -142,7 +142,7 @@ fn acquire_platform_push_key() -> String {
 fn acquire_platform_push_key() -> String {
     // TODO(push): request Notification permission, create a PushSubscription,
     // and serialize its endpoint/auth/p256dh values as the web push key.
-    "webpush:chask-dev-placeholder-token".to_owned()
+    "webpush:yougen-dev-placeholder-token".to_owned()
 }
 
 #[cfg(test)]
@@ -151,16 +151,16 @@ mod tests {
 
     #[test]
     fn builds_chime_register_request() {
-        let request = build_register_request("dev_chask").unwrap();
-        assert_eq!(request.device_id, "dev_chask");
-        assert_eq!(request.app_id.as_deref(), Some("chask"));
+        let request = build_register_request("dev_yougen").unwrap();
+        assert_eq!(request.device_id, "dev_yougen");
+        assert_eq!(request.app_id.as_deref(), Some("yougen"));
         assert_eq!(request.platform.as_deref(), Some(current_platform()));
         assert!(!request.push_key.is_empty());
     }
 
     #[test]
     fn builds_persistable_registration_state() {
-        let request = build_register_request("dev_chask").unwrap();
+        let request = build_register_request("dev_yougen").unwrap();
         let response = RegisterDeviceResponse {
             ok: true,
             registration_id: Some("cx:push:test".to_owned()),
@@ -169,30 +169,30 @@ mod tests {
         let state = registration_state_from_response(&request, &response);
 
         assert_eq!(state.registration_id.as_deref(), Some("cx:push:test"));
-        assert_eq!(state.device_id, "dev_chask");
+        assert_eq!(state.device_id, "dev_yougen");
         assert!(state.push_key_hash.starts_with("sha256:"));
         assert!(!state.push_key_hash.contains("placeholder"));
     }
 
     #[test]
     fn builds_unregister_request_from_existing_state() {
-        let request = build_register_request("dev_chask").unwrap();
+        let request = build_register_request("dev_yougen").unwrap();
         let response = RegisterDeviceResponse {
             ok: true,
             registration_id: Some("cx:push:test".to_owned()),
             expires_at: None,
         };
         let state = registration_state_from_response(&request, &response);
-        let unregister = build_unregister_request("dev_chask", Some(&state)).unwrap();
+        let unregister = build_unregister_request("dev_yougen", Some(&state)).unwrap();
 
-        assert_eq!(unregister.device_id, "dev_chask");
+        assert_eq!(unregister.device_id, "dev_yougen");
         assert_eq!(unregister.registration_id.as_deref(), Some("cx:push:test"));
-        assert_eq!(unregister.app_id.as_deref(), Some("chask"));
+        assert_eq!(unregister.app_id.as_deref(), Some("yougen"));
     }
 
     #[test]
     fn push_status_label_treats_state_without_registration_id_as_registered() {
-        let request = build_register_request("dev_chask").unwrap();
+        let request = build_register_request("dev_yougen").unwrap();
         let response = RegisterDeviceResponse {
             ok: true,
             registration_id: None,

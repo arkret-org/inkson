@@ -153,7 +153,7 @@ pub fn AgentRunsPanel(
                                     json!({"summary": input.clone()}),
                                     "running",
                                 )
-                                .build("chask");
+                                .build("yougen");
                                 let commit = CommitBuilder::new(actor.clone())
                                     .add_operation(op.clone())
                                     .build();
@@ -360,7 +360,7 @@ pub fn AgentRunsPanel(
                                                         "duration_ms": 240,
                                                     }),
                                                 )
-                                                .build("chask");
+                                                .build("yougen");
                                                 let commit = CommitBuilder::new(actor.clone())
                                                     .add_operation(op.clone())
                                                     .build();
@@ -451,7 +451,7 @@ pub fn AgentRunsPanel(
                                                     &run_id,
                                                     json!({"summary": "Run completed from review panel"}),
                                                 )
-                                                .build("chask");
+                                                .build("yougen");
                                                 let commit = CommitBuilder::new(actor.clone())
                                                     .add_operation(op.clone())
                                                     .build();
@@ -532,7 +532,7 @@ pub fn AgentRunsPanel(
                                             let space = selected_space.clone();
                                             let run_id = run.id.clone();
                                             move |_| {
-                                                let op = cx_ops::run_fail(&space, &actor, &run_id, "manual failure").build("chask");
+                                                let op = cx_ops::run_fail(&space, &actor, &run_id, "manual failure").build("yougen");
                                                 let commit = CommitBuilder::new(actor.clone())
                                                     .add_operation(op.clone())
                                                     .build();

@@ -209,9 +209,27 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                         div { class: "muted", "data-testid": "capability-constraints",
                             "constraints {json_value(&grant, &[\"constraints\", \"obligations\"])}"
                         }
+                        {
+                            let allowed_facets = capability_allowed_entity_facets(&grant);
+                            if !allowed_facets.is_empty() {
+                                let allowed_facets_label = allowed_facets.join(", ");
+                                rsx! {
+                                    div { class: "muted", "data-testid": "capability-allowed-facets",
+                                        "allowed entity facets {allowed_facets_label}"
+                                    }
+                                }
+                            } else {
+                                rsx! { div {} }
+                            }
+                        }
                         div { class: "muted", "data-testid": "capability-delegation-chain",
                             "delegation {json_value(&grant, &[\"delegation_chain\", \"proofs\"])}"
                         }
+                    }
+                }
+                if capability_decision() == "denied" && !capability_reason().is_empty() {
+                    div { class: "muted", "data-testid": "capability-denial-class",
+                        "denial {capability_denial_label(&capability_reason())}"
                     }
                 }
                 if capability_grants().is_empty() {
@@ -426,6 +444,53 @@ fn json_value(value: &Value, keys: &[&str]) -> String {
         .unwrap_or_else(|| "[]".to_owned())
 }
 
+fn capability_allowed_entity_facets(grant: &Value) -> Vec<String> {
+    let mut facets = Vec::new();
+    collect_string_array(grant.get("allowed_entity_facets"), &mut facets);
+
+    if let Some(constraints) = grant.get("constraints").and_then(|v| v.as_array()) {
+        for constraint in constraints {
+            collect_string_array(constraint.get("allowed_entity_facets"), &mut facets);
+            collect_string_array(
+                constraint
+                    .get("params")
+                    .and_then(|params| params.get("allowed_entity_facets")),
+                &mut facets,
+            );
+        }
+    }
+
+    facets
+}
+
+fn collect_string_array(value: Option<&Value>, target: &mut Vec<String>) {
+    if let Some(values) = value.and_then(|v| v.as_array()) {
+        for value in values {
+            if let Some(text) = value.as_str() {
+                let text = text.to_owned();
+                if !target.contains(&text) {
+                    target.push(text);
+                }
+            }
+        }
+    }
+}
+
+fn capability_denial_label(reason: &str) -> &'static str {
+    let reason = reason.to_ascii_lowercase();
+    if reason.contains("entity type") || reason.contains("entity_type") {
+        "entity type label mismatch"
+    } else if reason.contains("entity facet") || reason.contains("allowed_entity_facets") {
+        "facet capability missing"
+    } else if reason.contains("stale") || reason.contains("frontier") {
+        "stale frontier"
+    } else if reason.contains("review") {
+        "requires review"
+    } else {
+        "access denied"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,5 +525,37 @@ mod tests {
         );
         assert!(json_value(&grant, &["constraints"]).contains("temporal"));
         assert!(json_value(&grant, &["delegation_chain", "proofs"]).contains("cx:grant:root"));
+    }
+
+    #[test]
+    fn capability_explanation_extracts_allowed_entity_facets() {
+        let grant = json!({
+            "allowed_entity_facets": ["renderable"],
+            "constraints": [
+                {"type": "type_restriction", "params": {"allowed_entity_facets": ["stateful", "rankable"]}},
+                {"type": "type_restriction", "allowed_entity_facets": ["renderable"]}
+            ]
+        });
+
+        assert_eq!(
+            capability_allowed_entity_facets(&grant),
+            vec![
+                "renderable".to_owned(),
+                "stateful".to_owned(),
+                "rankable".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn capability_denial_label_distinguishes_type_and_facet_denials() {
+        assert_eq!(
+            capability_denial_label("entity type task not allowed"),
+            "entity type label mismatch"
+        );
+        assert_eq!(
+            capability_denial_label("entity facet rankable not allowed or unavailable"),
+            "facet capability missing"
+        );
     }
 }

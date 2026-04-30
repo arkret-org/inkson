@@ -183,7 +183,7 @@ pub fn ChatPanel(
                                         &kind,
                                         if topic.is_empty() { None } else { Some(topic.as_str()) },
                                     )
-                                    .build("chask");
+                                    .build("yougen");
                                     let commit = CommitBuilder::new(actor.clone())
                                         .add_operation(op.clone())
                                         .build();
@@ -324,7 +324,7 @@ pub fn ChatPanel(
                                 };
                                 messages.write().push(ChatMessage {
                                     id: local_id.clone(),
-                                    sender: "chask".to_owned(),
+                                    sender: "yougen".to_owned(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     channel_id: channel.entity_id.clone(),

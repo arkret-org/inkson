@@ -1,13 +1,37 @@
-# chask Active TODO
+# yougen Active TODO
 
-> 更新日期: 2026-04-29
-> 范围: Contrix 跨平台客户端。`chask` 负责产品 UX、平台集成、客户端本地状态、安全边界和 E2E；协议基础模型、validators、builders 优先复用 `contrix-rust-sdk`，push registration 优先复用 `chime`。
+> 更新日期: 2026-04-30
+> 范围: Contrix 跨平台客户端。`yougen` 负责产品 UX、平台集成、客户端本地状态、安全边界和 E2E；协议基础模型、validators、builders 优先复用 `contrix-rust-sdk`，push registration 优先复用 `chime`。
 
 ## 0. 当前边界
 
 - 当前已有 Dioxus app、URL routes、主要页面、Playwright 主业务流、结构化事件写入骨架、目录/通知/Agent/Space Admin 等产品面。
 - 仍未达到生产发布级: 生产认证、真实 DID/handle/key-log、Web E2EE、持久安全存储、multi-device sync、授权审批 UX、真实 federation/applet/agent interop、桌面/移动发布工程。
-- 本清单只跟踪 chask 侧应做的产品和平台工作；SDK/服务端工作只作为依赖引用，不在 chask 内重复实现。
+- 本清单只跟踪 yougen 侧应做的产品和平台工作；SDK/服务端工作只作为依赖引用，不在 yougen 内重复实现。
+
+## P0: Spec Drift - Facet-Aware Client Surface
+
+目标: 客户端 UI 和本地写入语义跟随 `contrix-spec` 最新 facets/view renderer 模型。
+
+- [x] Local entity model:
+  - [x] 实体缓存支持 `facets`，把 `entity_type` 作为语义标签显示，不再用它推断全部交互能力。
+  - [x] 通用实体卡片根据 `renderable` facet 与 server `renderer` 选择 card/row/table/message/node 渲染。
+  - [x] unknown facet 保留并在调试面板展示，不丢弃服务端扩展。
+- [ ] Dynamic views:
+  - [x] index query 支持 `facets` 和 `renderer` 参数。
+  - [ ] kanban/table/timeline/thread/graph 页面读取 `item_facets/message_facets/node_facets`。
+  - [x] cursor/filter mismatch 错误展示 renderer/facet 条件，避免用户继续使用旧游标。
+- [ ] Outbound operations:
+  - [x] yougen 本地 operation helpers 已提供 `cx.field_position.move/reorder` 和 `cx.container.move_item/rebalance` canonical kind。
+  - [ ] SDK builders 产出的 canonical kind 使用 `cx.field_position.move/reorder` 和 `cx.container.move_item/rebalance`。
+  - [ ] 旧 `cx.task.move/reorder`、`cx.relation.move/rebalance` 只用于 legacy profile 迁移。
+  - [ ] UI audit 链路展示 canonical kind 和服务端回显的 operation/commit id。
+- [x] Capability UX:
+  - [x] capability model/evaluator 支持 `allowed_entity_facets`。
+  - [x] capability explanation 显示 `allowed_entity_facets`。
+  - [x] 被拒绝操作区分 entity type 标签不匹配与 facet capability 不满足。
+
+并行性: 本地模型、动态视图、操作 builder、能力解释 UI 可并行；出站写入应等待 `contrix-rust-sdk` 公共 API。
 
 ## P0: Production Auth and Identity UX
 
@@ -157,7 +181,7 @@
 - [ ] Dynamic views:
   - [ ] server-defined View objects。
   - [ ] kanban/table/timeline/graph projections。
-  - [ ] generic unknown entity card。
+  - [x] generic unknown entity card。
   - [ ] schema-driven custom fields。
 - [ ] Media/blob:
   - [ ] content hash before/after download。
@@ -200,6 +224,38 @@
   - [ ] episodic vs semantic memory separation。
   - [ ] kill-switch / max capability display。
   - [ ] A2A/ACP/MCP handoff metadata。
+
+## P1: MIMI Interop Client Surface
+
+目标: 跟随 `cx.profile.mimi_interop.v1`，把 MIMI 作为 Provider Facade / interop projection 暴露给客户端，不替代 Contrix signed event/reducer、`space_id`、DID、HLC、capability、auth refs 或 MLS state。
+
+- [x] Draft pinning:
+  - [x] 客户端展示 `draft-ietf-mimi-protocol-06`、`draft-ietf-mimi-content-08`、`draft-ietf-mimi-room-policy-03`、`draft-kohbrok-mimi-identifiers-01`。
+  - [x] provider directory UI 显示 `cx.profile.mimi_interop.v1` 和 feature set。
+- [x] Typed facade API:
+  - [x] `provider_directory`。
+  - [x] `key_material`。
+  - [x] `room_update`。
+  - [x] `notify`。
+  - [x] `submit_message`。
+  - [x] `group_info`。
+  - [x] `request_consent` / `update_consent`。
+  - [x] `identifier_query`。
+  - [x] `report_abuse`。
+  - [x] `proxy_download`。
+- [x] Settings UI:
+  - [x] MIMI interop section。
+  - [x] refresh directory、groupInfo、identifier query、submit test message、proxy download 操作。
+  - [x] last receipt/status 展示。
+- [x] Playwright:
+  - [x] mock MIMI provider facade endpoints。
+  - [x] e2e 覆盖 discovery、draft/feature display、group-info、identifier-query、proxy-download、submit-message 主流程。
+- [ ] Follow-up:
+  - [ ] 真实 HTTP Message Signature/service DID proof UX。
+  - [ ] `cx.mimi.room_binding` discovery and Space/Channel binding picker。
+  - [ ] consent request/update management UI。
+  - [ ] abuse report evidence package UI。
+  - [ ] MIMI write receipt link to native Contrix event/operation/commit audit view。
 
 ## P1: Platform Release Engineering
 
@@ -268,14 +324,15 @@
   - [x] offline queue。
   - [x] capability explanation。
 - [ ] Integration:
-  - [ ] chask + soland sync。
-  - [ ] chask + coauth OIDC。
-  - [ ] chask + starid DID registration。
-  - [ ] chask + floria/chime push registration。
+  - [ ] yougen + soland sync。
+  - [ ] yougen + coauth OIDC。
+  - [ ] yougen + starid DID registration。
+  - [ ] yougen + floria/chime push registration。
   - [ ] multi-device same account。
 - [ ] E2E:
   - [ ] production auth flow。
   - [ ] full Space lifecycle。
+  - [x] MIMI provider facade discovery/actions。
   - [ ] offline -> online replay。
   - [ ] E2EE group lifecycle。
   - [ ] push token rotate。
@@ -300,3 +357,15 @@
 - [ ] Protocol writes expose operation/commit/audit ids where relevant。
 - [ ] E2E covers success, denial and recovery/error path。
 - [ ] UX never leaks invisible resource existence or private plaintext boundary details。
+
+## 本轮验证记录
+
+- [x] 2026-04-30 spec drift: `cargo fmt --all`。
+- [x] 2026-04-30 spec drift: `cargo check --message-format short`。
+- [x] 2026-04-30 spec drift: `cargo test --lib entity_round_trip_serde --message-format short`。
+- [x] 2026-04-30 spec drift: `cargo test --lib test_constraint_type_restriction_checks_facets --message-format short`。
+- [x] 2026-04-30 facet UI: `cargo fmt --all`。
+- [x] 2026-04-30 facet UI: `cargo check --message-format short`。
+- [x] 2026-04-30 facet UI: `cargo check --tests --message-format short`。
+- [x] 2026-04-30 facet UI: `git diff --check`。
+- [x] 2026-04-30 facet UI: `npx playwright test --list`。

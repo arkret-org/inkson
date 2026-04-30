@@ -24,9 +24,122 @@ export async function mockContrixApi(page: Page) {
         service_did: "did:web:serverx.local",
         service_type: "principal_server",
         protocol_version: "1.0",
-        supported_features: ["sync.client_sync", "directory.search_spaces"],
-        supported_operations: ["cx.sync.client_sync", "cx.directory.search_spaces"],
+        supported_profiles: ["cx.profile.mimi_interop.v1"],
+        supported_features: ["sync.client_sync", "directory.search_spaces", "mimi_provider_facade"],
+        supported_operations: ["cx.sync.client_sync", "cx.directory.search_spaces", "cx.mimi.provider_directory"],
         limits: { storage: "memory" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/provider-directory") {
+      return json(route, mimiProviderDirectory());
+    }
+
+    if (url.pathname === "/api/v1/mimi/key-material") {
+      return json(route, {
+        ok: true,
+        key_packages: [{ key_package_ref: "mimi:key-package:e2e", target: "mimi://remote.example/alice" }],
+        receipt: { kind: "cx.mimi.key_material", profile: "cx.profile.mimi_interop.v1" },
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/update$/) && route.request().method() === "PUT") {
+      const roomId = decodeURIComponent(url.pathname.split("/")[5]);
+      return json(route, {
+        ok: true,
+        room_id: roomId,
+        receipt: { kind: "cx.mimi.room_update", operation_id: "cx:operation:mimi-room-update" },
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/notify$/)) {
+      return json(route, {
+        ok: true,
+        accepted: ["did:web:remote.example"],
+        receipt: { kind: "cx.mimi.notify", notification_id: "cx:mimi:notify:e2e" },
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/messages$/)) {
+      return json(route, {
+        ok: true,
+        mimi_message_id: "mimi-msg-e2e",
+        mapped_operation_id: "cx:operation:mimi-submit-e2e",
+        contrix_event_id: "cx:event:mimi-submit-e2e",
+        receipt: {
+          kind: "cx.mimi.mapping_receipt",
+          profile: "cx.profile.mimi_interop.v1",
+          mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
+          source_format: "text/markdown;variant=GFM-MIMI",
+          target_format: "cx.message.create",
+          original_envelope_hash: "sha256:e2e-mimi-envelope",
+          mapped_operation_id: "cx:operation:mimi-submit-e2e",
+          mimi_message_id: "mimi-msg-e2e",
+        },
+      });
+    }
+
+    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/group-info$/)) {
+      const roomId = decodeURIComponent(url.pathname.split("/")[5]);
+      return json(route, {
+        room_id: roomId,
+        mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
+        group_info: { epoch: 7, mls_group_id: "mls-group-01", policy_root: "sha256:e2e-policy-root" },
+        participants: [
+          { identifier: "mimi://mimi.example.com/alice", did: "did:web:alice.example", role: "admin" },
+          { identifier: "mimi://remote.example/bob", did: "did:web:bob.example", role: "member" },
+        ],
+        receipt: { kind: "cx.mimi.group_info", profile: "cx.profile.mimi_interop.v1" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/consent/request") {
+      return json(route, {
+        ok: true,
+        consent_id: "cx:mimi-consent:e2e",
+        state: "requested",
+        receipt: { kind: "cx.mimi.request_consent" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/consent/update") {
+      return json(route, {
+        ok: true,
+        consent_id: "cx:mimi-consent:e2e",
+        state: "accepted",
+        receipt: { kind: "cx.mimi.update_consent" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/identifiers/query") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        query: body.query,
+        reachable: true,
+        mapped_did: "did:web:alice.example",
+        provider_id: "mimi://mimi.example.com",
+        proofs: [{ type: "private_contact_discovery", expires_at: "2026-04-30T12:00:00Z" }],
+        receipt: { kind: "cx.mimi.identifier_query", privacy_mode: body.privacy_mode },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/report-abuse") {
+      return json(route, {
+        ok: true,
+        report_id: "cx:report:mimi-e2e",
+        status: "queued",
+        receipt: { kind: "cx.mimi.report_abuse" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/mimi/proxy-download") {
+      return json(route, {
+        ok: true,
+        blob_ref: "cx:blob:sha256:e2e",
+        media_type: "application/octet-stream",
+        size: 23,
+        proxy_url: "/api/v1/mimi/proxy-download/cx:blob:sha256:e2e",
+        receipt: { kind: "cx.mimi.proxy_download", direct_object_store_url: null },
       });
     }
 
@@ -93,7 +206,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         did: "did:web:alice.example",
         handle: "alice.example",
-        display_name: "chask",
+        display_name: "yougen",
         created_at: "2026-04-28T12:00:00Z",
       });
     }
@@ -491,7 +604,17 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/index/query") {
       return json(route, {
-        results: [{ kind: "space_preview", space_id: DEMO_SPACE, title: "Contrix Demo Space" }],
+        results: [
+          {
+            kind: "space_preview",
+            space_id: DEMO_SPACE,
+            title: "Contrix Demo Space",
+            entity_type: "space",
+            facets: ["renderable", "com.example.preview"],
+            renderer: "card",
+            item_facets: ["stateful", "rankable"],
+          },
+        ],
         next_cursor: null,
         frontier: {},
       });
@@ -542,7 +665,13 @@ export async function mockContrixApi(page: Page) {
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.send"],
             resource_selectors: ["space:cx:space:01js0sp0000000000000000000/**"],
-            constraints: [{ type: "temporal", not_after: "2026-12-31T00:00:00Z" }],
+            constraints: [
+              { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
+              {
+                type: "type_restriction",
+                params: { allowed_types: ["space"], allowed_entity_facets: ["renderable", "stateful"] },
+              },
+            ],
             delegation_chain: ["cx:grant:root", "cx:grant:e2e"],
           },
         ],
@@ -576,7 +705,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname.startsWith("/api/v1/device_messages/")) {
-      return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_chask"] }, unknown_devices: {} });
+      return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
     }
 
     if (url.pathname === "/api/v1/push/register-device") {
@@ -612,7 +741,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/blob/get") {
-      return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "chask encrypted bytes" });
+      return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "yougen encrypted bytes" });
     }
 
     if (url.pathname === "/api/v1/moderation/report") {
@@ -651,6 +780,43 @@ function spaceLifecycle(spaceId: string, members: string[], deleted: boolean) {
     owner: "did:web:alice.example",
     members,
     deleted,
+  };
+}
+
+function mimiProviderDirectory() {
+  return {
+    schema: "cx.schema.mimi_interop.v1",
+    service_did: "did:web:mimi.example.com",
+    service_type: "mimi_provider_facade",
+    supported_profiles: ["cx.profile.mimi_interop.v1"],
+    mimi: {
+      protocol_draft: "draft-ietf-mimi-protocol-06",
+      content_draft: "draft-ietf-mimi-content-08",
+      room_policy_draft: "draft-ietf-mimi-room-policy-03",
+      identifier_draft: "draft-kohbrok-mimi-identifiers-01",
+      base_url: "https://mimi.example.com/api/v1/mimi",
+      provider_id: "mimi://mimi.example.com",
+      features: [
+        "key_material",
+        "room_update",
+        "notify",
+        "submit_message",
+        "group_info",
+        "consent",
+        "identifier_query",
+        "report_abuse",
+        "proxy_download",
+      ],
+      mls_cipher_suites: ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
+      content_profiles: [
+        "application/mimi-content",
+        "text/plain;charset=utf-8",
+        "text/markdown;variant=GFM-MIMI",
+        "application/vnd.contrix.content+json",
+      ],
+      room_policy_components: ["roles", "join_rules", "history_visibility"],
+    },
+    proof: { type: "mock-http-message-signature" },
   };
 }
 

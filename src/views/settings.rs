@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use serde_json::json;
 
 use crate::{
     config::LocalConfigStore,
@@ -13,6 +14,7 @@ enum SettingsSection {
     Server,
     Storage,
     Encryption,
+    Mimi,
     Push,
     Privacy,
     Theme,
@@ -39,6 +41,8 @@ pub fn SettingsPanel(
     let mut read_receipts_visible = use_signal(|| true);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
+    let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
+    let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
     let muted_spaces = state_store.read().muted_spaces();
@@ -69,6 +73,12 @@ pub fn SettingsPanel(
                     "data-testid": "section-encryption",
                     onclick: move |_| active_section.set(SettingsSection::Encryption),
                     "Encryption"
+                }
+                button {
+                    class: if active_section() == SettingsSection::Mimi { "primary" } else { "secondary" },
+                    "data-testid": "section-mimi",
+                    onclick: move |_| active_section.set(SettingsSection::Mimi),
+                    "MIMI"
                 }
                 button {
                     class: if active_section() == SettingsSection::Push { "primary" } else { "secondary" },
@@ -239,6 +249,199 @@ pub fn SettingsPanel(
                             onclick: move |_| key_backup_status.set("Setup not yet available".to_owned()),
                             "Setup Key Backup"
                         }
+                    }
+                }
+            }
+
+            // ── MIMI interop facade ──────────────────────────────
+            if active_section() == SettingsSection::Mimi {
+                div { class: "event", "data-testid": "mimi-interop-panel",
+                    div { class: "event-head", span { "MIMI Provider Facade" } span { "interop projection" } }
+                    div { class: "muted", "Profile: cx.profile.mimi_interop.v1" }
+                    div { class: "metric-grid", "data-testid": "mimi-draft-pinning",
+                        div { class: "metric", strong { "Protocol" } span { "draft-ietf-mimi-protocol-06" } }
+                        div { class: "metric", strong { "Content" } span { "draft-ietf-mimi-content-08" } }
+                        div { class: "metric", strong { "Room Policy" } span { "draft-ietf-mimi-room-policy-03" } }
+                        div { class: "metric", strong { "Identifiers" } span { "draft-kohbrok-mimi-identifiers-01" } }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "mimi-refresh-directory",
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.mimi_provider_directory().await {
+                                                Ok(directory) => {
+                                                    let features = directory.mimi.features.join(", ");
+                                                    mimi_directory.set(format!(
+                                                        "{}\n{}\n{}\n{}",
+                                                        directory.mimi.provider_id,
+                                                        directory.supported_profiles.join(", "),
+                                                        directory.mimi.protocol_draft,
+                                                        features
+                                                    ));
+                                                    status.set("MIMI provider directory refreshed".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let message = format!("MIMI directory failed: {error}");
+                                                    mimi_directory.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Refresh Directory"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "mimi-group-info",
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.mimi_group_info("01JSMIMI").await {
+                                                Ok(response) => {
+                                                    mimi_receipt.set(format!(
+                                                        "group-info {} participants {}",
+                                                        response.room_id,
+                                                        response.participants.len()
+                                                    ));
+                                                    status.set("MIMI groupInfo loaded".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let message = format!("MIMI groupInfo failed: {error}");
+                                                    mimi_receipt.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Group Info"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "mimi-identifier-query",
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.mimi_identifier_query(json!({
+                                                "query": "mimi://remote.example/alice",
+                                                "privacy_mode": "private_contact_discovery"
+                                            })).await {
+                                                Ok(response) => {
+                                                    mimi_receipt.set(format!(
+                                                        "identifier {} reachable {} mapped {}",
+                                                        response.query,
+                                                        response.reachable,
+                                                        response.mapped_did.unwrap_or_else(|| "none".to_owned())
+                                                    ));
+                                                    status.set("MIMI identifier query completed".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let message = format!("MIMI identifier query failed: {error}");
+                                                    mimi_receipt.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Identifier Query"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "mimi-submit-message",
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.mimi_submit_message("01JSMIMI", json!({
+                                                "source_format": "text/markdown;variant=GFM-MIMI",
+                                                "body": "MIMI interop test from yougen",
+                                                "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
+                                            })).await {
+                                                Ok(response) => {
+                                                    mimi_receipt.set(format!(
+                                                        "submit-message {} {}",
+                                                        response.mimi_message_id.unwrap_or_else(|| "no-message-id".to_owned()),
+                                                        response.mapped_operation_id.unwrap_or_else(|| "no-operation".to_owned())
+                                                    ));
+                                                    status.set("MIMI test message submitted".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let message = format!("MIMI submit failed: {error}");
+                                                    mimi_receipt.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Submit Test Message"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "mimi-proxy-download",
+                            onclick: {
+                                move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.mimi_proxy_download(json!({
+                                                "blob_ref": "cx:blob:sha256:e2e",
+                                                "asset_privacy_policy": "provider_proxy"
+                                            })).await {
+                                                Ok(response) => {
+                                                    mimi_receipt.set(format!(
+                                                        "proxy-download {} {}",
+                                                        response.blob_ref,
+                                                        response.media_type.unwrap_or_else(|| "unknown".to_owned())
+                                                    ));
+                                                    status.set("MIMI proxy download prepared".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let message = format!("MIMI proxy download failed: {error}");
+                                                    mimi_receipt.set(message.clone());
+                                                    status.set(message);
+                                                }
+                                            },
+                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Proxy Download"
+                        }
+                    }
+                    div { class: "event", "data-testid": "mimi-directory-result",
+                        div { class: "event-head", span { "Directory" } span { "features" } }
+                        pre { "{mimi_directory}" }
+                    }
+                    div { class: "event", "data-testid": "mimi-action-receipt",
+                        div { class: "event-head", span { "Receipt" } span { "last action" } }
+                        pre { "{mimi_receipt}" }
                     }
                 }
             }

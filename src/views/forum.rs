@@ -53,7 +53,7 @@ pub fn ForumPanel(
         vec![ForumTopic {
             entity_id: "cx:topic:welcome".to_owned(),
             title: "Welcome to the forum".to_owned(),
-            author: "chask".to_owned(),
+            author: "yougen".to_owned(),
             body: "This is the first anchored topic in the forum. Start a structured discussion."
                 .to_owned(),
             tags: vec!["welcome".to_owned(), "meta".to_owned()],
@@ -199,7 +199,7 @@ pub fn ForumPanel(
                                             tags.clone(),
                                             mentions_to_json(&mentions),
                                         )
-                                        .build("chask");
+                                        .build("yougen");
                                         let mut operations = vec![topic_op.clone()];
                                         operations.extend(mention_relation_ops(&space, &actor, &topic_id, &mentions));
                                         let commit = operations.iter().cloned().fold(
@@ -236,7 +236,7 @@ pub fn ForumPanel(
                                                         topics.write().push(ForumTopic {
                                                             entity_id: topic_id.clone(),
                                                             title: title.clone(),
-                                                            author: "chask".to_owned(),
+                                                            author: "yougen".to_owned(),
                                                             body: body.clone(),
                                                             tags: tags.clone(),
                                                             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
@@ -363,7 +363,7 @@ pub fn ForumPanel(
                                                 parent_id.as_deref(),
                                                 mentions_to_json(&mentions),
                                             )
-                                            .build("chask");
+                                            .build("yougen");
                                             let mut operations = vec![comment_op.clone()];
                                             operations.extend(mention_relation_ops(&space, &actor, &comment_id, &mentions));
                                             let commit = operations.iter().cloned().fold(
@@ -400,7 +400,7 @@ pub fn ForumPanel(
                                                         Ok(submitted) => {
                                                             let comment = ForumComment {
                                                                 entity_id: comment_id.clone(),
-                                                                author: "chask".to_owned(),
+                                                                author: "yougen".to_owned(),
                                                                 body: body.clone(),
                                                                 created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
                                                                 parent_id: parent_id.clone(),
@@ -590,7 +590,7 @@ fn mention_relation_ops(
         .iter()
         .map(|mention| {
             cx_ops::relation_create(space_id, actor, source_id, &mention.target, "mentions")
-                .build("chask")
+                .build("yougen")
         })
         .collect()
 }

@@ -757,3 +757,122 @@ pub struct IceServer {
     pub username: Option<String>,
     pub credential: Option<String>,
 }
+
+// ── MIMI Provider Facade ─────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiProviderDirectoryResponse {
+    pub service_did: Option<String>,
+    pub service_type: String,
+    #[serde(default)]
+    pub supported_profiles: Vec<String>,
+    pub mimi: MimiProviderProfile,
+    #[serde(default)]
+    pub proof: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiProviderProfile {
+    pub protocol_draft: String,
+    pub content_draft: String,
+    pub room_policy_draft: Option<String>,
+    pub identifier_draft: Option<String>,
+    pub base_url: String,
+    pub provider_id: String,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub mls_cipher_suites: Vec<String>,
+    #[serde(default)]
+    pub content_profiles: Vec<String>,
+    #[serde(default)]
+    pub room_policy_components: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiKeyMaterialResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub key_packages: Vec<Value>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiRoomUpdateResponse {
+    pub ok: bool,
+    pub room_id: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiNotifyResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub accepted: Vec<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiSubmitMessageResponse {
+    pub ok: bool,
+    pub mimi_message_id: Option<String>,
+    pub mapped_operation_id: Option<String>,
+    pub contrix_event_id: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiGroupInfoResponse {
+    pub room_id: String,
+    pub mimi_room_uri: Option<String>,
+    pub group_info: Value,
+    #[serde(default)]
+    pub participants: Vec<Value>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiConsentResponse {
+    pub ok: bool,
+    pub consent_id: Option<String>,
+    pub state: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiIdentifierQueryResponse {
+    pub query: String,
+    pub reachable: bool,
+    pub mapped_did: Option<String>,
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub proofs: Vec<Value>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiReportAbuseResponse {
+    pub ok: bool,
+    pub report_id: Option<String>,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MimiProxyDownloadResponse {
+    pub ok: bool,
+    pub blob_ref: String,
+    pub media_type: Option<String>,
+    pub size: Option<usize>,
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
+}

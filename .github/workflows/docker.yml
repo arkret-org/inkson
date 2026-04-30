@@ -11,17 +11,17 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/chask-web
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/yougen-web
 
 jobs:
   image:
     name: Build web image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout chask
+      - name: Checkout yougen
         uses: actions/checkout@v6
         with:
-          path: chask
+          path: yougen
 
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v6
@@ -59,7 +59,7 @@ jobs:
             --exclude node_modules \
             --exclude test-results \
             --exclude playwright-report \
-            chask/ docker-context/chask/
+            yougen/ docker-context/yougen/
           rsync -a --delete \
             --exclude .git \
             --exclude target \
@@ -69,7 +69,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker-context
-          file: docker-context/chask/Dockerfile
+          file: docker-context/yougen/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -63,17 +63,20 @@ use crate::models::{
     IdentityResolveResponse, IndexDescribeResponse, IndexEntityResponse, IndexInboxResponse,
     IndexNotificationsResponse, IndexQueryResponse, IndexSearchResponse, IndexThreadResponse,
     InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
-    MlsEpochResponse, MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
-    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
-    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
-    PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
-    RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse,
-    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    SearchUsersResponse, SendMessageResponse, ServerDescription, SnapshotHeadResponse,
-    SpaceHierarchyResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
-    SpacePolicyResponse, SubmitCommitResponse, SubmitDidOperationResponse, SyncDescribeResponse,
-    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
-    UpdateSpaceResponse, VerifyDeviceResponse,
+    MimiConsentResponse, MimiGroupInfoResponse, MimiIdentifierQueryResponse,
+    MimiKeyMaterialResponse, MimiNotifyResponse, MimiProviderDirectoryResponse,
+    MimiProxyDownloadResponse, MimiReportAbuseResponse, MimiRoomUpdateResponse,
+    MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
+    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
+    OidcCallbackResponse, OkResponse, PasskeyChallengeResponse, PasskeyVerifyResponse,
+    PolicyCheckResponse, PolicyResponse, PushRegisterResponse, ReactionResponse, ReceiptResponse,
+    RedactMessageResponse, RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse,
+    ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse,
+    SearchSpacesResponse, SearchUsersResponse, SendMessageResponse, ServerDescription,
+    SnapshotHeadResponse, SpaceHierarchyResponse, SpaceInviteResponse, SpaceLeaveResponse,
+    SpaceLifecycleResponse, SpacePolicyResponse, SubmitCommitResponse, SubmitDidOperationResponse,
+    SyncDescribeResponse, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
+    TokenRefreshResponse, TypingResponse, UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::uuid_v8;
 
@@ -288,7 +291,7 @@ impl ContrixApi {
     ) -> anyhow::Result<DevLoginResponse> {
         self.post_json(
             "api/v1/auth/dev-login",
-            json!({"actor": actor, "device_id": device_id, "display_name": "chask"}),
+            json!({"actor": actor, "device_id": device_id, "display_name": "yougen"}),
         )
         .await
     }
@@ -464,7 +467,24 @@ impl ContrixApi {
         space_ids: &[String],
         next_cursor: Option<&str>,
     ) -> anyhow::Result<IndexQueryResponse> {
+        self.index_query_with_options(space_ids, next_cursor, None, None)
+            .await
+    }
+
+    pub async fn index_query_with_options(
+        &self,
+        space_ids: &[String],
+        next_cursor: Option<&str>,
+        facets: Option<&[String]>,
+        renderer: Option<&str>,
+    ) -> anyhow::Result<IndexQueryResponse> {
         let mut body = json!({"space_ids": space_ids, "entity_types": [], "limit": 20});
+        if let Some(facets) = facets {
+            body["facets"] = json!(facets);
+        }
+        if let Some(renderer) = renderer {
+            body["renderer"] = json!(renderer);
+        }
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
@@ -578,7 +598,7 @@ impl ContrixApi {
     }
 
     pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterResponse> {
-        let request = crate::push::build_register_request("dev_chask")?;
+        let request = crate::push::build_register_request("dev_yougen")?;
         self.register_push_device_with_request(&request).await
     }
 
@@ -614,8 +634,8 @@ impl ContrixApi {
             "api/v1/keys/upload",
             json!({
                 "device_id": device_id,
-                "device_keys": {"alg": "mls-rfc9420", "key": "chask-dev-key"},
-                "one_time_keys": [{"key_id": "chask-otk-1", "key": "chask-one-time"}],
+                "device_keys": {"alg": "mls-rfc9420", "key": "yougen-dev-key"},
+                "one_time_keys": [{"key_id": "yougen-otk-1", "key": "yougen-one-time"}],
                 "fallback_keys": {},
                 "device_signature": {"alg": "none"}
             }),
@@ -654,13 +674,13 @@ impl ContrixApi {
         device_id: &str,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
         self.put_json(
-            "api/v1/device_messages/chask-txn-1",
+            "api/v1/device_messages/yougen-txn-1",
             json!({
                 "messages": {
                     actor: {
                         device_id: {
                             "type": "cx.mls.test",
-                            "content": {"ciphertext": "opaque-chask-test"}
+                            "content": {"ciphertext": "opaque-yougen-test"}
                         }
                     }
                 }
@@ -1122,6 +1142,8 @@ impl ContrixApi {
         query: &str,
         space_ids: Option<&[String]>,
         entity_types: Option<&[String]>,
+        facets: Option<&[String]>,
+        renderer: Option<&str>,
         limit: Option<usize>,
         next_cursor: Option<&str>,
     ) -> anyhow::Result<IndexSearchResponse> {
@@ -1129,6 +1151,8 @@ impl ContrixApi {
             "query": query,
             "space_ids": space_ids,
             "entity_types": entity_types,
+            "facets": facets,
+            "renderer": renderer,
             "limit": limit.unwrap_or(20)
         });
         if let Some(cursor) = next_cursor {
@@ -1232,6 +1256,84 @@ impl ContrixApi {
             json!({"actor": actor, "action": action, "resource": resource}),
         )
         .await
+    }
+
+    // ── MIMI Provider Facade ─────────────────────────────────────
+
+    pub async fn mimi_provider_directory(&self) -> anyhow::Result<MimiProviderDirectoryResponse> {
+        self.get_json("api/v1/mimi/provider-directory").await
+    }
+
+    pub async fn mimi_key_material(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiKeyMaterialResponse> {
+        self.post_json("api/v1/mimi/key-material", request).await
+    }
+
+    pub async fn mimi_room_update(
+        &self,
+        room_id: &str,
+        request: Value,
+    ) -> anyhow::Result<MimiRoomUpdateResponse> {
+        self.put_json(&format!("api/v1/mimi/rooms/{room_id}/update"), request)
+            .await
+    }
+
+    pub async fn mimi_notify(
+        &self,
+        room_id: &str,
+        request: Value,
+    ) -> anyhow::Result<MimiNotifyResponse> {
+        self.post_json(&format!("api/v1/mimi/rooms/{room_id}/notify"), request)
+            .await
+    }
+
+    pub async fn mimi_submit_message(
+        &self,
+        room_id: &str,
+        request: Value,
+    ) -> anyhow::Result<MimiSubmitMessageResponse> {
+        self.post_json(&format!("api/v1/mimi/rooms/{room_id}/messages"), request)
+            .await
+    }
+
+    pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResponse> {
+        self.get_json(&format!("api/v1/mimi/rooms/{room_id}/group-info"))
+            .await
+    }
+
+    pub async fn mimi_request_consent(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiConsentResponse> {
+        self.post_json("api/v1/mimi/consent/request", request).await
+    }
+
+    pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiConsentResponse> {
+        self.post_json("api/v1/mimi/consent/update", request).await
+    }
+
+    pub async fn mimi_identifier_query(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiIdentifierQueryResponse> {
+        self.post_json("api/v1/mimi/identifiers/query", request)
+            .await
+    }
+
+    pub async fn mimi_report_abuse(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiReportAbuseResponse> {
+        self.post_json("api/v1/mimi/report-abuse", request).await
+    }
+
+    pub async fn mimi_proxy_download(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiProxyDownloadResponse> {
+        self.post_json("api/v1/mimi/proxy-download", request).await
     }
 
     // ── Applet ──────────────────────────────────────────────────────

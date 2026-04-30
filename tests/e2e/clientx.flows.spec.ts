@@ -104,6 +104,36 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
 });
 
+test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
+  await page.getByTestId("settings-nav-button").click();
+  await page.getByTestId("section-mimi").click();
+  await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
+  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-protocol-06");
+  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-content-08");
+  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-room-policy-03");
+  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-kohbrok-mimi-identifiers-01");
+
+  await page.getByTestId("mimi-refresh-directory").click();
+  await expect(page.getByTestId("mimi-directory-result")).toContainText("mimi://mimi.example.com");
+  await expect(page.getByTestId("mimi-directory-result")).toContainText("submit_message");
+  await expect(page.getByTestId("mimi-directory-result")).toContainText("identifier_query");
+  await expect(page.getByTestId("mimi-directory-result")).toContainText("proxy_download");
+
+  await page.getByTestId("mimi-group-info").click();
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText("group-info 01JSMIMI participants 2");
+
+  await page.getByTestId("mimi-identifier-query").click();
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText("identifier mimi://remote.example/alice reachable true");
+
+  await page.getByTestId("mimi-proxy-download").click();
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download cx:blob:sha256:e2e");
+
+  const submit = page.waitForRequest("**/api/v1/mimi/rooms/01JSMIMI/messages");
+  await page.getByTestId("mimi-submit-message").click();
+  expect((await submit).postDataJSON().source_format).toBe("text/markdown;variant=GFM-MIMI");
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText("submit-message mimi-msg-e2e");
+});
+
 test("mobile viewport collapses shell chrome and keeps timeline usable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/timeline", { waitUntil: "domcontentloaded" });
@@ -141,6 +171,11 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-search-button").click();
   await expect(page.getByTestId("directory-result")).toContainText("Contrix Demo Space");
   await expect(page.getByTestId("index-query-results")).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("generic-entity-card")).toHaveAttribute("data-render-kind", "card");
+  await expect(page.getByTestId("entity-type-label")).toContainText("space");
+  await expect(page.getByTestId("entity-facets")).toContainText("renderable");
+  await expect(page.getByTestId("projection-facets")).toContainText("item: stateful, rankable");
+  await expect(page.getByTestId("unknown-facets-debug")).toContainText("com.example.preview");
 
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
@@ -414,7 +449,7 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   const report = page.waitForRequest("**/api/v1/moderation/report");
-  const deviceMessage = page.waitForRequest("**/api/v1/device_messages/chask-txn-1");
+  const deviceMessage = page.waitForRequest("**/api/v1/device_messages/yougen-txn-1");
 
   await page.getByTestId("report-queue-button").click();
 
@@ -498,6 +533,7 @@ test("audit capability explanation shows grants constraints and frontier reason"
   await expect(page.getByTestId("capability-grant-row")).toContainText("cx:grant:e2e");
   await expect(page.getByTestId("capability-resource-selectors")).toContainText("space:cx:space");
   await expect(page.getByTestId("capability-constraints")).toContainText("temporal");
+  await expect(page.getByTestId("capability-allowed-facets")).toContainText("renderable, stateful");
   await expect(page.getByTestId("capability-delegation-chain")).toContainText("cx:grant:root");
 });
 
@@ -509,7 +545,7 @@ test("devices panel reflects key queue push and crypto state after bootstrap", a
   await expect(page.getByTestId("devices-panel")).toBeVisible();
   await expect(page.getByTestId("device-summary")).toContainText("Queue1");
   await expect(page.getByTestId("device-summary")).toContainText("Pushcx:push:e2e");
-  await expect(page.getByTestId("device-summary")).toContainText("Cryptosession dev_chask");
+  await expect(page.getByTestId("device-summary")).toContainText("Cryptosession dev_yougen");
 });
 
 test("invalid server URL surfaces an error state", async ({ page }) => {

@@ -9,9 +9,9 @@ use url::Url;
 
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8787";
 const DEFAULT_ACCOUNT_DID: &str = "did:web:alice.example";
-const DEFAULT_DEVICE_ID: &str = "dev_chask";
+const DEFAULT_DEVICE_ID: &str = "dev_yougen";
 #[cfg(target_arch = "wasm32")]
-const CONFIG_STORAGE_KEY: &str = "chask.config.v1";
+const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -181,7 +181,7 @@ fn app_data_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("chask")
+        .join("yougen")
 }
 
 #[cfg(test)]
@@ -194,7 +194,7 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.server_url, "http://127.0.0.1:8787");
         assert_eq!(config.account_did, "did:web:alice.example");
-        assert_eq!(config.device_id, "dev_chask");
+        assert_eq!(config.device_id, "dev_yougen");
         assert!(config.session_token.is_empty());
     }
 
@@ -281,6 +281,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("chask-{name}-{stamp}.json"))
+        std::env::temp_dir().join(format!("yougen-{name}-{stamp}.json"))
     }
 }
