@@ -689,7 +689,19 @@ fn resolve_oidc_client_id(
     let candidates: Vec<&CoauthOidcClientHint> = topology
         .oidc_clients
         .iter()
-        .filter(|client| client.grant_types.iter().any(|grant_type| grant_type == "authorization_code"))
+        .filter(|client| {
+            client
+                .grant_types
+                .iter()
+                .any(|grant_type| grant_type == "authorization_code")
+        })
+        .filter(|client| {
+            client
+                .token_endpoint_auth_method
+                .as_deref()
+                .map(|method| method == "none")
+                .unwrap_or(true)
+        })
         .collect();
 
     if let Some(client) = candidates.iter().find(|client| {
@@ -707,12 +719,22 @@ fn resolve_oidc_client_id(
 
     let available = candidates
         .iter()
-        .map(|client| format!("{}:[{}]", client.client_id, client.redirect_uris.join(",")))
+        .map(|client| {
+            format!(
+                "{}({}):[{}]",
+                client.client_id,
+                client
+                    .token_endpoint_auth_method
+                    .as_deref()
+                    .unwrap_or("none"),
+                client.redirect_uris.join(",")
+            )
+        })
         .collect::<Vec<_>>()
         .join(" | ");
 
     anyhow::bail!(
-        "coauth topology did not expose a usable authorization_code client for redirect_uri={redirect_uri}; available={available}"
+        "coauth topology did not expose a usable public authorization_code client for redirect_uri={redirect_uri}; available={available}"
     )
 }
 
