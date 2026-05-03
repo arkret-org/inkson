@@ -140,6 +140,9 @@ pub struct PersistedOidcScaffold {
     pub expected_state: String,
     pub code_verifier: String,
     pub auth_server_url: String,
+    pub principal_server_url: String,
+    pub principal_actor_did: String,
+    pub device_id: String,
     pub principal_audience: String,
     pub callback_uri: String,
     pub authorize_url: String,
@@ -431,6 +434,9 @@ pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
 pub fn persist_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     auth_server_url: &str,
+    principal_server_url: &str,
+    principal_actor_did: &str,
+    device_id: &str,
 ) -> anyhow::Result<()> {
     let window = web_sys::window()
         .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
@@ -442,6 +448,9 @@ pub fn persist_oidc_scaffold(
         expected_state: bundle.state.clone(),
         code_verifier: bundle.code_verifier.clone(),
         auth_server_url: auth_server_url.to_owned(),
+        principal_server_url: principal_server_url.to_owned(),
+        principal_actor_did: principal_actor_did.to_owned(),
+        device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),
         authorize_url: bundle.authorize_url.clone(),
@@ -459,6 +468,9 @@ pub fn persist_oidc_scaffold(
 pub fn persist_oidc_scaffold(
     _bundle: &OidcScaffoldBundle,
     _auth_server_url: &str,
+    _principal_server_url: &str,
+    _principal_actor_did: &str,
+    _device_id: &str,
 ) -> anyhow::Result<()> {
     Ok(())
 }

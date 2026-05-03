@@ -117,6 +117,15 @@ pub fn LoginPanel(
                         if auth_server_url() == base_url() {
                             auth_server_url.set(scaffold.auth_server_url.clone());
                         }
+                        if base_url().trim().is_empty() {
+                            base_url.set(scaffold.principal_server_url.clone());
+                        }
+                        if account_did().trim().is_empty() {
+                            account_did.set(scaffold.principal_actor_did.clone());
+                        }
+                        if device_id().trim().is_empty() {
+                            device_id.set(scaffold.device_id.clone());
+                        }
                         if expected_state.trim().is_empty() {
                             expected_state = scaffold.expected_state.clone();
                             coauth_expected_state.set(expected_state.clone());
@@ -492,6 +501,20 @@ pub fn LoginPanel(
                                                         auth_server_url
                                                             .set(scaffold.auth_server_url.clone());
                                                     }
+                                                    if base_url().trim().is_empty() {
+                                                        base_url.set(
+                                                            scaffold.principal_server_url.clone(),
+                                                        );
+                                                    }
+                                                    if account_did().trim().is_empty() {
+                                                        account_did.set(
+                                                            scaffold.principal_actor_did.clone(),
+                                                        );
+                                                    }
+                                                    if device_id().trim().is_empty() {
+                                                        device_id
+                                                            .set(scaffold.device_id.clone());
+                                                    }
                                                     if expected_state.trim().is_empty() {
                                                         expected_state =
                                                             scaffold.expected_state.clone();
@@ -608,6 +631,17 @@ pub fn LoginPanel(
                                             if auth_server_url() == base_url() {
                                                 auth_server_url
                                                     .set(scaffold.auth_server_url.clone());
+                                            }
+                                            if base_url().trim().is_empty() {
+                                                base_url
+                                                    .set(scaffold.principal_server_url.clone());
+                                            }
+                                            if account_did().trim().is_empty() {
+                                                account_did
+                                                    .set(scaffold.principal_actor_did.clone());
+                                            }
+                                            if device_id().trim().is_empty() {
+                                                device_id.set(scaffold.device_id.clone());
                                             }
                                             if expected_state.trim().is_empty() {
                                                 expected_state = scaffold.expected_state.clone();
@@ -837,7 +871,7 @@ pub fn LoginPanel(
                                             Ok(api) => match api.inspect_topology().await {
                                                 Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
                                                     Ok(bundle) => {
-                                                        let persistence_status = match persist_oidc_scaffold(&bundle, auth.as_str()) {
+                                                        let persistence_status = match persist_oidc_scaffold(&bundle, auth.as_str(), principal.as_str(), actor.as_str(), dev.as_str()) {
                                                             Ok(()) => "browser scaffold persisted for callback recovery".to_owned(),
                                                             Err(error) => format!("browser scaffold persistence unavailable: {error}"),
                                                         };
