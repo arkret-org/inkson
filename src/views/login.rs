@@ -668,16 +668,25 @@ pub fn LoginPanel(
                                         match CoauthApi::new(&auth) {
                                             Ok(coauth) => match coauth.inspect_topology().await {
                                                 Ok(topology) => match build_oidc_code_exchange_plan(&topology, &principal, &actor, &dev) {
-                                                    Ok(plan) => match coauth
-                                                        .exchange_oidc_code(
-                                                            &authorization_code,
-                                                            &code_verifier,
-                                                            &actor,
-                                                            &dev,
-                                                            Some(&plan.principal_audience),
-                                                        )
-                                                        .await
-                                                    {
+                                                    Ok(plan) => {
+                                                        let returned_state = (!imported_state.trim().is_empty())
+                                                            .then_some(imported_state.as_str());
+                                                        let expected_state_param = (!expected_state
+                                                            .trim()
+                                                            .is_empty())
+                                                            .then_some(expected_state.as_str());
+                                                        match coauth
+                                                            .exchange_oidc_code(
+                                                                &authorization_code,
+                                                                &code_verifier,
+                                                                &actor,
+                                                                &dev,
+                                                                Some(&plan.principal_audience),
+                                                                returned_state,
+                                                                expected_state_param,
+                                                            )
+                                                            .await
+                                                        {
                                                         Ok(login) => {
                                                             if login.status != "success" {
                                                                 integration_plan_status.set(format!(
@@ -763,7 +772,8 @@ pub fn LoginPanel(
                                                             }
                                                         }
                                                         Err(error) => integration_plan_status.set(format!("coauth oidc exchange failed: {error}")),
-                                                    },
+                                                        }
+                                                    }
                                                     Err(error) => integration_plan_status.set(format!("oidc code-exchange plan failed: {error}")),
                                                 },
                                                 Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),

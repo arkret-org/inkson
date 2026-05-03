@@ -192,6 +192,8 @@ impl CoauthApi {
         login_hint: &str,
         device_id: &str,
         principal_audience: Option<&str>,
+        state: Option<&str>,
+        expected_state: Option<&str>,
     ) -> anyhow::Result<CoauthLoginResponse> {
         self.post_json(
             "api/v1/auth/oidc/exchange",
@@ -201,6 +203,8 @@ impl CoauthApi {
                 "login_hint": login_hint,
                 "device_id": device_id,
                 "principal_audience": principal_audience,
+                "state": state,
+                "expected_state": expected_state,
             }),
         )
         .await
