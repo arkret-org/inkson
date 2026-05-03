@@ -760,6 +760,19 @@ pub fn RouterView() -> Element {
                             token,
                             status,
                             config_store,
+                            auto_capture_callback: false,
+                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
+                        }
+                    },
+                    Route::AuthCallback => rsx! {
+                        crate::views::login::LoginPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            status,
+                            config_store,
+                            auto_capture_callback: true,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
                     },

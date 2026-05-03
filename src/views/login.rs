@@ -77,6 +77,7 @@ pub fn LoginPanel(
     token: Signal<String>,
     status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
+    auto_capture_callback: bool,
     on_login: EventHandler<()>,
 ) -> Element {
     let mut health_status = use_signal(|| String::new());
@@ -100,6 +101,96 @@ pub fn LoginPanel(
     let mut dev_login_status = use_signal(|| String::new());
     let mut refresh_status = use_signal(|| String::new());
     let mut rate_limiter = use_signal(|| AuthRateLimiter::new(5, 60.0));
+    let mut auto_capture_bootstrapped = use_signal(|| false);
+
+    use_future(move || async move {
+        if !auto_capture_callback || auto_capture_bootstrapped() {
+            return;
+        }
+        auto_capture_bootstrapped.set(true);
+        match capture_current_browser_callback_url() {
+            Ok(callback_url) => {
+                coauth_callback_url.set(callback_url.clone());
+                let mut expected_state = coauth_expected_state();
+                if expected_state.trim().is_empty() || coauth_code_verifier().trim().is_empty() {
+                    if let Ok(Some(scaffold)) = restore_oidc_scaffold() {
+                        if expected_state.trim().is_empty() {
+                            expected_state = scaffold.expected_state.clone();
+                            coauth_expected_state.set(expected_state.clone());
+                        }
+                        if coauth_code_verifier().trim().is_empty() {
+                            coauth_code_verifier.set(scaffold.code_verifier);
+                        }
+                    }
+                }
+                match extract_error_from_callback(&callback_url) {
+                    Ok(Some(error_code)) => {
+                        let error_description =
+                            extract_error_description_from_callback(&callback_url)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| "missing".to_owned());
+                        let returned_state = extract_state_from_callback(&callback_url)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default();
+                        coauth_authorization_code.set(String::new());
+                        coauth_imported_state.set(returned_state.clone());
+                        coauth_state_verified.set(false);
+                        integration_plan_status.set(format!(
+                            "Captured OIDC callback automatically from /auth/callback.\nerror={error_code}\nerror_description={error_description}\nexpected_state={}\nreturned_state={}\n\nDo not continue the bridge flow until the browser callback succeeds.",
+                            if expected_state.is_empty() { "missing" } else { expected_state.as_str() },
+                            if returned_state.is_empty() { "missing" } else { returned_state.as_str() },
+                        ));
+                    }
+                    Ok(None) => match extract_authorization_code_from_callback(&callback_url) {
+                        Ok(code) => {
+                            let returned_state = extract_state_from_callback(&callback_url)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                            if expected_state.is_empty() {
+                                coauth_authorization_code.set(code);
+                                coauth_imported_state.set(returned_state.clone());
+                                coauth_state_verified.set(returned_state.is_empty());
+                                integration_plan_status.set(format!(
+                                    "Captured authorization code automatically from /auth/callback without a prepared expected state.\nreturned_state={}\n\nRun `Prepare OIDC Browser Flow` first if you want the client to verify callback state before `OIDC Code + Push Bridge`.",
+                                    if returned_state.is_empty() { "missing" } else { returned_state.as_str() },
+                                ));
+                            } else if returned_state.is_empty() {
+                                coauth_authorization_code.set(String::new());
+                                coauth_imported_state.set(String::new());
+                                coauth_state_verified.set(false);
+                                integration_plan_status.set(format!(
+                                    "Captured browser callback is missing state.\nexpected_state={expected_state}\n\nRefuse to continue until the callback returns the prepared state."
+                                ));
+                            } else if returned_state != expected_state {
+                                coauth_authorization_code.set(String::new());
+                                coauth_imported_state.set(returned_state.clone());
+                                coauth_state_verified.set(false);
+                                integration_plan_status.set(format!(
+                                    "Captured browser callback state mismatch.\nexpected_state={expected_state}\nreturned_state={returned_state}\n\nRefuse to continue until the returned callback matches the prepared browser flow."
+                                ));
+                            } else {
+                                coauth_authorization_code.set(code);
+                                coauth_imported_state.set(returned_state.clone());
+                                coauth_state_verified.set(true);
+                                integration_plan_status.set(format!(
+                                    "Captured authorization code automatically from /auth/callback.\nstate={returned_state}\nstate_verified=true\n\nRun `OIDC Code + Push Bridge` to continue the scaffold flow."
+                                ));
+                            }
+                        }
+                        Err(error) => integration_plan_status
+                            .set(format!("automatic browser callback capture failed: {error}")),
+                    },
+                    Err(error) => integration_plan_status
+                        .set(format!("automatic browser callback inspection failed: {error}")),
+                }
+            }
+            Err(error) => integration_plan_status
+                .set(format!("automatic callback capture unavailable: {error}")),
+        }
+    });
 
     rsx! {
         div { class: "timeline", "data-testid": "login-panel", role: "region", "aria-label": "Login",

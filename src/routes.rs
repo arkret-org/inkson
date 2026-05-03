@@ -127,7 +127,7 @@ impl Route {
     pub fn to_view(&self) -> View {
         match self {
             Route::Dashboard => View::Dashboard,
-            Route::Login => View::Login,
+            Route::Login | Route::AuthCallback => View::Login,
             Route::Register => View::Register,
             Route::Timeline | Route::TimelineSpace { .. } => View::Timeline,
             Route::Directory => View::Directory,
