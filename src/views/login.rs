@@ -961,6 +961,16 @@ pub fn LoginPanel(
                                                             );
                                                             return;
                                                         };
+                                                        let Some(userinfo_endpoint) = topology
+                                                            .userinfo_endpoint
+                                                            .clone()
+                                                            .filter(|value| !value.trim().is_empty())
+                                                        else {
+                                                            integration_plan_status.set(
+                                                                "coauth inspect did not expose a userinfo_endpoint; refuse to continue the OIDC bridge until discovery is complete".to_owned(),
+                                                            );
+                                                            return;
+                                                        };
                                                         let returned_state = (!imported_state.trim().is_empty())
                                                             .then_some(imported_state.as_str());
                                                         let expected_state_param = (!expected_state
@@ -974,6 +984,7 @@ pub fn LoginPanel(
                                                                 &redirect_uri,
                                                                 &issuer,
                                                                 &token_endpoint,
+                                                                &userinfo_endpoint,
                                                                 &plan.client_id,
                                                                 &actor,
                                                                 &dev,

@@ -26,6 +26,8 @@ pub struct OidcDiscoveryDocument {
     #[serde(default)]
     pub token_endpoint: Option<String>,
     #[serde(default)]
+    pub userinfo_endpoint: Option<String>,
+    #[serde(default)]
     pub code_challenge_methods_supported: Vec<String>,
     #[serde(default)]
     pub scopes_supported: Vec<String>,
@@ -86,6 +88,7 @@ pub struct CoauthTopologySnapshot {
     pub issuer: String,
     pub authorization_endpoint: String,
     pub token_endpoint: Option<String>,
+    pub userinfo_endpoint: Option<String>,
     pub code_challenge_methods_supported: Vec<String>,
     pub scopes_supported: Vec<String>,
     pub oidc_clients: Vec<CoauthOidcClientHint>,
@@ -199,6 +202,7 @@ impl CoauthApi {
             issuer: discovery.issuer,
             authorization_endpoint: discovery.authorization_endpoint,
             token_endpoint: discovery.token_endpoint,
+            userinfo_endpoint: discovery.userinfo_endpoint,
             code_challenge_methods_supported: discovery.code_challenge_methods_supported,
             scopes_supported: discovery.scopes_supported,
             oidc_clients: server
@@ -233,6 +237,7 @@ impl CoauthApi {
         redirect_uri: &str,
         issuer: &str,
         token_endpoint: &str,
+        userinfo_endpoint: &str,
         client_id: &str,
         login_hint: &str,
         device_id: &str,
@@ -248,6 +253,7 @@ impl CoauthApi {
                 "redirect_uri": redirect_uri,
                 "issuer": issuer,
                 "token_endpoint": token_endpoint,
+                "userinfo_endpoint": userinfo_endpoint,
                 "client_id": client_id,
                 "login_hint": login_hint,
                 "device_id": device_id,
@@ -346,12 +352,17 @@ pub fn build_oidc_code_exchange_plan(
         .token_endpoint
         .clone()
         .unwrap_or_else(|| "missing".to_owned());
+    let userinfo_endpoint = topology
+        .userinfo_endpoint
+        .clone()
+        .unwrap_or_else(|| "missing".to_owned());
     let exchange_request_preview = serde_json::to_string_pretty(&json!({
         "grant_type": "authorization_code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "issuer": topology.issuer,
         "token_endpoint": token_endpoint,
+        "userinfo_endpoint": userinfo_endpoint,
         "resource": principal_audience,
         "code": "TODO_AUTHORIZATION_CODE",
         "code_verifier": "TODO_PKCE_CODE_VERIFIER",
