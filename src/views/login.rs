@@ -8,6 +8,7 @@ use crate::{
     coauth::{
         CoauthApi, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
+        extract_authorization_code_from_callback, extract_state_from_callback,
         summarize_password_login_bridge,
     },
     config::LocalConfigStore,
@@ -85,6 +86,7 @@ pub fn LoginPanel(
     let mut integration_plan_status = use_signal(|| String::new());
     let mut coauth_authorization_code = use_signal(String::new);
     let mut coauth_code_verifier = use_signal(String::new);
+    let mut coauth_callback_url = use_signal(String::new);
     let mut coauth_username = use_signal(|| String::new());
     let mut coauth_password = use_signal(|| String::new());
     let mut passkey_status = use_signal(|| String::new());
@@ -359,6 +361,12 @@ pub fn LoginPanel(
                         value: "{coauth_authorization_code}",
                         oninput: move |evt| coauth_authorization_code.set(evt.value()),
                     }
+                    label { "OIDC Callback URL" }
+                    input {
+                        "data-testid": "coauth-callback-url",
+                        value: "{coauth_callback_url}",
+                        oninput: move |evt| coauth_callback_url.set(evt.value()),
+                    }
                     label { "OIDC PKCE Code Verifier" }
                     input {
                         "data-testid": "coauth-code-verifier",
@@ -366,6 +374,30 @@ pub fn LoginPanel(
                         oninput: move |evt| coauth_code_verifier.set(evt.value()),
                     }
                     div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "import-oidc-callback-button",
+                            onclick: {
+                                move |_| {
+                                    let callback_url = coauth_callback_url();
+                                    match extract_authorization_code_from_callback(&callback_url) {
+                                        Ok(code) => {
+                                            let state = extract_state_from_callback(&callback_url)
+                                                .ok()
+                                                .flatten()
+                                                .unwrap_or_else(|| "missing".to_owned());
+                                            coauth_authorization_code.set(code);
+                                            integration_plan_status.set(format!(
+                                                "Imported authorization code from callback URL.\nstate={state}\n\nRun `OIDC Code + Push Bridge` to continue the scaffold flow."
+                                            ));
+                                        }
+                                        Err(error) => integration_plan_status
+                                            .set(format!("callback URL import failed: {error}")),
+                                    }
+                                }
+                            },
+                            "Import Callback URL"
+                        }
                         button {
                             class: "secondary",
                             "data-testid": "inspect-coauth-button",

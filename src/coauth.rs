@@ -349,6 +349,21 @@ pub fn build_oidc_scaffold_bundle(
     })
 }
 
+pub fn extract_authorization_code_from_callback(callback_url: &str) -> anyhow::Result<String> {
+    let url = Url::parse(callback_url)?;
+    url.query_pairs()
+        .find_map(|(key, value)| (key == "code").then(|| value.into_owned()))
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("callback URL does not contain an authorization code"))
+}
+
+pub fn extract_state_from_callback(callback_url: &str) -> anyhow::Result<Option<String>> {
+    let url = Url::parse(callback_url)?;
+    Ok(url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "state").then(|| value.into_owned())))
+}
+
 pub fn summarize_password_login_bridge(
     login: &CoauthLoginResponse,
     registration_id: Option<&str>,
