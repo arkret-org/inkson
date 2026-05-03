@@ -114,6 +114,9 @@ pub fn LoginPanel(
                 let mut expected_state = coauth_expected_state();
                 if expected_state.trim().is_empty() || coauth_code_verifier().trim().is_empty() {
                     if let Ok(Some(scaffold)) = restore_oidc_scaffold() {
+                        if auth_server_url() == base_url() {
+                            auth_server_url.set(scaffold.auth_server_url.clone());
+                        }
                         if expected_state.trim().is_empty() {
                             expected_state = scaffold.expected_state.clone();
                             coauth_expected_state.set(expected_state.clone());
@@ -485,6 +488,10 @@ pub fn LoginPanel(
                                             {
                                                 if let Ok(Some(scaffold)) = restore_oidc_scaffold()
                                                 {
+                                                    if auth_server_url() == base_url() {
+                                                        auth_server_url
+                                                            .set(scaffold.auth_server_url.clone());
+                                                    }
                                                     if expected_state.trim().is_empty() {
                                                         expected_state =
                                                             scaffold.expected_state.clone();
@@ -598,6 +605,10 @@ pub fn LoginPanel(
                                         || coauth_code_verifier().trim().is_empty()
                                     {
                                         if let Ok(Some(scaffold)) = restore_oidc_scaffold() {
+                                            if auth_server_url() == base_url() {
+                                                auth_server_url
+                                                    .set(scaffold.auth_server_url.clone());
+                                            }
                                             if expected_state.trim().is_empty() {
                                                 expected_state = scaffold.expected_state.clone();
                                                 coauth_expected_state
@@ -826,7 +837,7 @@ pub fn LoginPanel(
                                             Ok(api) => match api.inspect_topology().await {
                                                 Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
                                                     Ok(bundle) => {
-                                                        let persistence_status = match persist_oidc_scaffold(&bundle) {
+                                                        let persistence_status = match persist_oidc_scaffold(&bundle, auth.as_str()) {
                                                             Ok(()) => "browser scaffold persisted for callback recovery".to_owned(),
                                                             Err(error) => format!("browser scaffold persistence unavailable: {error}"),
                                                         };

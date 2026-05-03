@@ -139,6 +139,7 @@ pub struct OidcScaffoldBundle {
 pub struct PersistedOidcScaffold {
     pub expected_state: String,
     pub code_verifier: String,
+    pub auth_server_url: String,
     pub principal_audience: String,
     pub callback_uri: String,
     pub authorize_url: String,
@@ -421,7 +422,10 @@ pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn persist_oidc_scaffold(bundle: &OidcScaffoldBundle) -> anyhow::Result<()> {
+pub fn persist_oidc_scaffold(
+    bundle: &OidcScaffoldBundle,
+    auth_server_url: &str,
+) -> anyhow::Result<()> {
     let window = web_sys::window()
         .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let storage = window
@@ -431,6 +435,7 @@ pub fn persist_oidc_scaffold(bundle: &OidcScaffoldBundle) -> anyhow::Result<()> 
     let payload = PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
         code_verifier: bundle.code_verifier.clone(),
+        auth_server_url: auth_server_url.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),
         authorize_url: bundle.authorize_url.clone(),
@@ -445,7 +450,10 @@ pub fn persist_oidc_scaffold(bundle: &OidcScaffoldBundle) -> anyhow::Result<()> 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn persist_oidc_scaffold(_bundle: &OidcScaffoldBundle) -> anyhow::Result<()> {
+pub fn persist_oidc_scaffold(
+    _bundle: &OidcScaffoldBundle,
+    _auth_server_url: &str,
+) -> anyhow::Result<()> {
     Ok(())
 }
 
