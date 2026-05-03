@@ -9,6 +9,7 @@ use crate::{
         CoauthApi, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
         extract_authorization_code_from_callback, extract_state_from_callback,
+        extract_error_description_from_callback, extract_error_from_callback,
         summarize_password_login_bridge,
     },
     config::LocalConfigStore,
@@ -87,6 +88,9 @@ pub fn LoginPanel(
     let mut coauth_authorization_code = use_signal(String::new);
     let mut coauth_code_verifier = use_signal(String::new);
     let mut coauth_callback_url = use_signal(String::new);
+    let mut coauth_expected_state = use_signal(String::new);
+    let mut coauth_imported_state = use_signal(String::new);
+    let mut coauth_state_verified = use_signal(|| false);
     let mut coauth_username = use_signal(|| String::new());
     let mut coauth_password = use_signal(|| String::new());
     let mut passkey_status = use_signal(|| String::new());
@@ -380,19 +384,89 @@ pub fn LoginPanel(
                             onclick: {
                                 move |_| {
                                     let callback_url = coauth_callback_url();
-                                    match extract_authorization_code_from_callback(&callback_url) {
-                                        Ok(code) => {
-                                            let state = extract_state_from_callback(&callback_url)
+                                    match extract_error_from_callback(&callback_url) {
+                                        Ok(Some(error_code)) => {
+                                            let error_description =
+                                                extract_error_description_from_callback(
+                                                    &callback_url,
+                                                )
                                                 .ok()
                                                 .flatten()
                                                 .unwrap_or_else(|| "missing".to_owned());
-                                            coauth_authorization_code.set(code);
+                                            let returned_state = extract_state_from_callback(
+                                                &callback_url,
+                                            )
+                                            .ok()
+                                            .flatten()
+                                            .unwrap_or_default();
+                                            let expected_state = coauth_expected_state();
+                                            coauth_authorization_code.set(String::new());
+                                            coauth_imported_state.set(returned_state.clone());
+                                            coauth_state_verified.set(false);
                                             integration_plan_status.set(format!(
-                                                "Imported authorization code from callback URL.\nstate={state}\n\nRun `OIDC Code + Push Bridge` to continue the scaffold flow."
+                                                "OIDC callback returned an error.\nerror={error_code}\nerror_description={error_description}\nexpected_state={}\nreturned_state={}\n\nDo not continue the bridge flow until the browser callback succeeds.",
+                                                if expected_state.is_empty() { "missing" } else { expected_state.as_str() },
+                                                if returned_state.is_empty() { "missing" } else { returned_state.as_str() },
                                             ));
                                         }
+                                        Ok(None) => match extract_authorization_code_from_callback(
+                                            &callback_url,
+                                        ) {
+                                            Ok(code) => {
+                                                let returned_state = extract_state_from_callback(
+                                                    &callback_url,
+                                                )
+                                                .ok()
+                                                .flatten()
+                                                .unwrap_or_default();
+                                                let expected_state = coauth_expected_state();
+                                                if expected_state.is_empty() {
+                                                    coauth_authorization_code.set(code);
+                                                    coauth_imported_state
+                                                        .set(returned_state.clone());
+                                                    coauth_state_verified
+                                                        .set(returned_state.is_empty());
+                                                    integration_plan_status.set(format!(
+                                                        "Imported authorization code from callback URL without a prepared expected state.\nreturned_state={}\n\nRun `Prepare OIDC Browser Flow` first if you want the client to verify callback state before `OIDC Code + Push Bridge`.",
+                                                        if returned_state.is_empty() { "missing" } else { returned_state.as_str() },
+                                                    ));
+                                                } else if returned_state.is_empty() {
+                                                    coauth_authorization_code
+                                                        .set(String::new());
+                                                    coauth_imported_state
+                                                        .set(String::new());
+                                                    coauth_state_verified
+                                                        .set(false);
+                                                    integration_plan_status.set(format!(
+                                                        "Callback URL is missing state.\nexpected_state={expected_state}\n\nRefuse to continue until the callback returns the prepared state."
+                                                    ));
+                                                } else if returned_state != expected_state {
+                                                    coauth_authorization_code
+                                                        .set(String::new());
+                                                    coauth_imported_state
+                                                        .set(returned_state.clone());
+                                                    coauth_state_verified
+                                                        .set(false);
+                                                    integration_plan_status.set(format!(
+                                                        "Callback state mismatch.\nexpected_state={expected_state}\nreturned_state={returned_state}\n\nRefuse to continue until the returned callback matches the prepared browser flow."
+                                                    ));
+                                                } else {
+                                                    coauth_authorization_code.set(code);
+                                                    coauth_imported_state
+                                                        .set(returned_state.clone());
+                                                    coauth_state_verified
+                                                        .set(true);
+                                                    integration_plan_status.set(format!(
+                                                        "Imported authorization code from callback URL.\nstate={returned_state}\nstate_verified=true\n\nRun `OIDC Code + Push Bridge` to continue the scaffold flow."
+                                                    ));
+                                                }
+                                            }
+                                            Err(error) => integration_plan_status.set(format!(
+                                                "callback URL import failed: {error}"
+                                            )),
+                                        },
                                         Err(error) => integration_plan_status
-                                            .set(format!("callback URL import failed: {error}")),
+                                            .set(format!("callback URL inspection failed: {error}")),
                                     }
                                 }
                             },
@@ -529,9 +603,13 @@ pub fn LoginPanel(
                                                 Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
                                                     Ok(bundle) => {
                                                         coauth_authorization_code.set(String::new());
+                                                        coauth_callback_url.set(String::new());
                                                         coauth_code_verifier.set(bundle.code_verifier.clone());
+                                                        coauth_expected_state.set(bundle.state.clone());
+                                                        coauth_imported_state.set(String::new());
+                                                        coauth_state_verified.set(false);
                                                         integration_plan_status.set(format!(
-                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n\nPaste the returned authorization code into the field above, then run `OIDC Code + Push Bridge`.\n\n{}",
+                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n\nImport the returned callback URL next. The client will verify the callback state before allowing `OIDC Code + Push Bridge`.\n\n{}",
                                                             bundle.authorize_url,
                                                             bundle.callback_uri,
                                                             bundle.principal_audience,
@@ -564,6 +642,28 @@ pub fn LoginPanel(
                                     let dev = device_id();
                                     let authorization_code = coauth_authorization_code();
                                     let code_verifier = coauth_code_verifier();
+                                    let expected_state = coauth_expected_state();
+                                    let imported_state = coauth_imported_state();
+                                    let state_verified = coauth_state_verified();
+                                    if authorization_code.trim().is_empty() {
+                                        integration_plan_status.set(
+                                            "missing authorization code: import a successful OIDC callback before continuing".to_owned(),
+                                        );
+                                        return;
+                                    }
+                                    if code_verifier.trim().is_empty() {
+                                        integration_plan_status.set(
+                                            "missing PKCE code verifier: run `Prepare OIDC Browser Flow` before continuing".to_owned(),
+                                        );
+                                        return;
+                                    }
+                                    if !expected_state.is_empty() && !state_verified {
+                                        integration_plan_status.set(format!(
+                                            "callback state has not been verified.\nexpected_state={expected_state}\nimported_state={}\n\nImport a successful callback URL whose state matches the prepared browser flow before running `OIDC Code + Push Bridge`.",
+                                            if imported_state.is_empty() { "missing" } else { imported_state.as_str() },
+                                        ));
+                                        return;
+                                    }
                                     spawn(async move {
                                         match CoauthApi::new(&auth) {
                                             Ok(coauth) => match coauth.inspect_topology().await {

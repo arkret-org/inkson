@@ -364,6 +364,22 @@ pub fn extract_state_from_callback(callback_url: &str) -> anyhow::Result<Option<
         .find_map(|(key, value)| (key == "state").then(|| value.into_owned())))
 }
 
+pub fn extract_error_from_callback(callback_url: &str) -> anyhow::Result<Option<String>> {
+    let url = Url::parse(callback_url)?;
+    Ok(url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "error").then(|| value.into_owned())))
+}
+
+pub fn extract_error_description_from_callback(
+    callback_url: &str,
+) -> anyhow::Result<Option<String>> {
+    let url = Url::parse(callback_url)?;
+    Ok(url.query_pairs().find_map(|(key, value)| {
+        (key == "error_description").then(|| value.into_owned())
+    }))
+}
+
 pub fn summarize_password_login_bridge(
     login: &CoauthLoginResponse,
     registration_id: Option<&str>,
