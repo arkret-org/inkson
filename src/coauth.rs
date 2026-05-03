@@ -7,7 +7,6 @@ use url::Url;
 
 use crate::config::validate_server_url;
 
-const YOUGEN_OIDC_CLIENT_ID: &str = "yougen";
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
 const OIDC_STATE_PLACEHOLDER: &str = "TODO_STATE";
 const OIDC_NONCE_PLACEHOLDER: &str = "TODO_NONCE";
@@ -89,6 +88,22 @@ pub struct CoauthTopologySnapshot {
     pub token_endpoint: Option<String>,
     pub code_challenge_methods_supported: Vec<String>,
     pub scopes_supported: Vec<String>,
+    pub oidc_clients: Vec<CoauthOidcClientHint>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthOidcClientHint {
+    #[serde(default)]
+    pub id: String,
+    pub client_id: String,
+    #[serde(default)]
+    pub client_name: Option<String>,
+    #[serde(default)]
+    pub redirect_uris: Vec<String>,
+    #[serde(default)]
+    pub grant_types: Vec<String>,
+    #[serde(default)]
+    pub token_endpoint_auth_method: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +132,7 @@ pub struct OidcCodeExchangePlan {
     pub principal_audience: String,
     pub actor_did: String,
     pub device_id: String,
+    pub client_id: String,
     pub authorize_url_preview: String,
     pub token_endpoint: String,
     pub exchange_request_preview: String,
@@ -125,6 +141,7 @@ pub struct OidcCodeExchangePlan {
 
 #[derive(Clone, Debug)]
 pub struct OidcScaffoldBundle {
+    pub client_id: String,
     pub state: String,
     pub nonce: String,
     pub code_verifier: String,
@@ -184,6 +201,13 @@ impl CoauthApi {
             token_endpoint: discovery.token_endpoint,
             code_challenge_methods_supported: discovery.code_challenge_methods_supported,
             scopes_supported: discovery.scopes_supported,
+            oidc_clients: server
+                .get("auth_metadata")
+                .and_then(|value| value.get("oidc_clients"))
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
 
@@ -209,6 +233,7 @@ impl CoauthApi {
         redirect_uri: &str,
         issuer: &str,
         token_endpoint: &str,
+        client_id: &str,
         login_hint: &str,
         device_id: &str,
         principal_audience: Option<&str>,
@@ -223,7 +248,7 @@ impl CoauthApi {
                 "redirect_uri": redirect_uri,
                 "issuer": issuer,
                 "token_endpoint": token_endpoint,
-                "client_id": YOUGEN_OIDC_CLIENT_ID,
+                "client_id": client_id,
                 "login_hint": login_hint,
                 "device_id": device_id,
                 "principal_audience": principal_audience,
@@ -313,6 +338,8 @@ pub fn build_oidc_code_exchange_plan(
 ) -> anyhow::Result<OidcCodeExchangePlan> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
     let principal_audience = principal_audience(principal_server_url.as_str())?;
+    let redirect_uri = current_oidc_redirect_uri();
+    let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
     let authorize_url_preview =
         build_authorize_url_preview(topology, actor_did, principal_audience.as_str())?;
     let token_endpoint = topology
@@ -321,8 +348,8 @@ pub fn build_oidc_code_exchange_plan(
         .unwrap_or_else(|| "missing".to_owned());
     let exchange_request_preview = serde_json::to_string_pretty(&json!({
         "grant_type": "authorization_code",
-        "client_id": YOUGEN_OIDC_CLIENT_ID,
-        "redirect_uri": current_oidc_redirect_uri(),
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
         "issuer": topology.issuer,
         "token_endpoint": token_endpoint,
         "resource": principal_audience,
@@ -337,6 +364,7 @@ pub fn build_oidc_code_exchange_plan(
         principal_audience,
         actor_did: actor_did.to_owned(),
         device_id: device_id.to_owned(),
+        client_id,
         authorize_url_preview,
         token_endpoint,
         exchange_request_preview,
@@ -352,6 +380,8 @@ pub fn build_oidc_scaffold_bundle(
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
     let principal_audience = principal_audience(principal_server_url.as_str())?;
+    let callback_uri = current_oidc_redirect_uri();
+    let client_id = resolve_oidc_client_id(topology, callback_uri.as_str())?;
     let state = format!("cx-state-{}", scaffold_slug(actor_did, device_id, "state"));
     let nonce = format!("cx-nonce-{}", scaffold_slug(actor_did, device_id, "nonce"));
     let code_verifier = format!(
@@ -364,6 +394,8 @@ pub fn build_oidc_scaffold_bundle(
     );
     let authorize_url = build_authorize_url(
         topology,
+        client_id.as_str(),
+        callback_uri.as_str(),
         actor_did,
         principal_audience.as_str(),
         &state,
@@ -372,12 +404,13 @@ pub fn build_oidc_scaffold_bundle(
     )?;
 
     Ok(OidcScaffoldBundle {
+        client_id,
         state,
         nonce,
         code_verifier,
         code_challenge,
         authorize_url,
-        callback_uri: current_oidc_redirect_uri(),
+        callback_uri,
         principal_audience,
         todo: "TODO: replace the deterministic scaffold state/nonce/challenge with real browser-generated PKCE material and a callback handler that captures the returned authorization code automatically.",
     })
@@ -583,8 +616,12 @@ fn build_authorize_url_preview(
     actor_did: &str,
     principal_audience: &str,
 ) -> anyhow::Result<String> {
+    let redirect_uri = current_oidc_redirect_uri();
+    let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
     build_authorize_url(
         topology,
+        client_id.as_str(),
+        redirect_uri.as_str(),
         actor_did,
         principal_audience,
         OIDC_STATE_PLACEHOLDER,
@@ -595,6 +632,8 @@ fn build_authorize_url_preview(
 
 fn build_authorize_url(
     topology: &CoauthTopologySnapshot,
+    client_id: &str,
+    redirect_uri: &str,
     actor_did: &str,
     principal_audience: &str,
     state: &str,
@@ -616,8 +655,8 @@ fn build_authorize_url(
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("response_type", "code");
-        query.append_pair("client_id", YOUGEN_OIDC_CLIENT_ID);
-        query.append_pair("redirect_uri", current_oidc_redirect_uri().as_str());
+        query.append_pair("client_id", client_id);
+        query.append_pair("redirect_uri", redirect_uri);
         query.append_pair("scope", scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
@@ -630,6 +669,40 @@ fn build_authorize_url(
     }
 
     Ok(url.to_string())
+}
+
+fn resolve_oidc_client_id(
+    topology: &CoauthTopologySnapshot,
+    redirect_uri: &str,
+) -> anyhow::Result<String> {
+    let candidates: Vec<&CoauthOidcClientHint> = topology
+        .oidc_clients
+        .iter()
+        .filter(|client| client.grant_types.iter().any(|grant_type| grant_type == "authorization_code"))
+        .collect();
+
+    if let Some(client) = candidates.iter().find(|client| {
+        client
+            .redirect_uris
+            .iter()
+            .any(|candidate_redirect_uri| candidate_redirect_uri == redirect_uri)
+    }) {
+        return Ok(client.client_id.clone());
+    }
+
+    if candidates.len() == 1 {
+        return Ok(candidates[0].client_id.clone());
+    }
+
+    let available = candidates
+        .iter()
+        .map(|client| format!("{}:[{}]", client.client_id, client.redirect_uris.join(",")))
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    anyhow::bail!(
+        "coauth topology did not expose a usable authorization_code client for redirect_uri={redirect_uri}; available={available}"
+    )
 }
 
 fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {

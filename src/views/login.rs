@@ -974,6 +974,7 @@ pub fn LoginPanel(
                                                                 &redirect_uri,
                                                                 &issuer,
                                                                 &token_endpoint,
+                                                                &plan.client_id,
                                                                 &actor,
                                                                 &dev,
                                                                 Some(&plan.principal_audience),
