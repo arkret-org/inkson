@@ -8,7 +8,7 @@ use url::Url;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_CLIENT_ID: &str = "yougen";
-const YOUGEN_OIDC_REDIRECT_URI: &str = "urn:yougen:oauth:callback";
+const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
 const OIDC_STATE_PLACEHOLDER: &str = "TODO_STATE";
 const OIDC_NONCE_PLACEHOLDER: &str = "TODO_NONCE";
 const OIDC_CODE_CHALLENGE_PLACEHOLDER: &str = "TODO_PKCE_CODE_CHALLENGE";
@@ -304,7 +304,7 @@ pub fn build_oidc_code_exchange_plan(
     let exchange_request_preview = serde_json::to_string_pretty(&json!({
         "grant_type": "authorization_code",
         "client_id": YOUGEN_OIDC_CLIENT_ID,
-        "redirect_uri": YOUGEN_OIDC_REDIRECT_URI,
+        "redirect_uri": current_oidc_redirect_uri(),
         "resource": principal_audience,
         "code": "TODO_AUTHORIZATION_CODE",
         "code_verifier": "TODO_PKCE_CODE_VERIFIER",
@@ -357,7 +357,7 @@ pub fn build_oidc_scaffold_bundle(
         code_verifier,
         code_challenge,
         authorize_url,
-        callback_uri: YOUGEN_OIDC_REDIRECT_URI.to_owned(),
+        callback_uri: current_oidc_redirect_uri(),
         principal_audience,
         todo: "TODO: replace the deterministic scaffold state/nonce/challenge with real browser-generated PKCE material and a callback handler that captures the returned authorization code automatically.",
     })
@@ -581,7 +581,7 @@ fn build_authorize_url(
         let mut query = url.query_pairs_mut();
         query.append_pair("response_type", "code");
         query.append_pair("client_id", YOUGEN_OIDC_CLIENT_ID);
-        query.append_pair("redirect_uri", YOUGEN_OIDC_REDIRECT_URI);
+        query.append_pair("redirect_uri", current_oidc_redirect_uri().as_str());
         query.append_pair("scope", scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
@@ -602,6 +602,19 @@ fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
         .to_string()
         .trim_end_matches('/')
         .to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_oidc_redirect_uri() -> String {
+    web_sys::window()
+        .and_then(|window| window.location().origin().ok())
+        .map(|origin| format!("{origin}/auth/callback"))
+        .unwrap_or_else(|| YOUGEN_OIDC_REDIRECT_URI_NATIVE.to_owned())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_oidc_redirect_uri() -> String {
+    YOUGEN_OIDC_REDIRECT_URI_NATIVE.to_owned()
 }
 
 fn preferred_pkce_method(methods: &[String]) -> Option<&'static str> {

@@ -13,6 +13,9 @@ pub enum Route {
     #[route("/login", crate::app::RouterView)]
     Login,
 
+    #[route("/auth/callback", crate::app::RouterView)]
+    AuthCallback,
+
     #[route("/register", crate::app::RouterView)]
     Register,
 
