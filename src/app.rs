@@ -3,11 +3,15 @@ use dioxus_router::{Link, Router, hooks::*};
 
 use crate::{
     api::ContrixApi,
-    components::Metric,
+    components::RightPanel,
     config::LocalConfigStore,
+    conformance::{
+        PROFILE_CHAT_ONLY_CLIENT, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT,
+        PROFILE_KANBAN_ONLY_CLIENT, PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
+    },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
-    models::SpacePreview,
+    models::{ServerDescription, SpacePreview},
     routes::Route,
     views::{
         ConnectionState,
@@ -47,19 +51,35 @@ button, input, textarea { font: inherit; }
 a.primary, a.secondary { line-height: 1.5; }
 .main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
 .topbar { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+.topbar-search { min-width: 260px; max-width: 420px; flex: 1; }
+.topbar-search input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
 .title { font-size: 28px; font-weight: 750; overflow-wrap: anywhere; }
 .timeline { display: grid; gap: 10px; align-content: start; overflow: auto; }
 .event { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 14px; display: grid; gap: 6px; }
 .event-head { display: flex; justify-content: space-between; gap: 12px; color: #4e5b6b; font-size: 13px; }
 .composer { background: white; border-top: 1px solid #d8e0e8; padding: 14px; display: grid; gap: 10px; border-radius: 8px; }
 .composer textarea { min-height: 88px; resize: vertical; }
-.panel { border-left: 1px solid #d8e0e8; background: #fbfcfd; padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; }
+.panel { border-left: 1px solid #d8e0e8; background: #fbfcfd; padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; min-width: 0; }
+.right-panel { overflow-x: hidden; pointer-events: none; }
+.right-panel a, .right-panel button, .right-panel input, .right-panel select, .right-panel textarea { pointer-events: auto; }
+.right-panel .muted, .right-panel .metric span, .right-panel .hierarchy-row { overflow-wrap: anywhere; }
 .section { display: grid; gap: 10px; }
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .section h2 { margin: 0; font-size: 16px; }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .metric { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 10px; min-width: 0; }
 .metric strong { display: block; font-size: 12px; color: #607086; margin-bottom: 4px; }
 .metric span { overflow-wrap: anywhere; }
+.quick-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.quick-nav__item { min-width: 0; }
+.compact-button { padding: 7px 9px; font-size: 13px; }
+.mobile-shellbar, .mobile-drawer { display: none; }
+.hierarchy-boundary-note { background: #f8fafc; }
+.hierarchy-list { display: grid; gap: 8px; }
+.hierarchy-row { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 10px; display: grid; gap: 8px; pointer-events: none; }
+.hierarchy-row__main { display: grid; gap: 3px; min-width: 0; }
+.hierarchy-row__main strong { overflow-wrap: anywhere; }
+.hierarchy-row__badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .settings, .workflow-form { display: grid; gap: 10px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .badge-info { background: #e7edf3; color: #18212f; }
@@ -106,6 +126,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .shell.rtl .sidebar, .shell.rtl .main, .shell.rtl .panel { grid-column: auto; }
   .sidebar { display: none; }
   .panel { display: none; }
+  .mobile-shellbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: #101827; color: white; }
+  .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: #172033; }
   .main { min-height: 100vh; padding: 16px; }
   .title { font-size: 22px; }
   .actions { flex-direction: column; }
@@ -118,6 +140,238 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .sidebar, .panel, .actions, .composer { display: none !important; }
   .shell { grid-template-columns: 1fr; }
   .event { break-inside: avoid; }
+}
+
+/* Product theme layer: calm security-oriented palette shared by all views. */
+body {
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #eef3f8;
+  color: #142033;
+  letter-spacing: 0;
+}
+.shell {
+  --cx-bg: #eef3f8;
+  --cx-bg-soft: #f8fafc;
+  --cx-bg-end: #e7eef7;
+  --cx-surface: #ffffff;
+  --cx-surface-raised: rgba(255, 255, 255, 0.94);
+  --cx-ink: #142033;
+  --cx-muted: #64748b;
+  --cx-line: #d7e0ea;
+  --cx-line-strong: #c5d1dd;
+  --cx-brand: #2563eb;
+  --cx-brand-strong: #1d4ed8;
+  --cx-teal: #0f766e;
+  --cx-green: #0f9f6e;
+  --cx-amber: #d97706;
+  --cx-red: #dc2626;
+  --cx-nav: #101827;
+  --cx-nav-soft: #172033;
+  --cx-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --cx-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+  background: linear-gradient(135deg, var(--cx-bg) 0%, var(--cx-bg-soft) 64%, var(--cx-bg-end) 100%);
+  color: var(--cx-ink);
+}
+.shell.theme-night {
+  --cx-bg: #0f172a;
+  --cx-bg-soft: #111827;
+  --cx-bg-end: #0b1220;
+  --cx-surface: #172033;
+  --cx-surface-raised: rgba(23, 32, 51, 0.94);
+  --cx-ink: #e5edf7;
+  --cx-muted: #9fb0c3;
+  --cx-line: #2a3a52;
+  --cx-line-strong: #3a4b63;
+  --cx-brand: #60a5fa;
+  --cx-brand-strong: #3b82f6;
+  --cx-teal: #2dd4bf;
+  --cx-nav: #080d17;
+  --cx-nav-soft: #111827;
+  --cx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --cx-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+}
+@media (prefers-color-scheme: dark) {
+  .shell.theme-system {
+    --cx-bg: #0f172a;
+    --cx-bg-soft: #111827;
+    --cx-bg-end: #0b1220;
+    --cx-surface: #172033;
+    --cx-surface-raised: rgba(23, 32, 51, 0.94);
+    --cx-ink: #e5edf7;
+    --cx-muted: #9fb0c3;
+    --cx-line: #2a3a52;
+    --cx-line-strong: #3a4b63;
+    --cx-brand: #60a5fa;
+    --cx-brand-strong: #3b82f6;
+    --cx-teal: #2dd4bf;
+    --cx-nav: #080d17;
+    --cx-nav-soft: #111827;
+    --cx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --cx-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+  }
+}
+.sidebar {
+  background: var(--cx-nav);
+  color: #e5edf7;
+  border-right: 1px solid rgba(148, 163, 184, 0.16);
+}
+.brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.brand::before {
+  content: "Y";
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--cx-brand-strong), var(--cx-teal));
+  box-shadow: 0 12px 30px rgba(37, 99, 235, 0.24);
+}
+.status {
+  border-color: #334155;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: var(--cx-shadow-sm);
+}
+.space-button {
+  border-color: #334155;
+  border-radius: 12px;
+  background: var(--cx-nav-soft);
+}
+.space-button.active {
+  border-color: rgba(96, 165, 250, 0.52);
+  background: rgba(37, 99, 235, 0.22);
+}
+.main {
+  background: transparent;
+}
+.topbar {
+  margin: -6px -6px 2px;
+  padding: 14px 16px;
+  border: 1px solid rgba(215, 224, 234, 0.86);
+  border-radius: 16px;
+  background: var(--cx-surface-raised);
+  box-shadow: var(--cx-shadow-sm);
+  backdrop-filter: blur(16px);
+}
+.title {
+  color: var(--cx-ink);
+  font-size: 30px;
+  line-height: 1.12;
+}
+.muted,
+.space-meta {
+  color: var(--cx-muted);
+}
+.event,
+.composer,
+.metric,
+.hierarchy-row {
+  border-color: var(--cx-line);
+  border-radius: 14px;
+  background: var(--cx-surface);
+  color: var(--cx-ink);
+  box-shadow: var(--cx-shadow-sm);
+}
+.event-head {
+  color: var(--cx-muted);
+  font-weight: 650;
+}
+.panel {
+  border-color: var(--cx-line);
+  background: var(--cx-surface-raised);
+  color: var(--cx-ink);
+}
+.search input,
+.topbar-search input,
+.settings input,
+.workflow-form input,
+.composer textarea,
+.composer input,
+.settings textarea,
+.settings select,
+.workflow-form textarea,
+.workflow-form select {
+  border-color: var(--cx-line-strong);
+  border-radius: 10px;
+  background: var(--cx-surface);
+  color: var(--cx-ink);
+}
+.search input:focus,
+.topbar-search input:focus,
+.settings input:focus,
+.workflow-form input:focus,
+.composer textarea:focus,
+.settings select:focus,
+.workflow-form select:focus {
+  border-color: var(--cx-brand);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+.primary,
+.secondary {
+  border-radius: 10px;
+  min-height: 38px;
+  font-weight: 700;
+  box-shadow: var(--cx-shadow-sm);
+}
+.primary {
+  background: var(--cx-brand-strong);
+  color: #fff;
+}
+.secondary {
+  border: 1px solid var(--cx-line-strong);
+  background: var(--cx-surface);
+  color: var(--cx-ink);
+}
+.badge {
+  border-radius: 999px;
+  font-weight: 700;
+}
+.badge-info { background: #eff6ff; color: #1d4ed8; }
+.badge-success { background: #eefbf5; color: #047857; }
+.badge-error { background: #fff1f2; color: #b91c1c; }
+.badge-warning { background: #fff8e5; color: #92400e; }
+.badge.blue { background: #eff6ff; color: #1d4ed8; }
+.badge.amber { background: #fff8e5; color: #92400e; }
+.badge.red { background: #fff1f2; color: #b91c1c; }
+.badge.green { background: #ecfdf5; color: #047857; }
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 12px;
+}
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.board-column { min-width: 0; }
+.board-card { cursor: pointer; }
+.card-detail-drawer { border-color: var(--cx-brand); }
+.tabs {
+  gap: 6px;
+}
+.tab {
+  border-radius: 999px;
+  background: var(--cx-surface);
+  color: var(--cx-muted);
+}
+.tab.active {
+  border-color: var(--cx-brand);
+  background: var(--cx-brand);
+  color: #fff;
+}
+@media (max-width: 900px) {
+  .dashboard-layout { grid-template-columns: 1fr; }
+  .board-grid { grid-template-columns: 1fr; }
 }
 "#;
 
@@ -137,6 +391,10 @@ pub fn RouterView() -> Element {
         .load_private_data(&initial_config.account_did, "locale")
         .map(|code| Locale::from_code(&code))
         .unwrap_or_default();
+    let initial_theme = initial_state_store
+        .load_private_data(&initial_config.account_did, "theme")
+        .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
+        .unwrap_or_else(|| "system".to_owned());
     let config_store = use_signal(LocalConfigStore::default);
     let state_store = use_signal(LocalStateStore::default);
     let mut base_url = use_signal({
@@ -154,7 +412,7 @@ pub fn RouterView() -> Element {
     let token = use_signal(move || initial_config.session_token);
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    let view = use_signal(|| route.to_view());
+    let mut view = use_signal(|| route.to_view());
     let status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let sync_cursor = use_signal({
         let initial_local_state = initial_local_state.clone();
@@ -187,7 +445,37 @@ pub fn RouterView() -> Element {
     let crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
     let network_state = use_signal(|| "online".to_owned());
     let last_error = use_signal(|| Option::<String>::None);
+    let server_description = use_signal(|| Option::<ServerDescription>::None);
+    let server_probe_status = use_signal(|| "server describe pending".to_owned());
     let locale = use_signal(move || initial_locale);
+    let theme = use_signal(move || initial_theme);
+    let mut mobile_nav_open = use_signal(|| false);
+    let mut global_query = use_signal(String::new);
+
+    use_future({
+        let base = base_url();
+        move || {
+            let base = base.clone();
+            async move {
+                probe_server_description(base, server_description, server_probe_status).await;
+            }
+        }
+    });
+
+    let active_server_description = server_description();
+    let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
+    let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_ONLY_CLIENT);
+    let kanban_ready = profile_ready(
+        active_server_description.as_ref(),
+        PROFILE_KANBAN_ONLY_CLIENT,
+    );
+    let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
+    let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
+    let push_ready = profile_ready(active_server_description.as_ref(), PROFILE_PUSH_GATEWAY);
+    let event_write_ready = active_server_description
+        .as_ref()
+        .map(|description| description.supports_event_envelope_write_plane())
+        .unwrap_or(false);
 
     let selected_preview = spaces()
         .iter()
@@ -201,11 +489,20 @@ pub fn RouterView() -> Element {
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
     let locale_attr = active_locale.code();
-    let shell_class = if active_direction == TextDirection::Rtl {
-        "shell rtl"
-    } else {
-        "shell"
-    };
+    let active_theme = theme();
+    let shell_class = format!(
+        "shell {}{}",
+        match active_theme.as_str() {
+            "night" => "theme-night",
+            "light" => "theme-light",
+            _ => "theme-system",
+        },
+        if active_direction == TextDirection::Rtl {
+            " rtl"
+        } else {
+            ""
+        }
+    );
 
     rsx! {
         style { "{STYLE}" }
@@ -215,7 +512,28 @@ pub fn RouterView() -> Element {
             "lang": locale_attr,
             "data-direction": direction_attr,
             "data-locale": locale_attr,
+            "data-theme": active_theme,
             "data-testid": "client-shell",
+            div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
+                button {
+                    class: "secondary",
+                    "data-testid": "mobile-nav-toggle",
+                    onclick: move |_| mobile_nav_open.toggle(),
+                    if mobile_nav_open() { "Close" } else { "Menu" }
+                }
+                div { class: "brand", "yougen" }
+                Link { class: "secondary", to: Route::Notifications, "Inbox" }
+            }
+            nav {
+                class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
+                "data-testid": "mobile-nav-drawer",
+                Link { class: "secondary", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
+                Link { class: "secondary", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
+                Link { class: "secondary", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
+                Link { class: "secondary", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Rooms" }
+                Link { class: "secondary", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
+                Link { class: "secondary", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
+            }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
                 div { class: "brand", "yougen" }
                 div { class: "status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
@@ -250,6 +568,8 @@ pub fn RouterView() -> Element {
                                         state_store,
                                         network_state,
                                         last_error,
+                                        server_description,
+                                        server_probe_status,
                                     });
                                 },
                                 "Retry"
@@ -294,6 +614,8 @@ pub fn RouterView() -> Element {
                                     state_store,
                                     network_state,
                                     last_error,
+                                    server_description,
+                                    server_probe_status,
                                 },
                             ),
                             "Connect"
@@ -326,20 +648,33 @@ pub fn RouterView() -> Element {
                 }
                 div { class: "actions",
                     Link { class: "secondary", to: Route::Dashboard, "Dashboard" }
-                    Link { class: "secondary", to: Route::Timeline, "Timeline" }
-                    Link { class: "secondary", "data-testid": "product-nav-button", to: Route::Product, "Product" }
-                    Link { class: "secondary", to: Route::Contacts, "Contacts" }
+                    if minimal_ready {
+                        Link { class: "secondary", to: Route::Timeline, "Timeline" }
+                    }
+                    if full_ready {
+                        Link { class: "secondary", "data-testid": "product-nav-button", to: Route::Product, "Product" }
+                    }
                     Link { class: "secondary", to: Route::Directory, "Directory" }
-                    Link { class: "secondary", to: Route::Kanban, "Kanban" }
-                    Link { class: "secondary", to: Route::Chat, "Chat" }
-                    Link { class: "secondary", to: Route::Forum, "Forum" }
-                    Link { class: "secondary", "data-testid": "memory-review-nav-button", to: Route::MemoryReview, "Memory" }
-                    Link { class: "secondary", "data-testid": "agent-runs-nav-button", to: Route::AgentRuns, "Agents" }
-                    Link { class: "secondary", to: Route::Audit, "Audit" }
-                    Link { class: "secondary", "data-testid": "notifications-nav-button", to: Route::Notifications, "Notifications" }
+                    if kanban_ready {
+                        Link { class: "secondary", to: Route::Kanban, "Kanban" }
+                    }
+                    if chat_ready {
+                        Link { class: "secondary", to: Route::Chat, "Chat" }
+                        Link { class: "secondary", to: Route::Forum, "Forum" }
+                    }
+                    if full_ready {
+                        Link { class: "secondary", "data-testid": "memory-review-nav-button", to: Route::MemoryReview, "Memory" }
+                        Link { class: "secondary", "data-testid": "agent-runs-nav-button", to: Route::AgentRuns, "Agents" }
+                        Link { class: "secondary", to: Route::Audit, "Audit" }
+                    }
+                    if minimal_ready || push_ready {
+                        Link { class: "secondary", "data-testid": "notifications-nav-button", to: Route::Notifications, "Notifications" }
+                    }
                     Link { class: "secondary", "data-testid": "settings-nav-button", to: Route::Settings, "Settings" }
-                    Link { class: "secondary", "data-testid": "devices-nav-button", to: Route::Devices, "Devices" }
-                    Link { class: "secondary", to: Route::VerifyDevice, "Verify" }
+                    if e2ee_ready {
+                        Link { class: "secondary", "data-testid": "devices-nav-button", to: Route::Devices, "Devices" }
+                        Link { class: "secondary", to: Route::VerifyDevice, "Verify" }
+                    }
                     Link { class: "secondary", "data-testid": "readiness-nav-button", to: Route::Readiness, "Release" }
                 }
             }
@@ -350,7 +685,34 @@ pub fn RouterView() -> Element {
                         div { class: "title", "data-testid": "space-title", "{title}" }
                         div { class: "muted", "data-testid": "selected-space-id", "{selected_space}" }
                     }
+                    div { class: "topbar-search",
+                        input {
+                            "data-testid": "global-search-input",
+                            value: "{global_query}",
+                            placeholder: "Search Spaces, Cards, Rooms, Actors",
+                            oninput: move |event| global_query.set(event.value()),
+                            onkeydown: move |event| {
+                                if event.key().to_string() == "Enter" && !global_query().trim().is_empty() {
+                                    view.set(crate::views::View::Directory);
+                                    let _ = navigator.push(Route::Directory);
+                                }
+                            },
+                        }
+                    }
                     div { class: "actions",
+                        Link {
+                            class: "secondary",
+                            "data-testid": "topbar-inbox-button",
+                            to: Route::Notifications,
+                            "Inbox"
+                        }
+                        Link {
+                            class: "primary",
+                            "data-testid": "topbar-create-button",
+                            to: Route::Product,
+                            "Create"
+                        }
+                        span { class: "badge blue", "data-testid": "topbar-members", "3 members" }
                         button {
                             class: "secondary",
                             "data-testid": "backfill-button",
@@ -423,21 +785,25 @@ pub fn RouterView() -> Element {
                         if let Some(sid) = route.space_id() {
                             selected_space.set(sid.to_owned());
                         }
-                        rsx! {
-                            crate::views::timeline::TimelinePanel {
-                                base_url: base_url(),
-                                account_did: account_did(),
-                                device_id: device_id(),
-                                token,
-                                selected_space: selected_space(),
-                                timeline,
-                                draft,
-                                state_store,
-                                crypto_state,
-                                sync_cursor,
-                                repo_state,
-                                base_url_sig: base_url,
+                        if minimal_ready {
+                            rsx! {
+                                crate::views::timeline::TimelinePanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    device_id: device_id(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    timeline,
+                                    draft,
+                                    state_store,
+                                    crypto_state,
+                                    sync_cursor,
+                                    repo_state,
+                                    base_url_sig: base_url,
+                                }
                             }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
                     Route::Directory => rsx! {
@@ -450,19 +816,25 @@ pub fn RouterView() -> Element {
                             view,
                         }
                     },
-                    Route::Product => rsx! {
-                        crate::views::product::ProductPanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            device_id: device_id(),
-                            token,
-                            selected_space,
-                            spaces,
-                            timeline,
-                            status,
-                            sync_cursor,
-                            repo_state,
-                            state_store,
+                    Route::Product => {
+                        if full_ready {
+                            rsx! {
+                                crate::views::product::ProductPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    device_id: device_id(),
+                                    token,
+                                    selected_space,
+                                    spaces,
+                                    timeline,
+                                    status,
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::Settings | Route::SettingsSection { .. } => rsx! {
@@ -476,120 +848,168 @@ pub fn RouterView() -> Element {
                             state_store,
                             push_state,
                             locale,
+                            theme,
                             status,
+                            push_ready,
                         }
                     },
-                    Route::Devices => rsx! {
-                        crate::views::devices::DevicesPanel {
-                            base_url: base_url(),
-                            token,
-                            device_id: device_id(),
-                            device_queue: device_queue(),
-                            push_state,
-                            state_store,
-                            crypto_state,
+                    Route::Devices => {
+                        if e2ee_ready {
+                            rsx! {
+                                crate::views::devices::DevicesPanel {
+                                    base_url: base_url(),
+                                    token,
+                                    device_id: device_id(),
+                                    device_queue: device_queue(),
+                                    push_state,
+                                    state_store,
+                                    crypto_state,
+                                    push_ready,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "e2ee_client" } }
                         }
                     },
                     Route::Readiness => rsx! {
                         crate::views::readiness::ReadinessPanel {
                             status,
+                            server_description: active_server_description.clone(),
+                            server_probe_status: server_probe_status(),
                         }
                     },
-                    Route::VerifyDevice => rsx! {
-                        crate::views::verify_device::VerifyDevicePanel {
-                            base_url: base_url(),
-                            token,
-                            device_id: device_id(),
+                    Route::VerifyDevice => {
+                        if e2ee_ready {
+                            rsx! {
+                                crate::views::verify_device::VerifyDevicePanel {
+                                    base_url: base_url(),
+                                    token,
+                                    device_id: device_id(),
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "e2ee_client" } }
                         }
                     },
-                    Route::Contacts => rsx! {
-                        crate::views::contacts::ContactsPanel {
-                            base_url: base_url(),
-                            token,
+                    Route::SpaceAdmin { .. } => {
+                        if full_ready {
+                            rsx! {
+                                crate::views::space_admin::SpaceAdminPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
-                    Route::SpaceAdmin { .. } => rsx! {
-                        crate::views::space_admin::SpaceAdminPanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            token,
-                            selected_space: selected_space(),
-                            sync_cursor,
-                            repo_state,
-                            state_store,
-                        }
-                    },
-                    Route::Audit => rsx! {
-                        crate::views::audit::AuditPanel {
-                            base_url: base_url(),
-                            token,
+                    Route::Audit => {
+                        if full_ready {
+                            rsx! {
+                                crate::views::audit::AuditPanel {
+                                    base_url: base_url(),
+                                    token,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::Kanban | Route::KanbanSpace { .. } => {
                         if let Some(sid) = route.space_id() {
                             selected_space.set(sid.to_owned());
                         }
-                        rsx! {
-                            crate::views::kanban::KanbanPanel {
-                                base_url: base_url(),
-                                token,
-                                selected_space: selected_space(),
+                        if kanban_ready {
+                            rsx! {
+                                crate::views::kanban::KanbanPanel {
+                                    base_url: base_url(),
+                                    token,
+                                    account_did: account_did(),
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                    event_write_ready,
+                                }
                             }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "kanban_only_client" } }
                         }
                     },
                     Route::Chat | Route::ChatSpace { .. } => {
                         if let Some(sid) = route.space_id() {
                             selected_space.set(sid.to_owned());
                         }
-                        rsx! {
-                            crate::views::chat::ChatPanel {
-                                base_url: base_url(),
-                                account_did: account_did(),
-                                token,
-                                selected_space: selected_space(),
-                                sync_cursor,
-                                repo_state,
-                                state_store,
+                        if chat_ready {
+                            rsx! {
+                                crate::views::chat::ChatPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
                             }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "chat_only_client" } }
                         }
                     },
-                    Route::Forum => rsx! {
-                        crate::views::forum::ForumPanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            token,
-                            selected_space: selected_space(),
-                            sync_cursor,
-                            repo_state,
-                            state_store,
+                    Route::Forum => {
+                        if chat_ready {
+                            rsx! {
+                                crate::views::forum::ForumPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "chat_only_client" } }
                         }
                     },
-                    Route::SocialFeed => rsx! {
-                        crate::views::social_feed::SocialFeedPanel {
-                            base_url: base_url(),
-                            token,
+                    Route::MemoryReview => {
+                        if full_ready {
+                            rsx! {
+                                crate::views::memory_review::MemoryReviewPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
-                    Route::MemoryReview => rsx! {
-                        crate::views::memory_review::MemoryReviewPanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            token,
-                            selected_space: selected_space(),
-                            sync_cursor,
-                            repo_state,
-                            state_store,
-                        }
-                    },
-                    Route::AgentRuns => rsx! {
-                        crate::views::agent_runs::AgentRunsPanel {
-                            base_url: base_url(),
-                            account_did: account_did(),
-                            token,
-                            selected_space: selected_space(),
-                            sync_cursor,
-                            repo_state,
-                            state_store,
+                    Route::AgentRuns => {
+                        if full_ready {
+                            rsx! {
+                                crate::views::agent_runs::AgentRunsPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: selected_space(),
+                                    sync_cursor,
+                                    repo_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::Notifications => rsx! {
@@ -604,10 +1024,14 @@ pub fn RouterView() -> Element {
                             selected_space.set(sid.to_owned());
                         }
                         rsx! {
-                            crate::views::document::DocumentPanel {
-                                base_url: base_url(),
-                                token,
-                                selected_space: selected_space(),
+                            if full_ready {
+                                crate::views::document::DocumentPanel {
+                                    base_url: base_url(),
+                                    token,
+                                    selected_space: selected_space(),
+                                }
+                            } else {
+                                ProfileGateNotice { profile: "full_client" }
                             }
                         }
                     },
@@ -620,31 +1044,34 @@ pub fn RouterView() -> Element {
                 }
             }
 
-            section { class: "panel", "data-testid": "right-panel", role: "complementary", "aria-label": "Sync and device info",
-                div { class: "section",
-                    h2 { "Sync" }
-                    div { class: "metric-grid", "data-testid": "sync-metrics",
-                        Metric { label: "Spaces", value: spaces().len().to_string() }
-                        Metric { label: "Device Queue", value: device_queue().to_string() }
-                        Metric { label: "Repo", value: repo_state() }
-                        Metric { label: "Push", value: push_state() }
-                    }
+            RightPanel {
+                base_url: base_url(),
+                token,
+                selected_space: selected_space(),
+                selected_preview: selected_preview.clone(),
+                spaces_count: spaces().len(),
+                device_queue: device_queue(),
+                repo_state: repo_state(),
+                push_state: push_state(),
+                account_did: account_did(),
+                device_id: device_id(),
+                crypto_state: crypto_state(),
+            }
+        }
+    }
+}
+
+#[component]
+fn ProfileGateNotice(profile: &'static str) -> Element {
+    rsx! {
+        div { class: "timeline", "data-testid": "profile-gate-notice",
+            div { class: "event error-banner",
+                div { class: "event-head",
+                    span { "Profile gated" }
+                    span { "{profile}" }
                 }
-                div { class: "section",
-                    h2 { "Device" }
-                    div { class: "metric",
-                        strong { "Account" }
-                        span { "{account_did}" }
-                    }
-                    div { class: "metric",
-                        strong { "Device ID" }
-                        span { "{device_id}" }
-                    }
-                    div { class: "metric",
-                        strong { "Crypto" }
-                        span { "{crypto_state}" }
-                    }
-                }
+                div { class: "space-title", "This server has not declared the required capability set." }
+                div { class: "muted", "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements." }
             }
         }
     }
@@ -665,6 +1092,34 @@ struct ConnectContext {
     state_store: Signal<LocalStateStore>,
     network_state: Signal<String>,
     last_error: Signal<Option<String>>,
+    server_description: Signal<Option<ServerDescription>>,
+    server_probe_status: Signal<String>,
+}
+
+async fn probe_server_description(
+    base: String,
+    mut server_description: Signal<Option<ServerDescription>>,
+    mut server_probe_status: Signal<String>,
+) {
+    match ContrixApi::new(&base) {
+        Ok(api) => match api.describe().await {
+            Ok(description) => {
+                server_probe_status.set(format!(
+                    "server describe loaded: {} / {}",
+                    description.service_type, description.protocol_version
+                ));
+                server_description.set(Some(description));
+            }
+            Err(error) => {
+                server_probe_status.set(format!("server describe failed: {error}"));
+                server_description.set(None);
+            }
+        },
+        Err(error) => {
+            server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
+            server_description.set(None);
+        }
+    }
 }
 
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
@@ -682,6 +1137,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut state_store = ctx.state_store;
         let mut network_state = ctx.network_state;
         let mut last_error = ctx.last_error;
+        let mut server_description = ctx.server_description;
+        let mut server_probe_status = ctx.server_probe_status;
 
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
@@ -697,6 +1154,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             description.protocol_version
                         ));
                         network_state.set("online".to_owned());
+                        server_probe_status.set(format!(
+                            "server describe loaded: {} / {}",
+                            description.service_type, description.protocol_version
+                        ));
+                        server_description.set(Some(description));
                     }
                     Err(error) => {
                         status.set(format!(
@@ -705,6 +1167,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         ));
                         network_state.set("reconnecting".to_owned());
                         last_error.set(Some(format!("describe: {error}")));
+                        server_probe_status.set(format!("server describe failed: {error}"));
+                        server_description.set(None);
                     }
                 }
                 let authed = match api.dev_login(&actor, &device).await {
@@ -830,6 +1294,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 ok: push.ok,
                                 registration_id: push.registration_id.clone(),
                                 expires_at: push.expires_at.clone(),
+                                ..Default::default()
                             };
                             state_store.write().save_push_registration(
                                 crate::push::registration_state_from_response(
@@ -854,6 +1319,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 ));
                 network_state.set("offline".to_owned());
                 last_error.set(Some(format!("invalid URL: {error}")));
+                server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
+                server_description.set(None);
             }
         }
     });

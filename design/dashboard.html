@@ -1,13 +1,68 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>看板 - yougen</title><link rel="stylesheet" href="styles.css"></head>
-<body><div class="page-shell">
-<aside class="sidebar"><div class="brand"><strong>yougen</strong><span>Workspace</span></div><div class="status-card"><div class="status-row"><span>Server</span><b>online</b></div><div class="status-row"><span>Sync</span><b>sx:e2e:product</b></div><div class="status-row"><span>Device</span><b>trusted</b></div></div><nav class="nav"><a class="active" href="dashboard.html">看板<span>全局概览</span></a><a href="space.html">Space<span>消息与加密</span></a><a href="contacts.html">联系人<span>好友和请求</span></a><a href="space-admin.html">Space 管理<span>策略和成员</span></a><a href="directory.html">目录<span>发现和 resolve</span></a><a href="devices.html">设备密钥<span>MLS / push</span></a><a href="audit.html">审计<span>repo / sync</span></a><a href="settings.html">设置<span>发布健康</span></a></nav><a class="btn" href="index.html">页面目录</a></aside>
-<main class="content">
-  <section class="topbar"><div><h1>看板</h1><p class="muted">用户打开应用后的默认工作台，显示空间、同步、队列、设备、发布健康。</p></div><div class="toolbar"><button class="btn">Offline mode</button><button class="btn primary">Sync now</button></div></section>
-  <section class="grid four"><div class="metric"><strong>Spaces</strong><span>12 joined</span></div><div class="metric"><strong>Unread</strong><span>28 messages</span></div><div class="metric"><strong>Device Queue</strong><span>2 to-device</span></div><div class="metric"><strong>Repo Head</strong><span>cx:commit:e2e</span></div></section>
-  <section class="grid two">
-    <div class="panel"><div class="section-head"><h2>Spaces</h2><button class="btn primary">Create</button></div><div class="event"><div class="event-head"><span>collaboration</span><span>public</span></div><h3>Contrix Demo Space</h3><p class="muted">Shared demo Space served by serverx.</p></div><div class="event"><div class="event-head"><span>private</span><span>invite only</span></div><h3>Security Review</h3><p class="muted">MLS encrypted, 3 members, epoch 4.</p></div></div>
-    <div class="panel"><div class="section-head"><h2>Protocol Health</h2><span class="pill amber">not release ready</span></div><div class="table"><div class="row"><div class="cell">Area</div><div class="cell">State</div><div class="cell">Blocker</div><div class="cell">Action</div></div><div class="row"><div class="cell">Auth</div><div class="cell">dev ready</div><div class="cell">passkey</div><div class="cell">Design</div></div><div class="row"><div class="cell">Crypto</div><div class="cell">native ready</div><div class="cell">web store</div><div class="cell">Build</div></div></div></div>
-  </section>
-</main></div></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>应用首页 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-frame">
+    <aside class="side-nav">
+      <div class="side-brand"><strong>yougen</strong><span>Workspace</span></div>
+      <div class="nav-status"><div><span>Server</span><b>online</b></div><div><span>Cursor</span><b>sx:e2e:product</b></div><div><span>Queue</span><b>2</b></div></div>
+      <nav class="nav-list">
+        <a class="active" href="dashboard.html">首页<span>spaces / inbox / recent boards</span></a>
+        <a href="board-room-workbench.html">Board<span>Trello style workbench</span></a>
+        <a href="card-detail.html">Card detail<span>click card state</span></a>
+        <a href="room.html">Rooms<span>chat timeline</span></a>
+        <a href="notifications.html">Inbox<span>mentions and tasks</span></a>
+        <a href="directory.html">Directory<span>discover</span></a>
+        <a href="space-admin.html">Admin<span>members and policy</span></a>
+        <a href="devices.html">Devices<span>keys and push</span></a>
+        <a href="audit.html">Audit<span>events and conflicts</span></a>
+        <a href="settings.html">Settings<span>client preferences</span></a>
+      </nav>
+      <a class="button" href="index.html">Design index</a>
+    </aside>
+
+    <main class="content-page">
+      <section class="page-head">
+        <div><h1>应用首页</h1><p>登录后的默认页面，不做营销展示。首页聚合 Space、最近 Board、待处理通知、设备/同步健康和离线队列。</p></div>
+        <div class="chip-row"><button class="button primary">Create</button><button class="button">Sync now</button></div>
+      </section>
+
+      <section class="panel-grid four">
+        <div class="metric-tile"><span>Joined Spaces</span><strong>12</strong></div>
+        <div class="metric-tile"><span>Unread Rooms</span><strong>28</strong></div>
+        <div class="metric-tile"><span>Assigned Cards</span><strong>7</strong></div>
+        <div class="metric-tile"><span>Local Queue</span><strong>2 events</strong></div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="page-panel">
+          <div class="record-head"><h2>Recent Boards</h2><a class="button compact" href="board-room-workbench.html">Open board</a></div>
+          <div class="record-card"><div class="record-head"><span>kanban</span><span>4 lists</span></div><strong>Launch Board</strong><p>Legal review, security sign-off, onboarding copy.</p><div class="chip-row"><span class="chip blue">2 pending moves</span><span class="chip amber">1 conflict</span></div></div>
+          <div class="record-card"><div class="record-head"><span>review_queue</span><span>8 cards</span></div><strong>Memory Review</strong><p>Agent memory candidates waiting for human confirmation.</p></div>
+        </div>
+        <div class="page-panel">
+          <div class="record-head"><h2>Inbox</h2><a class="button compact" href="notifications.html">View all</a></div>
+          <div class="timeline-line"><strong>@mention in Review room</strong><p>Bob mentioned you on Legal review for public beta.</p></div>
+          <div class="timeline-line"><strong>Assigned card</strong><p>Security sign-off moved into Review and assigned to you.</p></div>
+          <div class="timeline-line"><strong>Device warning</strong><p>iPhone key package expires soon.</p></div>
+        </div>
+      </section>
+
+      <section class="page-panel">
+        <h2>Bootstrap health</h2>
+        <div class="table-card">
+          <div class="table-row"><div class="table-cell">Area</div><div class="table-cell">State</div><div class="table-cell">Protocol</div><div class="table-cell">Action</div></div>
+          <div class="table-row"><div class="table-cell">Sync</div><div class="table-cell">online</div><div class="table-cell">frontier verified</div><div class="table-cell">Backfill</div></div>
+          <div class="table-row"><div class="table-cell">E2EE</div><div class="table-cell">ready</div><div class="table-cell">MLS epoch 4</div><div class="table-cell">Verify device</div></div>
+          <div class="table-row"><div class="table-cell">Projection</div><div class="table-cell">partial</div><div class="table-cell">1 lazy link</div><div class="table-cell">Open audit</div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

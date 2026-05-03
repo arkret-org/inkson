@@ -45,6 +45,12 @@ jobs:
           repository: ${{ github.repository_owner }}/contrix-rust-sdk
           path: contrix-rust-sdk
 
+      - name: Checkout chime
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: chime
+
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         run: |

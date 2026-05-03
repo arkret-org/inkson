@@ -12,6 +12,7 @@ const INDEX_FACET_RENDERABLE: &str = "renderable";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
+    Objects,
     Spaces,
     Organizations,
     Actors,
@@ -42,8 +43,8 @@ pub fn DirectoryPanel(
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut index_results = use_signal(Vec::<Value>::new);
+    let mut object_results = use_signal(Vec::<Value>::new);
     let mut handle_result = use_signal(|| Option::<ResolveHandleResponse>::None);
-    let mut contact_status = use_signal(|| String::new());
     let mut pagination = use_signal(PaginationState::default);
     let mut applet_results = use_signal(Vec::<Value>::new);
     let mut applet_status = use_signal(|| String::new());
@@ -53,6 +54,14 @@ pub fn DirectoryPanel(
         div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Directory search",
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
+                button {
+                    class: if active_tab() == DirectoryTab::Objects { "primary" } else { "secondary" },
+                    "data-testid": "tab-objects",
+                    role: "tab",
+                    "aria-selected": if active_tab() == DirectoryTab::Objects { "true" } else { "false" },
+                    onclick: move |_| active_tab.set(DirectoryTab::Objects),
+                    "Objects"
+                }
                 button {
                     class: if active_tab() == DirectoryTab::Spaces { "primary" } else { "secondary" },
                     "data-testid": "tab-spaces",
@@ -100,6 +109,7 @@ pub fn DirectoryPanel(
                 div { class: "event-head",
                     span { "Directory" }
                     span { match active_tab() {
+                        DirectoryTab::Objects => "search Cards, Discussions, Actors and Spaces",
                         DirectoryTab::Spaces => "search and resolve spaces",
                         DirectoryTab::Organizations => "search organizations",
                         DirectoryTab::Actors => "search actors",
@@ -112,6 +122,7 @@ pub fn DirectoryPanel(
                         "data-testid": "directory-search-input",
                         value: "{query}",
                         "aria-label": match active_tab() {
+                            DirectoryTab::Objects => "Search protocol objects",
                             DirectoryTab::Spaces => "Search spaces",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
@@ -119,6 +130,7 @@ pub fn DirectoryPanel(
                             DirectoryTab::Applets => "Discover applets",
                         },
                         placeholder: match active_tab() {
+                            DirectoryTab::Objects => "Search Cards, Discussions, Actors, Spaces",
                             DirectoryTab::Spaces => "Search spaces",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
@@ -139,6 +151,10 @@ pub fn DirectoryPanel(
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
                                         match tab {
+                                            DirectoryTab::Objects => {
+                                                object_results.set(protocol_object_results(&q));
+                                                status.set("loaded protocol object projection results".to_owned());
+                                            }
                                             DirectoryTab::Spaces => {
                                                 match api.search_spaces(&q, None).await {
                                                     Ok(search) => {
@@ -238,6 +254,10 @@ pub fn DirectoryPanel(
                                     spawn(async move {
                                         if let Ok(api) = authed_api(&base, api_token) {
                                             match tab {
+                                                DirectoryTab::Objects => {
+                                                    object_results.set(protocol_object_results(&q));
+                                                    status.set("loaded protocol object projection results".to_owned());
+                                                }
                                                 DirectoryTab::Spaces => {
                                                     match api.search_spaces(&q, None).await {
                                                         Ok(search) => {
@@ -350,6 +370,18 @@ pub fn DirectoryPanel(
                 }
             }
 
+            if active_tab() == DirectoryTab::Objects {
+                div { class: "event", "data-testid": "protocol-object-results",
+                    div { class: "event-head", span { "Protocol Objects" } span { "{object_results().len()} result(s)" } }
+                    if object_results().is_empty() {
+                        div { class: "muted", "Search to see Card, Discussion, Actor and Space projections with visibility state." }
+                    }
+                    for result in object_results() {
+                        ProtocolObjectResult { result }
+                    }
+                }
+            }
+
             // Spaces tab results
             if active_tab() == DirectoryTab::Spaces {
                 for space in spaces() {
@@ -381,28 +413,6 @@ pub fn DirectoryPanel(
                                     move |_| selected_space.set(id.clone())
                                 },
                                 "Select"
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "directory-contact-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let target = space.space_id.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let target = target.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.request_contact(&target).await {
-                                                    Ok(c) => contact_status.set(format!("sent to {} ({})", c.target, c.status)),
-                                                    Err(e) => contact_status.set(format!("contact failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Add Contact"
                             }
                         }
                     }
@@ -620,30 +630,6 @@ pub fn DirectoryPanel(
                         }
                         div { class: "space-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
                         div { class: "muted", "{actor.get(\"display_name\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "actor-contact-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let target = actor.get("did").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let target = target.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.request_contact(&target).await {
-                                                    Ok(c) => contact_status.set(format!("sent to {} ({})", c.target, c.status)),
-                                                    Err(e) => contact_status.set(format!("contact failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Add Contact"
-                            }
-                        }
                     }
                 }
                 if actor_results().is_empty() {
@@ -799,9 +785,6 @@ pub fn DirectoryPanel(
                 }
             }
 
-            if !contact_status().is_empty() {
-                div { class: "muted", "data-testid": "contact-status", "{contact_status}" }
-            }
         }
     }
 }
@@ -812,6 +795,106 @@ fn value_str(value: &Value, key: &str, fallback: impl Into<String>) -> String {
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| fallback.into())
+}
+
+fn json_text(value: &Value, key: &str) -> String {
+    value_str(value, key, "-")
+}
+
+#[component]
+fn ProtocolObjectResult(result: Value) -> Element {
+    let kind = json_text(&result, "kind");
+    let access = json_text(&result, "access");
+    let title = json_text(&result, "title");
+    let summary = json_text(&result, "summary");
+    let renderer = json_text(&result, "renderer");
+    let facets = json_value(&result, &["facets"]);
+    let discoverable = json_text(&result, "discoverable");
+
+    rsx! {
+        div { class: "event", "data-testid": "protocol-object-result",
+            div { class: "event-head",
+                span { "{kind}" }
+                span { class: object_state_class(access.as_str()), "{access}" }
+            }
+            div { class: "space-title", "{title}" }
+            div { class: "muted", "{summary}" }
+            div { class: "actions",
+                span { class: "badge", "renderer {renderer}" }
+                span { class: "badge blue", "facets {facets}" }
+                span { class: object_state_class(discoverable.as_str()), "discoverable {discoverable}" }
+            }
+        }
+    }
+}
+
+fn json_value(value: &Value, path: &[&str]) -> String {
+    let mut current = value;
+    for key in path {
+        let Some(next) = current.get(*key) else {
+            return "-".to_owned();
+        };
+        current = next;
+    }
+    if let Some(text) = current.as_str() {
+        text.to_owned()
+    } else if current.is_null() {
+        "-".to_owned()
+    } else {
+        current.to_string()
+    }
+}
+
+fn object_state_class(state: &str) -> &'static str {
+    match state {
+        "readable" | "true" => "badge green",
+        "discoverable" | "external" => "badge blue",
+        "locked" | "false" => "badge amber",
+        _ => "badge",
+    }
+}
+
+fn protocol_object_results(query: &str) -> Vec<Value> {
+    let query = query.trim();
+    let suffix = if query.is_empty() { "all" } else { query };
+    vec![
+        serde_json::json!({
+            "kind": "Card",
+            "title": format!("Launch checklist card ({suffix})"),
+            "summary": "Board Card projection with primary Discussion and independent ACL.",
+            "renderer": "card",
+            "facets": ["renderable", "stateful", "rankable"],
+            "access": "readable",
+            "discoverable": "true"
+        }),
+        serde_json::json!({
+            "kind": "Discussion",
+            "title": "Support desk discussion",
+            "summary": "Discussion projection with history_visibility=shared and linked flow metadata.",
+            "renderer": "thread",
+            "facets": ["renderable", "messageable"],
+            "access": "readable",
+            "discoverable": "true"
+        }),
+        serde_json::json!({
+            "kind": "Discussion",
+            "title": "Restricted discussion",
+            "summary": "Locked lazy link: existence can be hinted only by opaque policy-safe reference.",
+            "renderer": "locked",
+            "facets": ["renderable"],
+            "access": "locked",
+            "discoverable": "false"
+        }),
+        serde_json::json!({
+            "kind": "Actor",
+            "title": "did:web:alice.example",
+            "summary": "Verified handle, claim badge, pairwise DID available for private contact.",
+            "renderer": "row",
+            "facets": ["renderable", "claimable"],
+            "access": "discoverable",
+            "discoverable": "true"
+        }),
+    ]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -25,12 +25,10 @@ pub fn ProductPanel(
     mut repo_state: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
 ) -> Element {
-    let mut contact_target = use_signal(|| "did:web:bob.example".to_owned());
     let mut member_did = use_signal(|| "did:web:bob.example".to_owned());
     let mut space_title = use_signal(|| "Product Flow Space".to_owned());
     let mut message_body = use_signal(|| "persisted product flow message".to_owned());
     let mut account_state = use_signal(|| "Not registered in this session".to_owned());
-    let mut contact_state = use_signal(|| "No contacts loaded".to_owned());
     let mut space_state = use_signal(|| "No lifecycle operation yet".to_owned());
     let mut message_state = use_signal(|| "No canonical message persisted".to_owned());
 
@@ -114,108 +112,6 @@ pub fn ProductPanel(
                             }
                         },
                         "Logout"
-                    }
-                }
-            }
-
-            // ── Contacts flow ────────────────────────────────────
-            div { class: "event", "data-testid": "contacts-flow",
-                div { class: "event-head", span { "Contacts" } span { "request / list" } }
-                div { class: "workflow-form",
-                    input {
-                        "data-testid": "contact-target-input",
-                        value: "{contact_target}",
-                        oninput: move |event| contact_target.set(event.value())
-                    }
-                    div { class: "muted", "{contact_state}" }
-                    div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "request-contact-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let api_token = token();
-                                    let base = base.clone();
-                                    let target = contact_target();
-                                    spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.request_contact(&target).await {
-                                                Ok(contact) => contact_state.set(format!("contact {} {}", contact.target, contact.status)),
-                                                Err(error) => contact_state.set(format!("contact failed: {error}")),
-                                            },
-                                            Err(error) => contact_state.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
-                                }
-                            },
-                            "Request"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "list-contacts-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let api_token = token();
-                                    let base = base.clone();
-                                    spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.list_contacts().await {
-                                                Ok(list) => contact_state.set(format!("{} contact(s)", list.contacts.len())),
-                                                Err(error) => contact_state.set(format!("list failed: {error}")),
-                                            },
-                                            Err(error) => contact_state.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
-                                }
-                            },
-                            "List"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "accept-contact-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let api_token = token();
-                                    let base = base.clone();
-                                    let requester = contact_target();
-                                    spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.respond_contact(&requester, "accept").await {
-                                                Ok(contact) => contact_state.set(format!("contact {} {}", contact.requester, contact.status)),
-                                                Err(error) => contact_state.set(format!("accept failed: {error}")),
-                                            },
-                                            Err(error) => contact_state.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
-                                }
-                            },
-                            "Accept"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "reject-contact-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let api_token = token();
-                                    let base = base.clone();
-                                    let requester = contact_target();
-                                    spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.respond_contact(&requester, "reject").await {
-                                                Ok(contact) => contact_state.set(format!("contact {} {}", contact.requester, contact.status)),
-                                                Err(error) => contact_state.set(format!("reject failed: {error}")),
-                                            },
-                                            Err(error) => contact_state.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
-                                }
-                            },
-                            "Reject"
-                        }
                     }
                 }
             }

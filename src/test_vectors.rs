@@ -278,7 +278,7 @@ mod operation_vectors {
             "cx.message.redact",
             "cx.reaction.add",
             "cx.reaction.remove",
-            "cx.channel.create",
+            "cx.flow.create",
             "cx.topic.create",
             "cx.comment.create",
             "cx.run.create",
@@ -485,12 +485,6 @@ mod entity_vectors {
             ("replies_to", RelationType::RepliesTo),
             ("mentions", RelationType::Mentions),
             ("assigned_to", RelationType::AssignedTo),
-            ("follows", RelationType::Follows),
-            ("contact", RelationType::Contact),
-            ("circle_member", RelationType::CircleMember),
-            ("blocks_social", RelationType::BlocksSocial),
-            ("reposts", RelationType::Reposts),
-            ("likes", RelationType::Likes),
         ];
 
         for (name, expected) in types {

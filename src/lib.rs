@@ -12,12 +12,12 @@ pub mod entity;
 pub mod hlc;
 pub mod i18n;
 pub mod local_state;
+pub mod media;
 pub mod models;
 pub mod offline;
 pub mod operation;
 pub mod push;
 pub mod routes;
-pub mod social;
 #[cfg(feature = "protocol-test-vectors")]
 pub mod test_vectors;
 pub mod views;

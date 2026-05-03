@@ -79,9 +79,19 @@ pub fn LoginPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "login-panel", role: "region", "aria-label": "Login",
+            div { class: "event",
+                div { class: "event-head", span { "Identity entry" } span { "secure account access" } }
+                div { class: "muted",
+                    "Connect to a Principal Server, identify the account DID, bind the current device, then choose a supported authentication method. Development login is available for local workflows only."
+                }
+            }
+
             // Connection test
             div { class: "event", "data-testid": "connection-test",
                 div { class: "event-head", span { "Server" } span { "connection test" } }
+                div { class: "muted",
+                    "Server: this endpoint issues challenges, validates credentials, and returns session tokens. Use an HTTPS origin outside local development."
+                }
                 div { class: "workflow-form",
                     label { "Server URL" }
                     input {
@@ -123,6 +133,9 @@ pub fn LoginPanel(
             // Account DID input with validation
             div { class: "event", "data-testid": "account-input",
                 div { class: "event-head", span { "Account" } span { "DID" } }
+                div { class: "muted",
+                    "Account: enter the DID that owns the workspace. The client validates the DID shape before requesting method-specific challenges."
+                }
                 div { class: "workflow-form",
                     label { "Account DID" }
                     input {
@@ -142,6 +155,9 @@ pub fn LoginPanel(
                     if !did_validation().is_empty() {
                         div { class: "muted", "data-testid": "did-validation", "{did_validation}" }
                     }
+                    div { class: "muted",
+                        "Device: this label scopes the session to the current browser or machine and appears in audit/recovery flows."
+                    }
                     label { "Device ID" }
                     input {
                         "data-testid": "login-device-id",
@@ -154,6 +170,9 @@ pub fn LoginPanel(
             // Login methods
             div { class: "event", "data-testid": "login-methods",
                 div { class: "event-head", span { "Login" } span { "choose method" } }
+                div { class: "muted",
+                    "Method: passkey requests a signed challenge, OIDC starts an external provider redirect, and dev login bootstraps a local session for testing."
+                }
                 div { class: "actions",
                     button {
                         class: "primary",
@@ -302,6 +321,9 @@ pub fn LoginPanel(
                         SessionState::SoftLogout => "soft-logout",
                     }}
                 }
+                div { class: "muted",
+                    "Session: access tokens are stored locally for this client. Re-authenticate after expiry or if the device state changes."
+                }
                 if !session_info().is_empty() {
                     div { class: "muted", "data-testid": "session-info", "{session_info}" }
                 }
@@ -316,6 +338,9 @@ pub fn LoginPanel(
             // Token refresh
             div { class: "event", "data-testid": "token-refresh",
                 div { class: "event-head", span { "Token" } span { "refresh" } }
+                div { class: "muted",
+                    "Status: refresh keeps an authenticated session alive without changing the account DID or device binding."
+                }
                 div { class: "actions",
                     button {
                         class: "secondary",

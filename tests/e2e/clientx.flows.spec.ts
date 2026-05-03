@@ -23,6 +23,24 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("sync-metrics")).toContainText("1");
 });
 
+test("right panel shows space hierarchy without implicit cascade", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await expect(page.getByTestId("right-panel-space-info")).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("membership");
+  await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("encryption");
+
+  await expect(page.getByTestId("space-hierarchy-children")).toContainText("Design Child");
+  await expect(page.getByTestId("space-hierarchy-children")).toContainText("cx:space:01js0childprivate000000000");
+  await expect(page.getByTestId("space-hierarchy-children")).toContainText("lazy link");
+  await expect(page.getByTestId("space-hierarchy-edges")).toContainText("unconfirmed_link");
+
+  const hierarchyRequest = page.waitForRequest("**/api/v1/index/space-hierarchy?*");
+  await page.getByTestId("right-panel-refresh-hierarchy").click();
+  const requestUrl = new URL((await hierarchyRequest).url());
+  expect(requestUrl.searchParams.get("depth")).toBe("2");
+  expect(requestUrl.searchParams.get("include_unconfirmed")).toBe("true");
+});
+
 test("login page covers connection auth methods and token refresh", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
@@ -47,6 +65,8 @@ test("login page covers connection auth methods and token refresh", async ({ pag
 test("registration wizard completes account bootstrap", async ({ page }) => {
   await page.goto("/register", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("register-panel")).toBeVisible();
+  await expect(page.getByTestId("did-method-policy")).toContainText("did:plc");
+  await expect(page.getByTestId("did-method-policy")).toContainText("did:uuid");
 
   await page.getByTestId("generate-did-button").click();
   await page.getByTestId("register-handle-input").fill("new-alice.example");
@@ -61,6 +81,33 @@ test("registration wizard completes account bootstrap", async ({ page }) => {
 
   await expect(page.getByTestId("registration-complete")).toContainText("Account registered successfully");
   await expect(page.getByTestId("register-summary-status")).toContainText("cx:didop:e2e");
+});
+
+test("registration can bind an existing protocol DID with scoped proof", async ({ page }) => {
+  await page.goto("/register", { waitUntil: "domcontentloaded" });
+  await page.getByTestId("register-path-bind").click();
+  await page.getByTestId("bind-existing-did-input").fill("did:web:team.example");
+  await page.getByTestId("bind-existing-did-button").click();
+  await page.getByTestId("register-handle-input").fill("team.example");
+  await page.getByTestId("next-to-displayname").click();
+  await page.getByTestId("register-display-name").fill("Team Workspace");
+  await page.getByTestId("register-device-label").fill("team-laptop");
+  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByTestId("generate-proof-button").click();
+  await expect(page.getByTestId("proof-challenge")).toContainText("challenge-");
+  await expect(page.getByTestId("proof-verification-method")).toHaveValue("authentication");
+  await page.getByRole("button", { name: "Sign & Continue" }).click();
+  await page.getByRole("button", { name: "Next" }).click();
+
+  const didOperation = page.waitForRequest("**/api/v1/identity/submit-did-operation");
+  await page.getByTestId("complete-registration-button").click();
+  const didBody = await didOperation.then((request) => request.postDataJSON());
+  expect(didBody.did).toBe("did:web:team.example");
+  expect(didBody.operation.type).toBe("cx.did.bind");
+  expect(didBody.operation.did_method).toBe("did:web");
+  expect(didBody.operation.proof.audience).toContain("127.0.0.1");
+  expect(didBody.operation.proof.verification_method).toBe("authentication");
+  await expect(page.getByTestId("registration-complete")).toContainText("did:web:team.example");
 });
 
 test("settings can update account and device before session bootstrap", async ({ page }) => {
@@ -86,6 +133,10 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await page.getByTestId("settings-nav-button").click();
   await page.getByTestId("section-theme").click();
   await expect(page.getByTestId("language-settings")).toBeVisible();
+  await page.getByTestId("theme-night").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "night");
+  await page.getByTestId("theme-system").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "system");
 
   await page.getByTestId("language-ar").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
@@ -102,6 +153,36 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await page.getByTestId("language-en").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
+});
+
+test("kanban card detail exposes linked discussion and locked discussion boundaries", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Kanban" }).click();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await page.getByTestId("kanban-card").first().click();
+  await expect(page.getByTestId("card-detail-modal")).toContainText("Primary discussion");
+  await expect(page.getByTestId("card-detail-modal")).toContainText("Locked discussion");
+  await expect(page.getByTestId("card-detail-modal")).toContainText("card visibility != discussion visibility");
+  await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
+});
+
+test("kanban queues card Event Envelopes and replays through events API", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Kanban" }).click();
+  await page.getByTestId("add-card-button").first().click();
+  await page.getByTestId("new-card-title-input").fill("Event envelope card");
+  await page.getByTestId("save-card-button").click();
+  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("actor_seq");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("schema cx.schema.core.v1");
+
+  const eventSubmit = page.waitForRequest("**/api/v1/events/submit");
+  await page.getByTestId("replay-board-queue").click();
+  const eventBody = await eventSubmit.then((request) => request.postDataJSON());
+  expect(eventBody.event.type).toBe("cx.flow.create");
+  expect(eventBody.event.auth_refs).toContain("cx:capability:board.write");
+  await expect(page.getByTestId("board-status")).toContainText("accepted");
+  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:event");
 });
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
@@ -141,6 +222,9 @@ test("mobile viewport collapses shell chrome and keeps timeline usable", async (
   await expect(page.getByTestId("client-shell")).toBeVisible();
   await expect(page.getByTestId("sidebar")).toBeHidden();
   await expect(page.getByTestId("right-panel")).toBeHidden();
+  await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
+  await page.getByTestId("mobile-nav-toggle").click();
+  await expect(page.getByTestId("mobile-nav-drawer")).toContainText("Board");
   await expect(page.getByTestId("main-view")).toBeVisible();
   await expect(page.getByTestId("composer-input")).toBeVisible();
 });
@@ -182,6 +266,13 @@ test("directory search resolve and space selection flow works", async ({ page })
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0sp0000000000000000000");
 
+  await page.getByTestId("tab-objects").click();
+  await page.getByTestId("directory-search-input").fill("launch");
+  await page.getByTestId("directory-search-button").click();
+  await expect(page.getByTestId("protocol-object-results")).toContainText("Launch checklist card");
+  await expect(page.getByTestId("protocol-object-results")).toContainText("Restricted discussion");
+  await expect(page.getByTestId("protocol-object-results")).toContainText("locked");
+
   await page.getByTestId("tab-organizations").click();
   await page.getByTestId("directory-search-input").fill("contrix");
   await page.getByTestId("directory-search-button").click();
@@ -213,7 +304,7 @@ test("notifications are derived from index projections and respect per-space mut
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 
-test("product account contacts space lifecycle and canonical message flow works", async ({ page }) => {
+test("product account space lifecycle and canonical message flow works", async ({ page }) => {
   await page.getByTestId("connect-button").click();
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
@@ -222,13 +313,6 @@ test("product account contacts space lifecycle and canonical message flow works"
 
   await page.getByTestId("register-account-button").click();
   await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
-
-  await page.getByTestId("request-contact-button").click();
-  await expect(page.getByTestId("contacts-flow")).toContainText("contact did:web:bob.example pending");
-  await page.getByTestId("list-contacts-button").click();
-  await expect(page.getByTestId("contacts-flow")).toContainText("1 contact(s)");
-  await page.getByTestId("accept-contact-button").click();
-  await expect(page.getByTestId("contacts-flow")).toContainText("contact did:web:bob.example accepted");
 
   await page.getByTestId("create-space-button").click();
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0productflow000000000000");
@@ -253,7 +337,7 @@ test("product account contacts space lifecycle and canonical message flow works"
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("deleted true");
 });
 
-test("chat creates channel entities and sends structured mention payloads", async ({ page }) => {
+test("chat creates discussion entities and sends structured mention payloads", async ({ page }) => {
   await page.getByTestId("connect-button").click();
   await page.getByRole("link", { name: "Chat" }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
@@ -264,21 +348,27 @@ test("chat creates channel entities and sends structured mention payloads", asyn
   const channelCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
   await page.getByTestId("create-channel-button").click();
   const channelBody = await channelCommit.then((request) => request.postDataJSON());
-  expect(channelBody.commit.operations[0].type).toBe("cx.channel.create");
+  expect(channelBody.commit.operations[0].type).toBe("cx.flow.create");
   expect(channelBody.commit.operations[0].body.kind).toBe("announce");
-  expect(channelBody.commit.operations[0].body.channel_id).toContain("cx:channel:");
+  expect(channelBody.commit.operations[0].body.flow_id).toContain("cx:flow:");
+  expect(channelBody.commit.operations[0].body.title).toBe("Ops Announce");
+  expect(channelBody.commit.operations[0].body.rank).toBeTruthy();
   await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
-  await expect(page.getByTestId("chat-status")).toContainText("channel committed");
+  await expect(page.getByTestId("chat-status")).toContainText("flow committed");
 
   const chatSend = page.waitForRequest("**/api/v1/messages/send");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
-  expect(chatBody.content.channel_id).toContain("cx:channel:");
+  expect(chatBody.content.flow_id).toContain("cx:flow:");
+  expect(chatBody.content.branch).toBe("discussion");
   expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
   expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
   await expect(page.getByTestId("chat-mentions").last()).toContainText("did:web:bob.example");
+  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Revision chain");
+  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Tombstone");
+  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Linked discussion access");
 });
 
 test("forum anchors topics and stores comments separately from chat messages", async ({ page }) => {
@@ -427,6 +517,44 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await expect(page.getByTestId("right-panel")).toContainText("encrypted local payload");
 });
 
+test("timeline mark-read sends public receipt and stores private marker", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Timeline" }).click();
+  await expect(page.getByTestId("timeline-event").first()).toBeVisible();
+
+  const receiptRequest = page.waitForRequest("**/api/v1/receipts");
+  await page.getByTestId("mark-read-button").first().click();
+  const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
+
+  expect(receiptBody.space_id).toBe("cx:space:01js0sp0000000000000000000");
+  expect(receiptBody.receipt_type).toBe("cx.receipt.read");
+  expect(receiptBody.event_id).toContain("summary-cx:space");
+  await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
+  await expect(page.getByTestId("read-marker-status")).toContainText("Read marker:");
+  await expect(page.getByTestId("read-marker-badge")).toContainText("Read marker here");
+});
+
+test("timeline blob flow verifies hashes and authenticated downloads", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  await page.getByRole("link", { name: "Timeline" }).click();
+
+  const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
+  await page.getByTestId("attach-blob-button").click();
+  expect((await uploadRequest).headers()["authorization"]).toContain("Bearer");
+  await expect(page.getByTestId("blob-status")).toContainText("upload hash ok");
+  await expect(page.getByTestId("blob-status")).toContainText("no token in media URL");
+  await expect(page.getByTestId("blob-policy-panel")).toContainText("unsafe or opaque type opens as attachment");
+  await expect(page.getByTestId("blob-policy-panel")).toContainText("Thumbnail: cx:blob:sha256:e2e-thumb");
+
+  const downloadRequest = page.waitForRequest("**/api/v1/blob/get?blob_ref=*");
+  await page.getByTestId("verify-blob-download").click();
+  const download = await downloadRequest;
+  expect(download.headers()["authorization"]).toContain("Bearer");
+  expect(download.url()).not.toContain("access_token");
+  expect(download.url()).not.toContain("Bearer");
+  await expect(page.getByTestId("blob-status")).toContainText("download verified sha256");
+});
+
 test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("plaintext-boundary-panel")).toBeVisible();
@@ -457,28 +585,12 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
   expect((await deviceMessage).method()).toBe("PUT");
 });
 
-test("contacts page searches requests and accepts a contact", async ({ page }) => {
-  await page.getByRole("link", { name: "Contacts" }).click();
-  await expect(page.getByTestId("contacts-panel")).toBeVisible();
-
-  await page.getByTestId("tab-search").click();
-  await page.getByTestId("contact-search-input").fill("bob");
-  await page.getByTestId("contact-search-button").click();
-  await expect(page.getByTestId("search-result")).toContainText("bob.example");
-
-  await page.getByTestId("send-contact-request").click();
-  await expect(page.getByTestId("contacts-status")).toContainText("sent to did:web:bob.example");
-
-  await page.getByTestId("tab-incoming").click();
-  await page.getByTestId("refresh-incoming").click();
-  await expect(page.getByTestId("incoming-request")).toContainText("did:web:alice.example");
-  await page.getByTestId("accept-request-button").click();
-  await expect(page.getByTestId("contacts-status")).toContainText("accepted did:web:alice.example");
-});
-
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
   await page.goto("/space/cx:space:01js0sp0000000000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("space-admin-panel")).toBeVisible();
+  await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
+  await page.getByTestId("queue-discussion-admission").click();
+  await expect(page.getByTestId("space-admin-status")).toContainText("Discussion-scoped external admission");
 
   await page.getByTestId("space-name-input").fill("Updated Demo Space");
   await page.getByTestId("update-metadata-button").click();
@@ -515,6 +627,8 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
 test("audit page loads repo operations commits conflicts and snapshots", async ({ page }) => {
   await page.getByRole("link", { name: "Audit" }).click();
   await expect(page.getByTestId("audit-panel")).toBeVisible();
+  await expect(page.getByTestId("event-envelope-audit")).toContainText("actor_seq");
+  await expect(page.getByTestId("event-envelope-audit")).toContainText("auth_refs");
 
   await page.getByTestId("refresh-audit-button").click();
   await expect(page.getByTestId("audit-status")).toContainText("loaded");
@@ -543,9 +657,12 @@ test("devices panel reflects key queue push and crypto state after bootstrap", a
 
   await page.getByTestId("devices-nav-button").click();
   await expect(page.getByTestId("devices-panel")).toBeVisible();
+  await expect(page.getByTestId("device-verification-workbench")).toContainText("SAS");
   await expect(page.getByTestId("device-summary")).toContainText("Queue1");
   await expect(page.getByTestId("device-summary")).toContainText("Pushcx:push:e2e");
   await expect(page.getByTestId("device-summary")).toContainText("Cryptosession dev_yougen");
+  await page.getByTestId("revoke-impact-button").click();
+  await expect(page.getByTestId("device-summary")).toContainText("Revocation will require MLS remove proposal");
 });
 
 test("invalid server URL surfaces an error state", async ({ page }) => {
@@ -571,13 +688,38 @@ test("call panel loads server ICE configuration", async ({ page }) => {
   await expect(page.getByTestId("ice-ttl")).toContainText("600s");
 });
 
+test("visual smoke renders core product pages on desktop and mobile", async ({ page }) => {
+  await page.getByTestId("connect-button").click();
+  for (const [route, testId] of [
+    ["/", "dashboard-panel"],
+    ["/register", "register-panel"],
+    ["/kanban", "kanban-panel"],
+    ["/chat", "chat-panel"],
+    ["/settings", "settings-panel"],
+  ] as const) {
+    await page.goto(route, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId(testId)).toBeVisible();
+    const shot = await page.screenshot();
+    expect(shot.length).toBeGreaterThan(10_000);
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/kanban", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
+  const mobileShot = await page.screenshot();
+  expect(mobileShot.length).toBeGreaterThan(10_000);
+});
+
 test("release readiness panel keeps production blockers visible", async ({ page }) => {
   await page.getByTestId("readiness-nav-button").click();
 
   await expect(page.getByTestId("readiness-panel")).toBeVisible();
   await expect(page.getByTestId("release-summary")).toContainText("Not production-ready");
+  await expect(page.getByTestId("server-describe-readiness")).toContainText("did:web:serverx.local");
+  await expect(page.getByTestId("local-profile-support")).toContainText("minimal_client");
+  await expect(page.getByTestId("profile-readiness")).toContainText("chat_only_client");
+  await expect(page.getByTestId("profile-readiness")).toContainText("ready");
   await expect(page.getByTestId("readiness-panel")).toContainText("Production registration");
-  await expect(page.getByTestId("readiness-panel")).toContainText("Contacts and friends");
   await expect(page.getByTestId("readiness-panel")).toContainText("Create space");
   await expect(page.getByTestId("readiness-panel")).toContainText("Invite, add, remove, and kick members");
   await expect(page.getByTestId("readiness-panel")).toContainText("Leave, archive, and delete space");

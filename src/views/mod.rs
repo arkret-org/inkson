@@ -2,7 +2,6 @@ pub mod agent_runs;
 pub mod audit;
 pub mod call;
 pub mod chat;
-pub mod contacts;
 pub mod dashboard;
 pub mod devices;
 pub mod directory;
@@ -17,7 +16,6 @@ pub mod product;
 pub mod readiness;
 pub mod register;
 pub mod settings;
-pub mod social_feed;
 pub mod space_admin;
 pub mod timeline;
 pub mod verify_device;
@@ -34,13 +32,11 @@ pub enum View {
     Devices,
     Readiness,
     VerifyDevice,
-    Contacts,
     SpaceAdmin,
     Audit,
     Kanban,
     Chat,
     Forum,
-    SocialFeed,
     MemoryReview,
     AgentRuns,
     Notifications,

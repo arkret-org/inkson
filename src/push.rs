@@ -25,6 +25,7 @@ pub fn build_register_request(device_id: &str) -> anyhow::Result<RegisterDeviceR
     let prefs = push_preferences();
     let idempotency_key = format!("yougen-push-register-{device_id}");
     let config = PushDeviceConfig {
+        principal_did: None,
         device_id,
         push_key: Some(&push_key),
         platform: Some(platform),
@@ -51,6 +52,7 @@ pub fn build_unregister_request(
         .and_then(|state| state.app_id.as_deref())
         .unwrap_or(APP_ID);
     let config = PushDeviceConfig {
+        principal_did: existing.and_then(|state| state.principal_did.as_deref()),
         device_id,
         push_key: None,
         platform: Some(platform),
@@ -74,6 +76,7 @@ pub fn registration_state_from_response(
     response: &RegisterDeviceResponse,
 ) -> PushRegistrationState {
     let config = PushDeviceConfig {
+        principal_did: request.principal_did.as_deref(),
         device_id: &request.device_id,
         push_key: Some(&request.push_key),
         platform: request.platform.as_deref(),
@@ -165,6 +168,7 @@ mod tests {
             ok: true,
             registration_id: Some("cx:push:test".to_owned()),
             expires_at: None,
+            ..Default::default()
         };
         let state = registration_state_from_response(&request, &response);
 
@@ -181,6 +185,7 @@ mod tests {
             ok: true,
             registration_id: Some("cx:push:test".to_owned()),
             expires_at: None,
+            ..Default::default()
         };
         let state = registration_state_from_response(&request, &response);
         let unregister = build_unregister_request("dev_yougen", Some(&state)).unwrap();
@@ -197,6 +202,7 @@ mod tests {
             ok: true,
             registration_id: None,
             expires_at: None,
+            ..Default::default()
         };
         let state = registration_state_from_response(&request, &response);
 

@@ -33,10 +33,11 @@ pub fn SettingsPanel(
     state_store: Signal<LocalStateStore>,
     push_state: Signal<String>,
     mut locale: Signal<Locale>,
+    mut theme: Signal<String>,
     status: Signal<String>,
+    push_ready: bool,
 ) -> Element {
     let mut active_section = use_signal(|| SettingsSection::Server);
-    let mut theme = use_signal(|| "system".to_owned());
     let mut presence_visible = use_signal(|| true);
     let mut read_receipts_visible = use_signal(|| true);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
@@ -242,6 +243,7 @@ pub fn SettingsPanel(
                     div { class: "muted", "Current: {crypto_state}" }
                     label { "Key Backup" }
                     div { class: "muted", "{key_backup_status}" }
+                    if push_ready {
                     div { class: "actions",
                         button {
                             class: "secondary",
@@ -249,6 +251,9 @@ pub fn SettingsPanel(
                             onclick: move |_| key_backup_status.set("Setup not yet available".to_owned()),
                             "Setup Key Backup"
                         }
+                    }
+                    } else {
+                        div { class: "muted", "Push registration controls are hidden until /server/describe advertises push.register_device." }
                     }
                 }
             }
@@ -341,7 +346,7 @@ pub fn SettingsPanel(
                                         match authed_api(&base, api_token) {
                                             Ok(api) => match api.mimi_identifier_query(json!({
                                                 "query": "mimi://remote.example/alice",
-                                                "privacy_mode": "private_contact_discovery"
+                                                "privacy_mode": "private_identifier_query"
                                             })).await {
                                                 Ok(response) => {
                                                     mimi_receipt.set(format!(
@@ -470,6 +475,7 @@ pub fn SettingsPanel(
                                                             ok: push.ok,
                                                             registration_id: push.registration_id.clone(),
                                                             expires_at: push.expires_at.clone(),
+                                                            ..Default::default()
                                                         };
                                                         let local_state = crate::push::registration_state_from_response(
                                                             &request,
@@ -603,21 +609,39 @@ pub fn SettingsPanel(
                     div { class: "actions",
                         button {
                             class: if theme() == "light" { "primary" } else { "secondary" },
-                            onclick: move |_| theme.set("light".to_owned()),
+                            "data-testid": "theme-light",
+                            onclick: move |_| {
+                                theme.set("light".to_owned());
+                                state_store.write().save_private_data(&account_did(), "theme", "light");
+                                status.set("Theme set to light".to_owned());
+                            },
                             "Light"
                         }
                         button {
-                            class: if theme() == "dark" { "primary" } else { "secondary" },
-                            onclick: move |_| theme.set("dark".to_owned()),
-                            "Dark"
+                            class: if theme() == "night" { "primary" } else { "secondary" },
+                            "data-testid": "theme-night",
+                            onclick: move |_| {
+                                theme.set("night".to_owned());
+                                state_store.write().save_private_data(&account_did(), "theme", "night");
+                                status.set("Theme set to night".to_owned());
+                            },
+                            "Night"
                         }
                         button {
                             class: if theme() == "system" { "primary" } else { "secondary" },
-                            onclick: move |_| theme.set("system".to_owned()),
+                            "data-testid": "theme-system",
+                            onclick: move |_| {
+                                theme.set("system".to_owned());
+                                state_store.write().save_private_data(&account_did(), "theme", "system");
+                                status.set("Theme set to system".to_owned());
+                            },
                             "System"
                         }
                     }
                     div { class: "muted", "Current: {theme}" }
+                    div { class: "muted",
+                        "Theme is actor-private account data. Shared board filters/layout still require an explicit shared View save."
+                    }
                 }
                 div { class: "event", "data-testid": "language-settings",
                     div { class: "event-head",

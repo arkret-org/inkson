@@ -4,6 +4,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::models::ServerDescription;
+
+pub const PROFILE_MINIMAL_CLIENT: &str = "cx.profile.minimal_client.v1";
+pub const PROFILE_CHAT_ONLY_CLIENT: &str = "cx.profile.chat_only_client.v1";
+pub const PROFILE_KANBAN_ONLY_CLIENT: &str = "cx.profile.kanban_only_client.v1";
+pub const PROFILE_FULL_CLIENT: &str = "cx.profile.full_client.v1";
+pub const PROFILE_E2EE_CLIENT: &str = "cx.profile.e2ee_client.v1";
+pub const PROFILE_FEDERATION_MINIMAL: &str = "cx.profile.federation_minimal.v1";
+pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
+
 /// Conformance profile declarations per contrix-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConformanceProfile {
@@ -15,33 +25,220 @@ pub struct ConformanceProfile {
 
 /// All known conformance profiles.
 pub fn known_profiles() -> Vec<ConformanceProfile> {
+    client_profile_declarations()
+        .into_iter()
+        .map(|declaration| ConformanceProfile {
+            profile_id: declaration.profile_id.to_owned(),
+            version: "1.0".to_owned(),
+            description: declaration.description.to_owned(),
+            supported: declaration.local_supported,
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientProfileDeclaration {
+    pub profile_id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub local_supported: bool,
+    pub degradation_path: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileReadiness {
+    pub profile_id: String,
+    pub label: String,
+    pub local_supported: bool,
+    pub server_declared: bool,
+    pub ready: bool,
+    pub missing: Vec<String>,
+    pub degradation_path: String,
+}
+
+pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
     vec![
-        ConformanceProfile {
-            profile_id: "cx.profile.minimal_client.v1".into(),
-            version: "1.0".into(),
-            description: "Minimal client: basic sync, plaintext messaging, directory lookup".into(),
-            supported: true,
+        ClientProfileDeclaration {
+            profile_id: PROFILE_MINIMAL_CLIENT,
+            label: "minimal_client",
+            description: "Minimal client: sync, directory lookup, timeline, and plaintext message flow.",
+            local_supported: true,
+            degradation_path: "Read-only shell with server discovery and local cached state.",
         },
-        ConformanceProfile {
-            profile_id: "cx.profile.full_client.v1".into(),
-            version: "1.0".into(),
-            description: "Full client: all views, entity/relation management, capability checks"
-                .into(),
-            supported: false,
+        ClientProfileDeclaration {
+            profile_id: PROFILE_CHAT_ONLY_CLIENT,
+            label: "chat_only_client",
+            description: "Chat-only client: channels, timeline, message send/edit/redaction, reactions, and read markers.",
+            local_supported: true,
+            degradation_path: "Timeline can remain visible, but chat write controls stay gated.",
         },
-        ConformanceProfile {
-            profile_id: "cx.profile.e2ee_client.v1".into(),
-            version: "1.0".into(),
-            description: "E2EE client: MLS encryption, device management, key lifecycle".into(),
-            supported: false,
+        ClientProfileDeclaration {
+            profile_id: PROFILE_KANBAN_ONLY_CLIENT,
+            label: "kanban_only_client",
+            description: "Kanban-only client: board/list/card projection and repo-backed entity operations.",
+            local_supported: true,
+            degradation_path: "Directory/index projections remain available without board mutation controls.",
         },
-        ConformanceProfile {
-            profile_id: "cx.profile.enterprise_client.v1".into(),
-            version: "1.0".into(),
-            description: "Enterprise client: capability delegation, audit, compliance".into(),
-            supported: false,
+        ClientProfileDeclaration {
+            profile_id: PROFILE_FULL_CLIENT,
+            label: "full_client",
+            description: "Full client: product workflows, space lifecycle, audit, notifications, app views, and admin surfaces.",
+            local_supported: true,
+            degradation_path: "Fall back to minimal, chat-only, and kanban-only surfaces.",
+        },
+        ClientProfileDeclaration {
+            profile_id: PROFILE_E2EE_CLIENT,
+            label: "e2ee_client",
+            description: "E2EE client: MLS payload preservation, key lifecycle, device queues, and verification UX.",
+            local_supported: true,
+            degradation_path: "Use plaintext development mode and preserve encrypted payloads without claiming decryptability.",
+        },
+        ClientProfileDeclaration {
+            profile_id: PROFILE_FEDERATION_MINIMAL,
+            label: "federation_minimal",
+            description: "Federation-minimal client: remote service DID display, transaction/backfill errors, and quarantine warnings.",
+            local_supported: true,
+            degradation_path: "Hide federation actions and show local-domain resources only.",
+        },
+        ClientProfileDeclaration {
+            profile_id: PROFILE_PUSH_GATEWAY,
+            label: "push_gateway",
+            description: "Push gateway client: chime registration, unregister, local push state, and notification projection.",
+            local_supported: true,
+            degradation_path: "Keep in-app notification projection and skip push registration controls.",
         },
     ]
+}
+
+pub fn local_supported_profile_ids() -> Vec<&'static str> {
+    client_profile_declarations()
+        .into_iter()
+        .filter(|declaration| declaration.local_supported)
+        .map(|declaration| declaration.profile_id)
+        .collect()
+}
+
+pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadiness> {
+    client_profile_declarations()
+        .into_iter()
+        .map(|declaration| {
+            let server_declared = server.is_some_and(|description| {
+                description
+                    .supported_profiles
+                    .iter()
+                    .any(|profile| profile == declaration.profile_id)
+            });
+            let missing = server
+                .map(|description| missing_requirements(declaration.profile_id, description))
+                .unwrap_or_else(|| vec!["server describe unavailable".to_owned()]);
+            let ready = declaration.local_supported && missing.is_empty();
+
+            ProfileReadiness {
+                profile_id: declaration.profile_id.to_owned(),
+                label: declaration.label.to_owned(),
+                local_supported: declaration.local_supported,
+                server_declared,
+                ready,
+                missing,
+                degradation_path: declaration.degradation_path.to_owned(),
+            }
+        })
+        .collect()
+}
+
+pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bool {
+    server
+        .map(|description| missing_requirements(profile_id, description).is_empty())
+        .unwrap_or(true)
+}
+
+fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<String> {
+    let mut missing = Vec::new();
+    match profile_id {
+        PROFILE_MINIMAL_CLIENT => {
+            require_feature_or_operation(
+                server,
+                "sync.client_sync",
+                "cx.sync.client_sync",
+                &mut missing,
+            );
+            require_feature_or_operation(
+                server,
+                "directory.search_spaces",
+                "cx.directory.search_spaces",
+                &mut missing,
+            );
+        }
+        PROFILE_CHAT_ONLY_CLIENT => {
+            require_feature_or_operation(
+                server,
+                "sync.client_sync",
+                "cx.sync.client_sync",
+                &mut missing,
+            );
+            require_feature_or_operation(server, "message.send", "cx.messages.send", &mut missing);
+        }
+        PROFILE_KANBAN_ONLY_CLIENT => {
+            require_feature_or_operation(server, "index.query", "cx.index.query", &mut missing);
+            require_feature_or_operation(
+                server,
+                "repo.submit_commit",
+                "cx.repo.submit_commit",
+                &mut missing,
+            );
+        }
+        PROFILE_FULL_CLIENT => {
+            for (feature, operation) in [
+                ("sync.client_sync", "cx.sync.client_sync"),
+                ("directory.search_spaces", "cx.directory.search_spaces"),
+                ("index.query", "cx.index.query"),
+                ("repo.submit_commit", "cx.repo.submit_commit"),
+                ("authz.check", "cx.authz.check"),
+                ("space.create", "cx.spaces.create"),
+            ] {
+                require_feature_or_operation(server, feature, operation, &mut missing);
+            }
+        }
+        PROFILE_E2EE_CLIENT => {
+            for (feature, operation) in [
+                ("keys.upload", "cx.keys.upload"),
+                ("keys.query", "cx.keys.query"),
+                ("keys.claim", "cx.keys.claim"),
+                ("device_messages.receive", "cx.device_messages.receive"),
+            ] {
+                require_feature_or_operation(server, feature, operation, &mut missing);
+            }
+        }
+        PROFILE_FEDERATION_MINIMAL => {
+            require_feature_or_operation(
+                server,
+                "federation.transaction",
+                "cx.federation.transaction",
+                &mut missing,
+            );
+        }
+        PROFILE_PUSH_GATEWAY => {
+            require_feature_or_operation(
+                server,
+                "push.register_device",
+                "cx.push.register_device",
+                &mut missing,
+            );
+        }
+        _ => missing.push(format!("unknown profile {profile_id}")),
+    }
+    missing
+}
+
+fn require_feature_or_operation(
+    server: &ServerDescription,
+    feature: &str,
+    operation: &str,
+    missing: &mut Vec<String>,
+) {
+    if !server.supports_feature(feature) && !server.supports_operation(operation) {
+        missing.push(format!("{feature} or {operation}"));
+    }
 }
 
 /// Plaintext boundary check per contrix-spec section 12.1.
@@ -205,8 +402,50 @@ mod tests {
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "cx.profile.full_client.v1" && !p.supported)
+                .any(|p| p.profile_id == "cx.profile.chat_only_client.v1" && p.supported)
         );
+        assert!(
+            profiles
+                .iter()
+                .any(|p| p.profile_id == "cx.profile.push_gateway.v1")
+        );
+    }
+
+    #[test]
+    fn profile_readiness_reports_server_gaps() {
+        let server: ServerDescription = serde_json::from_value(json!({
+            "service_did": "did:web:server.example",
+            "service_type": "principal_server",
+            "protocol_version": "1.0",
+            "supported_profiles": [PROFILE_MINIMAL_CLIENT],
+            "supported_features": ["sync.client_sync", "directory.search_spaces"],
+            "supported_operations": ["cx.sync.client_sync", "cx.directory.search_spaces"]
+        }))
+        .unwrap();
+
+        let readiness = profile_readiness(Some(&server));
+        let minimal = readiness
+            .iter()
+            .find(|profile| profile.profile_id == PROFILE_MINIMAL_CLIENT)
+            .unwrap();
+        assert!(minimal.ready);
+        assert!(minimal.server_declared);
+
+        let chat = readiness
+            .iter()
+            .find(|profile| profile.profile_id == PROFILE_CHAT_ONLY_CLIENT)
+            .unwrap();
+        assert!(!chat.ready);
+        assert!(
+            chat.missing
+                .iter()
+                .any(|missing| missing.contains("message.send"))
+        );
+    }
+
+    #[test]
+    fn profile_ready_is_permissive_until_describe_finishes() {
+        assert!(profile_ready(None, PROFILE_CHAT_ONLY_CLIENT));
     }
 
     #[test]

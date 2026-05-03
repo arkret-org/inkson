@@ -187,7 +187,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.timeline", "Timeline");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Forum");
-    dict.set("nav.contacts", "Contacts");
     dict.set("nav.directory", "Directory");
     dict.set("nav.notifications", "Notifications");
     dict.set("nav.settings", "Settings");
@@ -297,7 +296,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.timeline", "时间线");
     dict.set("nav.chat", "聊天");
     dict.set("nav.forum", "论坛");
-    dict.set("nav.contacts", "通讯录");
     dict.set("nav.directory", "目录");
     dict.set("nav.notifications", "通知");
     dict.set("nav.settings", "设置");
@@ -361,7 +359,6 @@ pub fn arabic_translations() -> TranslationDict {
     dict.set("nav.timeline", "الخط الزمني");
     dict.set("nav.chat", "الدردشة");
     dict.set("nav.forum", "المنتدى");
-    dict.set("nav.contacts", "جهات الاتصال");
     dict.set("nav.directory", "الدليل");
     dict.set("nav.notifications", "الإشعارات");
     dict.set("nav.settings", "الإعدادات");

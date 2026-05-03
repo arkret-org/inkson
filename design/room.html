@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Room 聊天 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-frame">
+    <aside class="side-nav">
+      <div class="side-brand"><strong>yougen</strong><span>Rooms</span></div>
+      <div class="nav-status"><div><span>Room sync</span><b>live</b></div><div><span>E2EE</span><b>MLS</b></div><div><span>Unread</span><b>14</b></div></div>
+      <nav class="nav-list">
+        <a href="dashboard.html">首页<span>home</span></a>
+        <a href="board-room-workbench.html">Board<span>workbench</span></a>
+        <a href="card-detail.html">Card detail<span>card context</span></a>
+        <a class="active" href="room.html">Rooms<span>chat timeline</span></a>
+        <a href="notifications.html">Inbox<span>mentions</span></a>
+      </nav>
+      <a class="button" href="index.html">Design index</a>
+    </aside>
+
+    <main class="content-page">
+      <section class="page-head">
+        <div><h1>Room 聊天页面</h1><p>Room 是标准对象，不是 Card comment。这里展示 Room 列表、消息时间线、成员、历史可见性、E2EE 和上下文 lazy links。</p></div>
+        <div class="chip-row"><button class="button">New room</button><button class="button primary">Invite</button></div>
+      </section>
+
+      <section class="chat-layout">
+        <aside class="room-sidebar">
+          <h2>Rooms</h2>
+          <div class="room-item active"><strong>Review room</strong><span>review · 4 unread · primary for Legal review</span></div>
+          <div class="room-item"><strong>Launch board room</strong><span>discussion · board linked</span></div>
+          <div class="room-item"><strong>External counsel</strong><span>external · joined history</span></div>
+          <div class="room-item"><strong>Activity feed</strong><span>activity · agent runs</span></div>
+        </aside>
+
+        <section class="message-feed">
+          <div class="record-head"><div><h2>Review room</h2><p>room_kind=review · history_visibility=joined · encryption_profile=mls_rfc9420</p></div><span class="chip green">member</span></div>
+          <div class="message-stack">
+            <div class="message"><div class="message-head"><strong>Alice</strong><span>09:41 · cx.message.create</span></div><p>@bob 请确认 privacy clause 是否可以进入 public beta。</p><div class="chip-row"><span class="chip blue">mentions did:web:bob.example</span><span class="chip">references cx:card:01legal...</span></div></div>
+            <div class="message"><div class="message-head"><strong>Bob</strong><span>09:58 · revised</span></div><p>需要把 external processor 的表述收窄，我会给出替换文本。</p><div class="chip-row"><button class="button compact">View revision</button><button class="button compact">React</button></div></div>
+            <div class="message tombstone"><div class="message-head"><strong>Carol</strong><span>10:03 · cx.message.redact</span></div><p>[Message redacted]</p></div>
+          </div>
+          <div class="page-panel">
+            <div class="form-field"><label>Message composer</label><textarea placeholder="Write markdown with structured @mentions and #object refs"></textarea></div>
+            <div class="chip-row"><button class="button">Attach blob</button><button class="button">Mention</button><button class="button primary">Send</button></div>
+          </div>
+        </section>
+
+        <aside class="room-context">
+          <h2>Context</h2>
+          <div class="record-card"><div class="record-head"><span>linked card</span><span>visible</span></div><strong>Legal review for public beta</strong><p>Card visibility checked independently from Room visibility.</p></div>
+          <div class="record-card"><div class="record-head"><span>membership</span><span>4 members</span></div><p>Alice, Bob, Carol, external counsel. External badge is visible because policy allows member list disclosure.</p></div>
+          <div class="record-card"><div class="record-head"><span>policy</span><span>restricted</span></div><p>New members can only see messages after join unless history sharing event is explicitly approved.</p></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

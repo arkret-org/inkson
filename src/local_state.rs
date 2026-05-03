@@ -9,7 +9,7 @@ use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use contrix_sdk::EncryptedPayload;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
@@ -28,6 +28,33 @@ pub struct NotificationClientState {
     pub read: bool,
     #[serde(default)]
     pub archived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerBody {
+    pub space_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<String>,
+    pub event_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerRecord {
+    #[serde(rename = "type")]
+    pub marker_type: String,
+    pub body: ReadMarkerBody,
+    pub actor: String,
+    pub device_id: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ReadMarkerRecord {
+    pub fn cx_marker_read_operation(&self) -> Value {
+        json!({
+            "type": self.marker_type,
+            "body": &self.body,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +78,9 @@ pub struct ClientLocalState {
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
     pub private_data: BTreeMap<String, String>,
+    /// Private cx.marker.read cursors keyed by space + topic/thread scope.
+    #[serde(default)]
+    pub read_markers: BTreeMap<String, ReadMarkerRecord>,
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +223,55 @@ impl LocalStateStore {
             .get(notification_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn save_read_marker(
+        &mut self,
+        actor: impl Into<String>,
+        device_id: impl Into<String>,
+        space_id: impl Into<String>,
+        topic_id: Option<String>,
+        event_id: impl Into<String>,
+    ) -> ReadMarkerRecord {
+        self.ensure_cached_loaded();
+        let space_id = space_id.into();
+        let topic_id = topic_id.filter(|topic| !topic.trim().is_empty());
+        let marker = ReadMarkerRecord {
+            marker_type: "cx.marker.read".to_owned(),
+            body: ReadMarkerBody {
+                space_id: space_id.clone(),
+                topic_id: topic_id.clone(),
+                event_id: event_id.into(),
+            },
+            actor: actor.into(),
+            device_id: device_id.into(),
+            updated_at: Utc::now(),
+        };
+        self.cached.read_markers.insert(
+            read_marker_key(&space_id, topic_id.as_deref()),
+            marker.clone(),
+        );
+        let _ = self.flush();
+        marker
+    }
+
+    pub fn read_marker_for(
+        &self,
+        space_id: &str,
+        topic_id: Option<&str>,
+    ) -> Option<ReadMarkerRecord> {
+        self.load()
+            .read_markers
+            .get(&read_marker_key(space_id, topic_id))
+            .cloned()
+    }
+
+    pub fn latest_read_marker(&self, space_id: &str) -> Option<ReadMarkerRecord> {
+        self.load()
+            .read_markers
+            .into_values()
+            .filter(|marker| marker.body.space_id == space_id)
+            .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
     pub fn set_space_muted(&mut self, space_id: impl Into<String>, muted: bool) {
@@ -347,6 +426,14 @@ impl LocalStateStore {
     }
 }
 
+fn read_marker_key(space_id: &str, topic_id: Option<&str>) -> String {
+    let topic = topic_id
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+        .unwrap_or("-");
+    format!("{space_id}\n{topic}")
+}
+
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|window| window.local_storage().ok().flatten())
@@ -479,18 +566,96 @@ mod tests {
     }
 
     #[test]
+    fn local_state_store_persists_private_read_markers() {
+        let path = temp_state_path("read-marker");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let marker = store.save_read_marker(
+            "did:web:alice.example",
+            "device-1",
+            "cx:space:demo",
+            None,
+            "cx:event:read-1",
+        );
+
+        assert_eq!(marker.marker_type, "cx.marker.read");
+        assert_eq!(marker.body.space_id, "cx:space:demo");
+        assert_eq!(marker.body.event_id, "cx:event:read-1");
+        assert_eq!(
+            marker.cx_marker_read_operation(),
+            serde_json::json!({
+                "type": "cx.marker.read",
+                "body": {
+                    "space_id": "cx:space:demo",
+                    "event_id": "cx:event:read-1",
+                },
+            })
+        );
+
+        let reader = LocalStateStore::with_path(path);
+        let persisted = reader
+            .read_marker_for("cx:space:demo", None)
+            .expect("read marker persisted");
+        assert_eq!(persisted.actor, "did:web:alice.example");
+        assert_eq!(persisted.device_id, "device-1");
+        assert_eq!(persisted.body.event_id, "cx:event:read-1");
+    }
+
+    #[test]
+    fn local_state_store_keeps_thread_read_markers_separate() {
+        let path = temp_state_path("thread-read-marker");
+        let mut store = LocalStateStore::with_path(path);
+        store.save_read_marker(
+            "did:web:alice.example",
+            "desktop",
+            "cx:space:demo",
+            None,
+            "cx:event:topic",
+        );
+        store.save_read_marker(
+            "did:web:alice.example",
+            "desktop",
+            "cx:space:demo",
+            Some("cx:thread:reply-1".to_owned()),
+            "cx:event:thread",
+        );
+
+        assert_eq!(
+            store
+                .read_marker_for("cx:space:demo", None)
+                .expect("topic marker")
+                .body
+                .event_id,
+            "cx:event:topic"
+        );
+        assert_eq!(
+            store
+                .read_marker_for("cx:space:demo", Some("cx:thread:reply-1"))
+                .expect("thread marker")
+                .body
+                .event_id,
+            "cx:event:thread"
+        );
+    }
+
+    #[test]
     fn local_state_store_persists_push_registration_state() {
         let path = temp_state_path("push-registration");
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_push_registration(PushRegistrationState {
+            schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
+            principal_did: None,
             registration_id: Some("cx:push:local".to_owned()),
             device_id: "dev_yougen".to_owned(),
+            platform: Some("desktop".to_owned()),
             app_id: Some("yougen".to_owned()),
             push_gateway: "https://push.example/api/v1/push/notify".to_owned(),
             push_key_hash: "sha256:abc".to_owned(),
             push_key_preview: "desktop:<redacted,len=5>".to_owned(),
             registered_at: Some("2026-04-29T00:00:00Z".to_owned()),
             expires_at: None,
+            refresh_hint: None,
+            last_success_at: Some("2026-04-29T00:00:00Z".to_owned()),
+            last_error: None,
         });
 
         let mut reader = LocalStateStore::with_path(path);

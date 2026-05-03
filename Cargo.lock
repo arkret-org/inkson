@@ -532,27 +532,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yougen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "chime",
- "chrono",
- "contrix-sdk",
- "dioxus",
- "dioxus-router",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "url",
- "web-sys",
-]
-
-[[package]]
 name = "chime"
 version = "0.1.0"
 dependencies = [
@@ -775,13 +754,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "contrix-sdk"
+name = "contrix"
 version = "0.1.0"
 dependencies = [
  "base64",
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
+ "contrix-api",
+ "contrix-appservice-api",
+ "contrix-client",
+ "contrix-client-api",
+ "contrix-core",
+ "contrix-crypto",
+ "contrix-events",
+ "contrix-federation-api",
+ "contrix-ffi",
+ "contrix-html",
+ "contrix-identity-api",
+ "contrix-operations",
+ "contrix-push-gateway-api",
+ "contrix-schema",
+ "contrix-signatures",
+ "contrix-state-res",
+ "contrix-store",
+ "contrix-testing",
+ "contrix-ui",
  "getrandom 0.3.4",
  "openmls",
  "openmls_basic_credential",
@@ -794,7 +792,233 @@ dependencies = [
  "thiserror 2.0.18",
  "tls_codec",
  "ulid",
+]
+
+[[package]]
+name = "contrix-api"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+]
+
+[[package]]
+name = "contrix-appservice-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+ "ulid",
+]
+
+[[package]]
+name = "contrix-client"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
  "url",
+]
+
+[[package]]
+name = "contrix-client-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "contrix-crypto",
+ "contrix-events",
+ "contrix-html",
+ "contrix-push-gateway-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-core"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "contrix-identifiers",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "url",
+]
+
+[[package]]
+name = "contrix-crypto"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "contrix-signatures",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "contrix-events"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-federation-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "contrix-signatures",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-ffi"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-html"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-identifiers"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "contrix-identity-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-operations"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-push-gateway-api"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-schema"
+version = "0.1.0"
+dependencies = [
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-signatures"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-state-res"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "contrix-testing"
+version = "0.1.0"
+dependencies = [
+ "contrix-api",
+ "contrix-appservice-api",
+ "contrix-client-api",
+ "contrix-core",
+ "contrix-crypto",
+ "contrix-events",
+ "contrix-federation-api",
+ "contrix-ffi",
+ "contrix-html",
+ "contrix-identity-api",
+ "contrix-operations",
+ "contrix-push-gateway-api",
+ "contrix-schema",
+ "contrix-signatures",
+ "contrix-state-res",
+ "contrix-store",
+ "contrix-ui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "contrix-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contrix-core",
+ "contrix-crypto",
+ "contrix-events",
+ "contrix-push-gateway-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7634,6 +7858,28 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "yougen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chime",
+ "chrono",
+ "contrix",
+ "dioxus",
+ "dioxus-router",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "url",
+ "web-sys",
 ]
 
 [[package]]

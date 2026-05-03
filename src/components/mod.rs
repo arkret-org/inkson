@@ -1,5 +1,9 @@
 use dioxus::prelude::*;
 
+pub mod right_panel;
+
+pub use right_panel::RightPanel;
+
 #[component]
 pub fn Metric(label: String, value: String) -> Element {
     rsx! {

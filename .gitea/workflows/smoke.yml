@@ -1,0 +1,61 @@
+name: Smoke
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-smoke:
+    name: Rust format, check, and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout yougen
+        uses: actions/checkout@v4
+        with:
+          path: yougen
+
+      - name: Checkout contrix-rust-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/contrix-rust-sdk
+          path: contrix-rust-sdk
+
+      - name: Checkout chime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: chime
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        working-directory: yougen
+        run: cargo fmt --check
+
+      - name: Cargo check
+        working-directory: yougen
+        run: cargo check --locked --all-targets
+
+      - name: Rust tests
+        working-directory: yougen
+        run: cargo test --locked

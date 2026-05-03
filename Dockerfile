@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Build context must contain both `yougen/` and sibling `contrix-rust-sdk/`.
+# Build context must contain `yougen/`, sibling `contrix-rust-sdk/`, and sibling `chime/`.
 # From the parent directory run:
 #   docker build -f yougen/Dockerfile -t yougen-web .
 
@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 WORKDIR /workspace
 
 COPY contrix-rust-sdk ./contrix-rust-sdk
+COPY chime ./chime
 COPY yougen ./yougen
 
 WORKDIR /workspace/yougen

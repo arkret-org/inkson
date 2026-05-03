@@ -3,9 +3,15 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    conformance::PlaintextBoundary, crypto::compose_local_encrypted_message,
-    local_state::LocalStateStore, operation::uuid_v8, views::helpers::authed_api_with_sync,
+    conformance::PlaintextBoundary,
+    crypto::compose_local_encrypted_message,
+    local_state::{LocalStateStore, ReadMarkerRecord},
+    media::{hash_matches, media_type_preview_policy, sha256_hex},
+    operation::uuid_v8,
+    views::helpers::authed_api_with_sync,
 };
+
+const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
 
 const EMOJI_GRID: &[&str] = &[
     "\u{1f44d}",
@@ -28,6 +34,15 @@ pub struct TimelineRevision {
     pub timestamp: String,
     pub operation_id: Option<String>,
     pub commit_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct BlobAttachment {
+    blob_ref: String,
+    size: usize,
+    media_type: String,
+    sha256: String,
+    thumbnail_ref: Option<String>,
 }
 
 /// Event model for timeline display.
@@ -192,8 +207,10 @@ pub fn TimelinePanel(
     let mut thread_open = use_signal(|| Option::<usize>::None);
     let mut encrypt_toggle = use_signal(|| false);
     let _typing_indicator = use_signal(|| String::new());
-    let read_receipts = use_signal(Vec::<String>::new);
+    let mut read_receipts = use_signal(Vec::<String>::new);
+    let mut receipt_status = use_signal(|| "Read receipt: none".to_owned());
     let mut blob_status = use_signal(|| String::new());
+    let mut attached_blob = use_signal(|| Option::<BlobAttachment>::None);
     let mut write_status = use_signal(|| String::new());
     let mut search_query = use_signal(String::new);
     let mut private_plaintext = use_signal(|| false);
@@ -205,6 +222,14 @@ pub fn TimelinePanel(
     let account_did_key = account_did.clone();
     let device_id_key = device_id.clone();
     let selected_space_key = selected_space.clone();
+    let latest_read_marker = state_store.read().latest_read_marker(&selected_space);
+    let latest_read_marker_event_id = latest_read_marker
+        .as_ref()
+        .map(|marker| marker.body.event_id.clone());
+    let read_marker_status = latest_read_marker
+        .as_ref()
+        .map(read_marker_status_label)
+        .unwrap_or_else(|| "Read marker: none".to_owned());
 
     let events_data: Vec<(usize, TimelineEvent)> = timeline()
         .iter()
@@ -263,6 +288,12 @@ pub fn TimelinePanel(
                             }
                         }
 
+                        if latest_read_marker_event_id.as_deref() == Some(event.id.as_str()) {
+                            div { class: "muted", "data-testid": "read-marker-badge",
+                                "Read marker here"
+                            }
+                        }
+
                         if let Some(reply_id) = &event.reply_to {
                             div { class: "muted", "data-testid": "reply-indicator",
                                 "\u{21a9}\u{fe0f} Reply to {reply_id}"
@@ -282,23 +313,9 @@ pub fn TimelinePanel(
 
                             if let Some(blob_ref) = &event.blob_ref {
                                 div { class: "muted", "data-testid": "blob-attachment",
-                                    if blob_ref.ends_with(".png")
-                                        || blob_ref.ends_with(".jpg")
-                                        || blob_ref.ends_with(".jpeg")
-                                        || blob_ref.ends_with(".gif")
-                                        || blob_ref.ends_with(".webp")
-                                    {
-                                        img {
-                                            src: "{base_url}/api/v1/blob/get?blob_ref={blob_ref}",
-                                            alt: "Attached image",
-                                            style: "max-width: 300px; max-height: 200px; border-radius: 4px; margin: 4px 0;",
-                                            loading: "lazy",
-                                        }
-                                    }
-                                    a {
-                                        href: "{base_url}/api/v1/blob/get?blob_ref={blob_ref}",
-                                        target: "_blank",
-                                        "\u{1f4ce} Blob: {blob_ref}"
+                                    div { "Blob: {blob_ref}" }
+                                    div {
+                                        "Downloaded through the authenticated blob API; bearer tokens are not embedded in media URLs."
                                     }
                                 }
                             }
@@ -357,6 +374,73 @@ pub fn TimelinePanel(
                                         thread_open.set(if current == Some(idx) { None } else { Some(idx) });
                                     },
                                     "Thread"
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "mark-read-button",
+                                    disabled: event.pending || selected_space.trim().is_empty(),
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let event_id = event.id.clone();
+                                        let space = selected_space.clone();
+                                        let topic_id = event.thread_id.clone();
+                                        let actor = account_did.clone();
+                                        let device = device_id.clone();
+                                        move |_| {
+                                            if event_id.trim().is_empty() || space.trim().is_empty() {
+                                                write_status.set("mark read skipped: missing event or space".to_owned());
+                                                return;
+                                            }
+
+                                            let marker = state_store.write().save_read_marker(
+                                                actor.clone(),
+                                                device.clone(),
+                                                space.clone(),
+                                                topic_id.clone(),
+                                                event_id.clone(),
+                                            );
+                                            write_status.set(format!("read marker saved {}", marker.body.event_id));
+                                            receipt_status.set(format!("Read receipt: sending {}", marker.body.event_id));
+
+                                            let base = base.clone();
+                                            let api_token = token();
+                                            let wait_for = active_sync_token(sync_cursor());
+                                            let receipt_space = marker.body.space_id.clone();
+                                            let receipt_event_id = marker.body.event_id.clone();
+                                            let actor_for_status = marker.actor.clone();
+                                            spawn(async move {
+                                                match authed_api_with_sync(&base, api_token, wait_for) {
+                                                    Ok(api) => match api
+                                                        .send_receipt(
+                                                            &receipt_space,
+                                                            &receipt_event_id,
+                                                            "cx.receipt.read",
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(receipt) if receipt.ok => {
+                                                            read_receipts.write().push(format!(
+                                                                "{actor_for_status} -> {receipt_event_id}"
+                                                            ));
+                                                            receipt_status.set(format!(
+                                                                "Read receipt: sent cx.receipt.read for {receipt_event_id}"
+                                                            ));
+                                                        }
+                                                        Ok(_) => receipt_status.set(format!(
+                                                            "Read receipt: server returned not ok for {receipt_event_id}"
+                                                        )),
+                                                        Err(error) => receipt_status.set(format!(
+                                                            "Read receipt failed: {error}"
+                                                        )),
+                                                    },
+                                                    Err(error) => receipt_status.set(format!(
+                                                        "Read receipt failed: {error}"
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Mark Read"
                                 }
                             }
 
@@ -813,14 +897,91 @@ pub fn TimelinePanel(
                         let wait_for = active_sync_token(sync_cursor());
                         spawn(async move {
                             if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                match api.upload_blob(b"yougen attached bytes").await {
-                                    Ok(blob) => blob_status.set(format!("attached {}", blob.blob_ref)),
+                                match api.upload_blob(ATTACHMENT_BYTES).await {
+                                    Ok(blob) => {
+                                        let local_hash = sha256_hex(ATTACHMENT_BYTES);
+                                        let hash_state = if blob.sha256.trim_start_matches("sha256:") == local_hash {
+                                            "upload hash ok"
+                                        } else {
+                                            "upload hash mismatch"
+                                        };
+                                        let policy = media_type_preview_policy(&blob.media_type);
+                                        attached_blob.set(Some(BlobAttachment {
+                                            blob_ref: blob.blob_ref.clone(),
+                                            size: blob.size,
+                                            media_type: blob.media_type.clone(),
+                                            sha256: blob.sha256.clone(),
+                                            thumbnail_ref: blob.thumbnail_ref.clone(),
+                                        }));
+                                        blob_status.set(format!(
+                                            "attached {} ({hash_state}; {}; no token in media URL)",
+                                            blob.blob_ref,
+                                            policy.label()
+                                        ));
+                                    }
                                     Err(error) => blob_status.set(format!("attach failed: {error}")),
                                 }
                             }
                         });
                     },
                     "Attach Blob"
+                }
+
+                if let Some(blob) = attached_blob() {
+                    div { class: "event", "data-testid": "blob-policy-panel",
+                        div { class: "event-head",
+                            span { "Blob" }
+                            span { "{blob.media_type}" }
+                        }
+                        div { class: "muted", "Ref: {blob.blob_ref}" }
+                        div { class: "muted", "SHA-256: {blob.sha256}" }
+                        div { class: "muted", "Size: {blob.size} bytes" }
+                        div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
+                        div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
+                        if let Some(thumbnail_ref) = &blob.thumbnail_ref {
+                            div { class: "muted", "Thumbnail: {thumbnail_ref}" }
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "secondary",
+                                "data-testid": "verify-blob-download",
+                                onclick: {
+                                    let blob_ref = blob.blob_ref.clone();
+                                    let expected_sha256 = blob.sha256.clone();
+                                    move |_| {
+                                        let base = base_url_sig();
+                                        let api_token = token();
+                                        let wait_for = active_sync_token(sync_cursor());
+                                        let blob_ref = blob_ref.clone();
+                                        let expected_sha256 = expected_sha256.clone();
+                                        spawn(async move {
+                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                Ok(api) => match api.get_blob_bytes(&blob_ref).await {
+                                                    Ok(bytes) if hash_matches(&expected_sha256, &bytes) => {
+                                                        blob_status.set(format!(
+                                                            "download verified sha256 {} ({} bytes)",
+                                                            expected_sha256,
+                                                            bytes.len()
+                                                        ));
+                                                    }
+                                                    Ok(bytes) => {
+                                                        blob_status.set(format!(
+                                                            "download hash mismatch expected {} got {}",
+                                                            expected_sha256,
+                                                            sha256_hex(&bytes)
+                                                        ));
+                                                    }
+                                                    Err(error) => blob_status.set(format!("download failed: {error}")),
+                                                },
+                                                Err(error) => blob_status.set(format!("invalid server URL: {error}")),
+                                            }
+                                        });
+                                    }
+                                },
+                                "Verify Download"
+                            }
+                        }
+                    }
                 }
 
                 button {
@@ -996,6 +1157,9 @@ pub fn TimelinePanel(
                 div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
             }
 
+            div { class: "muted", "data-testid": "read-marker-status", "{read_marker_status}" }
+            div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
+
             if !read_receipts().is_empty() {
                 div { class: "muted", "data-testid": "read-receipts",
                     "Read by: {read_receipts:?}"
@@ -1018,6 +1182,20 @@ fn reply_target_label(events: &[TimelineEvent], reply_idx: usize) -> String {
 
 fn timestamp_now() -> String {
     Utc::now().format("%Y-%m-%d %H:%M").to_string()
+}
+
+fn read_marker_status_label(marker: &ReadMarkerRecord) -> String {
+    let scope = marker
+        .body
+        .topic_id
+        .as_deref()
+        .map(|topic_id| format!("thread {topic_id}"))
+        .unwrap_or_else(|| "space timeline".to_owned());
+    format!(
+        "Read marker: {} ({scope}) at {}",
+        marker.body.event_id,
+        marker.updated_at.format("%Y-%m-%d %H:%M")
+    )
 }
 
 fn plaintext_visible_service(base_url: &str) -> String {

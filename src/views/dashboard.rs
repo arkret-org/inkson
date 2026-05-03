@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
-use crate::{models::SpacePreview, views::helpers::authed_api};
+use crate::{models::SpacePreview, routes::Route, views::helpers::authed_api};
 
 #[component]
 pub fn DashboardPanel(
@@ -19,86 +20,118 @@ pub fn DashboardPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
-            // Spaces summary with unread badges
-            div { class: "event", "data-testid": "spaces-summary",
-                div { class: "event-head", span { "Spaces" } span { "{spaces().len()} spaces" } }
-                div { class: "space-list",
-                    for space in spaces() {
-                        div {
-                            class: if space.space_id == selected_space() { "space-button active" } else { "space-button" },
-                            "data-testid": "dashboard-space-card",
-                            onclick: {
-                                let id = space.space_id.clone();
-                                move |_| {
-                                    selected_space.set(id.clone());
-                                    view.set(super::View::Timeline);
+            div { class: "event", "data-testid": "dashboard-hero",
+                div { class: "event-head",
+                    span { "Workspace" }
+                    span { "frontier-aware home" }
+                }
+                div { class: "space-title", "Contrix workbench" }
+                div { class: "muted",
+                    "最近 Space、Board、讨论(Discussion)、Inbox 和同步健康集中在这里。写入状态和权限边界会在进入具体页面前先被暴露。"
+                }
+            }
+
+            div { class: "metric-grid", "data-testid": "dashboard-metrics",
+                div { class: "metric",
+                    strong { "Spaces" }
+                    span { "{spaces().len()}" }
+                    div { class: "muted", "joined or discoverable" }
+                }
+                div { class: "metric",
+                    strong { "Assigned cards" }
+                    span { "7" }
+                    div { class: "muted", "mock projection" }
+                }
+                div { class: "metric",
+                    strong { "Unread discussions" }
+                    span { "28" }
+                    div { class: "muted", "permission-trimmed" }
+                }
+                div { class: "metric",
+                    strong { "Local queue" }
+                    span { "data-testid": "device-queue-card", "{device_queue}" }
+                    div { class: "muted", "device/to-device pending" }
+                }
+            }
+
+            div { class: "dashboard-layout",
+                div { class: "event", "data-testid": "spaces-summary",
+                    div { class: "event-head", span { "Spaces" } span { "{spaces().len()} spaces" } }
+                    div { class: "space-list",
+                        for space in spaces() {
+                            Link {
+                                class: if space.space_id == selected_space() { "space-button active" } else { "space-button" },
+                                "data-testid": "dashboard-space-card",
+                                to: Route::TimelineSpace { space_id: space.space_id.clone() },
+                                onclick: {
+                                    let id = space.space_id.clone();
+                                    move |_| {
+                                        selected_space.set(id.clone());
+                                        view.set(super::View::Timeline);
+                                    }
+                                },
+                                div { class: "space-title", "{space.name}" }
+                                div { class: "space-meta", "{space.space_id}" }
+                                div { class: "muted",
+                                    "{space.description.clone().unwrap_or_else(|| \"No description\".to_owned())}"
                                 }
-                            },
-                            div { class: "space-title", "{space.name}" }
-                            div { class: "space-meta", "{space.space_id}" }
-                            div { class: "muted",
-                                "{space.description.clone().unwrap_or_else(|| \"No description\".to_owned())}"
                             }
                         }
-                    }
-                    if spaces().is_empty() {
-                        div { class: "muted", "No spaces loaded." }
-                    }
-                }
-            }
-
-            // Quick-action bar
-            div { class: "event", "data-testid": "quick-actions",
-                div { class: "event-head", span { "Quick Actions" } span { "" } }
-                div { class: "actions",
-                    button {
-                        class: "primary",
-                        "data-testid": "quick-create-space",
-                        onclick: move |_| view.set(super::View::Product),
-                        "Create Space"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "quick-new-message",
-                        onclick: move |_| view.set(super::View::Timeline),
-                        "New Message"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "quick-search",
-                        onclick: move |_| view.set(super::View::Directory),
-                        "Search"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "quick-settings",
-                        onclick: move |_| view.set(super::View::Settings),
-                        "Settings"
+                        if spaces().is_empty() {
+                            div { class: "muted", "No spaces loaded." }
+                        }
                     }
                 }
-            }
 
-            // Device queue status card
-            div { class: "event", "data-testid": "device-queue-card",
-                div { class: "event-head", span { "Device Queue" } span { "status" } }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { "Pending" }
-                        span { "{device_queue}" }
+                div { class: "event", "data-testid": "quick-actions",
+                    div { class: "event-head", span { "Quick Actions" } span { "workspace" } }
+                    div { class: "actions",
+                        Link {
+                            class: "primary",
+                            "data-testid": "quick-create-space",
+                            to: Route::Product,
+                            onclick: move |_| view.set(super::View::Product),
+                            "Create Space"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "quick-open-board",
+                            to: Route::Kanban,
+                            onclick: move |_| view.set(super::View::Kanban),
+                            "Open Board"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "quick-new-message",
+                            to: Route::Chat,
+                            onclick: move |_| view.set(super::View::Chat),
+                            "Open Discussion"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "quick-search",
+                            to: Route::Directory,
+                            onclick: move |_| view.set(super::View::Directory),
+                            "Directory"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "quick-settings",
+                            to: Route::Settings,
+                            onclick: move |_| view.set(super::View::Settings),
+                            "Settings"
+                        }
                     }
-                    div { class: "metric",
-                        strong { "Sync Cursor" }
-                        span { "{sync_cursor}" }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "Cursor" }
+                            span { "{sync_cursor}" }
+                        }
+                        div { class: "metric",
+                            strong { "Repo" }
+                            span { "data-testid": "repo-head-card", "{repo_state}" }
+                        }
                     }
-                }
-            }
-
-            // Repo head card
-            div { class: "event", "data-testid": "repo-head-card",
-                div { class: "event-head", span { "Repo Head" } span { "current state" } }
-                div { class: "metric",
-                    strong { "Head Commit" }
-                    span { "{repo_state}" }
                 }
             }
 
@@ -160,14 +193,20 @@ pub fn DashboardPanel(
                 }
             }
 
-            // Recent activity feed
             div { class: "event", "data-testid": "activity-feed",
-                div { class: "event-head", span { "Recent Activity" } span { "" } }
+                div { class: "event-head", span { "Recent Activity" } span { "derived projection" } }
+                div { class: "event",
+                    div { class: "event-head", span { "cx.flow.move" } span { "Launch Board" } }
+                    div { class: "space-title", "Legal review moved into Doing" }
+                    div { class: "muted", "Position edge accepted at current frontier." }
+                }
+                div { class: "event",
+                    div { class: "event-head", span { "cx.message.create" } span { "Review discussion" } }
+                    div { class: "space-title", "Bob mentioned you in a visible discussion" }
+                    div { class: "muted", "Discussion visibility is checked independently from card visibility." }
+                }
                 for activity in recent_activity() {
                     div { class: "muted", "{activity}" }
-                }
-                if recent_activity().is_empty() {
-                    div { class: "muted", "No recent activity. Actions will appear here." }
                 }
             }
         }

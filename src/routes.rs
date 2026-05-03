@@ -43,9 +43,6 @@ pub enum Route {
     #[route("/readiness", crate::app::RouterView)]
     Readiness,
 
-    #[route("/contacts", crate::app::RouterView)]
-    Contacts,
-
     #[route("/space/:space_id/admin", SpaceAdminPage)]
     SpaceAdmin { space_id: String },
 
@@ -66,9 +63,6 @@ pub enum Route {
 
     #[route("/forum", crate::app::RouterView)]
     Forum,
-
-    #[route("/social", crate::app::RouterView)]
-    SocialFeed,
 
     #[route("/memory", crate::app::RouterView)]
     MemoryReview,
@@ -139,13 +133,11 @@ impl Route {
             Route::Devices => View::Devices,
             Route::VerifyDevice => View::VerifyDevice,
             Route::Readiness => View::Readiness,
-            Route::Contacts => View::Contacts,
             Route::SpaceAdmin { .. } => View::SpaceAdmin,
             Route::Audit => View::Audit,
             Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
             Route::Chat | Route::ChatSpace { .. } => View::Chat,
             Route::Forum => View::Forum,
-            Route::SocialFeed => View::SocialFeed,
             Route::MemoryReview => View::MemoryReview,
             Route::AgentRuns => View::AgentRuns,
             Route::Notifications => View::Notifications,
@@ -189,7 +181,6 @@ impl From<View> for Route {
             View::Devices => Route::Devices,
             View::VerifyDevice => Route::VerifyDevice,
             View::Readiness => Route::Readiness,
-            View::Contacts => Route::Contacts,
             View::SpaceAdmin => Route::SpaceAdmin {
                 space_id: String::new(),
             },
@@ -197,7 +188,6 @@ impl From<View> for Route {
             View::Kanban => Route::Kanban,
             View::Chat => Route::Chat,
             View::Forum => Route::Forum,
-            View::SocialFeed => Route::SocialFeed,
             View::MemoryReview => Route::MemoryReview,
             View::AgentRuns => Route::AgentRuns,
             View::Notifications => Route::Notifications,
@@ -224,12 +214,10 @@ mod tests {
             Route::Devices,
             Route::VerifyDevice,
             Route::Readiness,
-            Route::Contacts,
             Route::Audit,
             Route::Kanban,
             Route::Chat,
             Route::Forum,
-            Route::SocialFeed,
             Route::MemoryReview,
             Route::AgentRuns,
             Route::Notifications,

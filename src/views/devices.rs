@@ -12,6 +12,7 @@ pub fn DevicesPanel(
     push_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
     crypto_state: Signal<String>,
+    push_ready: bool,
 ) -> Element {
     let mut one_time_keys = use_signal(|| Value::Null);
     let mut to_device_messages = use_signal(Vec::<Value>::new);
@@ -46,6 +47,39 @@ pub fn DevicesPanel(
                     div { class: "metric",
                         strong { "Crypto" }
                         span { "{crypto_state}" }
+                    }
+                }
+            }
+
+            div { class: "event", "data-testid": "device-verification-workbench",
+                div { class: "event-head", span { "Device verification" } span { "SAS / QR / KeyPackage" } }
+                div { class: "muted",
+                    "Verification is modeled as a device-scoped flow. Revocation explains MLS epoch impact before any destructive action."
+                }
+                div { class: "metric-grid",
+                    div { class: "metric", strong { "SAS" } span { "473 918" } div { class: "muted", "compare on both devices" } }
+                    div { class: "metric", strong { "QR" } span { "cx:verify:{device_id}" } div { class: "muted", "short-lived verification token" } }
+                    div { class: "metric", strong { "KeyPackage" } span { "published" } div { class: "muted", "ready for MLS Welcome" } }
+                    div { class: "metric", strong { "Epoch impact" } span { "proposal required" } div { class: "muted", "revoked device is removed at next commit" } }
+                }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "sas-start-button",
+                        onclick: move |_| crypto_state.set("SAS verification started for current device".to_owned()),
+                        "Start SAS"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "qr-start-button",
+                        onclick: move |_| crypto_state.set("QR verification token prepared".to_owned()),
+                        "Show QR"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "revoke-impact-button",
+                        onclick: move |_| crypto_state.set("Revocation will require MLS remove proposal and epoch advance".to_owned()),
+                        "Preview revoke impact"
                     }
                 }
             }
@@ -153,74 +187,79 @@ pub fn DevicesPanel(
             // Push notification controls
             div { class: "event", "data-testid": "push-controls",
                 div { class: "event-head", span { "Push Notifications" } span { "register / unregister" } }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "push-register-button",
-                        onclick: {
-                            let base = base_url_c.clone();
-                            let dev = device_id_c.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let api_token = token();
-                                let dev = dev.clone();
-                                spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match crate::push::build_register_request(&dev) {
-                                            Ok(request) => match api.register_push_device_with_request(&request).await {
-                                                Ok(push) => {
-                                                    let local_push = chime::RegisterDeviceResponse {
-                                                        ok: push.ok,
-                                                        registration_id: push.registration_id.clone(),
-                                                        expires_at: push.expires_at.clone(),
-                                                    };
-                                                    state_store.write().save_push_registration(
-                                                        crate::push::registration_state_from_response(
-                                                            &request,
-                                                            &local_push,
-                                                        ),
-                                                    );
-                                                    push_state.set(push.registration_id.unwrap_or_else(|| "registered".to_owned()));
-                                                }
-                                                Err(e) => push_state.set(format!("push failed: {e}")),
-                                            },
-                                            Err(e) => push_state.set(format!("push unavailable: {e}")),
+                if push_ready {
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "push-register-button",
+                            onclick: {
+                                let base = base_url_c.clone();
+                                let dev = device_id_c.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let dev = dev.clone();
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            match crate::push::build_register_request(&dev) {
+                                                Ok(request) => match api.register_push_device_with_request(&request).await {
+                                                    Ok(push) => {
+                                                        let local_push = chime::RegisterDeviceResponse {
+                                                            ok: push.ok,
+                                                            registration_id: push.registration_id.clone(),
+                                                            expires_at: push.expires_at.clone(),
+                                                            ..Default::default()
+                                                        };
+                                                        state_store.write().save_push_registration(
+                                                            crate::push::registration_state_from_response(
+                                                                &request,
+                                                                &local_push,
+                                                            ),
+                                                        );
+                                                        push_state.set(push.registration_id.unwrap_or_else(|| "registered".to_owned()));
+                                                    }
+                                                    Err(e) => push_state.set(format!("push failed: {e}")),
+                                                },
+                                                Err(e) => push_state.set(format!("push unavailable: {e}")),
+                                            }
                                         }
-                                    }
-                                });
-                            }
-                        },
-                        "Register Push"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "push-unregister-button",
-                        onclick: {
-                            let base = base_url_c.clone();
-                            let dev = device_id_c.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let api_token = token();
-                                let dev = dev.clone();
-                                let existing = state_store.read().push_registration();
-                                spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match crate::push::build_unregister_request(&dev, existing.as_ref()) {
-                                            Ok(request) => match api.unregister_push_device_with_request(&request).await {
-                                                Ok(_) => {
-                                                    state_store.write().clear_push_registration();
-                                                    push_state.set("Not registered".to_owned());
-                                                }
-                                                Err(e) => push_state.set(format!("unregister failed: {e}")),
-                                            },
-                                            Err(e) => push_state.set(format!("unregister unavailable: {e}")),
+                                    });
+                                }
+                            },
+                            "Register Push"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "push-unregister-button",
+                            onclick: {
+                                let base = base_url_c.clone();
+                                let dev = device_id_c.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let dev = dev.clone();
+                                    let existing = state_store.read().push_registration();
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            match crate::push::build_unregister_request(&dev, existing.as_ref()) {
+                                                Ok(request) => match api.unregister_push_device_with_request(&request).await {
+                                                    Ok(_) => {
+                                                        state_store.write().clear_push_registration();
+                                                        push_state.set("Not registered".to_owned());
+                                                    }
+                                                    Err(e) => push_state.set(format!("unregister failed: {e}")),
+                                                },
+                                                Err(e) => push_state.set(format!("unregister unavailable: {e}")),
+                                            }
                                         }
-                                    }
-                                });
-                            }
-                        },
-                        "Unregister Push"
+                                    });
+                                }
+                            },
+                            "Unregister Push"
+                        }
                     }
+                } else {
+                    div { class: "muted", "Push registration controls are hidden until /server/describe advertises push.register_device." }
                 }
                 div { class: "muted", "Current: {push_state}" }
             }

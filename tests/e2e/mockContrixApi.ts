@@ -4,7 +4,6 @@ const DEMO_SPACE = "cx:space:01js0sp0000000000000000000";
 const PRODUCT_SPACE = "cx:space:01js0productflow000000000000";
 
 export async function mockContrixApi(page: Page) {
-  let contactRequested = false;
   let productSpaceDeleted = false;
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
@@ -24,11 +23,96 @@ export async function mockContrixApi(page: Page) {
         service_did: "did:web:serverx.local",
         service_type: "principal_server",
         protocol_version: "1.0",
-        supported_profiles: ["cx.profile.mimi_interop.v1"],
-        supported_features: ["sync.client_sync", "directory.search_spaces", "mimi_provider_facade"],
-        supported_operations: ["cx.sync.client_sync", "cx.directory.search_spaces", "cx.mimi.provider_directory"],
+        supported_profiles: [
+          "cx.profile.minimal_client.v1",
+          "cx.profile.chat_only_client.v1",
+          "cx.profile.kanban_only_client.v1",
+          "cx.profile.full_client.v1",
+          "cx.profile.e2ee_client.v1",
+          "cx.profile.push_gateway.v1",
+          "cx.profile.mimi_interop.v1",
+          "cx.profile.core_event_store.v1",
+          "cx.profile.principal_server_events_api.v1",
+        ],
+        supported_features: [
+          "sync.client_sync",
+          "sync.backfill",
+          "directory.search_spaces",
+          "directory.resolve_space",
+          "index.query",
+          "repo.submit_commit",
+          "authz.check",
+          "space.create",
+          "space.manage_members",
+          "message.send",
+          "message.edit",
+          "message.redact",
+          "reaction.add",
+          "keys.upload",
+          "keys.query",
+          "keys.claim",
+          "device_messages.receive",
+          "device_messages.send",
+          "push.register_device",
+          "mimi_provider_facade",
+          "events.submit",
+        ],
+        supported_operations: [
+          "cx.sync.client_sync",
+          "cx.sync.backfill",
+          "cx.directory.search_spaces",
+          "cx.directory.resolve_space",
+          "cx.index.query",
+          "cx.repo.submit_commit",
+          "cx.authz.check",
+          "cx.spaces.create",
+          "cx.messages.send",
+          "cx.messages.edit",
+          "cx.messages.redact",
+          "cx.keys.upload",
+          "cx.keys.query",
+          "cx.keys.claim",
+          "cx.device_messages.receive",
+          "cx.device_messages.send",
+          "cx.push.register_device",
+          "cx.mimi.provider_directory",
+          "cx.events.describe",
+          "cx.events.submit",
+        ],
+        supported_schema_profiles: ["cx.schema.core.v1"],
+        supported_reducer_profiles: ["cx.reducer.v1"],
         limits: { storage: "memory" },
       });
+    }
+
+    if (url.pathname === "/api/v1/events/describe") {
+      return json(route, {
+        service_did: "did:web:serverx.local",
+        schema_profiles: ["cx.schema.core.v1"],
+        reducer_profiles: ["cx.reducer.v1"],
+        supported_event_types: [
+          "cx.flow.create",
+          "cx.flow.move",
+          "cx.flow.branch.member",
+          "cx.message.create",
+        ],
+        frontier: ["cx:commit:e2e"],
+      });
+    }
+
+    if (url.pathname === "/api/v1/events/submit") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        event_id: body.event.event_id,
+        status: "accepted",
+        accepted_frontier: [`cx:frontier:${body.event.event_id}`],
+        reducer_receipt: {
+          reducer_profile: body.event.reducer_profile,
+          state_hash: "sha256:e2e-board-state",
+          projection_source: body.event.event_id,
+        },
+        sync_token: "sx:e2e:event",
+      }, 201);
     }
 
     if (url.pathname === "/api/v1/mimi/provider-directory") {
@@ -118,7 +202,7 @@ export async function mockContrixApi(page: Page) {
         reachable: true,
         mapped_did: "did:web:alice.example",
         provider_id: "mimi://mimi.example.com",
-        proofs: [{ type: "private_contact_discovery", expires_at: "2026-04-30T12:00:00Z" }],
+        proofs: [{ type: "private_identifier_query", expires_at: "2026-04-30T12:00:00Z" }],
         receipt: { kind: "cx.mimi.identifier_query", privacy_mode: body.privacy_mode },
       });
     }
@@ -189,19 +273,6 @@ export async function mockContrixApi(page: Page) {
       }, 201);
     }
 
-    if (url.pathname === "/api/v1/directory/search-users") {
-      return json(route, {
-        results: [
-          {
-            did: "did:web:bob.example",
-            handle: "bob.example",
-            display_name: "Bob Example",
-          },
-        ],
-        next_cursor: null,
-      });
-    }
-
     if (url.pathname === "/api/v1/account/me") {
       return json(route, {
         did: "did:web:alice.example",
@@ -213,29 +284,6 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/auth/logout") {
       return json(route, { ok: true });
-    }
-
-    if (url.pathname === "/api/v1/contacts/request") {
-      contactRequested = true;
-      const body = await route.request().postDataJSON();
-      return json(route, contact(body.target, "pending"), 201);
-    }
-
-    if (url.pathname === "/api/v1/contacts/respond") {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        requester: body.requester,
-        target: "did:web:alice.example",
-        status: body.action === "accept" ? "accepted" : "rejected",
-        created_at: "2026-04-28T12:00:00Z",
-        updated_at: "2026-04-28T12:00:00Z",
-      });
-    }
-
-    if (url.pathname === "/api/v1/contacts") {
-      return json(route, {
-        contacts: contactRequested ? [contact("did:web:bob.example", "pending")] : [],
-      });
     }
 
     if (url.pathname === "/api/v1/spaces" && route.request().method() === "POST") {
@@ -620,6 +668,47 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/api/v1/index/space-hierarchy") {
+      return json(route, {
+        root_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
+        children: [
+          {
+            space_id: "cx:space:01js0childdesign0000000000",
+            edge_state: "confirmed",
+            accessible: true,
+            lazy_link: false,
+            summary: {
+              name: "Design Child",
+              description: "Confirmed child Space with independent membership and encryption.",
+            },
+          },
+          {
+            space_id: "cx:space:01js0childprivate000000000",
+            edge_state: "unconfirmed_link",
+            accessible: false,
+            lazy_link: true,
+          },
+        ],
+        edges: [
+          {
+            parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
+            child_space_id: "cx:space:01js0childdesign0000000000",
+            edge_state: "confirmed",
+            lazy_link: false,
+          },
+          {
+            parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
+            child_space_id: "cx:space:01js0childprivate000000000",
+            edge_state: "unconfirmed_link",
+            lazy_link: true,
+          },
+        ],
+        next_cursor: null,
+        frontier: { state_hash: "cx:statehash:hierarchy-e2e" },
+        cycle_detected: false,
+      });
+    }
+
     if (url.pathname === "/api/v1/index/notifications") {
       return json(route, {
         notifications: [
@@ -708,6 +797,17 @@ export async function mockContrixApi(page: Page) {
       return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
     }
 
+    if (url.pathname === "/api/v1/receipts") {
+      const body = await route.request().postDataJSON();
+      if (body.receipt_type !== "cx.receipt.read") {
+        return json(route, {
+          ok: false,
+          error: { errcode: "invalid_receipt_type", error: "expected cx.receipt.read" },
+        }, 400);
+      }
+      return json(route, { ok: true });
+    }
+
     if (url.pathname === "/api/v1/push/register-device") {
       return json(route, { ok: true, registration_id: "cx:push:e2e", expires_at: null });
     }
@@ -719,10 +819,11 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/blob/upload") {
       return json(route, {
         blob_ref: "cx:blob:sha256:e2e",
-        size: 23,
+        size: 22,
         media_type: "application/octet-stream",
-        sha256: "e2e",
-        upload_receipt: { service_did: "did:web:serverx.local" },
+        sha256: "01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+        thumbnail_ref: "cx:blob:sha256:e2e-thumb",
+        upload_receipt: { service_did: "did:web:serverx.local", content_hash_verified: true },
       });
     }
 
@@ -760,16 +861,6 @@ function spacePreview() {
     tags: ["demo"],
     public: true,
     category: "collaboration",
-  };
-}
-
-function contact(target: string, status: string) {
-  return {
-    requester: "did:web:alice.example",
-    target,
-    status,
-    created_at: "2026-04-28T12:00:00Z",
-    updated_at: "2026-04-28T12:00:00Z",
   };
 }
 

@@ -72,6 +72,117 @@ pub struct RepoCommit {
     pub signature: Option<String>,
 }
 
+/// A signed event envelope for the newer event-store write plane.
+///
+/// This is intentionally separate from the legacy repo commit envelope. The UI can
+/// build the same domain write as an event first, then submit it to
+/// `cx.events.submit` when the server advertises that profile, or persist it as a
+/// local queued write when only the legacy repo bridge is available.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub event_id: String,
+    pub space_id: String,
+    pub actor: String,
+    pub actor_seq: u64,
+    pub hlc: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<String>,
+    #[serde(default)]
+    pub auth_refs: Vec<String>,
+    pub schema_profile: String,
+    pub reducer_profile: String,
+    #[serde(default)]
+    pub frontier: Vec<String>,
+    pub payload: Value,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+pub struct EventEnvelopeBuilder {
+    space_id: String,
+    actor: String,
+    event_type: String,
+    object_id: Option<String>,
+    auth_refs: Vec<String>,
+    schema_profile: String,
+    reducer_profile: String,
+    frontier: Vec<String>,
+    payload: Value,
+}
+
+impl EventEnvelopeBuilder {
+    pub fn new(
+        space_id: impl Into<String>,
+        actor: impl Into<String>,
+        event_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            space_id: space_id.into(),
+            actor: actor.into(),
+            event_type: event_type.into(),
+            object_id: None,
+            auth_refs: Vec::new(),
+            schema_profile: "cx.schema.core.v1".to_owned(),
+            reducer_profile: "cx.reducer.v1".to_owned(),
+            frontier: Vec::new(),
+            payload: Value::Null,
+        }
+    }
+
+    pub fn object_id(mut self, object_id: impl Into<String>) -> Self {
+        self.object_id = Some(object_id.into());
+        self
+    }
+
+    pub fn payload(mut self, payload: Value) -> Self {
+        self.payload = payload;
+        self
+    }
+
+    pub fn auth_ref(mut self, auth_ref: impl Into<String>) -> Self {
+        self.auth_refs.push(auth_ref.into());
+        self
+    }
+
+    pub fn frontier(mut self, frontier: Vec<String>) -> Self {
+        self.frontier = frontier;
+        self
+    }
+
+    pub fn schema_profile(mut self, schema_profile: impl Into<String>) -> Self {
+        self.schema_profile = schema_profile.into();
+        self
+    }
+
+    pub fn reducer_profile(mut self, reducer_profile: impl Into<String>) -> Self {
+        self.reducer_profile = reducer_profile.into();
+        self
+    }
+
+    pub fn build(self, node_id: &str) -> EventEnvelope {
+        let hlc = Hlc::now(node_id);
+        EventEnvelope {
+            event_id: format!("cx:event:{}", uuid_v8()),
+            space_id: self.space_id,
+            actor: self.actor,
+            actor_seq: next_seq(),
+            hlc: hlc.encode(),
+            event_type: self.event_type,
+            object_id: self.object_id,
+            auth_refs: self.auth_refs,
+            schema_profile: self.schema_profile,
+            reducer_profile: self.reducer_profile,
+            frontier: self.frontier,
+            payload: self.payload,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            signature: None,
+        }
+    }
+}
+
 /// Builder for creating operation envelopes.
 pub struct OperationBuilder {
     space_id: String,
@@ -239,7 +350,7 @@ fn rand_u64() -> u64 {
 
 /// Standard operation types per contrix-spec section 6.6.
 pub mod cx_ops {
-    use super::OperationBuilder;
+    use super::{uuid_v8, EventEnvelopeBuilder, OperationBuilder};
     use serde_json::{Value, json};
 
     // Space/Schema/Policy
@@ -260,6 +371,378 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.entity.create")
             .body(json!({"entity_type": entity_type, "data": body}))
+    }
+
+    pub fn list_create(
+        space_id: &str,
+        actor: &str,
+        board_id: &str,
+        list_id: &str,
+        title: &str,
+        rank: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.list.create")
+            .target_ref(board_id)
+            .body(json!({
+                "board_id": board_id,
+                "list_id": list_id,
+                "title": title,
+                "rank": rank,
+            }))
+    }
+
+    pub fn card_create(
+        space_id: &str,
+        actor: &str,
+        list_id: &str,
+        card_id: &str,
+        title: &str,
+        rank: &str,
+    ) -> OperationBuilder {
+        // Legacy helper retained for compatibility. Canonically emit a flow create.
+        flow_create(space_id, actor, list_id, card_id, title, "card", rank)
+    }
+
+    pub fn flow_create(
+        space_id: &str,
+        actor: &str,
+        list_id: &str,
+        flow_id: &str,
+        title: &str,
+        flow_kind: &str,
+        rank: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(list_id)
+            .body(json!({
+                "list_id": list_id,
+                "flow_id": flow_id,
+                "title": title,
+                "kind": flow_kind,
+                "rank": rank,
+            }))
+    }
+
+    pub fn card_move(
+        space_id: &str,
+        actor: &str,
+        card_id: &str,
+        from_list_id: &str,
+        to_list_id: &str,
+        rank: &str,
+        expected_head: Option<&str>,
+    ) -> OperationBuilder {
+        // Legacy helper retained for compatibility. Canonically emit a flow move.
+        flow_move(
+            space_id,
+            actor,
+            card_id,
+            from_list_id,
+            to_list_id,
+            rank,
+            expected_head,
+        )
+    }
+
+    pub fn flow_move(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        from_list_id: &str,
+        to_list_id: &str,
+        rank: &str,
+        expected_head: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.move")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "from_list_id": from_list_id,
+                "to_list_id": to_list_id,
+                "rank": rank,
+                "expected_head": expected_head,
+            }))
+    }
+
+    pub fn card_reorder(
+        space_id: &str,
+        actor: &str,
+        card_id: &str,
+        list_id: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> OperationBuilder {
+        // Legacy helper retained for compatibility. Canonically emit a flow reorder.
+        flow_reorder(space_id, actor, card_id, list_id, before, after)
+    }
+
+    pub fn flow_reorder(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        list_id: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.reorder")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "list_id": list_id,
+                "before": before,
+                "after": after,
+            }))
+    }
+
+    pub fn flow_update(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        changes: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.update")
+            .target_ref(flow_id)
+            .body(changes)
+    }
+
+    pub fn flow_archive(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.archive")
+            .target_ref(flow_id)
+            .body(json!({"state": "archived"}))
+    }
+
+    pub fn flow_restore(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.restore")
+            .target_ref(flow_id)
+            .body(json!({"state": "active"}))
+    }
+
+    pub fn flow_convert(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        target_kind: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.convert")
+            .target_ref(flow_id)
+            .body(json!({"target_kind": target_kind}))
+    }
+
+    pub fn card_link_room(
+        space_id: &str,
+        actor: &str,
+        card_id: &str,
+        discussion_id: &str,
+        primary: bool,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.branch.member")
+            .target_ref(card_id)
+            .body(json!({
+                "flow_id": card_id,
+                "branch": "discussion",
+                "member_id": discussion_id,
+                "primary": primary,
+            }))
+    }
+
+pub fn room_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        name: &str,
+        history_visibility: &str,
+    ) -> OperationBuilder {
+        // Legacy helper retained for compatibility. Canonical room identity now uses flow id.
+        Self::discussion_create(space_id, actor, flow_id, name, history_visibility)
+    }
+
+    pub fn discussion_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        name: &str,
+        history_visibility: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(space_id)
+            .body(json!({
+                "list_id": space_id,
+                "flow_id": flow_id,
+                "title": name,
+                "kind": "discussion",
+                "rank": "r0",
+                "history_visibility": history_visibility,
+            }))
+    }
+
+    pub fn card_create_event(
+        space_id: &str,
+        actor: &str,
+        list_id: &str,
+        card_id: &str,
+        title: &str,
+        rank: &str,
+    ) -> EventEnvelopeBuilder {
+        flow_create_event(space_id, actor, list_id, card_id, title, "card", rank)
+    }
+
+    pub fn flow_create_event(
+        space_id: &str,
+        actor: &str,
+        list_id: &str,
+        flow_id: &str,
+        title: &str,
+        flow_kind: &str,
+        rank: &str,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.create")
+            .object_id(flow_id)
+            .payload(json!({
+                "list_id": list_id,
+                "flow_id": flow_id,
+                "title": title,
+                "kind": flow_kind,
+                "rank": rank,
+                "contains_relation": {
+                    "source": list_id,
+                    "target": flow_id,
+                    "relation_type": "contains"
+                },
+                "position_edge": {
+                    "field": "rank",
+                    "value": rank
+                }
+            }))
+    }
+
+    pub fn card_move_event(
+        space_id: &str,
+        actor: &str,
+        card_id: &str,
+        from_list_id: &str,
+        to_list_id: &str,
+        rank: &str,
+        frontier: Vec<String>,
+    ) -> EventEnvelopeBuilder {
+        flow_move_event(space_id, actor, card_id, from_list_id, to_list_id, rank, frontier)
+    }
+
+    pub fn flow_move_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        from_list_id: &str,
+        to_list_id: &str,
+        rank: &str,
+        frontier: Vec<String>,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.move")
+            .object_id(flow_id)
+            .frontier(frontier)
+            .payload(json!({
+                "flow_id": flow_id,
+                "from_list_id": from_list_id,
+                "to_list_id": to_list_id,
+                "rank": rank,
+                "replay_strategy": "rebase_from_latest_projection"
+            }))
+    }
+
+    pub fn card_link_room_event(
+        space_id: &str,
+        actor: &str,
+        card_id: &str,
+        discussion_id: &str,
+        primary: bool,
+    ) -> EventEnvelopeBuilder {
+        flow_branch_member_event(space_id, actor, card_id, "discussion", discussion_id, primary)
+    }
+
+    pub fn flow_branch_member_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        branch: &str,
+        member_id: &str,
+        primary: bool,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.member")
+            .object_id(flow_id)
+            .payload(json!({
+                "flow_id": flow_id,
+                "branch": branch,
+                "member_id": member_id,
+                "primary": primary,
+            }))
+    }
+
+    pub fn flow_branch_history_visibility_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        branch: &str,
+        history_visibility: &str,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.history_visibility")
+            .object_id(flow_id)
+            .payload(json!({
+                "flow_id": flow_id,
+                "branch": branch,
+                "history_visibility": history_visibility,
+            }))
+    }
+
+    pub fn flow_branch_policy_components_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        branch: &str,
+        policy_components: Vec<&str>,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.policy_components")
+            .object_id(flow_id)
+            .payload(json!({
+                "flow_id": flow_id,
+                "branch": branch,
+                "policy_components": policy_components,
+            }))
+    }
+
+    pub fn room_message_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        message_id: &str,
+        body: &str,
+        revision_of: Option<&str>,
+    ) -> EventEnvelopeBuilder {
+        Self::flow_message_event(
+            space_id,
+            actor,
+            flow_id,
+            message_id,
+            body,
+            revision_of,
+        )
+    }
+
+    pub fn flow_message_event(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        message_id: &str,
+        body: &str,
+        revision_of: Option<&str>,
+    ) -> EventEnvelopeBuilder {
+        EventEnvelopeBuilder::new(space_id, actor, "cx.message.create")
+            .object_id(message_id)
+            .payload(json!({
+                "flow_id": flow_id,
+                "branch": "discussion",
+                "message_id": message_id,
+                "body": body,
+                "revision_of": revision_of
+            }))
     }
 
     pub fn entity_update(
@@ -426,8 +909,16 @@ pub mod cx_ops {
 
     // Channel
     pub fn channel_create(space_id: &str, actor: &str, name: &str, kind: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.channel.create")
-            .body(json!({"name": name, "kind": kind}))
+        let flow_id = format!("cx:flow:{}", uuid_v8());
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(space_id)
+            .body(json!({
+                "list_id": space_id,
+                "flow_id": flow_id,
+                "title": name,
+                "kind": kind,
+                "rank": "r0",
+            }))
     }
 
     pub fn channel_create_entity(
@@ -438,11 +929,13 @@ pub mod cx_ops {
         kind: &str,
         topic: Option<&str>,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.channel.create").body(json!({
-            "channel_id": channel_id,
-            "name": name,
+        OperationBuilder::new(space_id, actor, "cx.flow.create").target_ref(space_id).body(json!({
+            "list_id": space_id,
+            "flow_id": channel_id,
+            "title": name,
             "kind": kind,
             "topic": topic,
+            "rank": "r0",
             "lifecycle": "active",
         }))
     }
@@ -667,16 +1160,20 @@ pub mod cx_ops {
             .body(json!({"state": "canceled", "reason": reason}))
     }
 
-    // Read marker
+    // Private account/device read marker. Public receipts use cx.receipt.read.
     pub fn read_marker(
         space_id: &str,
         actor: &str,
-        entity_id: &str,
-        position: &str,
+        topic_id: Option<&str>,
+        event_id: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.read.marker")
-            .target_ref(entity_id)
-            .body(json!({"position": position}))
+        OperationBuilder::new(space_id, actor, "cx.marker.read")
+            .target_ref(event_id)
+            .body(json!({
+                "space_id": space_id,
+                "topic_id": topic_id,
+                "event_id": event_id,
+            }))
     }
 
     // Capability
@@ -847,12 +1344,12 @@ mod tests {
             cx_ops::channel_create("s", "a", "c", "chat")
                 .build("n")
                 .op_type,
-            "cx.channel.create"
+            "cx.flow.create"
         );
         let channel_entity =
             cx_ops::channel_create_entity("s", "a", "cx:channel:1", "c", "announce", Some("topic"))
                 .build("n");
-        assert_eq!(channel_entity.body["channel_id"], "cx:channel:1");
+        assert_eq!(channel_entity.body["flow_id"], "cx:channel:1");
         assert_eq!(channel_entity.body["kind"], "announce");
         assert_eq!(
             cx_ops::topic_create("s", "a", "t", "b").build("n").op_type,
@@ -995,8 +1492,10 @@ mod tests {
             "cx.invite.cancel"
         );
         assert_eq!(
-            cx_ops::read_marker("s", "a", "e", "p").build("n").op_type,
-            "cx.read.marker"
+            cx_ops::read_marker("s", "a", Some("t"), "e")
+                .build("n")
+                .op_type,
+            "cx.marker.read"
         );
         assert_eq!(
             cx_ops::capability_grant("s", "a", "sub", vec!["read"])

@@ -1,30 +1,70 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>登录 - yougen</title><link rel="stylesheet" href="styles.css"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
 <body>
-  <main class="auth-layout">
-    <section class="auth-card">
-      <div class="brand"><strong>yougen</strong><span>登录到 Contrix 服务器</span></div>
-      <div class="grid">
-        <h1>登录</h1>
-        <p class="muted">生产登录需要 passkey/OIDC、token refresh 和设备绑定 session。dev 模式仅用于本地 serverx。</p>
+  <main class="auth-page">
+    <section class="auth-main">
+      <div>
+        <div class="eyebrow">yougen · Contrix client</div>
+        <h1>登录到你的 Space</h1>
+        <p>登录页需要同时支持生产身份、设备会话和开发 bootstrap。任何会进入共享 Event 历史的写入，都必须绑定 actor DID 和设备签名能力。</p>
       </div>
-      <div class="field"><label>Server URL</label><input value="https://serverx.example.com"></div>
-      <div class="field"><label>Account DID / Handle</label><input value="did:web:alice.example"></div>
-      <div class="grid two">
-        <button class="btn primary">使用 Passkey 登录</button>
-        <button class="btn">OIDC 登录</button>
+
+      <div class="page-panel">
+        <h2>服务器与账号</h2>
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Principal Server</span>
+            <input value="http://127.0.0.1:8787">
+          </label>
+          <label class="form-field">
+            <span>Account DID / handle</span>
+            <input value="did:web:alice.example">
+          </label>
+          <label class="form-field">
+            <span>Device label</span>
+            <input value="alice-windows">
+          </label>
+          <label class="form-field">
+            <span>Session scope</span>
+            <select><option>Full client</option><option>Kanban only</option><option>Chat only</option></select>
+          </label>
+        </div>
       </div>
-      <button class="btn">Dev bootstrap login</button>
-      <div class="pill-row"><span class="pill amber">token refresh required</span><span class="pill blue">device grant</span><span class="pill red">recovery not configured</span></div>
-      <div class="toolbar"><a class="btn" href="register.html">注册</a><a class="btn" href="dashboard.html">进入看板预览</a></div>
+
+      <div class="page-panel">
+        <h2>登录方式</h2>
+        <div class="chip-row">
+          <button class="button primary">Passkey</button>
+          <button class="button">OIDC</button>
+          <button class="button">Device QR</button>
+          <button class="button">Dev login</button>
+        </div>
+        <div class="record-card">
+          <div class="record-head"><span>Challenge</span><span>expires in 04:52</span></div>
+          <strong>did challenge received</strong>
+          <p>签名后换取短期 session token；token 不进入 Space canonical state。</p>
+        </div>
+      </div>
+
+      <div class="chip-row">
+        <a class="button primary" href="dashboard.html">Enter app</a>
+        <a class="button" href="register.html">Create account</a>
+      </div>
     </section>
-    <section class="auth-visual">
-      <div class="device-frame">
-        <h2>登录状态面板</h2>
-        <div class="metric"><strong>Auth metadata</strong><span>passkey, oidc, dev-login</span></div>
-        <div class="metric"><strong>Session</strong><span>device-bound bearer token</span></div>
-        <div class="metric"><strong>Storage</strong><span>native file / web localStorage</span></div>
+
+    <section class="auth-side">
+      <h2>登录后启动流程</h2>
+      <div class="step-list">
+        <div class="step"><strong>1. Server describe</strong><p>确认 minimal/chat/kanban/full/e2ee profile 是否可用。</p></div>
+        <div class="step"><strong>2. Device session</strong><p>加载设备密钥、push registration、to-device queue。</p></div>
+        <div class="step"><strong>3. Space sync</strong><p>拉取 snapshot/frontier/cursor，并进入增量订阅。</p></div>
+        <div class="step"><strong>4. Projection</strong><p>打开最近 Board 或 Inbox，所有内容按 actor 权限裁剪。</p></div>
       </div>
     </section>
   </main>

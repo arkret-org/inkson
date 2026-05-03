@@ -6,19 +6,27 @@ use crate::api::ContrixApi;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DidMethod {
-    DidUuid,
+    DidPlc,
     DidWeb,
+    DidWebvh,
     DidKey,
 }
 
 impl DidMethod {
     fn label(self) -> &'static str {
         match self {
-            Self::DidUuid => "did:uuid",
+            Self::DidPlc => "did:plc",
             Self::DidWeb => "did:web",
+            Self::DidWebvh => "did:webvh",
             Self::DidKey => "did:key",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegistrationPath {
+    CreateNewDid,
+    BindExistingDid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,8 +43,11 @@ enum RegisterStep {
 #[component]
 pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element {
     let mut step = use_signal(|| RegisterStep::ChooseDid);
-    let mut did_method = use_signal(|| DidMethod::DidUuid);
+    let mut registration_path = use_signal(|| RegistrationPath::CreateNewDid);
+    let mut did_method = use_signal(|| DidMethod::DidPlc);
     let mut generated_did = use_signal(String::new);
+    let mut existing_did = use_signal(String::new);
+    let mut existing_did_status = use_signal(String::new);
     let mut handle = use_signal(String::new);
     let mut handle_available = use_signal(|| Option::<bool>::None);
     let mut display_name = use_signal(|| "yougen user".to_owned());
@@ -44,6 +55,11 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
     let mut recovery_method = use_signal(|| "passphrase".to_owned());
     let mut register_status = use_signal(|| String::new());
     let mut proof_challenge = use_signal(|| String::new());
+    let mut proof_audience = use_signal(String::new);
+    let mut proof_origin = use_signal(String::new);
+    let mut proof_expires_at = use_signal(String::new);
+    let mut proof_nonce = use_signal(String::new);
+    let mut proof_verification_method = use_signal(|| "authentication".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "register-panel",
@@ -52,7 +68,7 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                 div { class: "event-head",
                     span { "Registration" }
                     span { match step() {
-                        RegisterStep::ChooseDid => "Step 1/6: Choose DID",
+                        RegisterStep::ChooseDid => "Step 1/6: DID path",
                         RegisterStep::HandleInput => "Step 2/6: Handle",
                         RegisterStep::DisplayName => "Step 3/6: Display Name",
                         RegisterStep::DidProof => "Step 4/6: DID Proof",
@@ -63,50 +79,143 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                 }
             }
 
-            // Step 1: DID generation
+            // Step 1: DID path and generation/binding
             if step() == RegisterStep::ChooseDid {
                 div { class: "event", "data-testid": "did-generation",
-                    div { class: "event-head", span { "DID Generation" } span { "select method" } }
-                    div { class: "actions",
-                        button {
-                            class: if did_method() == DidMethod::DidUuid { "primary" } else { "secondary" },
-                            "data-testid": "did-uuid",
-                            onclick: move |_| did_method.set(DidMethod::DidUuid),
-                            "did:uuid"
+                    div { class: "event-head", span { "DID" } span { "create or bind" } }
+                    div { class: "muted",
+                        "Create a portable account identifier or bind one you already control. New production accounts default to did:plc; did:web and did:webvh are available for domain-backed identities. did:key is temporary/test-only."
+                    }
+                    div { class: "metric-grid", "data-testid": "did-method-policy",
+                        div { class: "metric",
+                            strong { "Default" }
+                            span { "did:plc" }
+                            div { class: "muted", "ordinary user principal" }
                         }
-                        button {
-                            class: if did_method() == DidMethod::DidWeb { "primary" } else { "secondary" },
-                            "data-testid": "did-web",
-                            onclick: move |_| did_method.set(DidMethod::DidWeb),
-                            "did:web"
+                        div { class: "metric",
+                            strong { "Domain" }
+                            span { "did:web / did:webvh" }
+                            div { class: "muted", "domain-backed user, org, or service" }
                         }
-                        button {
-                            class: if did_method() == DidMethod::DidKey { "primary" } else { "secondary" },
-                            "data-testid": "did-key",
-                            onclick: move |_| did_method.set(DidMethod::DidKey),
-                            "did:key"
+                        div { class: "metric",
+                            strong { "Temporary" }
+                            span { "did:key" }
+                            div { class: "muted", "test, bootstrap, device, or invite only" }
+                        }
+                        div { class: "metric",
+                            strong { "Legacy" }
+                            span { "did:uuid" }
+                            div { class: "muted", "read-only migration; never generated here" }
                         }
                     }
-                    {let did_desc = match did_method() {
-                        DidMethod::DidUuid => "did:uuid - UUID-based identifier",
-                        DidMethod::DidWeb => "did:web - Web-based identifier",
-                        DidMethod::DidKey => "did:key - Cryptographic key identifier",
-                    };
-                    rsx! { div { class: "muted", "Selected: {did_desc}" } }}
                     div { class: "actions",
                         button {
-                            class: "primary",
-                            "data-testid": "generate-did-button",
-                            onclick: move |_| {
-                                let did = generate_did(did_method());
-                                generated_did.set(did);
-                                step.set(RegisterStep::HandleInput);
-                            },
-                            "Generate DID"
+                            class: if registration_path() == RegistrationPath::CreateNewDid { "primary" } else { "secondary" },
+                            "data-testid": "register-path-create",
+                            onclick: move |_| registration_path.set(RegistrationPath::CreateNewDid),
+                            "Create new DID"
+                        }
+                        button {
+                            class: if registration_path() == RegistrationPath::BindExistingDid { "primary" } else { "secondary" },
+                            "data-testid": "register-path-bind",
+                            onclick: move |_| registration_path.set(RegistrationPath::BindExistingDid),
+                            "Bind existing DID"
+                        }
+                    }
+                    if registration_path() == RegistrationPath::CreateNewDid {
+                        div { class: "actions",
+                            button {
+                                class: if did_method() == DidMethod::DidPlc { "primary" } else { "secondary" },
+                                "data-testid": "did-plc",
+                                onclick: move |_| did_method.set(DidMethod::DidPlc),
+                                "did:plc"
+                            }
+                            button {
+                                class: if did_method() == DidMethod::DidWeb { "primary" } else { "secondary" },
+                                "data-testid": "did-web",
+                                onclick: move |_| did_method.set(DidMethod::DidWeb),
+                                "did:web"
+                            }
+                            button {
+                                class: if did_method() == DidMethod::DidWebvh { "primary" } else { "secondary" },
+                                "data-testid": "did-webvh",
+                                onclick: move |_| did_method.set(DidMethod::DidWebvh),
+                                "did:webvh"
+                            }
+                            button {
+                                class: if did_method() == DidMethod::DidKey { "primary" } else { "secondary" },
+                                "data-testid": "did-key",
+                                onclick: move |_| did_method.set(DidMethod::DidKey),
+                                "did:key test"
+                            }
+                        }
+                        if did_method() == DidMethod::DidKey {
+                            div { class: "event error-banner", "data-testid": "did-key-principal-warning",
+                                div { class: "event-head", span { "Temporary DID" } span { "not a long-lived principal" } }
+                                div { class: "muted", "did:key is only valid here for temporary, test, bootstrap, device, or invite flows. Production user principals should use did:plc, did:web, or did:webvh." }
+                            }
+                        }
+                        {let did_desc = match did_method() {
+                            DidMethod::DidPlc => "did:plc - default portable DID for new accounts",
+                            DidMethod::DidWeb => "did:web - domain-backed DID for operators who control DNS/HTTPS",
+                            DidMethod::DidWebvh => "did:webvh - domain-backed DID with verifiable history",
+                            DidMethod::DidKey => "did:key - temporary/test-only; avoid for durable accounts",
+                        };
+                        rsx! { div { class: "muted", "Selected: {did_desc}" } }}
+                        div { class: "actions",
+                            button {
+                                class: "primary",
+                                "data-testid": "generate-did-button",
+                                onclick: move |_| {
+                                    let did = generate_did(did_method());
+                                    generated_did.set(did);
+                                    step.set(RegisterStep::HandleInput);
+                                },
+                                "Generate DID"
+                            }
+                        }
+                    } else {
+                        div { class: "workflow-form",
+                            label { "Existing DID" }
+                            input {
+                                "data-testid": "bind-existing-did-input",
+                                value: "{existing_did}",
+                                placeholder: "did:plc:..., did:web:..., did:webvh:..., or did:key:...",
+                                oninput: move |evt| {
+                                    existing_did.set(evt.value());
+                                    existing_did_status.set(String::new());
+                                },
+                            }
+                            div { class: "muted",
+                                "Binding keeps the identifier you already control and asks for a scoped proof before account registration. New did:uuid generation is intentionally unavailable."
+                            }
+                            if !existing_did_status().is_empty() {
+                                div { class: "muted", "data-testid": "bind-existing-did-status", "{existing_did_status}" }
+                            }
+                            div { class: "actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "bind-existing-did-button",
+                                    onclick: move |_| {
+                                        let did = existing_did().trim().to_owned();
+                                        if did.trim().is_empty() {
+                                            existing_did_status.set("Enter the DID you want to bind.".to_owned());
+                                        } else if !is_supported_existing_did(&did) {
+                                            existing_did_status.set(
+                                                "Supported DID methods are did:plc, did:web, did:webvh, and temporary did:key. did:uuid is not accepted.".to_owned(),
+                                            );
+                                        } else {
+                                            generated_did.set(did);
+                                            step.set(RegisterStep::HandleInput);
+                                        }
+                                    },
+                                    "Use Existing DID"
+                                }
+                            }
                         }
                     }
                     if !generated_did().is_empty() {
-                        div { class: "muted", "Generated: {generated_did}" }
+                        div { class: "muted", "DID: {generated_did}" }
                     }
                 }
             }
@@ -207,19 +316,42 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
             if step() == RegisterStep::DidProof {
                 div { class: "event", "data-testid": "did-proof",
                     div { class: "event-head", span { "DID Proof" } span { "challenge" } }
-                    div { class: "muted", "Prove ownership of your DID. A challenge will be generated." }
+                    div { class: "muted",
+                        "Prove control of the DID by signing a short-lived challenge scoped to this server audience and browser origin. The backend operation is still submitted through the existing placeholder API."
+                    }
                     div { class: "actions",
                         button {
                             class: "primary",
                             "data-testid": "generate-proof-button",
-                            onclick: move |_| {
-                                proof_challenge.set(format!("challenge-{}", chrono::Utc::now().timestamp()));
+                            onclick: {
+                                let proof_base_url = base_url.clone();
+                                move |_| {
+                                    let now = chrono::Utc::now();
+                                    proof_challenge.set(format!("challenge-{}", now.timestamp()));
+                                    proof_audience.set(proof_base_url.clone());
+                                    proof_origin.set("yougen://registration".to_owned());
+                                    proof_expires_at.set((now + chrono::Duration::minutes(10)).to_rfc3339());
+                                    proof_nonce.set(format!("nonce-{}", crate::operation::uuid_v8()));
+                                }
                             },
                             "Generate Challenge"
                         }
                     }
                     if !proof_challenge().is_empty() {
-                        div { class: "muted", "data-testid": "proof-challenge", "Challenge: {proof_challenge}" }
+                        div { class: "workflow-form",
+                            div { class: "muted", "data-testid": "proof-challenge", "Challenge: {proof_challenge}" }
+                            div { class: "muted", "Audience: {proof_audience}" }
+                            div { class: "muted", "Origin: {proof_origin}" }
+                            div { class: "muted", "Expires: {proof_expires_at}" }
+                            div { class: "muted", "Nonce: {proof_nonce}" }
+                            label { "Verification Method" }
+                            input {
+                                "data-testid": "proof-verification-method",
+                                value: "{proof_verification_method}",
+                                placeholder: "authentication",
+                                oninput: move |evt| proof_verification_method.set(evt.value()),
+                            }
+                        }
                         div { class: "actions",
                             button {
                                 class: "primary",
@@ -253,11 +385,6 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                             onclick: move |_| recovery_method.set("security_key".to_owned()),
                             "Security Key"
                         }
-                        button {
-                            class: if recovery_method() == "social_recovery" { "primary" } else { "secondary" },
-                            onclick: move |_| recovery_method.set("social_recovery".to_owned()),
-                            "Social Recovery"
-                        }
                     }
                     div { class: "muted", "Selected: {recovery_method}" }
                     div { class: "actions",
@@ -282,6 +409,11 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                     div { class: "muted",
                         "DID: {generated_did}\nHandle: {handle}\nDisplay: {display_name}\nDevice: {device_label}"
                     }
+                    {let path_label = match registration_path() {
+                        RegistrationPath::CreateNewDid => "create new DID",
+                        RegistrationPath::BindExistingDid => "bind existing DID",
+                    };
+                    rsx! { div { class: "muted", "Registration path: {path_label}" } }}
                     div { class: "actions",
                         button {
                             class: "primary",
@@ -296,12 +428,26 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                                     let device = device_label();
                                     let recovery = recovery_method();
                                     let proof = proof_challenge();
-                                    let did_method_name = did_method().label().to_owned();
+                                    let audience = proof_audience();
+                                    let origin = proof_origin();
+                                    let expires_at = proof_expires_at();
+                                    let nonce = proof_nonce();
+                                    let verification_method = proof_verification_method();
+                                    let did_method_name = match registration_path() {
+                                        RegistrationPath::CreateNewDid => did_method().label().to_owned(),
+                                        RegistrationPath::BindExistingDid => supported_existing_did_method(&did)
+                                            .unwrap_or(did_method().label())
+                                            .to_owned(),
+                                    };
+                                    let operation_type = match registration_path() {
+                                        RegistrationPath::CreateNewDid => "cx.did.create",
+                                        RegistrationPath::BindExistingDid => "cx.did.bind",
+                                    };
                                     spawn(async move {
                                         match ContrixApi::new(&base) {
                                             Ok(api) => {
                                                 let did_operation = json!({
-                                                    "type": "cx.did.create",
+                                                    "type": operation_type,
                                                     "did_method": did_method_name,
                                                     "handle": h.clone(),
                                                     "display_name": name.clone(),
@@ -310,6 +456,11 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                                                     "proof": {
                                                         "kind": "development_placeholder",
                                                         "challenge": proof,
+                                                        "audience": audience,
+                                                        "origin": origin,
+                                                        "expires_at": expires_at,
+                                                        "nonce": nonce,
+                                                        "verification_method": verification_method,
                                                     },
                                                     "submitted_at": chrono::Utc::now().to_rfc3339(),
                                                 });
@@ -388,8 +539,28 @@ fn generate_did(method: DidMethod) -> String {
         .collect::<String>();
 
     match method {
-        DidMethod::DidUuid => format!("did:uuid:{timestamp:011x}1{}", &random_hex[..19]),
+        DidMethod::DidPlc => format!("did:plc:{}", &random_hex[..24]),
         DidMethod::DidWeb => format!("did:web:user-{:011x}.example", timestamp),
+        DidMethod::DidWebvh => format!("did:webvh:user-{:011x}.example", timestamp),
         DidMethod::DidKey => format!("did:key:z{}", URL_SAFE_NO_PAD.encode(seed)),
+    }
+}
+
+fn is_supported_existing_did(did: &str) -> bool {
+    supported_existing_did_method(did).is_some()
+}
+
+fn supported_existing_did_method(did: &str) -> Option<&'static str> {
+    let did = did.trim();
+    if did.starts_with("did:plc:") {
+        Some("did:plc")
+    } else if did.starts_with("did:webvh:") {
+        Some("did:webvh")
+    } else if did.starts_with("did:web:") {
+        Some("did:web")
+    } else if did.starts_with("did:key:") {
+        Some("did:key")
+    } else {
+        None
     }
 }

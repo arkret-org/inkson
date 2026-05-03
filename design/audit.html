@@ -1,8 +1,49 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>同步审计 - yougen</title><link rel="stylesheet" href="styles.css"></head>
-<body><div class="page-shell"><aside class="sidebar"><div class="brand"><strong>yougen</strong><span>Audit</span></div><div class="status-card"><div class="status-row"><span>Head</span><b>cx:commit</b></div><div class="status-row"><span>Cursor</span><b>sx:e2e</b></div></div><nav class="nav"><a href="dashboard.html">看板<span>全局</span></a><a href="space.html">Space<span>消息</span></a><a href="contacts.html">联系人<span>社交</span></a><a href="space-admin.html">Space 管理<span>成员</span></a><a href="directory.html">目录<span>发现</span></a><a href="devices.html">设备密钥<span>安全</span></a><a class="active" href="audit.html">审计<span>repo sync</span></a><a href="settings.html">设置<span>发布</span></a></nav><a class="btn" href="index.html">页面目录</a></aside>
-<main class="content"><section class="topbar"><div><h1>同步审计</h1><p class="muted">给高级用户和支持人员看的 repo、commit、operation、snapshot、backfill、conflict 页面。</p></div><div class="toolbar"><button class="btn">Backfill</button><button class="btn">Snapshot</button><button class="btn primary">Verify</button></div></section>
-<section class="grid four"><div class="metric"><strong>Next batch</strong><span>sx:e2e:product</span></div><div class="metric"><strong>Raw operations</strong><span>148</span></div><div class="metric"><strong>Conflicts</strong><span>0</span></div><div class="metric"><strong>Snapshots</strong><span>healthy</span></div></section>
-<section class="panel"><h2>Commit Log</h2><div class="table"><div class="row"><div class="cell">Object</div><div class="cell">Identifier</div><div class="cell">State</div><div class="cell">Action</div></div><div class="row"><div class="cell">Commit</div><div class="cell">cx:commit:e2e-product</div><div class="cell"><span class="pill green">head</span></div><div class="cell">Inspect</div></div><div class="row"><div class="cell">Operation</div><div class="cell">cx:operation:e2e-product</div><div class="cell"><span class="pill blue">message</span></div><div class="cell">Verify digest</div></div><div class="row"><div class="cell">Snapshot</div><div class="cell">cx:snapshot:head</div><div class="cell"><span class="pill amber">stale soon</span></div><div class="cell">Refresh</div></div></div></section>
-</main></div></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>审计 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-frame">
+    <aside class="side-nav">
+      <div class="side-brand"><strong>yougen</strong><span>Audit</span></div>
+      <div class="nav-status"><div><span>Events</span><b>148</b></div><div><span>Conflicts</span><b>1</b></div><div><span>State hash</span><b>ok</b></div></div>
+      <nav class="nav-list">
+        <a href="dashboard.html">首页<span>home</span></a>
+        <a href="card-detail.html">Card detail<span>trace</span></a>
+        <a class="active" href="audit.html">Audit<span>events / sync</span></a>
+        <a href="settings.html">Settings<span>release</span></a>
+      </nav>
+      <a class="button" href="index.html">Design index</a>
+    </aside>
+    <main class="content-page">
+      <section class="page-head">
+        <div><h1>同步与审计</h1><p>高级页面用于查看 Event Envelope、frontier、snapshot、projection 来源、authz decision 和冲突记录。</p></div>
+        <div class="chip-row"><button class="button">Backfill</button><button class="button">Verify snapshot</button><button class="button primary">Refresh</button></div>
+      </section>
+      <section class="panel-grid four">
+        <div class="metric-tile"><span>Frontier</span><strong>cx:event:review-44</strong></div>
+        <div class="metric-tile"><span>Cursor</span><strong>sx:e2e:product</strong></div>
+        <div class="metric-tile"><span>State hash</span><strong>verified</strong></div>
+        <div class="metric-tile"><span>Conflicts</span><strong>1</strong></div>
+      </section>
+      <section class="page-panel">
+        <h2>Event log</h2>
+        <div class="table-card">
+          <div class="table-row"><div class="table-cell">Event</div><div class="table-cell">Kind</div><div class="table-cell">Target</div><div class="table-cell">Reducer result</div></div>
+          <div class="table-row"><div class="table-cell">cx:event:01move...</div><div class="table-cell">cx.card.move</div><div class="table-cell">cx:card:01legal...</div><div class="table-cell">accepted</div></div>
+          <div class="table-row"><div class="table-cell">cx:event:01stale...</div><div class="table-cell">cx.card.move</div><div class="table-cell">cx:card:01security...</div><div class="table-cell">cas_conflict</div></div>
+          <div class="table-row"><div class="table-cell">cx:event:01msg...</div><div class="table-cell">cx.message.redact</div><div class="table-cell">cx:message:01...</div><div class="table-cell">tombstone</div></div>
+        </div>
+      </section>
+      <section class="panel-grid">
+        <div class="page-panel"><h2>Conflict detail</h2><p>同一 `(board_id, card_id)` 出现多个 active position edge，reducer 按授权权重、HLC、Actor ID、Event ID 收敛，并记录 loser。</p></div>
+        <div class="page-panel"><h2>Authz explanation</h2><p>Card 可见、Room 不可见的情况下，projection 返回 locked lazy link，不返回 Room title、member list 或 unread exact count。</p></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -117,6 +117,21 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
+            div { class: "event", "data-testid": "event-envelope-audit",
+                div { class: "event-head", span { "Event Envelope" } span { "write plane" } }
+                div { class: "metric-grid",
+                    div { class: "metric", strong { "actor_seq" } span { "42" } div { class: "muted", "monotonic per actor" } }
+                    div { class: "metric", strong { "event_id" } span { "cx:event:preview" } div { class: "muted", "content-addressed after signing" } }
+                    div { class: "metric", strong { "frontier" } span { if head_commit().is_empty() { "not loaded" } else { "{head_commit}" } } div { class: "muted", "projection source" } }
+                    div { class: "metric", strong { "auth_refs" } span { "cx:capability:board.write" } div { class: "muted", "authorization proof references" } }
+                    div { class: "metric", strong { "schema" } span { "cx.schema.core.v1" } div { class: "muted", "validated before reducer" } }
+                    div { class: "metric", strong { "reducer" } span { "cx.reducer.v1" } div { class: "muted", "state hash after projection" } }
+                }
+                div { class: "muted",
+                    "Audit links UI actions to submitted events, reducer receipts, projection hashes, authz explanation, and conflict records."
+                }
+            }
+
             div { class: "event", "data-testid": "capability-explanation",
                 div { class: "event-head", span { "Capability explanation" } span { "{capability_grants().len()} grants" } }
                 div { class: "metric-grid",

@@ -181,6 +181,34 @@ pub fn SpaceAdminPanel(
             }
 
             // Invite member
+            div { class: "event", "data-testid": "admin-discussion-admission",
+                div { class: "event-head", span { "Discussion-scoped external admission" } span { "policy proposal" } }
+                div { class: "muted",
+                    "External access is granted to a Discussion, not to the whole Space or linked Card. History visibility and capability grants remain separate."
+                }
+                div { class: "metric-grid",
+                    div { class: "metric", strong { "Discussion" } span { "cx:flow:external-counsel" } div { class: "muted", "history: joined" } }
+                    div { class: "metric", strong { "Capability" } span { "discussion.message.create" } div { class: "muted", "expires in 7 days" } }
+                    div { class: "metric", strong { "Discussion Coupling" } span { "none" } div { class: "muted", "linked Discussion remains separately authorized" } }
+                    div { class: "metric", strong { "Review" } span { "requires admin approval" } div { class: "muted", "danger actions require reason" } }
+                }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                                "data-testid": "queue-discussion-admission",
+                        onclick: move |_| status_msg.set("queued Discussion-scoped external admission proposal".to_owned()),
+                        "Queue admission proposal"
+                    }
+                    button {
+                        class: "secondary",
+                                "data-testid": "deny-discussion-admission",
+                        onclick: move |_| status_msg.set("denied without leaking locked Discussion membership".to_owned()),
+                        "Deny"
+                    }
+                }
+            }
+
+            // Invite member
             div { class: "event", "data-testid": "invite-member",
                 div { class: "event-head", span { "Invite Member" } span { "" } }
                 div { class: "workflow-form",

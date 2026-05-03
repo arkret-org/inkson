@@ -482,7 +482,6 @@ fn render_kind_toggle(
 fn default_notification_title(kind: &str) -> String {
     match kind {
         "invite" => "Space invite".to_owned(),
-        "contact" => "Contact request".to_owned(),
         "reaction" => "New reaction".to_owned(),
         "mention" => "You were mentioned".to_owned(),
         _ => "New message".to_owned(),
@@ -492,7 +491,6 @@ fn default_notification_title(kind: &str) -> String {
 fn default_notification_action(kind: &str) -> &'static str {
     match kind {
         "invite" => "Review",
-        "contact" => "Accept",
         _ => "View",
     }
 }

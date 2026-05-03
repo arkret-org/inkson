@@ -28,21 +28,6 @@ pub struct AccountResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactResponse {
-    pub requester: String,
-    pub target: String,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactsResponse {
-    #[serde(default)]
-    pub contacts: Vec<ContactResponse>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpaceLifecycleResponse {
     pub ok: bool,
     pub space_id: String,
@@ -82,6 +67,47 @@ pub struct ServerDescription {
     pub auth_metadata: Value,
     #[serde(default)]
     pub limits: Value,
+}
+
+pub const PROFILE_CORE_EVENT_STORE: &str = "cx.profile.core_event_store.v1";
+pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "cx.profile.principal_server_events_api.v1";
+pub const OP_EVENTS_DESCRIBE: &str = "cx.events.describe";
+pub const OP_EVENTS_SUBMIT: &str = "cx.events.submit";
+
+impl ServerDescription {
+    pub fn supports_profile(&self, profile: &str) -> bool {
+        self.supported_profiles.iter().any(|value| value == profile)
+    }
+
+    pub fn supports_operation(&self, operation_id: &str) -> bool {
+        self.supported_operations
+            .iter()
+            .any(|value| value == operation_id)
+    }
+
+    pub fn supports_feature(&self, feature: &str) -> bool {
+        self.supported_features.iter().any(|value| value == feature)
+    }
+
+    pub fn supports_event_envelope_write_plane(&self) -> bool {
+        self.missing_event_envelope_write_requirements().is_empty()
+    }
+
+    pub fn missing_event_envelope_write_requirements(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if !self.supports_profile(PROFILE_CORE_EVENT_STORE)
+            && !self.supports_profile(PROFILE_PRINCIPAL_SERVER_EVENTS_API)
+        {
+            missing.push(PROFILE_CORE_EVENT_STORE);
+        }
+        if !self.supports_operation(OP_EVENTS_DESCRIBE) {
+            missing.push(OP_EVENTS_DESCRIBE);
+        }
+        if !self.supports_operation(OP_EVENTS_SUBMIT) {
+            missing.push(OP_EVENTS_SUBMIT);
+        }
+        missing
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -331,6 +357,8 @@ pub struct BlobUploadResponse {
     pub size: usize,
     pub media_type: String,
     pub sha256: String,
+    #[serde(default)]
+    pub thumbnail_ref: Option<String>,
     pub upload_receipt: Value,
 }
 
@@ -400,12 +428,6 @@ pub struct SearchOrganizationsResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SearchActorsResponse {
-    pub results: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchUsersResponse {
     pub results: Vec<Value>,
     pub next_cursor: Option<String>,
 }
@@ -608,9 +630,20 @@ pub struct IndexSearchResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpaceHierarchyResponse {
     #[serde(default)]
+    pub root: Value,
+    #[serde(default)]
+    pub root_space_id: Option<String>,
+    #[serde(default)]
+    pub children: Vec<Value>,
+    #[serde(default)]
     pub spaces: Vec<Value>,
     #[serde(default)]
     pub edges: Vec<Value>,
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub frontier: Value,
+    #[serde(default)]
+    pub cycle_detected: bool,
 }
 
 // ── Federation ───────────────────────────────────────────────────
@@ -734,6 +767,31 @@ pub struct SubmitDidOperationResponse {
     pub ok: bool,
     pub operation_id: String,
     pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EventsDescribeResponse {
+    pub service_did: String,
+    #[serde(default)]
+    pub schema_profiles: Vec<String>,
+    #[serde(default)]
+    pub reducer_profiles: Vec<String>,
+    #[serde(default)]
+    pub supported_event_types: Vec<String>,
+    #[serde(default)]
+    pub frontier: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEventResponse {
+    pub event_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub accepted_frontier: Vec<String>,
+    #[serde(default)]
+    pub reducer_receipt: Value,
+    #[serde(default)]
+    pub sync_token: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

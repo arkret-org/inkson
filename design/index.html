@@ -3,33 +3,110 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>yougen 页面设计目录</title>
+  <title>yougen 页面设计</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="page-index">
-    <div class="topbar">
-      <div class="grid">
-        <h1>yougen 页面设计稿</h1>
-        <p class="muted">每个入口都是独立页面原型，不是信息架构图。按协议功能覆盖登录、注册、看板、Space、联系人、设备、审计、设置。</p>
+  <main class="index-page">
+    <section class="index-hero">
+      <div>
+        <h1>yougen Board + Room 页面设计</h1>
+        <p>完整应用页面设计集：登录、注册、首页、Board、点击 Card 后详情、Room 聊天、Inbox、目录、管理、设备、审计、设置。整体参考 Trello 的工作台结构，但按 Contrix 协议补齐 Room/Message、权限裁剪、同步和并发收敛。</p>
       </div>
-      <div class="pill-row">
-        <span class="pill blue">HTML prototype</span>
-        <span class="pill green">Protocol mapped</span>
-      </div>
-    </div>
-    <section class="page-grid">
-      <a class="page-link" href="login.html"><h2>登录页面</h2><p class="muted">服务器、账号、passkey/OIDC、dev bootstrap、错误状态。</p><span class="pill blue">Auth</span></a>
-      <a class="page-link" href="register.html"><h2>注册页面</h2><p class="muted">DID、handle、设备绑定、proof challenge、恢复策略。</p><span class="pill amber">Registration</span></a>
-      <a class="page-link" href="verify-device.html"><h2>设备验证页面</h2><p class="muted">QR/SAS、设备信任、MLS key package、撤销风险。</p><span class="pill cyan">Security</span></a>
-      <a class="page-link" href="dashboard.html"><h2>看板页面</h2><p class="muted">全局工作台：Spaces、timeline、同步、队列、健康状态。</p><span class="pill green">Home</span></a>
-      <a class="page-link" href="space.html"><h2>Space 聊天页面</h2><p class="muted">消息流、加密 composer、reply、reaction、redaction、moderation。</p><span class="pill blue">Messaging</span></a>
-      <a class="page-link" href="contacts.html"><h2>联系人页面</h2><p class="muted">搜索、请求、接受/拒绝、block、隐私状态。</p><span class="pill amber">Social</span></a>
-      <a class="page-link" href="space-admin.html"><h2>Space 管理页面</h2><p class="muted">创建、策略、成员、邀请、移除、归档、删除。</p><span class="pill red">Admin</span></a>
-      <a class="page-link" href="directory.html"><h2>目录发现页面</h2><p class="muted">spaces、organizations、actors、handles 的搜索和 resolve。</p><span class="pill green">Directory</span></a>
-      <a class="page-link" href="devices.html"><h2>设备与密钥页面</h2><p class="muted">设备、keys、MLS group、to-device、push registration。</p><span class="pill cyan">Devices</span></a>
-      <a class="page-link" href="audit.html"><h2>同步审计页面</h2><p class="muted">repo、commits、operations、snapshot、backfill、conflict。</p><span class="pill blue">Audit</span></a>
-      <a class="page-link" href="settings.html"><h2>设置与发布健康页面</h2><p class="muted">服务器、存储、加密、CI、release readiness。</p><span class="pill red">Release</span></a>
+      <a class="button primary" href="app.html">Open product prototype</a>
+    </section>
+
+    <section class="index-grid">
+      <a class="index-card" href="app.html">
+        <strong>高保真可点击应用原型</strong>
+        <p>推荐从这里进入。单个静态应用壳包含登录、注册、首页、Board、Card 详情、Room、Inbox、目录、管理、设备、审计和设置，按钮会实际跳转。</p>
+        <span class="status-pill ok">Interactive</span>
+      </a>
+      <a class="index-card" href="login.html">
+        <strong>登录</strong>
+        <p>Principal Server、DID/handle、设备会话、Passkey/OIDC/Device QR/dev login，以及登录后的 sync bootstrap。</p>
+        <span class="status-pill ok">Auth</span>
+      </a>
+      <a class="index-card" href="register.html">
+        <strong>注册</strong>
+        <p>DID method、handle、profile、设备 proof、恢复策略和 invite accept 落点。</p>
+        <span class="status-pill ok">Account</span>
+      </a>
+      <a class="index-card" href="dashboard.html">
+        <strong>应用首页</strong>
+        <p>Space、最近 Board、Inbox、设备/同步健康、离线队列和启动状态。</p>
+        <span class="status-pill ok">Home</span>
+      </a>
+      <a class="index-card" href="board-room-workbench.html">
+        <strong>Board + Room Workbench</strong>
+        <p>横向 List 画布、Card 详情抽屉、primary Room 聊天、locked Room、并发 move 冲突和离线 pending 状态。</p>
+        <span class="status-pill ok">Board</span>
+      </a>
+      <a class="index-card" href="space.html">
+        <strong>Space 概览</strong>
+        <p>Space 下可见的 Boards、Rooms、最近活动、成员和 lazy links，强调 Space 是权限和同步边界。</p>
+        <span class="status-pill ok">Space</span>
+      </a>
+      <a class="index-card" href="card-detail.html">
+        <strong>点击 Card 后详情</strong>
+        <p>保持 Board 背景，打开右侧详情抽屉，覆盖字段编辑、Rooms、Chat preview、Activity 和 Audit。</p>
+        <span class="status-pill ok">Card</span>
+      </a>
+      <a class="index-card" href="room.html">
+        <strong>Room 聊天</strong>
+        <p>Room 列表、消息 timeline、composer、成员、history_visibility、E2EE 和上下文 lazy links。</p>
+        <span class="status-pill ok">Chat</span>
+      </a>
+      <a class="index-card" href="notifications.html">
+        <strong>Inbox / Notifications</strong>
+        <p>Mention、assignment、conflict、read marker、mute rules 和从通知进入 Card Room 的权限复核。</p>
+        <span class="status-pill ok">Inbox</span>
+      </a>
+      <a class="index-card" href="directory.html">
+        <strong>目录发现</strong>
+        <p>Spaces、Cards、Rooms、Actors 的搜索与 resolve，展示 readable、discoverable 和 locked lazy link。</p>
+        <span class="status-pill ok">Directory</span>
+      </a>
+      <a class="index-card" href="contacts.html">
+        <strong>联系人与 Actors</strong>
+        <p>Actor 发现、联系人请求、信任状态、block；联系人关系不等于 Space 或 Room membership。</p>
+        <span class="status-pill ok">Actors</span>
+      </a>
+      <a class="index-card" href="space-admin.html">
+        <strong>Space 管理</strong>
+        <p>Space metadata、join rule、Room external admission、invite、member grants 和危险生命周期。</p>
+        <span class="status-pill ok">Admin</span>
+      </a>
+      <a class="index-card" href="devices.html">
+        <strong>设备与密钥</strong>
+        <p>设备信任、SAS 验证、KeyPackage、one-time keys、to-device queue、push registration。</p>
+        <span class="status-pill ok">Devices</span>
+      </a>
+      <a class="index-card" href="verify-device.html">
+        <strong>设备验证</strong>
+        <p>QR/SAS 验证、新设备信任、MLS key package 和撤销影响说明。</p>
+        <span class="status-pill ok">Verify</span>
+      </a>
+      <a class="index-card" href="audit.html">
+        <strong>同步与审计</strong>
+        <p>Event Envelope、frontier、snapshot、state hash、authz explanation 和 Card move conflict。</p>
+        <span class="status-pill ok">Audit</span>
+      </a>
+      <a class="index-card" href="settings.html">
+        <strong>设置与发布健康</strong>
+        <p>本地账号配置、个人 View 偏好、主题语言、隐私和 release readiness。</p>
+        <span class="status-pill ok">Settings</span>
+      </a>
+      <a class="index-card" href="board-room-workbench.md">
+        <strong>页面规格与业务流程</strong>
+        <p>覆盖创建 Board/List/Card、拖拽并发、Card primary Room、外部协作 Room、消息编辑撤回、离线同步和通知跳转。</p>
+        <span class="status-pill ok">Spec</span>
+      </a>
+      <a class="index-card" href="README.md">
+        <strong>设计总览</strong>
+        <p>说明设计依据、协议边界和后续实现影响，包括从旧 channel 概念迁移到 Room/Message。</p>
+        <span class="status-pill ok">Notes</span>
+      </a>
     </section>
   </main>
 </body>

@@ -1,23 +1,30 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>设备验证 - yougen</title><link rel="stylesheet" href="styles.css"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设备验证 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
 <body>
-  <main class="auth-layout">
-    <section class="auth-card">
-      <h1>验证新设备</h1>
-      <p class="muted">用于跨设备信任、MLS group 加入、密钥备份和撤销。桌面显示 QR，移动端扫描；无法扫码时使用 SAS。</p>
-      <div class="grid two">
-        <div class="panel flat"><h3>QR 验证</h3><div class="qr"></div><p class="muted">在已信任设备上扫描。</p></div>
-        <div class="panel flat"><h3>SAS 短码</h3><h1>742 918</h1><p class="muted">两个设备显示一致后确认。</p></div>
+  <main class="auth-page">
+    <section class="auth-main">
+      <div>
+        <div class="eyebrow">device trust</div>
+        <h1>验证新设备</h1>
+        <p>用于跨设备信任、MLS Room 加入、密钥备份和撤销。验证设备不会自动改变任何 Card、Board 或 Room 权限。</p>
       </div>
-      <div class="table">
-        <div class="row"><div class="cell">Device</div><div class="cell">Trust</div><div class="cell">Key</div><div class="cell">Action</div></div>
-        <div class="row"><div class="cell">dev_yougen</div><div class="cell"><span class="pill green">current</span></div><div class="cell">ed25519</div><div class="cell">Keep</div></div>
-        <div class="row"><div class="cell">ios_alice</div><div class="cell"><span class="pill amber">pending</span></div><div class="cell">mls key package</div><div class="cell">Verify</div></div>
+      <div class="panel-grid">
+        <div class="page-panel"><h2>QR 验证</h2><div class="metric-tile"><span>QR payload</span><strong>cx:device:verify</strong></div><p>在已信任设备上扫描。</p></div>
+        <div class="page-panel"><h2>SAS 短码</h2><div class="metric-tile"><span>Compare</span><strong>742 918</strong></div><p>两个设备显示一致后确认。</p></div>
       </div>
-      <div class="toolbar"><a class="btn" href="dashboard.html">完成</a><button class="btn danger">拒绝设备</button></div>
+      <div class="chip-row"><a class="button primary" href="devices.html">Trust device</a><button class="button">Reject</button></div>
     </section>
-    <section class="auth-visual"><div class="device-frame"><h2>安全影响</h2><p>验证后允许解密历史策略范围内的消息，并接收 Welcome / Commit。</p><span class="pill red">revocation must rotate epoch</span></div></section>
+    <section class="auth-side">
+      <h2>安全影响</h2>
+      <p>设备验证后可接收 Welcome / Commit 和允许策略范围内的历史密钥。撤销设备必须触发相关 E2EE Room epoch rotation 或 key withholding。</p>
+      <div class="record-card"><div class="record-head"><span>pending device</span><span>alice-iphone</span></div><strong>ed25519 fingerprint</strong><p>9f:21:4a:...:88</p></div>
+    </section>
   </main>
 </body>
 </html>

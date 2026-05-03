@@ -1,8 +1,60 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>设置与发布健康 - yougen</title><link rel="stylesheet" href="styles.css"></head>
-<body><div class="page-shell"><aside class="sidebar"><div class="brand"><strong>yougen</strong><span>Settings</span></div><div class="status-card"><div class="status-row"><span>Release</span><b>blocked</b></div><div class="status-row"><span>Storage</span><b>persisted</b></div></div><nav class="nav"><a href="dashboard.html">看板<span>全局</span></a><a href="space.html">Space<span>消息</span></a><a href="contacts.html">联系人<span>社交</span></a><a href="space-admin.html">Space 管理<span>成员</span></a><a href="directory.html">目录<span>发现</span></a><a href="devices.html">设备密钥<span>安全</span></a><a href="audit.html">审计<span>repo</span></a><a class="active" href="settings.html">设置<span>发布健康</span></a></nav><a class="btn" href="index.html">页面目录</a></aside>
-<main class="content"><section class="topbar"><div><h1>设置与发布健康</h1><p class="muted">服务器、账号、设备、存储、加密、CI、release blockers 应该集中展示。</p></div><span class="pill red">Not production-ready</span></section>
-<section class="grid two"><div class="panel"><h2>Client Settings</h2><div class="field"><label>Server URL</label><input value="https://serverx.example.com"></div><div class="field"><label>Account DID</label><input value="did:web:alice.example"></div><div class="field"><label>Device ID</label><input value="dev_yougen"></div><button class="btn primary">Save</button></div><div class="panel"><h2>Storage</h2><div class="table"><div class="row"><div class="cell">Item</div><div class="cell">Native</div><div class="cell">Web</div><div class="cell">Risk</div></div><div class="row"><div class="cell">Config</div><div class="cell">file</div><div class="cell">localStorage</div><div class="cell">encrypt later</div></div><div class="row"><div class="cell">Key material</div><div class="cell">secure store</div><div class="cell">WebCrypto</div><div class="cell">blocked</div></div></div></div></section>
-<section class="panel"><h2>Release Blockers</h2><div class="grid three"><div class="event"><h3>Production Auth</h3><p class="muted">DID proof, passkey/OIDC, token refresh, recovery.</p><span class="pill red">blocked</span></div><div class="event"><h3>Web Crypto Store</h3><p class="muted">No placeholder envelope for release.</p><span class="pill red">blocked</span></div><div class="event"><h3>Signed Builds</h3><p class="muted">Desktop/mobile signing, updater, telemetry.</p><span class="pill amber">pending</span></div></div></section>
-</main></div></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设置 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-frame">
+    <aside class="side-nav">
+      <div class="side-brand"><strong>yougen</strong><span>Settings</span></div>
+      <div class="nav-status"><div><span>Locale</span><b>zh-CN</b></div><div><span>Theme</span><b>system</b></div><div><span>Storage</span><b>local</b></div></div>
+      <nav class="nav-list">
+        <a href="dashboard.html">首页<span>home</span></a>
+        <a href="devices.html">Devices<span>keys</span></a>
+        <a href="notifications.html">Inbox<span>mute rules</span></a>
+        <a class="active" href="settings.html">Settings<span>client prefs</span></a>
+      </nav>
+      <a class="button" href="index.html">Design index</a>
+    </aside>
+    <main class="content-page">
+      <section class="page-head">
+        <div><h1>设置与发布健康</h1><p>设置页区分本地账号配置、actor-private preference、共享 Space policy 和 release readiness。个人偏好不得误写入 shared View。</p></div>
+        <div class="chip-row"><button class="button">Export diagnostics</button><button class="button primary">Save local prefs</button></div>
+      </section>
+      <section class="panel-grid">
+        <div class="page-panel">
+          <h2>Server and account</h2>
+          <div class="form-grid">
+            <label class="form-field"><span>Server URL</span><input value="http://127.0.0.1:8787"></label>
+            <label class="form-field"><span>Account DID</span><input value="did:web:alice.example"></label>
+            <label class="form-field"><span>Device ID</span><input value="alice-windows"></label>
+            <label class="form-field"><span>Default landing</span><select><option>Last board</option><option>Inbox</option><option>Dashboard</option></select></label>
+          </div>
+        </div>
+        <div class="page-panel">
+          <h2>Personal view preferences</h2>
+          <div class="chip-row"><span class="chip blue">compact cards</span><span class="chip">show room badge</span><span class="chip">hide archived</span><span class="chip green">local only</span></div>
+          <p>列折叠、密度、最近打开 tab 和临时 filter 写入 actor-private account data，不写 `cx.view.update`。</p>
+        </div>
+      </section>
+      <section class="page-panel">
+        <h2>Release readiness</h2>
+        <div class="table-card">
+          <div class="table-row"><div class="table-cell">Area</div><div class="table-cell">State</div><div class="table-cell">Risk</div><div class="table-cell">Next action</div></div>
+          <div class="table-row"><div class="table-cell">Board projection</div><div class="table-cell">designed</div><div class="table-cell">API integration pending</div><div class="table-cell">Implement AppView query</div></div>
+          <div class="table-row"><div class="table-cell">Room/Message</div><div class="table-cell">designed</div><div class="table-cell">old channel model remains</div><div class="table-cell">Migrate chat view</div></div>
+          <div class="table-row"><div class="table-cell">E2EE web</div><div class="table-cell">partial</div><div class="table-cell">key storage hardening</div><div class="table-cell">Audit IndexedDB storage</div></div>
+        </div>
+      </section>
+      <section class="panel-grid three">
+        <div class="page-panel"><h2>Theme</h2><div class="chip-row"><button class="button primary">System</button><button class="button">Light</button><button class="button">Dark</button></div></div>
+        <div class="page-panel"><h2>Language</h2><div class="chip-row"><button class="button primary">中文</button><button class="button">English</button><button class="button">RTL test</button></div></div>
+        <div class="page-panel"><h2>Privacy</h2><p>控制 plaintext exposure disclosure、push notification preview、diagnostic log redaction。</p></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

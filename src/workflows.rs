@@ -55,13 +55,6 @@ pub fn production_release_workflows() -> Vec<ProductWorkflow> {
             server_dependency: "Needs persisted device trust, cross-signing, SAS/QR verification, and revocation endpoints",
         },
         ProductWorkflow {
-            id: "social.contacts",
-            name: "Contacts and friends",
-            stage: WorkflowStage::Blocked,
-            client_surface: "Product panel basic contact request/list/accept/reject",
-            server_dependency: "Needs block, privacy-preserving lookup, notification routing, and abuse controls",
-        },
-        ProductWorkflow {
             id: "space.discovery",
             name: "Discover and resolve public spaces",
             stage: WorkflowStage::Supported,
@@ -131,11 +124,6 @@ mod tests {
             blocked
                 .iter()
                 .any(|workflow| workflow.id == "account.registration")
-        );
-        assert!(
-            blocked
-                .iter()
-                .any(|workflow| workflow.id == "social.contacts")
         );
         assert!(blocked.iter().any(|workflow| workflow.id == "space.create"));
         assert!(

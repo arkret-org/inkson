@@ -54,31 +54,32 @@ use crate::models::{
     AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
     AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
     AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse, BackfillResponse,
-    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactsResponse, DevLoginResponse,
+    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
     DeviceMessagesReceiveResponse, DeviceMessagesSendResponse, DeviceTrustResponse,
     DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
-    FederationOperationsResponse, FederationSpaceMembersResponse, FederationTransactionResponse,
-    FederationVerifyActorResponse, GetCommitResponse, GetOperationsResponse, HealthResponse,
-    IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
-    IdentityResolveResponse, IndexDescribeResponse, IndexEntityResponse, IndexInboxResponse,
-    IndexNotificationsResponse, IndexQueryResponse, IndexSearchResponse, IndexThreadResponse,
-    InvitesResponse, KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, ListCommitsResponse,
-    MimiConsentResponse, MimiGroupInfoResponse, MimiIdentifierQueryResponse,
-    MimiKeyMaterialResponse, MimiNotifyResponse, MimiProviderDirectoryResponse,
-    MimiProxyDownloadResponse, MimiReportAbuseResponse, MimiRoomUpdateResponse,
-    MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
-    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
-    OidcCallbackResponse, OkResponse, PasskeyChallengeResponse, PasskeyVerifyResponse,
-    PolicyCheckResponse, PolicyResponse, PushRegisterResponse, ReactionResponse, ReceiptResponse,
-    RedactMessageResponse, RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse,
-    ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse,
-    SearchSpacesResponse, SearchUsersResponse, SendMessageResponse, ServerDescription,
-    SnapshotHeadResponse, SpaceHierarchyResponse, SpaceInviteResponse, SpaceLeaveResponse,
-    SpaceLifecycleResponse, SpacePolicyResponse, SubmitCommitResponse, SubmitDidOperationResponse,
-    SyncDescribeResponse, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
-    TokenRefreshResponse, TypingResponse, UpdateSpaceResponse, VerifyDeviceResponse,
+    EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
+    FederationTransactionResponse, FederationVerifyActorResponse, GetCommitResponse,
+    GetOperationsResponse, HealthResponse, IceConfigResponse, IdentityDescribeResponse,
+    IdentityLogResponse, IdentityReceiptsResponse, IdentityResolveResponse, IndexDescribeResponse,
+    IndexEntityResponse, IndexInboxResponse, IndexNotificationsResponse, IndexQueryResponse,
+    IndexSearchResponse, IndexThreadResponse, InvitesResponse, KeysClaimResponse,
+    KeysQueryResponse, KeysUploadResponse, ListCommitsResponse, MimiConsentResponse,
+    MimiGroupInfoResponse, MimiIdentifierQueryResponse, MimiKeyMaterialResponse,
+    MimiNotifyResponse, MimiProviderDirectoryResponse, MimiProxyDownloadResponse,
+    MimiReportAbuseResponse, MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse,
+    MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
+    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
+    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
+    PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
+    RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse,
+    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
+    SendMessageResponse, ServerDescription, SnapshotHeadResponse, SpaceHierarchyResponse,
+    SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse,
+    SubmitCommitResponse, SubmitDidOperationResponse, SubmitEventResponse, SyncDescribeResponse,
+    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
+    UpdateSpaceResponse, VerifyDeviceResponse,
 };
-use crate::operation::uuid_v8;
+use crate::operation::{EventEnvelope, uuid_v8};
 
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
@@ -321,30 +322,6 @@ impl ContrixApi {
 
     pub async fn logout(&self) -> anyhow::Result<OkResponse> {
         self.post_json("api/v1/auth/logout", json!({})).await
-    }
-
-    pub async fn request_contact(
-        &self,
-        target: &str,
-    ) -> anyhow::Result<crate::models::ContactResponse> {
-        self.post_json("api/v1/contacts/request", json!({"target": target}))
-            .await
-    }
-
-    pub async fn respond_contact(
-        &self,
-        requester: &str,
-        action: &str,
-    ) -> anyhow::Result<crate::models::ContactResponse> {
-        self.post_json(
-            "api/v1/contacts/respond",
-            json!({"requester": requester, "action": action}),
-        )
-        .await
-    }
-
-    pub async fn list_contacts(&self) -> anyhow::Result<ContactsResponse> {
-        self.get_json("api/v1/contacts").await
     }
 
     pub async fn create_space(
@@ -834,18 +811,6 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn search_users(
-        &self,
-        query: &str,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchUsersResponse> {
-        let mut body = json!({"query": query, "limit": 20});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/directory/search-users", body).await
-    }
-
     // ── Space Management ────────────────────────────────────────────
 
     pub async fn update_space(
@@ -1165,11 +1130,33 @@ impl ContrixApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<SpaceHierarchyResponse> {
-        self.post_json(
-            "api/v1/index/space-hierarchy",
-            json!({"space_id": space_id}),
-        )
-        .await
+        self.index_space_hierarchy_with_options(space_id, Some(2), Some(false))
+            .await
+    }
+
+    pub async fn index_space_hierarchy_with_options(
+        &self,
+        space_id: &str,
+        depth: Option<u32>,
+        include_unconfirmed: Option<bool>,
+    ) -> anyhow::Result<SpaceHierarchyResponse> {
+        let mut url = self.endpoint("api/v1/index/space-hierarchy")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("space_id", space_id);
+            if let Some(depth) = depth {
+                query.append_pair("depth", &depth.to_string());
+            }
+            if let Some(include_unconfirmed) = include_unconfirmed {
+                query.append_pair(
+                    "include_unconfirmed",
+                    if include_unconfirmed { "true" } else { "false" },
+                );
+            }
+        }
+        let request = self.http.get(url);
+        self.send_json(self.prepare_request(request), Method::GET)
+            .await
     }
 
     // ── Federation ──────────────────────────────────────────────────
@@ -1445,6 +1432,15 @@ impl ContrixApi {
             json!({"did": did, "operation": operation}),
         )
         .await
+    }
+
+    pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResponse> {
+        self.get_json("api/v1/events/describe").await
+    }
+
+    pub async fn submit_event(&self, event: &EventEnvelope) -> anyhow::Result<SubmitEventResponse> {
+        self.post_json("api/v1/events/submit", json!({"event": event}))
+            .await
     }
 
     pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResponse> {

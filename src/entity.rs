@@ -362,18 +362,6 @@ pub enum RelationType {
     AssignedTo,
     /// Attachment.
     AttachedTo,
-    /// Social follow.
-    Follows,
-    /// Contact relationship.
-    Contact,
-    /// Circle membership.
-    CircleMember,
-    /// Social block.
-    BlocksSocial,
-    /// Repost/quote.
-    Reposts,
-    /// Like.
-    Likes,
     /// Custom relation type.
     Custom(String),
 }
@@ -387,12 +375,6 @@ impl RelationType {
             Self::Mentions => "mentions",
             Self::AssignedTo => "assigned_to",
             Self::AttachedTo => "attached_to",
-            Self::Follows => "follows",
-            Self::Contact => "contact",
-            Self::CircleMember => "circle_member",
-            Self::BlocksSocial => "blocks_social",
-            Self::Reposts => "reposts",
-            Self::Likes => "likes",
             Self::Custom(s) => s,
         }
     }

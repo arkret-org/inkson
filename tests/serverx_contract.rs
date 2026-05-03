@@ -1,3 +1,5 @@
+use reqwest::StatusCode;
+use serde_json::json;
 use yougen::{
     api::{
         decode_contrix_error, parse_directory_describe, parse_index_describe, parse_repo_describe,
@@ -5,8 +7,6 @@ use yougen::{
     },
     config::{ClientConfig, LocalConfigStore},
 };
-use reqwest::StatusCode;
-use serde_json::json;
 
 #[test]
 fn yougen_accepts_serverx_contract_payloads() {
@@ -74,14 +74,15 @@ fn yougen_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: yougen::models::IdentityResolveResponse = serde_json::from_value(json!({
-        "did_document": {"id": "did:web:alice.example"},
-        "key_log_head": null,
-        "seq": 0,
-        "receipts": [],
-        "method_evidence": {"mode": "development_local"}
-    }))
-    .unwrap();
+    let resolved_identity: yougen::models::IdentityResolveResponse =
+        serde_json::from_value(json!({
+            "did_document": {"id": "did:web:alice.example"},
+            "key_log_head": null,
+            "seq": 0,
+            "receipts": [],
+            "method_evidence": {"mode": "development_local"}
+        }))
+        .unwrap();
     assert_eq!(
         resolved_identity.did_document["id"],
         "did:web:alice.example"
@@ -333,6 +334,55 @@ fn yougen_accepts_serverx_contract_payloads() {
     );
     assert_eq!(error.errcode, "expected_head_mismatch");
     assert_eq!(error.error, "expected_head mismatch");
+}
+
+#[test]
+fn server_description_gates_event_envelope_write_plane() {
+    let events_ready = parse_server_description(json!({
+        "service_did": "did:web:soland.local",
+        "service_type": "principal_server",
+        "protocol_version": "1.0",
+        "supported_profiles": [
+            "cx.profile.core_event_store.v1",
+            "cx.profile.principal_server_events_api.v1"
+        ],
+        "supported_operations": [
+            "cx.events.describe",
+            "cx.events.submit",
+            "cx.sync.client_sync"
+        ],
+        "supported_features": ["events.submit", "sync.client_sync"]
+    }))
+    .unwrap();
+    assert!(events_ready.supports_event_envelope_write_plane());
+    assert!(
+        events_ready
+            .missing_event_envelope_write_requirements()
+            .is_empty()
+    );
+
+    let repo_only = parse_server_description(json!({
+        "service_did": "did:web:legacy.local",
+        "service_type": "principal_server",
+        "protocol_version": "1.0",
+        "supported_profiles": ["cx.profile.principal_server_repo_api.v1"],
+        "supported_operations": [
+            "cx.repo.describe",
+            "cx.repo.submit_commit",
+            "cx.sync.client_sync"
+        ],
+        "supported_features": ["repo.submit_commit", "sync.client_sync"]
+    }))
+    .unwrap();
+    assert!(!repo_only.supports_event_envelope_write_plane());
+    assert_eq!(
+        repo_only.missing_event_envelope_write_requirements(),
+        vec![
+            "cx.profile.core_event_store.v1",
+            "cx.events.describe",
+            "cx.events.submit"
+        ]
+    );
 }
 
 #[test]

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Card 点击详情 - yougen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-frame">
+    <aside class="side-nav">
+      <div class="side-brand"><strong>yougen</strong><span>Card detail</span></div>
+      <div class="nav-status"><div><span>Card</span><b>active</b></div><div><span>Room</span><b>review</b></div><div><span>Authz</span><b>allowed</b></div></div>
+      <nav class="nav-list">
+        <a href="dashboard.html">首页<span>home</span></a>
+        <a href="board-room-workbench.html">Board<span>board view</span></a>
+        <a class="active" href="card-detail.html">Card detail<span>clicked card</span></a>
+        <a href="room.html">Rooms<span>chat</span></a>
+        <a href="audit.html">Audit<span>event trace</span></a>
+      </nav>
+      <a class="button" href="index.html">Design index</a>
+    </aside>
+
+    <main class="content-page">
+      <section class="page-head">
+        <div><h1>点击 Card 后的显示</h1><p>Card 点击后不跳离 Board，而是打开右侧详情抽屉。用户能继续感知当前列位置，同时完成字段编辑、Room 聊天、活动和审计。</p></div>
+        <div class="chip-row"><a class="button" href="board-room-workbench.html">Back to board</a><button class="button primary">Save</button></div>
+      </section>
+
+      <section class="split-detail">
+        <div class="card-preview-board">
+          <div class="mini-list"><strong>Todo</strong><div class="mini-card">Draft launch checklist<span>Room 5</span></div><div class="mini-card">Prepare customer announcement<span>Locked room</span></div></div>
+          <div class="mini-list"><strong>Doing</strong><div class="mini-card active">Legal review for public beta<span>Selected · Review room · 4 unread</span></div><div class="mini-card">Finalize onboarding copy<span>pending move</span></div></div>
+          <div class="mini-list"><strong>Review</strong><div class="mini-card">Security sign-off<span>CAS conflict</span></div></div>
+        </div>
+
+        <aside class="detail-drawer">
+          <div class="record-head"><span>cx:card:01legal...</span><span class="chip green">active</span></div>
+          <h2>Legal review for public beta</h2>
+          <p>Review privacy language before public beta announcement. Card state remains separate from Room discussion.</p>
+
+          <div class="panel-grid">
+            <div class="metric-tile"><span>Status</span><strong>Doing</strong></div>
+            <div class="metric-tile"><span>Priority</span><strong>High</strong></div>
+            <div class="metric-tile"><span>Due</span><strong>Today</strong></div>
+            <div class="metric-tile"><span>Assignee</span><strong>Alice</strong></div>
+          </div>
+
+          <div class="page-panel">
+            <div class="record-head"><h2>Rooms</h2><button class="button compact">Link room</button></div>
+            <div class="room-item active"><strong>Review room</strong><span>primary_room · review · E2EE MLS · 4 unread</span></div>
+            <div class="room-item"><strong>Private decision</strong><span>locked lazy link · no title leak if not discoverable</span></div>
+            <div class="room-item"><strong>External counsel</strong><span>external · history_visibility=joined</span></div>
+          </div>
+
+          <div class="page-panel">
+            <h2>Chat preview</h2>
+            <div class="message"><div class="message-head"><strong>Alice</strong><span>09:41</span></div><p>@bob 请确认 privacy clause。</p></div>
+            <div class="form-field"><label>Reply in Review room</label><textarea placeholder="Write a message"></textarea></div>
+            <div class="chip-row"><button class="button">Attach</button><button class="button primary">Send</button></div>
+          </div>
+
+          <div class="page-panel">
+            <h2>Activity and audit</h2>
+            <div class="timeline-line"><strong>cx.card.move</strong><p>Doing -> Review was rejected as stale; current card remains in Doing.</p></div>
+            <div class="timeline-line"><strong>cx.card.link_room</strong><p>Review room linked with purpose=review; link does not grant Room access.</p></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
