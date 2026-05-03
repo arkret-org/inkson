@@ -713,10 +713,6 @@ fn resolve_oidc_client_id(
         return Ok(client.client_id.clone());
     }
 
-    if candidates.len() == 1 {
-        return Ok(candidates[0].client_id.clone());
-    }
-
     let available = candidates
         .iter()
         .map(|client| {
@@ -734,7 +730,7 @@ fn resolve_oidc_client_id(
         .join(" | ");
 
     anyhow::bail!(
-        "coauth topology did not expose a usable public authorization_code client for redirect_uri={redirect_uri}; available={available}"
+        "coauth topology did not expose a usable public authorization_code client whose registered redirect_uris contain redirect_uri={redirect_uri}; available={available}"
     )
 }
 
