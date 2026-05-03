@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 use crate::{
     api::ContrixApi,
     coauth::{
-        CoauthApi, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
+        CoauthApi, active_oidc_redirect_uri, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
         clear_persisted_oidc_scaffold, capture_current_browser_callback_url,
         persist_oidc_scaffold, restore_oidc_scaffold,
@@ -780,6 +780,7 @@ pub fn LoginPanel(
                                     let dev = device_id();
                                     let authorization_code = coauth_authorization_code();
                                     let code_verifier = coauth_code_verifier();
+                                    let redirect_uri = active_oidc_redirect_uri();
                                     let expected_state = coauth_expected_state();
                                     let imported_state = coauth_imported_state();
                                     let state_verified = coauth_state_verified();
@@ -817,6 +818,7 @@ pub fn LoginPanel(
                                                             .exchange_oidc_code(
                                                                 &authorization_code,
                                                                 &code_verifier,
+                                                                &redirect_uri,
                                                                 &actor,
                                                                 &dev,
                                                                 Some(&plan.principal_audience),

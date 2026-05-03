@@ -199,6 +199,7 @@ impl CoauthApi {
         &self,
         authorization_code: &str,
         code_verifier: &str,
+        redirect_uri: &str,
         login_hint: &str,
         device_id: &str,
         principal_audience: Option<&str>,
@@ -210,6 +211,7 @@ impl CoauthApi {
             json!({
                 "authorization_code": authorization_code,
                 "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
                 "login_hint": login_hint,
                 "device_id": device_id,
                 "principal_audience": principal_audience,
@@ -246,6 +248,10 @@ impl CoauthApi {
     fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
         Ok(self.base_url.join(path.trim_start_matches('/'))?)
     }
+}
+
+pub fn active_oidc_redirect_uri() -> String {
+    current_oidc_redirect_uri()
 }
 
 pub fn build_soland_session_grant_plan(
