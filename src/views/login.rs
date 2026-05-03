@@ -3,7 +3,16 @@ use std::collections::HashMap;
 use chrono::Utc;
 use dioxus::prelude::*;
 
-use crate::{api::ContrixApi, config::LocalConfigStore, views::helpers::persist_config};
+use crate::{
+    api::ContrixApi,
+    coauth::{
+        CoauthApi, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
+        build_oidc_scaffold_bundle, build_soland_session_grant_plan,
+        summarize_password_login_bridge,
+    },
+    config::LocalConfigStore,
+    views::helpers::persist_config,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SessionState {
@@ -71,6 +80,13 @@ pub fn LoginPanel(
     let mut session_state = use_signal(|| SessionState::Disconnected);
     let mut session_info = use_signal(|| String::new());
     let mut token_expiry = use_signal(|| String::new());
+    let mut auth_server_url = use_signal(move || base_url());
+    let mut coauth_status = use_signal(|| String::new());
+    let mut integration_plan_status = use_signal(|| String::new());
+    let mut coauth_authorization_code = use_signal(String::new);
+    let mut coauth_code_verifier = use_signal(String::new);
+    let mut coauth_username = use_signal(|| String::new());
+    let mut coauth_password = use_signal(|| String::new());
     let mut passkey_status = use_signal(|| String::new());
     let mut oidc_status = use_signal(|| String::new());
     let mut dev_login_status = use_signal(|| String::new());
@@ -171,7 +187,7 @@ pub fn LoginPanel(
             div { class: "event", "data-testid": "login-methods",
                 div { class: "event-head", span { "Login" } span { "choose method" } }
                 div { class: "muted",
-                    "Method: passkey requests a signed challenge, OIDC starts an external provider redirect, and dev login bootstraps a local session for testing."
+                    "Method: dev login still bootstraps a local session on the Principal Server. Production passkey and OIDC should originate from coauth, then hand a session grant to soland and the chime-backed push path."
                 }
                 div { class: "actions",
                     button {
@@ -308,6 +324,437 @@ pub fn LoginPanel(
                 }
                 if !dev_login_status().is_empty() {
                     div { class: "muted", "data-testid": "dev-login-status", "{dev_login_status}" }
+                }
+            }
+
+            div { class: "event", "data-testid": "production-auth-bridge",
+                div { class: "event-head", span { "Production auth bridge" } span { "coauth -> soland / chime" } }
+                div { class: "muted",
+                    "Production auth is a separate topology: coauth owns OIDC and account sessions, soland consumes short-lived grants, and chime registration needs the same grant context on push registration requests."
+                }
+                div { class: "workflow-form",
+                    label { "Auth Server URL" }
+                    input {
+                        "data-testid": "auth-server-url",
+                        "aria-label": "Auth Server URL",
+                        value: "{auth_server_url}",
+                        oninput: move |evt| auth_server_url.set(evt.value()),
+                    }
+                    label { "Coauth Username" }
+                    input {
+                        "data-testid": "coauth-username",
+                        value: "{coauth_username}",
+                        oninput: move |evt| coauth_username.set(evt.value()),
+                    }
+                    label { "Coauth Password" }
+                    input {
+                        r#type: "password",
+                        "data-testid": "coauth-password",
+                        value: "{coauth_password}",
+                        oninput: move |evt| coauth_password.set(evt.value()),
+                    }
+                    label { "OIDC Authorization Code" }
+                    input {
+                        "data-testid": "coauth-authorization-code",
+                        value: "{coauth_authorization_code}",
+                        oninput: move |evt| coauth_authorization_code.set(evt.value()),
+                    }
+                    label { "OIDC PKCE Code Verifier" }
+                    input {
+                        "data-testid": "coauth-code-verifier",
+                        value: "{coauth_code_verifier}",
+                        oninput: move |evt| coauth_code_verifier.set(evt.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "inspect-coauth-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(api) => match api.inspect_topology().await {
+                                                Ok(topology) => {
+                                                    let pkce = if topology.code_challenge_methods_supported.is_empty() {
+                                                        "none advertised".to_owned()
+                                                    } else {
+                                                        topology.code_challenge_methods_supported.join(", ")
+                                                    };
+                                                    coauth_status.set(format!(
+                                                        "issuer={} service_did={} service_type={} protocol={} identity_service_did={} authz={} token={} pkce={}",
+                                                        topology.issuer,
+                                                        topology.service_did.unwrap_or_else(|| "unknown".to_owned()),
+                                                        topology.service_type.unwrap_or_else(|| "unknown".to_owned()),
+                                                        topology.protocol_version.unwrap_or_else(|| "unknown".to_owned()),
+                                                        topology.identity_service_did.unwrap_or_else(|| "unknown".to_owned()),
+                                                        topology.authorization_endpoint,
+                                                        topology.token_endpoint.unwrap_or_else(|| "missing".to_owned()),
+                                                        pkce,
+                                                    ));
+                                                }
+                                                Err(error) => coauth_status.set(format!("coauth inspect failed: {error}")),
+                                            },
+                                            Err(error) => coauth_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Inspect Coauth"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "plan-production-auth-bridge-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    let actor = account_did();
+                                    let dev = device_id();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(api) => match api.inspect_topology().await {
+                                                Ok(topology) => {
+                                                    match (
+                                                        build_soland_session_grant_plan(&topology, &principal, &actor, &dev),
+                                                        build_chime_push_grant_plan(&principal, &dev),
+                                                    ) {
+                                                        (Ok(soland_plan), Ok(chime_plan)) => integration_plan_status.set(format!(
+                                                            "OIDC authorize preview:\n{}\n\nSoland principal URL: {}\nSoland audience: {}\nActor DID: {}\nDevice ID: {}\nToken endpoint: {}\n{}\n\nChime register scaffold:\nprincipal={}\naudience={}\ndevice_id={}\n{}\n{}",
+                                                            soland_plan.authorize_url_preview,
+                                                            soland_plan.principal_server_url,
+                                                            soland_plan.principal_audience,
+                                                            soland_plan.actor_did,
+                                                            soland_plan.device_id,
+                                                            soland_plan.token_endpoint.unwrap_or_else(|| "missing".to_owned()),
+                                                            soland_plan.todo,
+                                                            chime_plan.principal_server_url,
+                                                            chime_plan.principal_audience,
+                                                            chime_plan.device_id,
+                                                            chime_plan.register_request_preview,
+                                                            chime_plan.todo,
+                                                        )),
+                                                        (Err(error), _) => integration_plan_status.set(format!("soland bridge plan failed: {error}")),
+                                                        (_, Err(error)) => integration_plan_status.set(format!("chime bridge plan failed: {error}")),
+                                                    }
+                                                }
+                                                Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Plan Soland + Chime"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "plan-coauth-oidc-exchange-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    let actor = account_did();
+                                    let dev = device_id();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(api) => match api.inspect_topology().await {
+                                                Ok(topology) => match build_oidc_code_exchange_plan(&topology, &principal, &actor, &dev) {
+                                                    Ok(plan) => integration_plan_status.set(format!(
+                                                        "Authorize URL preview:\n{}\n\nToken endpoint: {}\nPrincipal URL: {}\nAudience: {}\nActor DID: {}\nDevice ID: {}\nExchange request preview:\n{}\n\n{}",
+                                                        plan.authorize_url_preview,
+                                                        plan.token_endpoint,
+                                                        plan.principal_server_url,
+                                                        plan.principal_audience,
+                                                        plan.actor_did,
+                                                        plan.device_id,
+                                                        plan.exchange_request_preview,
+                                                        plan.todo,
+                                                    )),
+                                                    Err(error) => integration_plan_status.set(format!("oidc code-exchange plan failed: {error}")),
+                                                },
+                                                Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Plan OIDC Exchange"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "prepare-oidc-browser-scaffold-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    let actor = account_did();
+                                    let dev = device_id();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(api) => match api.inspect_topology().await {
+                                                Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
+                                                    Ok(bundle) => {
+                                                        coauth_authorization_code.set(String::new());
+                                                        coauth_code_verifier.set(bundle.code_verifier.clone());
+                                                        integration_plan_status.set(format!(
+                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n\nPaste the returned authorization code into the field above, then run `OIDC Code + Push Bridge`.\n\n{}",
+                                                            bundle.authorize_url,
+                                                            bundle.callback_uri,
+                                                            bundle.principal_audience,
+                                                            bundle.state,
+                                                            bundle.nonce,
+                                                            bundle.code_verifier,
+                                                            bundle.code_challenge,
+                                                            bundle.todo,
+                                                        ));
+                                                    }
+                                                    Err(error) => integration_plan_status.set(format!("oidc browser scaffold failed: {error}")),
+                                                },
+                                                Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Prepare OIDC Browser Flow"
+                        }
+                        button {
+                            class: "primary",
+                            "data-testid": "bridge-oidc-code-push-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    let actor = account_did();
+                                    let dev = device_id();
+                                    let authorization_code = coauth_authorization_code();
+                                    let code_verifier = coauth_code_verifier();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(coauth) => match coauth.inspect_topology().await {
+                                                Ok(topology) => match build_oidc_code_exchange_plan(&topology, &principal, &actor, &dev) {
+                                                    Ok(plan) => match coauth
+                                                        .exchange_oidc_code(
+                                                            &authorization_code,
+                                                            &code_verifier,
+                                                            &actor,
+                                                            &dev,
+                                                            Some(&plan.principal_audience),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(login) => {
+                                                            if login.status != "success" {
+                                                                integration_plan_status.set(format!(
+                                                                    "coauth oidc exchange returned status={} error={}",
+                                                                    login.status,
+                                                                    login.error.unwrap_or_else(|| "unknown".to_owned()),
+                                                                ));
+                                                                return;
+                                                            }
+                                                            let Some(grant) = login.session_grant.as_ref() else {
+                                                                integration_plan_status.set("coauth oidc exchange succeeded but returned no session grant".to_owned());
+                                                                return;
+                                                            };
+                                                            let principal_target = grant
+                                                                .principal_server
+                                                                .as_ref()
+                                                                .map(|server| server.endpoint.clone())
+                                                                .unwrap_or_else(|| principal.clone());
+                                                            match ContrixApi::new(&principal_target) {
+                                                                Ok(api) => match api.exchange_session_grant(&grant.grant_jwt, &actor, &dev).await {
+                                                                    Ok(session) => {
+                                                                        let register_request = match crate::push::build_register_request_for_actor(&dev, Some(&actor)) {
+                                                                            Ok(request) => request,
+                                                                            Err(error) => {
+                                                                                integration_plan_status.set(format!("push register scaffold failed: {error}"));
+                                                                                return;
+                                                                            }
+                                                                        };
+                                                                        let register_request_preview = match serde_json::to_string_pretty(&register_request) {
+                                                                            Ok(preview) => preview,
+                                                                            Err(error) => {
+                                                                                integration_plan_status.set(format!("push register preview failed: {error}"));
+                                                                                return;
+                                                                            }
+                                                                        };
+                                                                        let api = api.with_bearer(session.access_token.clone());
+                                                                        match api.register_push_device_with_request(&register_request).await {
+                                                                            Ok(response) => {
+                                                                                token.set(session.access_token.clone());
+                                                                                persist_config(
+                                                                                    config_store,
+                                                                                    principal_target.clone(),
+                                                                                    actor.clone(),
+                                                                                    dev.clone(),
+                                                                                    session.access_token.clone(),
+                                                                                );
+                                                                                session_state.set(SessionState::Connected);
+                                                                                session_info.set(format!(
+                                                                                    "DID: {}, Device: {}",
+                                                                                    session.actor, session.device_id
+                                                                                ));
+                                                                                token_expiry.set(session.expires_at.clone());
+                                                                                status.set(format!(
+                                                                                    "Online: oidc-code scaffold bridge as {}",
+                                                                                    session.actor
+                                                                                ));
+                                                                                integration_plan_status.set(format!(
+                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                                    summarize_password_login_bridge(
+                                                                                        &login,
+                                                                                        response.registration_id.as_deref(),
+                                                                                        &register_request_preview,
+                                                                                    ),
+                                                                                    plan.authorize_url_preview,
+                                                                                    plan.token_endpoint,
+                                                                                    principal_target,
+                                                                                    session.expires_at,
+                                                                                    response.registration_id.as_deref().unwrap_or("missing"),
+                                                                                ));
+                                                                                on_login.call(());
+                                                                            }
+                                                                            Err(error) => integration_plan_status.set(format!(
+                                                                                "push register after oidc-code exchange failed: {error}\nrequest_preview:\n{}",
+                                                                                register_request_preview,
+                                                                            )),
+                                                                        }
+                                                                    }
+                                                                    Err(error) => integration_plan_status.set(format!(
+                                                                        "soland session-grant exchange after oidc-code scaffold failed: {error}"
+                                                                    )),
+                                                                },
+                                                                Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
+                                                            }
+                                                        }
+                                                        Err(error) => integration_plan_status.set(format!("coauth oidc exchange failed: {error}")),
+                                                    },
+                                                    Err(error) => integration_plan_status.set(format!("oidc code-exchange plan failed: {error}")),
+                                                },
+                                                Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "OIDC Code + Push Bridge"
+                        }
+                        button {
+                            class: "primary",
+                            "data-testid": "bridge-password-login-push-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    let actor = account_did();
+                                    let dev = device_id();
+                                    let username = coauth_username();
+                                    let password = coauth_password();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(coauth) => match coauth.password_login(&username, &password).await {
+                                                Ok(login) => {
+                                                    if login.status != "success" {
+                                                        integration_plan_status.set(format!(
+                                                            "coauth login returned status={} error={}",
+                                                            login.status,
+                                                            login.error.unwrap_or_else(|| "unknown".to_owned()),
+                                                        ));
+                                                        return;
+                                                    }
+                                                    let Some(grant) = login.session_grant.as_ref() else {
+                                                        integration_plan_status.set("coauth login succeeded but returned no session grant".to_owned());
+                                                        return;
+                                                    };
+                                                    let principal_target = grant
+                                                        .principal_server
+                                                        .as_ref()
+                                                        .map(|server| server.endpoint.clone())
+                                                        .unwrap_or_else(|| principal.clone());
+                                                    match ContrixApi::new(&principal_target) {
+                                                        Ok(api) => match api.exchange_session_grant(&grant.grant_jwt, &actor, &dev).await {
+                                                            Ok(session) => {
+                                                                let register_request = match crate::push::build_register_request_for_actor(&dev, Some(&actor)) {
+                                                                    Ok(request) => request,
+                                                                    Err(error) => {
+                                                                        integration_plan_status.set(format!("push register scaffold failed: {error}"));
+                                                                        return;
+                                                                    }
+                                                                };
+                                                                let register_request_preview = match serde_json::to_string_pretty(&register_request) {
+                                                                    Ok(preview) => preview,
+                                                                    Err(error) => {
+                                                                        integration_plan_status.set(format!("push register preview failed: {error}"));
+                                                                        return;
+                                                                    }
+                                                                };
+                                                                let api = api.with_bearer(session.access_token.clone());
+                                                                match api.register_push_device_with_request(&register_request).await {
+                                                                    Ok(response) => {
+                                                                        token.set(session.access_token.clone());
+                                                                        persist_config(
+                                                                            config_store,
+                                                                            principal_target.clone(),
+                                                                            actor.clone(),
+                                                                            dev.clone(),
+                                                                            session.access_token.clone(),
+                                                                        );
+                                                                        session_state.set(SessionState::Connected);
+                                                                        session_info.set(format!(
+                                                                            "DID: {}, Device: {}",
+                                                                            session.actor, session.device_id
+                                                                        ));
+                                                                        token_expiry.set(session.expires_at.clone());
+                                                                        status.set(format!(
+                                                                            "Online: session-grant bridge as {}",
+                                                                            session.actor
+                                                                        ));
+                                                                        integration_plan_status.set(format!(
+                                                                            "{}\n\nprincipal_target={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                            summarize_password_login_bridge(
+                                                                                &login,
+                                                                                response.registration_id.as_deref(),
+                                                                                &register_request_preview,
+                                                                            ),
+                                                                            principal_target,
+                                                                            session.expires_at,
+                                                                            response.registration_id.as_deref().unwrap_or("missing"),
+                                                                        ));
+                                                                        on_login.call(());
+                                                                    }
+                                                                    Err(error) => integration_plan_status.set(format!(
+                                                                        "push register after session-grant exchange failed: {error}\nrequest_preview:\n{}",
+                                                                        register_request_preview,
+                                                                    )),
+                                                                }
+                                                            }
+                                                            Err(error) => integration_plan_status.set(format!(
+                                                                "soland session-grant exchange failed: {error}"
+                                                            )),
+                                                        },
+                                                        Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
+                                                    }
+                                                }
+                                                Err(error) => integration_plan_status.set(format!("coauth password login failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Password Login + Push Bridge"
+                        }
+                    }
+                    if !coauth_status().is_empty() {
+                        div { class: "muted", "data-testid": "coauth-status", "{coauth_status}" }
+                    }
+                    if !integration_plan_status().is_empty() {
+                        pre { class: "muted", "data-testid": "production-auth-bridge-status", "{integration_plan_status}" }
+                    }
                 }
             }
 
