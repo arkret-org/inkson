@@ -395,12 +395,12 @@ pub mod cx_ops {
         space_id: &str,
         actor: &str,
         list_id: &str,
-        card_id: &str,
+        flow_id: &str,
         title: &str,
         rank: &str,
     ) -> OperationBuilder {
         // Legacy helper retained for compatibility. Canonically emit a flow create.
-        flow_create(space_id, actor, list_id, card_id, title, "card", rank)
+        flow_create(space_id, actor, list_id, flow_id, title, "card", rank)
     }
 
     pub fn flow_create(
@@ -426,7 +426,7 @@ pub mod cx_ops {
     pub fn card_move(
         space_id: &str,
         actor: &str,
-        card_id: &str,
+        flow_id: &str,
         from_list_id: &str,
         to_list_id: &str,
         rank: &str,
@@ -436,7 +436,7 @@ pub mod cx_ops {
         flow_move(
             space_id,
             actor,
-            card_id,
+            flow_id,
             from_list_id,
             to_list_id,
             rank,
@@ -467,13 +467,13 @@ pub mod cx_ops {
     pub fn card_reorder(
         space_id: &str,
         actor: &str,
-        card_id: &str,
+        flow_id: &str,
         list_id: &str,
         before: Option<&str>,
         after: Option<&str>,
     ) -> OperationBuilder {
         // Legacy helper retained for compatibility. Canonically emit a flow reorder.
-        flow_reorder(space_id, actor, card_id, list_id, before, after)
+        flow_reorder(space_id, actor, flow_id, list_id, before, after)
     }
 
     pub fn flow_reorder(
@@ -531,21 +531,21 @@ pub mod cx_ops {
     pub fn card_link_room(
         space_id: &str,
         actor: &str,
-        card_id: &str,
+        flow_id: &str,
         discussion_id: &str,
         primary: bool,
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.flow.branch.member")
-            .target_ref(card_id)
+            .target_ref(flow_id)
             .body(json!({
-                "flow_id": card_id,
+                "flow_id": flow_id,
                 "branch": "discussion",
                 "member_id": discussion_id,
                 "primary": primary,
             }))
     }
 
-pub fn room_create(
+    pub fn room_create(
         space_id: &str,
         actor: &str,
         flow_id: &str,
@@ -579,11 +579,11 @@ pub fn room_create(
         space_id: &str,
         actor: &str,
         list_id: &str,
-        card_id: &str,
+        flow_id: &str,
         title: &str,
         rank: &str,
     ) -> EventEnvelopeBuilder {
-        flow_create_event(space_id, actor, list_id, card_id, title, "card", rank)
+        flow_create_event(space_id, actor, list_id, flow_id, title, "card", rank)
     }
 
     pub fn flow_create_event(
@@ -618,13 +618,13 @@ pub fn room_create(
     pub fn card_move_event(
         space_id: &str,
         actor: &str,
-        card_id: &str,
+        flow_id: &str,
         from_list_id: &str,
         to_list_id: &str,
         rank: &str,
         frontier: Vec<String>,
     ) -> EventEnvelopeBuilder {
-        flow_move_event(space_id, actor, card_id, from_list_id, to_list_id, rank, frontier)
+        flow_move_event(space_id, actor, flow_id, from_list_id, to_list_id, rank, frontier)
     }
 
     pub fn flow_move_event(
@@ -651,11 +651,11 @@ pub fn room_create(
     pub fn card_link_room_event(
         space_id: &str,
         actor: &str,
-        card_id: &str,
+        flow_id: &str,
         discussion_id: &str,
         primary: bool,
     ) -> EventEnvelopeBuilder {
-        flow_branch_member_event(space_id, actor, card_id, "discussion", discussion_id, primary)
+        flow_branch_member_event(space_id, actor, flow_id, "discussion", discussion_id, primary)
     }
 
     pub fn flow_branch_member_event(

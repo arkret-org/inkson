@@ -191,6 +191,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-protocol-06");
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-content-08");
+  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("Discussion Policy");
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-room-policy-03");
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-kohbrok-mimi-identifiers-01");
 

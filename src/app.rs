@@ -530,7 +530,7 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
                 Link { class: "secondary", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
                 Link { class: "secondary", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
-                Link { class: "secondary", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Rooms" }
+                Link { class: "secondary", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Discussions" }
                 Link { class: "secondary", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
                 Link { class: "secondary", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
             }
@@ -689,7 +689,7 @@ pub fn RouterView() -> Element {
                         input {
                             "data-testid": "global-search-input",
                             value: "{global_query}",
-                            placeholder: "Search Spaces, Cards, Rooms, Actors",
+                            placeholder: "Search Spaces, Cards, Discussions, Actors",
                             oninput: move |event| global_query.set(event.value()),
                             onkeydown: move |event| {
                                 if event.key().to_string() == "Enter" && !global_query().trim().is_empty() {

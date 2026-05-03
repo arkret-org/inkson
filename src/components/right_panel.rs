@@ -352,7 +352,7 @@ fn hierarchy_children(response: &SpaceHierarchyResponse) -> Vec<HierarchyChild> 
     source
         .iter()
         .filter(|value| {
-            let id = value_string(value, &["space_id", "id", "child_space_id", "room_id"]);
+        let id = value_string(value, &["space_id", "id", "child_space_id"]);
             id.as_ref() != root_id.as_ref()
         })
         .enumerate()
@@ -362,7 +362,7 @@ fn hierarchy_children(response: &SpaceHierarchyResponse) -> Vec<HierarchyChild> 
 
 fn hierarchy_child_from_value(index: usize, value: &Value) -> HierarchyChild {
     let summary = value.get("summary");
-    let space_id = value_string(value, &["space_id", "id", "child_space_id", "room_id"])
+    let space_id = value_string(value, &["space_id", "id", "child_space_id"])
         .or_else(|| summary.and_then(|summary| value_string(summary, &["space_id", "id"])))
         .unwrap_or_else(|| format!("child-{index}"));
     let label = value_string(value, &["name", "title", "display_name"])

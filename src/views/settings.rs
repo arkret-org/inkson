@@ -266,7 +266,7 @@ pub fn SettingsPanel(
                     div { class: "metric-grid", "data-testid": "mimi-draft-pinning",
                         div { class: "metric", strong { "Protocol" } span { "draft-ietf-mimi-protocol-06" } }
                         div { class: "metric", strong { "Content" } span { "draft-ietf-mimi-content-08" } }
-                        div { class: "metric", strong { "Room Policy" } span { "draft-ietf-mimi-room-policy-03" } }
+                        div { class: "metric", strong { "Discussion Policy" } span { "draft-ietf-mimi-room-policy-03" } }
                         div { class: "metric", strong { "Identifiers" } span { "draft-kohbrok-mimi-identifiers-01" } }
                     }
                     div { class: "actions",
