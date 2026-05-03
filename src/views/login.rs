@@ -910,6 +910,23 @@ pub fn LoginPanel(
                                             Ok(coauth) => match coauth.inspect_topology().await {
                                                 Ok(topology) => match build_oidc_code_exchange_plan(&topology, &principal, &actor, &dev) {
                                                     Ok(plan) => {
+                                                        let issuer = topology.issuer.trim().to_owned();
+                                                        if issuer.is_empty() {
+                                                            integration_plan_status.set(
+                                                                "coauth inspect returned an empty issuer; refuse to continue the OIDC bridge until discovery is coherent".to_owned(),
+                                                            );
+                                                            return;
+                                                        }
+                                                        let Some(token_endpoint) = topology
+                                                            .token_endpoint
+                                                            .clone()
+                                                            .filter(|value| !value.trim().is_empty())
+                                                        else {
+                                                            integration_plan_status.set(
+                                                                "coauth inspect did not expose a token_endpoint; refuse to continue the OIDC bridge until upstream discovery is complete".to_owned(),
+                                                            );
+                                                            return;
+                                                        };
                                                         let returned_state = (!imported_state.trim().is_empty())
                                                             .then_some(imported_state.as_str());
                                                         let expected_state_param = (!expected_state
@@ -921,6 +938,8 @@ pub fn LoginPanel(
                                                                 &authorization_code,
                                                                 &code_verifier,
                                                                 &redirect_uri,
+                                                                &issuer,
+                                                                &token_endpoint,
                                                                 &actor,
                                                                 &dev,
                                                                 Some(&plan.principal_audience),
