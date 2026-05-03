@@ -384,6 +384,26 @@ pub fn extract_error_description_from_callback(
     }))
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
+    let window = web_sys::window()
+        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let href = window
+        .location()
+        .href()
+        .map_err(|error| anyhow::anyhow!("failed to read browser location: {error:?}"))?;
+    let parsed = Url::parse(&href)?;
+    if parsed.query().is_none() {
+        anyhow::bail!("current browser location does not contain callback query parameters");
+    }
+    Ok(href)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
+    anyhow::bail!("current browser callback capture is only available in wasm/web builds")
+}
+
 pub fn summarize_password_login_bridge(
     login: &CoauthLoginResponse,
     registration_id: Option<&str>,
