@@ -140,8 +140,11 @@ pub struct PersistedOidcScaffold {
     pub expected_state: String,
     pub code_verifier: String,
     pub auth_server_url: String,
+    #[serde(default)]
     pub principal_server_url: String,
+    #[serde(default)]
     pub principal_actor_did: String,
+    #[serde(default)]
     pub device_id: String,
     pub principal_audience: String,
     pub callback_uri: String,
@@ -220,6 +223,7 @@ impl CoauthApi {
                 "redirect_uri": redirect_uri,
                 "issuer": issuer,
                 "token_endpoint": token_endpoint,
+                "client_id": YOUGEN_OIDC_CLIENT_ID,
                 "login_hint": login_hint,
                 "device_id": device_id,
                 "principal_audience": principal_audience,
