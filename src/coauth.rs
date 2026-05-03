@@ -1,6 +1,6 @@
 use anyhow::Context;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use url::Url;
@@ -12,6 +12,7 @@ const YOUGEN_OIDC_REDIRECT_URI: &str = "urn:yougen:oauth:callback";
 const OIDC_STATE_PLACEHOLDER: &str = "TODO_STATE";
 const OIDC_NONCE_PLACEHOLDER: &str = "TODO_NONCE";
 const OIDC_CODE_CHALLENGE_PLACEHOLDER: &str = "TODO_PKCE_CODE_CHALLENGE";
+const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc.scaffold.v1";
 
 #[derive(Clone, Debug)]
 pub struct CoauthApi {
@@ -132,6 +133,15 @@ pub struct OidcScaffoldBundle {
     pub callback_uri: String,
     pub principal_audience: String,
     pub todo: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PersistedOidcScaffold {
+    pub expected_state: String,
+    pub code_verifier: String,
+    pub principal_audience: String,
+    pub callback_uri: String,
+    pub authorize_url: String,
 }
 
 impl CoauthApi {
@@ -402,6 +412,80 @@ pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
     anyhow::bail!("current browser callback capture is only available in wasm/web builds")
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn persist_oidc_scaffold(bundle: &OidcScaffoldBundle) -> anyhow::Result<()> {
+    let window = web_sys::window()
+        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let storage = window
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
+        .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))?;
+    let payload = PersistedOidcScaffold {
+        expected_state: bundle.state.clone(),
+        code_verifier: bundle.code_verifier.clone(),
+        principal_audience: bundle.principal_audience.clone(),
+        callback_uri: bundle.callback_uri.clone(),
+        authorize_url: bundle.authorize_url.clone(),
+    };
+    storage
+        .set_item(
+            OIDC_SCAFFOLD_STORAGE_KEY,
+            &serde_json::to_string(&payload)?,
+        )
+        .map_err(|error| anyhow::anyhow!("failed to persist OIDC scaffold: {error:?}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn persist_oidc_scaffold(_bundle: &OidcScaffoldBundle) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> {
+    let window = web_sys::window()
+        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let Some(storage) = window
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(payload) = storage
+        .get_item(OIDC_SCAFFOLD_STORAGE_KEY)
+        .map_err(|error| anyhow::anyhow!("failed to load OIDC scaffold: {error:?}"))?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::from_str(&payload)?))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> {
+    Ok(None)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
+    let window = web_sys::window()
+        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let Some(storage) = window
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
+    else {
+        return Ok(());
+    };
+    storage
+        .remove_item(OIDC_SCAFFOLD_STORAGE_KEY)
+        .map_err(|error| anyhow::anyhow!("failed to clear OIDC scaffold: {error:?}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
+    Ok(())
 }
 
 pub fn summarize_password_login_bridge(

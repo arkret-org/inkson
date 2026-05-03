@@ -8,7 +8,8 @@ use crate::{
     coauth::{
         CoauthApi, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
-        capture_current_browser_callback_url,
+        clear_persisted_oidc_scaffold, capture_current_browser_callback_url,
+        persist_oidc_scaffold, restore_oidc_scaffold,
         extract_authorization_code_from_callback, extract_state_from_callback,
         extract_error_description_from_callback, extract_error_from_callback,
         summarize_password_login_bridge,
@@ -387,6 +388,24 @@ pub fn LoginPanel(
                                     match capture_current_browser_callback_url() {
                                         Ok(callback_url) => {
                                             coauth_callback_url.set(callback_url.clone());
+                                            let mut expected_state = coauth_expected_state();
+                                            if expected_state.trim().is_empty()
+                                                || coauth_code_verifier().trim().is_empty()
+                                            {
+                                                if let Ok(Some(scaffold)) = restore_oidc_scaffold()
+                                                {
+                                                    if expected_state.trim().is_empty() {
+                                                        expected_state =
+                                                            scaffold.expected_state.clone();
+                                                        coauth_expected_state
+                                                            .set(expected_state.clone());
+                                                    }
+                                                    if coauth_code_verifier().trim().is_empty() {
+                                                        coauth_code_verifier
+                                                            .set(scaffold.code_verifier);
+                                                    }
+                                                }
+                                            }
                                             match extract_error_from_callback(&callback_url) {
                                                 Ok(Some(error_code)) => {
                                                     let error_description =
@@ -402,7 +421,6 @@ pub fn LoginPanel(
                                                     .ok()
                                                     .flatten()
                                                     .unwrap_or_default();
-                                                    let expected_state = coauth_expected_state();
                                                     coauth_authorization_code.set(String::new());
                                                     coauth_imported_state.set(returned_state.clone());
                                                     coauth_state_verified.set(false);
@@ -484,6 +502,22 @@ pub fn LoginPanel(
                             onclick: {
                                 move |_| {
                                     let callback_url = coauth_callback_url();
+                                    let mut expected_state = coauth_expected_state();
+                                    if expected_state.trim().is_empty()
+                                        || coauth_code_verifier().trim().is_empty()
+                                    {
+                                        if let Ok(Some(scaffold)) = restore_oidc_scaffold() {
+                                            if expected_state.trim().is_empty() {
+                                                expected_state = scaffold.expected_state.clone();
+                                                coauth_expected_state
+                                                    .set(expected_state.clone());
+                                            }
+                                            if coauth_code_verifier().trim().is_empty() {
+                                                coauth_code_verifier
+                                                    .set(scaffold.code_verifier);
+                                            }
+                                        }
+                                    }
                                     match extract_error_from_callback(&callback_url) {
                                         Ok(Some(error_code)) => {
                                             let error_description =
@@ -499,7 +533,6 @@ pub fn LoginPanel(
                                             .ok()
                                             .flatten()
                                             .unwrap_or_default();
-                                            let expected_state = coauth_expected_state();
                                             coauth_authorization_code.set(String::new());
                                             coauth_imported_state.set(returned_state.clone());
                                             coauth_state_verified.set(false);
@@ -702,6 +735,10 @@ pub fn LoginPanel(
                                             Ok(api) => match api.inspect_topology().await {
                                                 Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
                                                     Ok(bundle) => {
+                                                        let persistence_status = match persist_oidc_scaffold(&bundle) {
+                                                            Ok(()) => "browser scaffold persisted for callback recovery".to_owned(),
+                                                            Err(error) => format!("browser scaffold persistence unavailable: {error}"),
+                                                        };
                                                         coauth_authorization_code.set(String::new());
                                                         coauth_callback_url.set(String::new());
                                                         coauth_code_verifier.set(bundle.code_verifier.clone());
@@ -709,7 +746,7 @@ pub fn LoginPanel(
                                                         coauth_imported_state.set(String::new());
                                                         coauth_state_verified.set(false);
                                                         integration_plan_status.set(format!(
-                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n\nImport the returned callback URL next. The client will verify the callback state before allowing `OIDC Code + Push Bridge`.\n\n{}",
+                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n{}\n\nImport the returned callback URL next. The client will verify the callback state before allowing `OIDC Code + Push Bridge`.\n\n{}",
                                                             bundle.authorize_url,
                                                             bundle.callback_uri,
                                                             bundle.principal_audience,
@@ -717,6 +754,7 @@ pub fn LoginPanel(
                                                             bundle.nonce,
                                                             bundle.code_verifier,
                                                             bundle.code_challenge,
+                                                            persistence_status,
                                                             bundle.todo,
                                                         ));
                                                     }
@@ -825,6 +863,7 @@ pub fn LoginPanel(
                                                                         let api = api.with_bearer(session.access_token.clone());
                                                                         match api.register_push_device_with_request(&register_request).await {
                                                                             Ok(response) => {
+                                                                                let _ = clear_persisted_oidc_scaffold();
                                                                                 token.set(session.access_token.clone());
                                                                                 persist_config(
                                                                                     config_store,
