@@ -1028,6 +1028,62 @@ pub fn SettingsPanel(
                             },
                             "Advance Restore Ticket"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-executor",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_executor_status(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_executor_status:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore executor status failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Executor"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-enqueue-restore-executor",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                let actor = account_did();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_executor_enqueue(&ticket_id, json!({
+                                            "execution_mode": "scaffold_materialize",
+                                            "requested_by": actor,
+                                            "note": "queue restore materialization scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_executor_enqueue:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore executor enqueue failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Queue Restore Executor"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }
