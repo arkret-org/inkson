@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
-    api::{ContrixApi, summarize_principal_integration_manifest},
+    api::{ApiClient, ContrixApi, summarize_principal_integration_manifest},
     coauth::{CoauthApi, summarize_coauth_integration_manifest, summarize_coauth_recovery_bridge},
     config::LocalConfigStore,
     i18n::Locale,
@@ -39,6 +39,10 @@ pub fn SettingsPanel(
     status: Signal<String>,
     push_ready: bool,
 ) -> Element {
+    // Auth Server URL defaults to principal `base_url`; if the deployment uses a separate
+    // Auth/SSO Gateway, the principal scaffold (login flow) overrides this. For settings-level
+    // recovery bridge inspection we treat them as the same handle by default.
+    let auth_server_url = base_url;
     let mut active_section = use_signal(|| SettingsSection::Server);
     let mut presence_visible = use_signal(|| true);
     let mut read_receipts_visible = use_signal(|| true);
@@ -1539,7 +1543,15 @@ pub fn SettingsPanel(
                                 let principal = base_url();
                                 let ticket_id = format!("restore-ticket-{}", key_backup_id());
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_key_backup_restore_activity(&ticket_id).await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "restore activity scaffold:\n{}",
@@ -1559,7 +1571,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_recovery_live_snapshot().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "recovery live snapshot scaffold:\n{}",
@@ -1579,7 +1599,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_recovery_stack_bundle().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "recovery stack bundle scaffold:\n{}",
@@ -1599,7 +1627,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_recovery_discovery().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "recovery discovery scaffold:\n{}",
@@ -1619,7 +1655,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_recovery_readiness().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "recovery readiness scaffold:\n{}",
@@ -1976,7 +2020,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_key_backup_restore_state_durability().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "restore-state durability scaffold:\n{}",
@@ -1996,7 +2048,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.list_key_backup_restore_state_checkpoints().await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "restore-state checkpoints scaffold:\n{}",
@@ -2016,7 +2076,15 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let principal = base_url();
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.post_key_backup_restore_state_checkpoint(serde_json::json!({
                                         "checkpoint_mode": "manual_scaffold",
                                         "reason": "yougen_operator_requested"
@@ -2040,7 +2108,15 @@ pub fn SettingsPanel(
                                 let principal = base_url();
                                 let ticket_id = format!("restore-ticket-{}", key_backup_id());
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_key_backup_restore_timeline(&ticket_id).await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "restore timeline scaffold:\n{}",
@@ -2061,7 +2137,15 @@ pub fn SettingsPanel(
                                 let principal = base_url();
                                 let ticket_id = format!("restore-ticket-{}", key_backup_id());
                                 spawn(async move {
-                                    let client = ApiClient::new(&principal);
+                                    let client = match ApiClient::new(&principal) {
+                                        Ok(c) => c,
+                                        Err(error) => {
+                                            recovery_contract_status.set(format!(
+                                                "principal API init failed: {error}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                     match client.get_key_backup_restore_audit_feed(&ticket_id).await {
                                         Ok(response) => recovery_contract_status.set(format!(
                                             "restore audit-feed scaffold:\n{}",

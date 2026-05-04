@@ -1054,6 +1054,18 @@ pub fn RouterView() -> Element {
                             token,
                         }
                     },
+                    Route::Recovery => rsx! {
+                        crate::views::recovery::RecoveryPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    Route::Applets => rsx! {
+                        crate::views::applets::AppletsPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
                 }
             }
 

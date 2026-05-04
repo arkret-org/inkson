@@ -102,6 +102,24 @@ pub fn NotificationsPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
+            // Privacy / projection banner — claude-design desktop/inbox.html
+            // discovery/push-notifications.md + crypto-media/devices-and-auth.md §5
+            div { class: "event", "data-testid": "inbox-protocol-banner",
+                div { class: "event-head",
+                    span { "Inbox 是 projection" }
+                    span { "Push gateway 默认脱敏唤醒" }
+                }
+                div { class: "muted",
+                    "本面板的所有条目都从 Event / Flow / Message / Relation / capability 派生。Push 仅发送 background_sync_needed 唤醒，正文在本机解密。每次进入卡片或讨论前都会重新做 Card 与 Room 两层独立的权限校验。"
+                }
+                div { class: "actions",
+                    span { class: "chip", "permission re-check" }
+                    span { class: "chip", "card vs room visibility" }
+                    span { class: "chip", "conflict pivot" }
+                    span { class: "chip", "push redacted" }
+                }
+            }
+
             div { class: "event", role: "status", "aria-live": "polite",
                 div { class: "event-head",
                     span { "Notifications" }

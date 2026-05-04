@@ -155,6 +155,19 @@ pub fn KanbanPanel(
                         span { class: state.class_name(), "{state.label()}" }
                     }
                 }
+                // Multi-renderer switcher — claude-design desktop/board.html
+                // models/views.md §4: View.kind = collection|timeline|graph|document|composite
+                // 当前 board 是 View{kind="collection", renderer="board"}，可切到 list/table/calendar/timeline
+                div { class: "actions", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
+                    span { class: "muted", "View renderer:" }
+                    span { class: "badge blue", "data-testid": "renderer-board", role: "tab", "aria-selected": "true", "board" }
+                    span { class: "badge", "data-testid": "renderer-list", role: "tab", "list" }
+                    span { class: "badge", "data-testid": "renderer-table", role: "tab", "table" }
+                    span { class: "badge", "data-testid": "renderer-calendar", role: "tab", "calendar" }
+                    span { class: "badge", "data-testid": "renderer-timeline", role: "tab", "timeline" }
+                    span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
+                    span { class: "muted", "切换 renderer 写入 cx.view.update（不改变 Board/Flow/Relation）" }
+                }
                 div { class: "metric-grid", "data-testid": "board-projection-model",
                     div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
@@ -408,6 +421,73 @@ pub fn KanbanPanel(
                         }
                         span { class: card.state.class_name(), "{card.state.label()}" }
                     }
+                    // Branch tabs — current-model.md §3 (synthesis / discussion 双 branch)
+                    div { class: "actions", "data-testid": "card-branch-tabs", role: "tablist", "aria-label": "Flow branches",
+                        span { class: "muted", "Branch:" }
+                        span { class: "badge blue", role: "tab", "aria-selected": "true", "synthesis · primary" }
+                        span { class: "badge", role: "tab", "discussion" }
+                        span { class: "muted", "branch 默认继承 Flow / Space access；显式 override 才独立" }
+                    }
+                    // Fields grid — claude-design desktop/flow-detail.html
+                    div { class: "metric-grid", "data-testid": "card-fields",
+                        div { class: "metric",
+                            strong { "Assignee" }
+                            span { "{card.assignee}" }
+                            div { class: "muted", "cx.flow.update fields.assignee" }
+                        }
+                        div { class: "metric",
+                            strong { "Due" }
+                            span { "{card.due}" }
+                            div { class: "muted", "cx.flow.update fields.due_at" }
+                        }
+                        div { class: "metric",
+                            strong { "List position" }
+                            span { "rank-stable" }
+                            div { class: "muted", "cx.flow.move / cx.flow.reorder" }
+                        }
+                        div { class: "metric",
+                            strong { "Capability" }
+                            span { "read · write" }
+                            div { class: "muted", "discussion 写入需 branch-scoped grant" }
+                        }
+                    }
+                    // Card vs Room visibility — claude-design desktop/flow-detail.html
+                    // overview/current-model.md §6 (权限与成员边界) — 三条独立判定：
+                    //   1. 能看 Flow synthesis ≠ 能读 discussion（只有有效 access policy
+                    //      继承或授予 discussion 读取时才能读）
+                    //   2. 能读 discussion ≠ 能写 Flow synthesis 字段
+                    //   3. branch-scoped membership ≠ Space membership
+                    div { class: "event", "data-testid": "card-vs-room-visibility",
+                        div { class: "event-head",
+                            span { "Card / Room visibility (independent)" }
+                            span { "current-model §6" }
+                        }
+                        div { class: "muted",
+                            "Flow synthesis（Card 字段）与 Flow discussion branch（Room 消息）的可见性必须独立判定，不可互推。Locked Room 只暴露存在的提示，不暴露标题、成员、计数。"
+                        }
+                        div { class: "metric-grid", "data-testid": "card-vs-room-axes",
+                            div { class: "metric",
+                                strong { "Card synthesis" }
+                                span { class: crate::components::write_state::WriteState::Accepted.class_name(), "readable + writable" }
+                                div { class: "muted", "你看见 Flow 字段不代表能看到 discussion" }
+                            }
+                            div { class: "metric",
+                                strong { "Primary Room" }
+                                span { class: "badge blue", "{card.primary_flow}" }
+                                div { class: "muted", "branch-scoped membership" }
+                            }
+                            div { class: "metric",
+                                strong { "External Visibility" }
+                                span { class: "badge", "{card.external_visibility}" }
+                                div { class: "muted", "history_visibility = {card.history_visibility}" }
+                            }
+                            div { class: "metric",
+                                strong { "Locked link policy" }
+                                span { class: "badge amber", if card.locked_flow.is_some() { "fail-closed" } else { "no locked link" } }
+                                div { class: "muted", "opaque ref + reason only" }
+                            }
+                        }
+                    }
                     div { class: "event", "data-testid": "card-discussion-boundary",
                         div { class: "event-head",
                             span { "Discussions" }
@@ -453,6 +533,18 @@ pub fn KanbanPanel(
                         }
                         div { class: "muted", "{card.activity_hint}" }
                         div { class: "muted", "{card.audit_hint}" }
+                    }
+                    // Audit trail excerpt — claude-design desktop/audit.html
+                    // sync/operations-sync.md (Event Envelope, prev_refs, auth_refs)
+                    div { class: "event", "data-testid": "card-audit-excerpt",
+                        div { class: "event-head",
+                            span { "Recent events on this card" }
+                            span { "actor event chain" }
+                        }
+                        div { class: "muted", "cx.flow.move · superseded(HLC older) → {card.id}" }
+                        div { class: "muted", "cx.flow.update · fields.status / fields.priority" }
+                        div { class: "muted", "cx.relation.create · contains list→flow（rank stable tie-break）" }
+                        div { class: "muted", "Auth refs 与 prev_refs 在 Audit 页可展开为完整 envelope。" }
                     }
                     div { class: "actions",
                         button {

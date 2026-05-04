@@ -450,7 +450,7 @@ impl CoauthApi {
     }
 
     pub async fn refresh_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/refresh", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/refresh", payload)
             .await
     }
 
@@ -459,12 +459,12 @@ impl CoauthApi {
     }
 
     pub async fn complete_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/complete", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/complete", payload)
             .await
     }
 
     pub async fn fail_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/fail", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/fail", payload)
             .await
     }
 
@@ -473,12 +473,12 @@ impl CoauthApi {
     }
 
     pub async fn retry_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/retry", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/retry", payload)
             .await
     }
 
     pub async fn invalidate_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/invalidate", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/invalidate", payload)
             .await
     }
 
@@ -491,12 +491,12 @@ impl CoauthApi {
     }
 
     pub async fn probe_principal_recovery_cache_upstream(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/upstream/probe", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/upstream/probe", payload)
             .await
     }
 
     pub async fn bind_principal_recovery_cache_upstream(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/upstream/bind", &payload)
+        self.post_json("api/v1/auth/recovery/principal-cache/upstream/bind", payload)
             .await
     }
 

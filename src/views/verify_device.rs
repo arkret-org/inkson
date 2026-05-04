@@ -114,19 +114,67 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                         if !sas_code().is_empty() {
                             div { class: "event", "data-testid": "sas-display",
                                 div { class: "space-title", "Short Authentication String" }
-                                div { class: "muted", "Compare these emojis with the other device:" }
-                                div { class: "space-title", "emoji-sequence-placeholder" }
+                                div { class: "muted", "在两台设备上 *肉眼比对* 同一组 emoji + 数字。" }
+                                // SAS emoji row — claude-design desktop/verify-device.html
+                                div { class: "actions", "data-testid": "sas-emoji-row",
+                                    span { class: "badge", "🐬 Dolphin" }
+                                    span { class: "badge", "🌳 Tree" }
+                                    span { class: "badge", "🚀 Rocket" }
+                                    span { class: "badge", "🎩 Hat" }
+                                    span { class: "badge", "🍯 Honey" }
+                                    span { class: "badge", "🦊 Fox" }
+                                    span { class: "badge", "🪐 Saturn" }
+                                }
+                                div { class: "space-title", "data-testid": "sas-digits", "3 7 5 2 — 9 1 0 4" }
                                 div { class: "muted", "{sas_code}" }
                                 div { class: "actions",
                                     button {
                                         class: "primary",
-                                        onclick: move |_| verify_status.set("SAS verified!".to_owned()),
+                                        "data-testid": "sas-match-button",
+                                        onclick: move |_| verify_status.set("SAS verified · 准备签发 cx.device.authorized + cx.device.cross_sign".to_owned()),
                                         "They Match"
                                     }
                                     button {
                                         class: "secondary",
-                                        onclick: move |_| verify_status.set("SAS mismatch - verification failed".to_owned()),
+                                        "data-testid": "sas-mismatch-button",
+                                        onclick: move |_| verify_status.set("SAS mismatch — abort. 不会签发任何 device authorization 或 mls welcome".to_owned()),
                                         "They Don't Match"
+                                    }
+                                }
+                                // Post-verification events panel
+                                // crypto-media/device-crypto-verification.md + devices-and-auth.md §1.2
+                                div { class: "event", "data-testid": "sas-post-verification",
+                                    div { class: "event-head",
+                                        span { "Verification 通过后写入" }
+                                        span { "actor event chain" }
+                                    }
+                                    div { class: "muted",
+                                        "SAS 只确认 device key 的人工信任。要让新设备成为长期 device、加入 MLS group、收到 E2EE 历史，下面这组 events 必须依序签名生效。"
+                                    }
+                                    div { class: "metric-grid",
+                                        div { class: "metric",
+                                            strong { "①" }
+                                            span { "cx.device.authorized" }
+                                            div { class: "muted", "把新设备公钥加入 device set" }
+                                        }
+                                        div { class: "metric",
+                                            strong { "②" }
+                                            span { "cx.device.cross_sign" }
+                                            div { class: "muted", "主设备签名 device key" }
+                                        }
+                                        div { class: "metric",
+                                            strong { "③" }
+                                            span { "cx.mls.welcome × N" }
+                                            div { class: "muted", "对每个 Space group 触发 epoch++" }
+                                        }
+                                        div { class: "metric",
+                                            strong { "④" }
+                                            span { "secret storage sync" }
+                                            div { class: "muted", "拉取 master key 加密 envelope" }
+                                        }
+                                    }
+                                    div { class: "muted",
+                                        "三件事分开：登录因子 → cx.session.grant；设备授权 → cx.device.authorized；设备验证 → cx.device.cross_sign。跳过 SAS 等于只拿到短期 session，无法读 E2EE 历史。"
                                     }
                                 }
                             }

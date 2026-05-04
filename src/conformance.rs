@@ -118,6 +118,89 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
         .collect()
 }
 
+/// Canonical event kinds that yougen claims to emit / consume.
+///
+/// 该列表用于：
+/// - `views/audit.rs` / `views/space_admin.rs` 的解释面板。
+/// - `claude-design/` 与 `_todos.md` 的 cross-reference。
+/// - 后续 `tests/` 端到端流程的 fixture 锚点。
+///
+/// 协议来源：`overview/current-model.md`、`models/object-model-core.md`、
+/// `models/conversation-model.md`、`crypto-media/devices-and-auth.md`、
+/// `authz/capabilities.md`、`sync/operations-sync.md`、
+/// `crypto-media/encryption-and-audit.md`、`crypto-media/webrtc-signaling.md`、
+/// `extensions/applet-integration.md`、`extensions/mimi-interop.md`。
+pub fn known_event_kinds() -> Vec<&'static str> {
+    vec![
+        // Space / boundary
+        "cx.space.create",
+        "cx.space.update",
+        "cx.space.archive",
+        "cx.space.policy.update",
+        "cx.space.discovery",
+        "cx.space.child",
+        "cx.space.parent",
+        // Flow & branches (current-model §3, conversation-model)
+        "cx.flow.create",
+        "cx.flow.update",
+        "cx.flow.move",
+        "cx.flow.reorder",
+        "cx.flow.convert",
+        "cx.flow.branch.enable",
+        "cx.flow.branch.disable",
+        "cx.flow.branch.set_primary",
+        "cx.flow.branch.member",
+        // Message & redaction (conversation-model)
+        "cx.message.create",
+        "cx.message.revise",
+        "cx.message.redact",
+        "cx.reaction.create",
+        // Morph & relation
+        "cx.morph.create",
+        "cx.morph.update",
+        "cx.relation.create",
+        "cx.relation.delete",
+        // View
+        "cx.view.create",
+        "cx.view.update",
+        "cx.view.delete",
+        // Capability & moderation
+        "cx.capability.grant",
+        "cx.capability.grant.request",
+        "cx.capability.revoke",
+        "cx.moderation.report",
+        "cx.moderation.quarantine",
+        "cx.moderation.appeal",
+        // Identity & devices (devices-and-auth, identity)
+        "cx.actor.profile.update",
+        "cx.session.grant",
+        "cx.device.authorized",
+        "cx.device.cross_sign",
+        "cx.device.revoked",
+        "cx.identity.recovery",
+        "cx.identity.recovery_attestation",
+        // Account lifecycle
+        "cx.account.suspend",
+        "cx.account.resume",
+        "cx.account.erase",
+        // MLS / E2EE
+        "cx.mls.welcome",
+        "cx.mls.commit",
+        "cx.mls.proposal",
+        // Snapshot / federation / sync
+        "cx.snapshot.publish",
+        "cx.federation.txn",
+        // Applet / agent / portal
+        "cx.applet.registration",
+        "cx.applet.transaction",
+        "cx.agent.session",
+        "cx.mimi.room_binding",
+        // Notification / read marker
+        "cx.notification.dismiss",
+        "cx.read_marker.update",
+    ]
+}
+
 pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadiness> {
     client_profile_declarations()
         .into_iter()
@@ -520,5 +603,36 @@ mod tests {
         assert_eq!(json, "\"public\"");
         let parsed: Discoverability = serde_json::from_str(&json).unwrap();
         assert_eq!(d, parsed);
+    }
+
+    #[test]
+    fn known_event_kinds_includes_branch_and_recovery() {
+        let kinds = known_event_kinds();
+        // current-model §3 — branch lifecycle events
+        assert!(kinds.contains(&"cx.flow.branch.enable"));
+        assert!(kinds.contains(&"cx.flow.branch.set_primary"));
+        // current-model §4 — board / list workflow container
+        assert!(kinds.contains(&"cx.flow.move"));
+        assert!(kinds.contains(&"cx.flow.reorder"));
+        // identity recovery (devices-and-auth §4)
+        assert!(kinds.contains(&"cx.identity.recovery"));
+        // device three-axes (devices-and-auth §1.2)
+        assert!(kinds.contains(&"cx.session.grant"));
+        assert!(kinds.contains(&"cx.device.authorized"));
+        assert!(kinds.contains(&"cx.device.cross_sign"));
+    }
+
+    #[test]
+    fn known_event_kinds_have_protocol_namespace() {
+        for kind in known_event_kinds() {
+            assert!(
+                kind.starts_with("cx."),
+                "event kind `{kind}` 必须使用 cx.* 命名空间"
+            );
+            assert!(
+                !kind.contains(' '),
+                "event kind `{kind}` 不应包含空格"
+            );
+        }
     }
 }

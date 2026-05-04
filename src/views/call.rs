@@ -34,6 +34,40 @@ pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
 
     rsx! {
         div { class: "timeline", "data-testid": "call-panel",
+            // Protocol model banner — claude-design desktop/call.html
+            // crypto-media/webrtc-signaling.md §2 (signaling Ephemeral; media path != trust path)
+            div { class: "event", "data-testid": "call-protocol-banner",
+                div { class: "event-head",
+                    span { "Realtime media model" }
+                    span { "signaling = ephemeral · summary = durable" }
+                }
+                div { class: "muted",
+                    "信令（offer/answer/ICE）通过 Sync Service Ephemeral channel 发送，不进入 Space history。通话结束后才写入 cx.morph.create morph_type=call 作为 durable record。媒体路径（TURN / SFU）不获得 Space 权限；MCU / 录制必须显式授权才能进入明文路径。"
+                }
+                div { class: "metric-grid", "data-testid": "call-protocol-metrics",
+                    div { class: "metric",
+                        strong { "Mode" }
+                        span { "SFU (default ≥3 peers)" }
+                        div { class: "muted", "p2p / mesh / sfu / mcu — 见 webrtc-signaling §3" }
+                    }
+                    div { class: "metric",
+                        strong { "Media E2EE" }
+                        span { "MLS-bound" }
+                        div { class: "muted", "SFU 转发密文；不持有 Space 权限" }
+                    }
+                    div { class: "metric",
+                        strong { "Recording" }
+                        span { "denied by default" }
+                        div { class: "muted", "需 capability=record_call + 全员同意" }
+                    }
+                    div { class: "metric",
+                        strong { "Membership" }
+                        span { "branch-scoped" }
+                        div { class: "muted", "由 Flow discussion branch member 集合决定" }
+                    }
+                }
+            }
+
             // Call initiation
             div { class: "event", "data-testid": "call-init",
                 div { class: "event-head", span { "Call" } span { match call_state() {
@@ -239,8 +273,35 @@ pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
             // Call ended summary
             if call_state() == CallState::Ended {
                 div { class: "event", "data-testid": "call-ended",
-                    div { class: "event-head", span { "Call Ended" } span { "" } }
+                    div { class: "event-head", span { "Call Ended" } span { "writing cx.morph.create" } }
                     div { class: "muted", "Duration: {call_duration()}s" }
+                    // Call Morph fields — claude-design desktop/call.html
+                    // crypto-media/webrtc-signaling.md §4 (Call Morph)
+                    div { class: "metric-grid", "data-testid": "call-morph-fields",
+                        div { class: "metric",
+                            strong { "morph_type" }
+                            span { "call" }
+                            div { class: "muted", "extensions/applet-integration not required" }
+                        }
+                        div { class: "metric",
+                            strong { "fields.mode" }
+                            span { "sfu" }
+                            div { class: "muted", "p2p / mesh / sfu / mcu" }
+                        }
+                        div { class: "metric",
+                            strong { "fields.state" }
+                            span { "ended" }
+                            div { class: "muted", "ringing → connecting → in_call → ended" }
+                        }
+                        div { class: "metric",
+                            strong { "fields.recording" }
+                            span { "none" }
+                            div { class: "muted", "录制需独立 capability + 全员授权" }
+                        }
+                    }
+                    div { class: "muted",
+                        "通话摘要 / 参会者 / 共享文档引用 都作为 morph fields 落到 Space history；信令（offer/answer/ICE/speaking_update）已丢弃，不进入审计链。"
+                    }
                     div { class: "actions",
                         button {
                             class: "primary",
@@ -251,6 +312,14 @@ pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
                                 status_msg.set(String::new());
                             },
                             "New Call"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "request-recording-button",
+                            onclick: move |_| {
+                                status_msg.set("recording 申请要求 capability=record_call + 全员显式同意".to_owned());
+                            },
+                            "Request recording grant"
                         }
                     }
                 }

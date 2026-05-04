@@ -553,7 +553,7 @@ pub mod cx_ops {
         history_visibility: &str,
     ) -> OperationBuilder {
         // Legacy helper retained for compatibility. Canonical room identity now uses flow id.
-        Self::discussion_create(space_id, actor, flow_id, name, history_visibility)
+        discussion_create(space_id, actor, flow_id, name, history_visibility)
     }
 
     pub fn discussion_create(
@@ -716,7 +716,7 @@ pub mod cx_ops {
         body: &str,
         revision_of: Option<&str>,
     ) -> EventEnvelopeBuilder {
-        Self::flow_message_event(
+        flow_message_event(
             space_id,
             actor,
             flow_id,

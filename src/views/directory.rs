@@ -104,6 +104,67 @@ pub fn DirectoryPanel(
                 }
             }
 
+            // Protocol invariant banner — claude-design desktop/directory.html
+            // discovery/discovery-directory.md §2-3
+            div { class: "event", "data-testid": "directory-three-axes-banner",
+                div { class: "event-head",
+                    span { "Discoverability ≠ Join Rule ≠ History Visibility" }
+                    span { "三件事独立判定" }
+                }
+                div { class: "muted",
+                    "能列出 ≠ 能加入；能加入 ≠ 能读历史。所有结果都会同时标注三维度，不可发现的 invite_only / secret Space 仅能通过精确 ID 或邀请链接解析。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Discoverability" }
+                        span {
+                            crate::components::PermissionPill {
+                                prefix: "disc".to_owned(),
+                                value: "listed".to_owned(),
+                                kind: "discoverability".to_owned(),
+                            }
+                        }
+                        div { class: "muted", "public / listed / restricted / unlisted / invite_only / secret" }
+                    }
+                    div { class: "metric",
+                        strong { "Join Rule" }
+                        span {
+                            crate::components::PermissionPill {
+                                prefix: "join".to_owned(),
+                                value: "invite_only".to_owned(),
+                                kind: "join_rule".to_owned(),
+                            }
+                        }
+                        div { class: "muted", "public / knock / restricted / invite_only" }
+                    }
+                    div { class: "metric",
+                        strong { "History Visibility" }
+                        span {
+                            crate::components::PermissionPill {
+                                prefix: "hist".to_owned(),
+                                value: "shared_history".to_owned(),
+                                kind: "history".to_owned(),
+                            }
+                        }
+                        div { class: "muted", "world_readable / shared_history / invited / joined" }
+                    }
+                }
+                div { class: "actions", "data-testid": "permission-pill-examples",
+                    span { class: "muted", "示例：" }
+                    crate::components::PermissionPillRow {
+                        discoverability: Some("public".to_owned()),
+                        join_rule: Some("knock".to_owned()),
+                        history_visibility: Some("world_readable".to_owned()),
+                    }
+                    span { class: "muted", "·" }
+                    crate::components::PermissionPillRow {
+                        discoverability: Some("invite_only".to_owned()),
+                        join_rule: Some("restricted".to_owned()),
+                        history_visibility: Some("invited".to_owned()),
+                    }
+                }
+            }
+
             // Search input
             div { class: "event",
                 div { class: "event-head",
@@ -823,6 +884,12 @@ fn ProtocolObjectResult(result: Value) -> Element {
                 span { class: "badge", "renderer {renderer}" }
                 span { class: "badge blue", "facets {facets}" }
                 span { class: object_state_class(discoverable.as_str()), "discoverable {discoverable}" }
+                if access.as_str() == "locked" || access.as_str() == "external" {
+                    crate::components::LazyLinkBadge {
+                        target_ref: None,
+                        reason: Some(access.clone()),
+                    }
+                }
             }
         }
     }

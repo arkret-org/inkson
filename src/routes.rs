@@ -84,6 +84,12 @@ pub enum Route {
 
     #[route("/call", crate::app::RouterView)]
     Call,
+
+    #[route("/recovery", crate::app::RouterView)]
+    Recovery,
+
+    #[route("/applets", crate::app::RouterView)]
+    Applets,
 }
 
 #[component]
@@ -146,6 +152,8 @@ impl Route {
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentSpace { .. } => View::Document,
             Route::Call => View::Call,
+            Route::Recovery => View::Recovery,
+            Route::Applets => View::Applets,
         }
     }
 
@@ -196,6 +204,8 @@ impl From<View> for Route {
             View::Notifications => Route::Notifications,
             View::Document => Route::Document,
             View::Call => Route::Call,
+            View::Recovery => Route::Recovery,
+            View::Applets => Route::Applets,
         }
     }
 }
@@ -226,6 +236,8 @@ mod tests {
             Route::Notifications,
             Route::Document,
             Route::Call,
+            Route::Recovery,
+            Route::Applets,
         ];
 
         for route in routes {

@@ -193,6 +193,104 @@ pub fn DashboardPanel(
                 }
             }
 
+            // Sync health banner — claude-design desktop/home.html, sync/client-sync §3
+            div { class: "event", "data-testid": "sync-health-banner", role: "status",
+                div { class: "event-head",
+                    span { "Sync 健康" }
+                    span { "frontier-aligned · push 脱敏唤醒" }
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Cursor" }
+                        span { "{sync_cursor}" }
+                        div { class: "muted", "本地同步指针；落后会触发 read-your-writes barrier" }
+                    }
+                    div { class: "metric",
+                        strong { "离线队列" }
+                        span { "{device_queue}" }
+                        div { class: "muted", "等待回放的本地写入" }
+                    }
+                    div { class: "metric",
+                        strong { "Repo head" }
+                        span { "{repo_state}" }
+                        div { class: "muted", "Principal Server reported" }
+                    }
+                }
+            }
+
+            // Recent Boards row — claude-design desktop/home.html
+            div { class: "event", "data-testid": "recent-boards",
+                div { class: "event-head",
+                    span { "Recent Boards" }
+                    span { "Space (kind=board) · derived" }
+                }
+                div { class: "muted",
+                    "看板是协议中的 Space (kind=board)；卡片位置由 cx.flow.move / cx.flow.reorder 收敛。"
+                }
+                div { class: "space-list",
+                    Link {
+                        class: "space-button",
+                        "data-testid": "recent-board-release",
+                        to: Route::Kanban,
+                        onclick: move |_| view.set(super::View::Kanban),
+                        div { class: "space-title", "Release Board" }
+                        div { class: "space-meta", "kind=board · 5 lists · 38 flows" }
+                        div { class: "muted", "renderer=board · view=v1.release" }
+                    }
+                    Link {
+                        class: "space-button",
+                        "data-testid": "recent-board-triage",
+                        to: Route::Kanban,
+                        onclick: move |_| view.set(super::View::Kanban),
+                        div { class: "space-title", "Triage Board" }
+                        div { class: "space-meta", "kind=board · 3 lists · 92 flows · 7 overdue" }
+                    }
+                    Link {
+                        class: "space-button",
+                        "data-testid": "recent-board-roadmap",
+                        to: Route::Kanban,
+                        onclick: move |_| view.set(super::View::Kanban),
+                        div { class: "space-title", "Q3 Roadmap" }
+                        div { class: "space-meta", "kind=board · timeline renderer" }
+                    }
+                }
+            }
+
+            // Pinned Inbox — claude-design desktop/inbox.html
+            div { class: "event", "data-testid": "pinned-inbox",
+                div { class: "event-head",
+                    span { "Inbox 摘要" }
+                    span { "@ mention · assignment · approval" }
+                }
+                div { class: "muted",
+                    "Notification 是 projection；push 默认脱敏唤醒。完整列表见 Inbox。"
+                }
+                div { class: "actions",
+                    Link {
+                        class: "secondary",
+                        "data-testid": "pinned-inbox-open",
+                        to: Route::Notifications,
+                        onclick: move |_| view.set(super::View::Notifications),
+                        "打开 Inbox"
+                    }
+                }
+                div { class: "event",
+                    div { class: "event-head", span { "@ mention" } span { "Review launch checklist · 🔒 E2EE" } }
+                    div { class: "space-title", "Mei 提到了你" }
+                    div { class: "muted", "branch=discussion · branch-scoped membership" }
+                }
+                div { class: "event",
+                    div { class: "event-head", span { "approval" } span { "1 / 2 admin" } }
+                    div { class: "space-title", "Researcher Agent 申请 read_flow" }
+                    div { class: "muted", "approval_constraint=2_of_3_admin" }
+                }
+                div { class: "event",
+                    div { class: "event-head", span { "conflict" } span { "cx.flow.move superseded" } }
+                    div { class: "space-title", "并发收敛 — Mei 的写入胜出" }
+                    div { class: "muted", "你的 cx.flow.move 保留在审计链，可恢复重写" }
+                }
+            }
+
             div { class: "event", "data-testid": "activity-feed",
                 div { class: "event-head", span { "Recent Activity" } span { "derived projection" } }
                 div { class: "event",

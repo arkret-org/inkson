@@ -518,6 +518,64 @@ pub fn DevicesPanel(
                 div { class: "event-head", span { "Encryption" } span { "dev mode" } }
                 div { "MLS local compose/decrypt helpers are active. Missing group state keeps ciphertext pending." }
             }
+
+            // Protocol invariant card — claude-design desktop/devices.html
+            // crypto-media/devices-and-auth.md §1.2
+            div { class: "event", "data-testid": "device-three-axes",
+                div { class: "event-head",
+                    span { "登录、设备授权、设备验证三件事分开" }
+                    span { "crypto-media/devices-and-auth §1.2" }
+                }
+                div { class: "muted",
+                    "Auth Service 验证因子（password / passkey / OIDC / SSO）只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized；SAS / QR 验证只确认 device key 的人工信任。三件事的组合决定是否能读 E2EE 历史。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "登录因子" }
+                        span { "→ cx.session.grant" }
+                        div { class: "muted", "ttl 分钟到小时；不持有 E2EE 历史密钥" }
+                    }
+                    div { class: "metric",
+                        strong { "设备授权" }
+                        span { "→ cx.device.authorized" }
+                        div { class: "muted", "唯一改变长期 device set 的事件" }
+                    }
+                    div { class: "metric",
+                        strong { "设备验证" }
+                        span { "→ cx.device.cross_sign" }
+                        div { class: "muted", "SAS / QR 后，对方成员才把它列入信任设备" }
+                    }
+                }
+            }
+
+            // KeyPackage / OTK / Fallback summary — claude-design desktop/devices.html
+            // crypto-media/encryption-and-audit.md (KeyPackage lifecycle)
+            div { class: "event", "data-testid": "device-keypackage-otk",
+                div { class: "event-head",
+                    span { "MLS KeyPackage / OTK / Fallback" }
+                    span { "per-Space epoch" }
+                }
+                div { class: "muted",
+                    "OTK 不足会阻塞新成员加入；fallback key 是临时回退。下表是按 Space 聚合的当前态摘要（来自 sync describe）。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Acme Engineering" }
+                        span { "epoch 12 · OTK 23 · fallback 1" }
+                        div { class: "muted", "MLS group ready" }
+                    }
+                    div { class: "metric",
+                        strong { "Launch Plan" }
+                        span { "epoch 4 · OTK 40 · fallback 1" }
+                        div { class: "muted", "MLS group ready" }
+                    }
+                    div { class: "metric",
+                        strong { "Acme × Beta Co." }
+                        span { "epoch 3 · OTK 9 · fallback 0" }
+                        div { class: "muted", "fallback 缺失，建议补 OTK" }
+                    }
+                }
+            }
         }
     }
 }

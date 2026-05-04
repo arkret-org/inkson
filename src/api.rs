@@ -206,6 +206,11 @@ use crate::models::{
 };
 use crate::operation::{EventEnvelope, uuid_v8};
 
+/// Backwards-compatible alias for `ContrixApi`. Some views (e.g. `views/settings.rs`)
+/// were written against `ApiClient` while this crate had two SDK eras; both names
+/// resolve to the same Principal Server HTTP client.
+pub type ApiClient = ContrixApi;
+
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
     base_url: Url,

@@ -684,6 +684,87 @@ pub fn SpaceAdminPanel(
                 }
             }
 
+            // Capability grant explanation — claude-design desktop/space-admin.html
+            // authz/capabilities.md (delegation, revocation, claim conditions)
+            div { class: "event", "data-testid": "grant-explanation",
+                div { class: "event-head",
+                    span { "Capability Grants" }
+                    span { "approval_constraint trail" }
+                }
+                div { class: "muted",
+                    "Grant 是 reducer 接受/拒绝写入的依据。每次决策都可追溯到签名 grant；高风险动作叠加 approval_constraint。Handle / 邮箱仅作展示，权限主体以 DID 为准。"
+                }
+                div { class: "metric-grid", "data-testid": "grant-explanation-rows",
+                    div { class: "metric",
+                        strong { "Mei (admin)" }
+                        span { "read · write · moderate · grant" }
+                        div { class: "muted", "did:plc:8djrfj4… · 永久 · auto-renew" }
+                    }
+                    div { class: "metric",
+                        strong { "Build-bot (applet)" }
+                        span { "write_message · reaction" }
+                        div { class: "muted", "did:web:bot.acme.example · 30d · approval=auto" }
+                    }
+                    div { class: "metric",
+                        strong { "Researcher Agent" }
+                        span { "read_flow (申请中)" }
+                        div { class: "muted", "approval_constraint = 2 of 3 admin · 1/3 已批准" }
+                    }
+                    div { class: "metric",
+                        strong { "Compliance Auditor (partner)" }
+                        span { "read_flow + write_morph(audit_report)" }
+                        div { class: "muted", "did:web:partner.example · weekly job · revocable" }
+                    }
+                }
+                div { class: "actions", "data-testid": "grant-decision-actions",
+                    button { class: "primary", "data-testid": "grant-approve-button", "批准 Researcher Agent" }
+                    button { class: "secondary", "data-testid": "grant-deny-button", "拒绝并签名 cx.capability.revoke" }
+                    button { class: "secondary", "data-testid": "grant-explain-button", "查看完整 grant trail (audit)" }
+                }
+                div { class: "muted",
+                    "Reducer 决策入口：cx.capability.grant / cx.capability.revoke / approval_constraint resolved。详细 trail 在 /audit。"
+                }
+            }
+
+            // Trust bundle import — claude-design desktop/space-admin.html
+            // sync/federation.md + sync/sovereign-deployment.md
+            div { class: "event", "data-testid": "trust-bundle-panel",
+                div { class: "event-head",
+                    span { "Trust Bundle (Federation)" }
+                    span { "受信 organization / service DID" }
+                }
+                div { class: "muted",
+                    "联邦 / 跨组织 / Controlled Collaboration Space 必须用显式 trust_bundle 列出可参与的 organization DID + service DID + trusted issuer。导入前请校验 method evidence、trust root 与 service delegation。"
+                }
+                div { class: "metric-grid", "data-testid": "trust-bundle-rows",
+                    div { class: "metric",
+                        strong { "did:web:partner.example" }
+                        span { "trust_bundle v3" }
+                        div { class: "muted", "active · federation_in" }
+                    }
+                    div { class: "metric",
+                        strong { "did:web:beta.example" }
+                        span { "trust_bundle v2 · pending" }
+                        div { class: "muted", "缺 attestation issuer; trust root 未确认" }
+                    }
+                    div { class: "metric",
+                        strong { "did:web:github-mirror.acme.example" }
+                        span { "portal scope only" }
+                        div { class: "muted", "applet · plaintext_visible(portal)" }
+                    }
+                    div { class: "metric",
+                        strong { "did:web:hsm.contrix.social" }
+                        span { "service · backup HSM" }
+                        div { class: "muted", "1 次/年配额; recovery only" }
+                    }
+                }
+                div { class: "actions", "data-testid": "trust-bundle-actions",
+                    button { class: "primary", "data-testid": "trust-bundle-import-button", "导入 trust_bundle" }
+                    button { class: "secondary", "data-testid": "trust-bundle-validate-button", "校验签名 + method evidence" }
+                    button { class: "secondary", "data-testid": "trust-bundle-revoke-button", "Revoke federation_in (partner)" }
+                }
+            }
+
             // Danger zone
             div { class: "event", "data-testid": "danger-zone",
                 div { class: "event-head", span { "Danger Zone" } span { "destructive actions" } }

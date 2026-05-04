@@ -1,4 +1,46 @@
+// =============================================================================
+// View modules — protocol / design-doc cross reference
+// =============================================================================
+//
+// 每个 view 都在 `claude-design/`（基于 `contrix-spec/zh/` 的 UI 设计稿）和协议
+// 规范之间承担一个固定的角色。引入新视图前请先核对：
+//
+// | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
+// |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
+// | login              | desktop/login.html, mobile/login  | crypto-media/devices-and-auth §1-3                     | cx.session.grant, cx.device.authorized                            |
+// | register           | desktop/onboarding.html (拆分中)  | identity/identity-did, identity-handles                | cx.actor.profile.update, cx.identity.recovery (initial)            |
+// | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
+// | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
+// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
+// | chat / forum       | desktop/discussion.html           | models/conversation-model, current-model §3            | cx.flow.branch.{enable,disable,set_primary}, cx.message.*          |
+// | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis branch                                 |
+// | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
+// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/{push-notifications,read-notification-schema}| (projection only)                                                  |
+// | devices            | desktop/devices.html, mobile      | crypto-media/devices-and-auth, device-crypto-verif.    | cx.device.{authorized,cross_sign,revoked}                          |
+// | verify_device      | desktop/verify-device.html        | crypto-media/device-crypto-verification                | cx.device.cross_sign, cx.mls.welcome                               |
+// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server,moderation}, sync/federation | cx.space.policy.update, cx.capability.{grant,revoke}        |
+// | audit              | desktop/audit.html                | sync/operations-sync, conformance/snapshot-schema      | (审计派生流；无独立写入)                                             |
+// | settings           | desktop/settings.html             | identity/progressive-disclosure, authz/account-lifecycle| cx.actor.profile.update, cx.account.suspend / lifecycle             |
+// | call               | desktop/call.html                 | crypto-media/webrtc-signaling                          | ephemeral signaling + cx.morph.create morph_type=call               |
+// | readiness          | (settings 内嵌)                   | overview/release-readiness, conformance/conformance-suite | (read-only)                                                      |
+// | agent_runs         | desktop/applets.html (Agent tab)  | extensions/agent-protocol-interop                      | applet/agent transactions + signed result events                   |
+// | memory_review      | (与 audit 联动)                   | conformance/state-resolution-conformance-vectors       | (本地 reducer 自检/调试)                                            |
+// | product            | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
+//
+// 待新增 view（见 `_todos.md`）：
+// - onboarding   → desktop/onboarding.html        (拆出独立步进；T12)
+// - recovery     → desktop/recovery.html          (Argon2id / SSS / Recovery Key；T10)
+// - applets      → desktop/applets.html           (Applet / Bot / Bridge / Agent 集中管理；T11)
+//
+// 共享准则（_todos.md §6）：
+// 1. 任何写入 UI 必须显式标注其 canonical event kind。
+// 2. discoverability / join_rule / history_visibility 三维度必须独立显示，不可互推。
+// 3. 跨 Space 引用默认 lazy_link，不展开标题 / 成员 / 计数。
+// 4. push 路径默认脱敏（background_sync_needed），正文在本地解密。
+// 5. Auth Service 只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized。
+
 pub mod agent_runs;
+pub mod applets;
 pub mod audit;
 pub mod call;
 pub mod chat;
@@ -14,6 +56,7 @@ pub mod memory_review;
 pub mod notifications;
 pub mod product;
 pub mod readiness;
+pub mod recovery;
 pub mod register;
 pub mod settings;
 pub mod space_admin;
@@ -42,6 +85,12 @@ pub enum View {
     Notifications,
     Document,
     Call,
+    /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
+    /// (claude-design `desktop/recovery.html`, crypto-media/devices-and-auth.md §4)
+    Recovery,
+    /// Applets / Bots / Bridges / Agents / Portal Spaces
+    /// (claude-design `desktop/applets.html`, extensions/applet-integration.md)
+    Applets,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

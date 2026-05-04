@@ -61,6 +61,92 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
 
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel",
+            // Projection origin banner — claude-design desktop/audit.html
+            // sync/operations-sync.md (Event Envelope is canonical; projections are derived)
+            div { class: "event", "data-testid": "projection-origin-banner",
+                div { class: "event-head",
+                    span { "Projection origin" }
+                    span { "signed Event → reducer → projection" }
+                }
+                div { class: "muted",
+                    "本页所有视图都源于 signed Event Envelope；projection 缓存丢失后必须能从 prev_refs / auth_refs 重新计算。Principal Server 不可伪造 Event；Capability cache 命中必须绑定 causal frontier 与 policy version，否则 fail closed 重新执行 authz。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "actor event chain" }
+                    span { class: "badge", "auth_refs" }
+                    span { class: "badge", "prev_refs" }
+                    span { class: "badge green", "reducer profile" }
+                    span { class: "badge amber", "fail-closed on cache miss" }
+                }
+            }
+
+            // Conflict trail explainer — claude-design desktop/audit.html
+            // models/views.md §10 + state-resolution-conformance-vectors
+            div { class: "event", "data-testid": "conflict-trail",
+                div { class: "event-head",
+                    span { "Conflict trail" }
+                    span { "concurrent cx.flow.move convergence" }
+                }
+                div { class: "muted",
+                    "并发 cx.flow.move 收敛规则：取更晚 HLC 胜出，被 superseded 的事件保留在审计链便于复审与重写。位置唯一性 (board_id, flow_id) 由 active position edge 去重。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Mei (winner)" }
+                        span { "→ Review · HLC 01970e589d21-0004" }
+                        div { class: "muted", "cx.flow.move accepted; new active position edge" }
+                    }
+                    div { class: "metric",
+                        strong { "Alice (你)" }
+                        span { "→ In Progress · superseded" }
+                        div { class: "muted", "保留在 actor event chain；可创建新 cx.flow.move 重写" }
+                    }
+                    div { class: "metric",
+                        strong { "Reducer resolve" }
+                        span { "list = Review" }
+                        div { class: "muted", "(board_id, flow_id) active edge dedupe" }
+                    }
+                }
+                div { class: "actions",
+                    button { class: "primary", "data-testid": "conflict-restore-button", "恢复 Alice 的写入（创建新 cx.flow.move）" }
+                    button { class: "secondary", "data-testid": "conflict-keep-button", "保留当前结果" }
+                }
+            }
+
+            // Authz explanation — claude-design desktop/audit.html
+            // authz/event-auth-state-resolution.md
+            div { class: "event", "data-testid": "authz-decisions",
+                div { class: "event-head",
+                    span { "Capability decisions" }
+                    span { "accept / pending / deny" }
+                }
+                div { class: "muted",
+                    "每次写入的 reducer 决策都附带 grant 引用与 constraint 求值结果。pending 表示叠加了 approval_constraint，仍在等待门槛达成。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "cx.flow.update (Mei)" }
+                        span { "accept" }
+                        div { class: "muted", "grant cx:grant:9a… · admin role" }
+                    }
+                    div { class: "metric",
+                        strong { "cx.message.create (α)" }
+                        span { "accept" }
+                        div { class: "muted", "grant cx:grant:5b… · approval=admin_auto" }
+                    }
+                    div { class: "metric",
+                        strong { "cx.capability.grant (α)" }
+                        span { "pending 1/2" }
+                        div { class: "muted", "approval_constraint=2_of_3_admin" }
+                    }
+                    div { class: "metric",
+                        strong { "cx.federation.txn (beta.example)" }
+                        span { "deny" }
+                        div { class: "muted", "trust_bundle missing" }
+                    }
+                }
+            }
+
             // Next batch display
             div { class: "event", "data-testid": "batch-display",
                 div { class: "event-head", span { "Sync Batch" } span { "cursor" } }
