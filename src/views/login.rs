@@ -4,7 +4,7 @@ use chrono::Utc;
 use dioxus::prelude::*;
 
 use crate::{
-    api::ContrixApi,
+    api::{ContrixApi, summarize_principal_integration_manifest},
     coauth::{
         CoauthApi, active_oidc_redirect_uri, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
@@ -16,7 +16,7 @@ use crate::{
         summarize_password_login_bridge,
     },
     config::LocalConfigStore,
-    push::summarize_push_gateway_bridge,
+    push::{summarize_push_gateway_bridge, summarize_push_gateway_integration},
     views::helpers::persist_config,
 };
 
@@ -1088,6 +1088,14 @@ pub fn LoginPanel(
                                                                             Ok(bridge) => summarize_push_gateway_bridge(&bridge),
                                                                             Err(error) => format!("bridge_lookup_failed={error}"),
                                                                         };
+                                                                        let push_gateway_integration_summary = match crate::push::describe_push_gateway_integration(&register_request.push_gateway).await {
+                                                                            Ok(manifest) => summarize_push_gateway_integration(&manifest),
+                                                                            Err(error) => format!("integration_lookup_failed={error}"),
+                                                                        };
+                                                                        let principal_integration_summary = match api.integration_describe().await {
+                                                                            Ok(manifest) => summarize_principal_integration_manifest(&manifest),
+                                                                            Err(error) => format!("integration_lookup_failed={error}"),
+                                                                        };
                                                                         let api = api.with_bearer(session.access_token.clone());
                                                                         match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                             Ok(response) => {
@@ -1111,7 +1119,7 @@ pub fn LoginPanel(
                                                                                     session.actor
                                                                                 ));
                                                                                 integration_plan_status.set(format!(
-                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\ncoauth_integration_manifest={}\nprincipal_session_grant_example={}\nprincipal_register_device_example={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\ncoauth_integration_manifest={}\nprincipal_integration_manifest={}\nprincipal_session_grant_example={}\nprincipal_register_device_example={}\npush_gateway_bridge={}\npush_gateway_integration_manifest={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
                                                                                     summarize_password_login_bridge(
                                                                                         &login,
                                                                                         response.registration_id.as_deref(),
@@ -1121,9 +1129,11 @@ pub fn LoginPanel(
                                                                                     plan.token_endpoint,
                                                                                     principal_target,
                                                                                     plan.integration_manifest_summary,
+                                                                                    principal_integration_summary,
                                                                                     serde_json::to_string_pretty(&bridge.examples.session_grant_exchange_request).unwrap_or_else(|_| "{}".to_owned()),
                                                                                     serde_json::to_string_pretty(&bridge.examples.register_device_request).unwrap_or_else(|_| "{}".to_owned()),
                                                                                     push_gateway_bridge_summary,
+                                                                                    push_gateway_integration_summary,
                                                                                     session.expires_at,
                                                                                     response.registration_id.as_deref().unwrap_or("missing"),
                                                                                 ));
@@ -1214,6 +1224,14 @@ pub fn LoginPanel(
                                                                     Ok(bridge) => summarize_push_gateway_bridge(&bridge),
                                                                     Err(error) => format!("bridge_lookup_failed={error}"),
                                                                 };
+                                                                let push_gateway_integration_summary = match crate::push::describe_push_gateway_integration(&register_request.push_gateway).await {
+                                                                    Ok(manifest) => summarize_push_gateway_integration(&manifest),
+                                                                    Err(error) => format!("integration_lookup_failed={error}"),
+                                                                };
+                                                                let principal_integration_summary = match api.integration_describe().await {
+                                                                    Ok(manifest) => summarize_principal_integration_manifest(&manifest),
+                                                                    Err(error) => format!("integration_lookup_failed={error}"),
+                                                                };
                                                                 let api = api.with_bearer(session.access_token.clone());
                                                                 match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                     Ok(response) => {
@@ -1236,14 +1254,16 @@ pub fn LoginPanel(
                                                                             session.actor
                                                                         ));
                                                                         integration_plan_status.set(format!(
-                                                                            "{}\n\nprincipal_target={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                            "{}\n\nprincipal_target={}\nprincipal_integration_manifest={}\npush_gateway_bridge={}\npush_gateway_integration_manifest={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
                                                                             summarize_password_login_bridge(
                                                                                 &login,
                                                                                 response.registration_id.as_deref(),
                                                                                 &register_request_preview,
                                                                             ),
                                                                             principal_target,
+                                                                            principal_integration_summary,
                                                                             push_gateway_bridge_summary,
+                                                                            push_gateway_integration_summary,
                                                                             session.expires_at,
                                                                             response.registration_id.as_deref().unwrap_or("missing"),
                                                                         ));

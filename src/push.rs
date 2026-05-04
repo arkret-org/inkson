@@ -1,8 +1,9 @@
 use chime::{
-    PushBridgeDescribeResponse, PushDeviceConfig, PushPreferences, PushRegistrationState,
+    PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
+    PushPreferences, PushRegistrationState,
     RegisterDeviceRequest, RegisterDeviceResponse, UnregisterDeviceRequest,
     build_register_device_request, build_registration_state, build_unregister_device_request,
-    push_bridge_describe_url,
+    push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
 
@@ -123,6 +124,18 @@ pub async fn describe_push_gateway_bridge(
     Ok(response.json().await?)
 }
 
+pub async fn describe_push_gateway_integration(
+    push_gateway_url: &str,
+) -> anyhow::Result<PushGatewayIntegrationDescribeResponse> {
+    let describe_url = push_integration_describe_url(push_gateway_url)?;
+    let response = reqwest::Client::new().get(&describe_url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("push gateway integration describe returned HTTP {status}");
+    }
+    Ok(response.json().await?)
+}
+
 pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeResponse) -> String {
     format!(
         "contract={} version={} notify_path={} providers={} auth_modes={} privacy_mode={} todos={}",
@@ -144,6 +157,55 @@ pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeResponse) -> Str
             "none".to_owned()
         } else {
             bridge.todos.join(" | ")
+        },
+    )
+}
+
+pub fn summarize_push_gateway_integration(
+    manifest: &PushGatewayIntegrationDescribeResponse,
+) -> String {
+    let dependencies = if manifest.dependencies.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                format!(
+                    "{}:{}@{}",
+                    dependency.service, dependency.purpose, dependency.discovery_path
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let surfaces = if manifest.surfaces.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .surfaces
+            .iter()
+            .map(|surface| {
+                format!(
+                    "{} {} {} [{}]",
+                    surface.method, surface.path, surface.contract, surface.stability
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    format!(
+        "contract={} version={} service={} kind={} dependencies={} surfaces={} todos={}",
+        manifest.contract,
+        manifest.version,
+        manifest.service,
+        manifest.service_kind,
+        dependencies,
+        surfaces,
+        if manifest.todos.is_empty() {
+            "none".to_owned()
+        } else {
+            manifest.todos.join(" | ")
         },
     )
 }

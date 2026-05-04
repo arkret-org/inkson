@@ -64,6 +64,92 @@ pub struct PrincipalAuthBridgeExamples {
     pub unregister_device_request: Value,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PrincipalIntegrationManifestResponse {
+    pub contract: String,
+    pub version: String,
+    pub service: String,
+    pub service_kind: String,
+    pub api_base_path: String,
+    pub describe_path: String,
+    #[serde(default)]
+    pub dependencies: Vec<PrincipalIntegrationDependency>,
+    #[serde(default)]
+    pub surfaces: Vec<PrincipalIntegrationSurface>,
+    #[serde(default)]
+    pub examples: Value,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PrincipalIntegrationDependency {
+    pub service: String,
+    pub purpose: String,
+    pub required_contract: String,
+    pub discovery_path: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PrincipalIntegrationSurface {
+    pub name: String,
+    pub method: String,
+    pub path: String,
+    pub contract: String,
+    pub stability: String,
+    pub todo: String,
+}
+
+pub fn summarize_principal_integration_manifest(
+    manifest: &PrincipalIntegrationManifestResponse,
+) -> String {
+    let dependencies = if manifest.dependencies.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                format!(
+                    "{}:{}@{}",
+                    dependency.service, dependency.purpose, dependency.discovery_path
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let surfaces = if manifest.surfaces.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .surfaces
+            .iter()
+            .map(|surface| {
+                format!(
+                    "{} {} {} [{}]",
+                    surface.method, surface.path, surface.contract, surface.stability
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    format!(
+        "contract={} version={} service={} kind={} dependencies={} surfaces={} todos={}",
+        manifest.contract,
+        manifest.version,
+        manifest.service,
+        manifest.service_kind,
+        dependencies,
+        surfaces,
+        if manifest.todos.is_empty() {
+            "none".to_owned()
+        } else {
+            manifest.todos.join(" | ")
+        },
+    )
+}
+
 impl CancellationToken {
     pub fn new() -> Self {
         Self {
@@ -326,6 +412,10 @@ impl ContrixApi {
 
     pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
         self.get_json("api/v1/auth/bridge/describe").await
+    }
+
+    pub async fn integration_describe(&self) -> anyhow::Result<PrincipalIntegrationManifestResponse> {
+        self.get_json("api/v1/integration/describe").await
     }
 
     pub async fn dev_login(
