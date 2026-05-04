@@ -1030,6 +1030,62 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-inspect-restore-approvals",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_approval_status(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_approval_status:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore approval status failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Approvals"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-submit-restore-approval",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                let actor = account_did();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_approval_submit(&ticket_id, json!({
+                                            "approver": actor,
+                                            "decision": "approve",
+                                            "note": "approval scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_approval_submit:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore approval submit failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Submit Restore Approval"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-inspect-restore-executor",
                             onclick: move |_| {
                                 let principal = base_url();
