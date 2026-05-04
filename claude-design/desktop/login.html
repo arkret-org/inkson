@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="auth-shell">
+    <aside class="auth-aside">
+      <div class="row gap-8">
+        <div style="width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,0.12);display:grid;place-items:center;font-weight:700;">C</div>
+        <strong>Contrix</strong>
+        <span class="pill" style="margin-left:auto;">v1.0 · full client</span>
+      </div>
+      <h2>身份是私钥<br>而不是用户名</h2>
+      <p>登录把你当前会话与 DID + Device 绑定。Auth Server 只是登录因子，权限来自于签名 Event 和 Space policy。</p>
+      <div class="stack-sm">
+        <div class="feature"><span class="num">1</span><span>Auth Service 验证因子（Passkey / OIDC / 已授权设备）。</span></div>
+        <div class="feature"><span class="num">2</span><span>签发短期 <code>cx.session.grant</code> 或长期 <code>cx.device.authorized</code>。</span></div>
+        <div class="feature"><span class="num">3</span><span>客户端用 device key 重放 sync frontier 与 KeyPackage。</span></div>
+      </div>
+      <div class="badge-row">
+        <span class="pill">did:plc</span>
+        <span class="pill">did:web</span>
+        <span class="pill">passkey</span>
+        <span class="pill">OIDC</span>
+        <span class="pill">QR pairing</span>
+      </div>
+    </aside>
+    <main class="auth-main">
+      <div class="auth-card">
+        <h1>登录到 Contrix</h1>
+        <p class="subtitle">使用主设备授权或企业身份。新用户请先完成 <a href="onboarding.html" style="color:var(--accent)">引导</a>。</p>
+
+        <div class="auth-tabs">
+          <button class="active">主设备扫码</button>
+          <button>Passkey</button>
+          <button>OIDC / SSO</button>
+          <button>开发者</button>
+        </div>
+
+        <div class="qr-block stack-sm">
+          <div class="qr"></div>
+          <div class="muted" style="font-size:12px;">在已登录的设备上扫一扫，或用 <code>cx://pair?ch=01J…</code> 打开。</div>
+          <div class="row gap-4" style="justify-content:center; font-size:11px; color:var(--text-3);">
+            <span class="dot-online"></span> 等待主设备 — 通道剩余 04:23
+          </div>
+        </div>
+
+        <div style="margin:18px 0;font-size:12px;color:var(--text-3);text-align:center;">— 或者 —</div>
+
+        <div class="stack-sm">
+          <button class="btn full">
+            <span>🪪</span> 使用 Passkey 登录
+          </button>
+          <button class="btn full">
+            <span>🏢</span> 用企业 SSO (acme.example) 登录
+          </button>
+          <button class="btn full ghost">
+            <span>🛠</span> Dev：使用 keystore.json 登录
+          </button>
+        </div>
+
+        <div class="callout proto" style="margin-top:18px;">
+          <span class="ico">⚙️</span>
+          <div>
+            <div style="font-weight:600;">Auth 不等于 Authorization</div>
+            <div class="dim" style="margin-top:2px;color:#a5b4fc;">Auth Service 只能签发 <code>cx.session.grant</code> / <code>cx.device.authorized</code>。读写 Space 仍由 capability + signed Event 决定。</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:24px; justify-content:space-between; font-size:12px;">
+          <a class="muted" href="recovery.html">忘记设备？走恢复流程 →</a>
+          <a class="muted" href="../index.html">返回设计稿</a>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Design — Contrix v1 客户端</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="gallery">
+    <h1>Claude Design — Contrix v1 客户端界面</h1>
+    <p class="lead">
+      基于 <code>contrix-spec/zh</code> 协议规范的客户端界面设计稿。覆盖 Identity / Space / Flow / Branch / View / Capability / Sync / E2EE / Applet / WebRTC 等所有协议平面，按桌面与移动两个版本组织。
+      详细的功能清单与业务流程说明见 <a href="README.md"><code>README.md</code></a>。
+    </p>
+
+    <h2>桌面版 / Desktop</h2>
+    <div class="cards">
+      <a class="card-link" href="desktop/login.html"><strong>登录</strong><p>Passkey / OIDC / 设备扫码 / dev login，绑定 DID + Device。</p><span class="kbd">desktop/login.html</span></a>
+      <a class="card-link" href="desktop/onboarding.html"><strong>新用户引导</strong><p>选 DID method、绑定 handle、生成首设备密钥、设置恢复策略。</p><span class="kbd">desktop/onboarding.html</span></a>
+      <a class="card-link" href="desktop/home.html"><strong>工作台首页</strong><p>Spaces、最近 Boards、Inbox 摘要、Sync 健康、离线队列。</p><span class="kbd">desktop/home.html</span></a>
+      <a class="card-link" href="desktop/space.html"><strong>Space 概览</strong><p>边界说明、boards / lists / flows、policy 摘要、成员预览。</p><span class="kbd">desktop/space.html</span></a>
+      <a class="card-link" href="desktop/board.html"><strong>看板 (Space kind=board)</strong><p>横向 List、Flow card、拖拽 → cx.flow.move、视图切换、conflict 提示。</p><span class="kbd">desktop/board.html</span></a>
+      <a class="card-link" href="desktop/flow-detail.html"><strong>Flow 详情 (synthesis)</strong><p>字段、正文、关系、附件、活动、agent 结果落点。</p><span class="kbd">desktop/flow-detail.html</span></a>
+      <a class="card-link" href="desktop/discussion.html"><strong>Flow 讨论 (discussion)</strong><p>Branch-scoped 成员、E2EE banner、消息、回复、redaction。</p><span class="kbd">desktop/discussion.html</span></a>
+      <a class="card-link" href="desktop/inbox.html"><strong>Inbox / Notifications</strong><p>Mention、assignment、approval、locked lazy link、push 偏好。</p><span class="kbd">desktop/inbox.html</span></a>
+      <a class="card-link" href="desktop/directory.html"><strong>发现 / Directory</strong><p>Spaces / Orgs / Actors / Applets，区分 listed / restricted / invite_only。</p><span class="kbd">desktop/directory.html</span></a>
+      <a class="card-link" href="desktop/devices.html"><strong>设备管理</strong><p>设备列表、密钥包、push 注册、撤销、配对入口。</p><span class="kbd">desktop/devices.html</span></a>
+      <a class="card-link" href="desktop/verify-device.html"><strong>设备验证</strong><p>SAS emoji + 数字、QR 通道、cross-signing 状态。</p><span class="kbd">desktop/verify-device.html</span></a>
+      <a class="card-link" href="desktop/recovery.html"><strong>密钥备份与恢复</strong><p>加密保险箱口令、社交恢复 (SSS)、recovery key、降级 PBKDF2。</p><span class="kbd">desktop/recovery.html</span></a>
+      <a class="card-link" href="desktop/space-admin.html"><strong>Space 管理</strong><p>Discoverability / Join Rule / History Visibility、capability、moderation、federation、trust bundle。</p><span class="kbd">desktop/space-admin.html</span></a>
+      <a class="card-link" href="desktop/audit.html"><strong>审计 / Sync</strong><p>Event Envelope、frontier、snapshot、authz 决策、conflict 收敛。</p><span class="kbd">desktop/audit.html</span></a>
+      <a class="card-link" href="desktop/applets.html"><strong>Applet / Agent</strong><p>Bot、Bridge、Ghost actor、Portal Space、Agent runtime 与 capability。</p><span class="kbd">desktop/applets.html</span></a>
+      <a class="card-link" href="desktop/call.html"><strong>WebRTC 通话</strong><p>SFU 多人会议、E2EE 标识、录制确认、TURN/媒体边界。</p><span class="kbd">desktop/call.html</span></a>
+      <a class="card-link" href="desktop/settings.html"><strong>设置</strong><p>Profile、隐私披露、通知、push、account lifecycle、release readiness。</p><span class="kbd">desktop/settings.html</span></a>
+    </div>
+
+    <h2>移动版 / Mobile</h2>
+    <div class="cards">
+      <a class="card-link" href="mobile/login.html"><strong>登录</strong><p>主设备扫码 + Passkey + 首次同步进度。</p><span class="kbd">mobile/login.html</span></a>
+      <a class="card-link" href="mobile/home.html"><strong>首页</strong><p>Inbox 概要、Spaces、recent flows、底部 5 项导航。</p><span class="kbd">mobile/home.html</span></a>
+      <a class="card-link" href="mobile/board.html"><strong>看板</strong><p>单列焦点 + 横向 swipe，拖拽变为长按 reorder。</p><span class="kbd">mobile/board.html</span></a>
+      <a class="card-link" href="mobile/flow-detail.html"><strong>Flow 详情</strong><p>顶部 sheet 风格、字段紧凑、底部行动条。</p><span class="kbd">mobile/flow-detail.html</span></a>
+      <a class="card-link" href="mobile/discussion.html"><strong>讨论 / 聊天</strong><p>消息流、attachment、@mention、E2EE 状态。</p><span class="kbd">mobile/discussion.html</span></a>
+      <a class="card-link" href="mobile/inbox.html"><strong>Inbox</strong><p>滑动归档 / 标记已读、push 脱敏说明。</p><span class="kbd">mobile/inbox.html</span></a>
+      <a class="card-link" href="mobile/devices.html"><strong>设备 / 密钥</strong><p>当前设备状态、SAS 验证、撤销丢失设备。</p><span class="kbd">mobile/devices.html</span></a>
+    </div>
+
+    <h2>业务流程速览</h2>
+    <div class="cards">
+      <a class="card-link" href="README.md#流程-a新用户首次使用onboarding--首次写入"><strong>A. Onboarding</strong><p>login → onboarding → recovery → home → space</p></a>
+      <a class="card-link" href="README.md#流程-b日常协作board--flow--discussion"><strong>B. 日常协作</strong><p>home → board → flow-detail → discussion → inbox</p></a>
+      <a class="card-link" href="README.md#流程-c跨组织协作--controlled-collaboration-space"><strong>C. 跨组织协作</strong><p>space-admin → directory → inbox → audit</p></a>
+      <a class="card-link" href="README.md#流程-d多设备--离线--冲突收敛"><strong>D. 多设备 / 冲突</strong><p>devices → verify-device → audit</p></a>
+      <a class="card-link" href="README.md#流程-e实时音视频会议"><strong>E. 实时会议</strong><p>flow-detail → call → audit</p></a>
+      <a class="card-link" href="README.md#流程-f-applet--agent--自动化"><strong>F. Applet / Agent</strong><p>applets → space-admin → flow-detail → audit</p></a>
+    </div>
+  </main>
+</body>
+</html>

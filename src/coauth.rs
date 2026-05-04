@@ -223,6 +223,10 @@ pub struct CoauthRecoveryDescribe {
     pub recovery_principal_cache_queue_path: String,
     pub recovery_principal_cache_complete_path: String,
     pub recovery_principal_cache_fail_path: String,
+    pub recovery_principal_cache_policy_path: String,
+    pub recovery_principal_cache_retry_path: String,
+    pub recovery_principal_cache_invalidate_path: String,
+    pub recovery_principal_cache_failures_path: String,
     pub key_backup_rest_base: String,
     pub key_backup_schema: String,
     pub device_message_schema: String,
@@ -457,6 +461,24 @@ impl CoauthApi {
     pub async fn fail_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
         self.post_json("api/v1/auth/recovery/principal-cache/fail", &payload)
             .await
+    }
+
+    pub async fn principal_recovery_cache_policy(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/auth/recovery/principal-cache/policy").await
+    }
+
+    pub async fn retry_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
+        self.post_json("api/v1/auth/recovery/principal-cache/retry", &payload)
+            .await
+    }
+
+    pub async fn invalidate_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
+        self.post_json("api/v1/auth/recovery/principal-cache/invalidate", &payload)
+            .await
+    }
+
+    pub async fn principal_recovery_cache_failures(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/auth/recovery/principal-cache/failures").await
     }
 
     pub async fn password_login(

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新用户引导 · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="auth-shell">
+    <aside class="auth-aside">
+      <div class="row gap-8">
+        <div style="width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,0.12);display:grid;place-items:center;font-weight:700;">C</div>
+        <strong>Contrix</strong>
+        <span class="pill" style="margin-left:auto;">step 2 / 4</span>
+      </div>
+      <h2>建立你的<br>可恢复身份</h2>
+      <p>每个设备都有自己的密钥；DID 是你跨设备的稳定主体。Handle 只是入口，密钥才是身份。</p>
+
+      <div class="stack-sm" style="margin-top:auto;">
+        <div class="feature"><span class="num">✓</span><span>选择登录方式 <span class="dim">— passkey / device QR / OIDC</span></span></div>
+        <div class="feature"><span class="num">●</span><span>选择 DID method 并绑定 handle</span></div>
+        <div class="feature"><span class="num">3</span><span>生成首设备 device key 与 secret storage 占位</span></div>
+        <div class="feature"><span class="num">4</span><span>配置恢复策略并完成首次同步</span></div>
+      </div>
+    </aside>
+
+    <main class="auth-main">
+      <div class="auth-card" style="max-width:440px;">
+        <h1>选择 DID method</h1>
+        <p class="subtitle">DID 是稳定主体引用。Handle 可迁移、密钥可轮换，DID 不变。</p>
+
+        <div class="stack-sm" style="margin-bottom:16px;">
+          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;border-color:var(--accent);background:var(--accent-soft);">
+            <input type="radio" name="m" checked>
+            <div>
+              <div class="row gap-8" style="margin-bottom:2px;"><strong>did:plc</strong><span class="pill accent">推荐</span></div>
+              <div class="muted" style="font-size:12px;">公共 PLC directory；支持 key rotation、recovery、可验证 history。适合没有自有域名的个人用户。</div>
+            </div>
+          </label>
+          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;">
+            <input type="radio" name="m">
+            <div>
+              <div class="row gap-8"><strong>did:web</strong><span class="pill muted">org / service</span></div>
+              <div class="muted" style="font-size:12px;">绑定到你拥有的域名。组织主体首选，<code>did:web:acme.example</code>。</div>
+            </div>
+          </label>
+          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;">
+            <input type="radio" name="m">
+            <div>
+              <div class="row gap-8"><strong>did:webvh</strong><span class="pill muted">verifiable history</span></div>
+              <div class="muted" style="font-size:12px;">高要求场景，DID log + witness。</div>
+            </div>
+          </label>
+          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;opacity:.6;">
+            <input type="radio" name="m" disabled>
+            <div>
+              <div class="row gap-8"><strong>did:key</strong> · <strong>did:pkh</strong><span class="pill muted">受限</span></div>
+              <div class="muted" style="font-size:12px;">仅用于临时主体、设备、邀请、钱包。不可作为长期默认身份。</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="field">
+          <label>Handle（人类可读入口）</label>
+          <div class="row gap-4">
+            <input class="input" value="alice" />
+            <span class="muted">@</span>
+            <select class="select" style="max-width:180px;">
+              <option>contrix.social</option>
+              <option>acme.example</option>
+              <option>自定义域名</option>
+            </select>
+          </div>
+          <div class="hint">Handle 可重新声明、迁移；本身不承担权限主键。</div>
+        </div>
+
+        <div class="surface pad" style="margin: 16px 0;">
+          <div class="spread" style="margin-bottom:8px;">
+            <strong style="font-size:13px;">将自动创建</strong>
+            <span class="pill success">已校验</span>
+          </div>
+          <div class="mono" style="font-size:11px;color:var(--text-2);line-height:1.7;">
+            principal_id = did:plc:7bzr2xrh4wkynjs8xlcd2ntm<br>
+            handle       = @alice@contrix.social<br>
+            device_key   = ed25519/Q4n…F9 (本机仅，未上传)<br>
+            session      = cx.session.grant ttl=15m
+          </div>
+        </div>
+
+        <div class="row gap-8">
+          <a class="btn ghost" href="login.html">← 返回</a>
+          <span class="grow"></span>
+          <a class="btn" href="login.html">跳过</a>
+          <a class="btn primary" href="recovery.html">下一步 · 配置恢复 →</a>
+        </div>
+
+        <div class="callout proto" style="margin-top:18px;">
+          <span class="ico">⚙️</span>
+          <div>
+            <div style="font-weight:600;">Auth Server 不能伪造 DID 控制权</div>
+            <div class="dim" style="margin-top:2px;color:#a5b4fc;">即使密码恢复成功，DID 控制密钥不会被服务器获得。后续读取 E2EE 历史仍需有效 device key 与 KeyPackage。</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

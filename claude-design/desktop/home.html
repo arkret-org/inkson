@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工作台 · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand"><span class="logo">C</span> Contrix</div>
+        <span class="pill accent" style="margin-left:auto;">v1</span>
+      </div>
+      <div class="sidebar-section">
+        <h4>Workspace</h4>
+        <div class="nav-item active"><span class="icon">🏠</span> 工作台</div>
+        <a class="nav-item" href="inbox.html"><span class="icon">📥</span> Inbox <span class="pill danger" style="margin-left:auto;">7</span></a>
+        <a class="nav-item" href="directory.html"><span class="icon">🧭</span> 发现</a>
+        <a class="nav-item" href="audit.html"><span class="icon">🪪</span> 审计 / Sync</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Spaces</h4>
+        <a class="nav-item" href="space.html"><span class="icon">🟪</span> Acme Engineering</a>
+        <a class="nav-item" href="space.html"><span class="icon">🟦</span> Launch Plan</a>
+        <a class="nav-item" href="space.html"><span class="icon">🟩</span> Personal</a>
+        <a class="nav-item" href="space.html"><span class="icon">🟧</span> Acme × Beta Co. <span class="pill warning" style="margin-left:auto;">外部</span></a>
+        <div class="nav-item dim"><span class="icon">＋</span> 新建 Space</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>系统</h4>
+        <a class="nav-item" href="devices.html"><span class="icon">📱</span> 设备</a>
+        <a class="nav-item" href="applets.html"><span class="icon">🤖</span> Applets / Agents</a>
+        <a class="nav-item" href="settings.html"><span class="icon">⚙️</span> 设置</a>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;">
+          <div style="font-weight:600;">Alice</div>
+          <div class="dim mono">did:plc:7bzr2x…</div>
+        </div>
+        <div class="dot-online" style="margin-left:auto;" title="frontier 已对齐"></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><strong>工作台</strong></div>
+        <div class="actions">
+          <div class="search-bar" style="width: 320px;">🔍 <span class="dim">搜索 Spaces / Flows / Messages…</span><span class="kbd-tag">⌘K</span></div>
+          <button class="btn">＋ 新建 Flow</button>
+          <a class="avatar" href="settings.html">A</a>
+        </div>
+      </header>
+
+      <div class="workspace-body">
+        <!-- Sync banner -->
+        <div class="callout info" style="margin-bottom:16px;">
+          <span class="ico">↻</span>
+          <div class="grow">
+            <strong>Sync 健康</strong>
+            <span class="dim"> · frontier <code>cx:event:01js0fr…0042</code> · snapshot 12 分钟前 · 离线队列 0 条</span>
+          </div>
+          <a class="btn sm ghost" href="audit.html">查看详情</a>
+        </div>
+
+        <!-- KPIs -->
+        <div class="metric-grid" style="margin-bottom:24px;">
+          <div class="metric"><div class="lbl">分配给我</div><div class="val">12</div><small class="muted">3 条逾期 · 2 待批准</small></div>
+          <div class="metric"><div class="lbl">待审阅</div><div class="val">5</div><small class="muted">2 个 capability 申请</small></div>
+          <div class="metric"><div class="lbl">未读消息</div><div class="val">28</div><small class="muted">4 处 @ 提及</small></div>
+          <div class="metric"><div class="lbl">设备 / Trust</div><div class="val">3 / 3</div><small class="success">所有设备已验证</small></div>
+        </div>
+
+        <h3 class="section-title">最近的 Spaces</h3>
+        <div style="display:grid;grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:24px;">
+          <a class="surface pad" href="space.html" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="row gap-8"><div class="avatar org">AE</div><strong>Acme Engineering</strong><span class="pill success" style="margin-left:auto;">E2EE</span></div>
+            <div class="muted" style="font-size:12px;">collaboration · 24 成员 · listed</div>
+            <div class="row gap-4"><span class="pill muted">Release Board</span><span class="pill muted">Triage</span><span class="pill muted">+3</span></div>
+          </a>
+          <a class="surface pad" href="space.html" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="row gap-8"><div class="avatar org">LP</div><strong>Launch Plan</strong><span class="pill accent" style="margin-left:auto;">project</span></div>
+            <div class="muted" style="font-size:12px;">project · 12 成员 · invite_only</div>
+            <div class="row gap-4"><span class="pill muted">Q3 Roadmap</span><span class="pill muted">Risk</span></div>
+          </a>
+          <a class="surface pad" href="space.html" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="row gap-8"><div class="avatar org">AB</div><strong>Acme × Beta Co.</strong><span class="pill warning" style="margin-left:auto;">外部</span></div>
+            <div class="muted" style="font-size:12px;">controlled · 7 成员 · restricted</div>
+            <div class="row gap-4"><span class="pill warning">trust_bundle pending</span></div>
+          </a>
+        </div>
+
+        <h3 class="section-title">分配给我的 Flow</h3>
+        <div class="surface" style="margin-bottom:24px;">
+          <table class="tbl">
+            <thead>
+              <tr><th>标题</th><th>Space</th><th>状态</th><th>到期</th><th>讨论</th><th>更新</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="flow-detail.html"><strong>Review launch checklist</strong></a> <span class="pill warning">overdue</span></td>
+                <td>Acme Engineering / Release Board</td>
+                <td><span class="pill info dot">review</span></td>
+                <td class="muted">昨天</td>
+                <td>🔒 12 条 · branch-scoped</td>
+                <td class="dim">2 分钟前</td>
+              </tr>
+              <tr>
+                <td><a href="flow-detail.html"><strong>支付重构 — 风控回调</strong></a></td>
+                <td>Acme Engineering / Backend</td>
+                <td><span class="pill warning dot">in_progress</span></td>
+                <td>05-09</td>
+                <td>4 条新</td>
+                <td class="dim">14:02</td>
+              </tr>
+              <tr>
+                <td><a href="flow-detail.html"><strong>合规：DID method allowlist</strong></a></td>
+                <td>Launch Plan</td>
+                <td><span class="pill muted dot">todo</span></td>
+                <td>05-15</td>
+                <td>未启用</td>
+                <td class="dim">11:48</td>
+              </tr>
+              <tr>
+                <td><a href="flow-detail.html"><strong>Beta Co. 共享文档</strong></a> <span class="pill accent">外部</span></td>
+                <td>Acme × Beta Co.</td>
+                <td><span class="pill info dot">review</span></td>
+                <td>05-04</td>
+                <td>locked · lazy_link</td>
+                <td class="dim">10:11</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:grid;grid-template-columns: 2fr 1fr; gap:16px;">
+          <div class="surface pad">
+            <div class="spread" style="margin-bottom:12px;">
+              <strong>近期活动</strong>
+              <span class="dim" style="font-size:12px;">来自所有可见 Space 的 reducer 派生</span>
+            </div>
+            <div class="activity-stream">
+              <div class="activity-item"><div class="avatar bot">B</div>
+                <div class="activity-body">
+                  <div><strong>Build-bot</strong> 把 <a href="flow-detail.html">支付重构 — 风控回调</a> 推到 <strong>Review</strong>。 <span class="pill muted">cx.flow.move</span></div>
+                  <div class="meta">15:42 · Acme Engineering</div>
+                </div>
+              </div>
+              <div class="activity-item"><div class="avatar">M</div>
+                <div class="activity-body">
+                  <div><strong>Mei</strong> 在 <a href="discussion.html">Review launch checklist</a> 的 discussion 提到了你。 <span class="pill accent">@you</span></div>
+                  <div class="meta">14:11 · branch-scoped E2EE</div>
+                </div>
+              </div>
+              <div class="activity-item"><div class="avatar agent">α</div>
+                <div class="activity-body">
+                  <div><strong>Researcher Agent</strong> 创建了 Flow <a href="flow-detail.html">竞品调研 Q2</a>。 <span class="pill muted">cx.flow.create</span></div>
+                  <div class="meta">10:55 · Launch Plan · capability=write_flow</div>
+                </div>
+              </div>
+              <div class="activity-item"><div class="avatar org">AB</div>
+                <div class="activity-body">
+                  <div>Beta Co. 的 <strong>did:web:beta.example</strong> 加入了受控外部 Space。 <span class="pill warning">需 trust_bundle 复核</span></div>
+                  <div class="meta">09:30 · Acme × Beta Co.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="surface pad">
+              <strong>设备 / E2EE</strong>
+              <div class="muted" style="font-size:12px;margin:6px 0 10px;">所有设备已 cross-sign</div>
+              <div class="stack-sm">
+                <div class="row gap-8"><span>💻</span><span class="grow">Mac · Studio</span><span class="pill success">本机</span></div>
+                <div class="row gap-8"><span>📱</span><span class="grow">iPhone 15</span><span class="pill success">已验证</span></div>
+                <div class="row gap-8"><span>🌐</span><span class="grow">Browser · Chrome</span><span class="pill warning">session 1h</span></div>
+              </div>
+              <a class="btn full sm" href="devices.html" style="margin-top:10px;">管理设备</a>
+            </div>
+            <div class="surface pad">
+              <strong>恢复保险箱</strong>
+              <div class="muted" style="font-size:12px;margin:6px 0;">Argon2id · xchacha20poly1305</div>
+              <div class="bar"><span style="width:80%"></span></div>
+              <small class="muted">已保护：DID 控制密钥、MLS secret storage、受控 backup metadata。</small>
+              <a class="btn full sm" href="recovery.html" style="margin-top:10px;">查看 / 升级</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+</body>
+</html>
