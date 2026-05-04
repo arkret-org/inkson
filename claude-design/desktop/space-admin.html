@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Space 管理 · Acme Engineering</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header"><div class="brand"><span class="logo">C</span> Contrix</div><span class="pill accent" style="margin-left:auto;">v1</span></div>
+      <div class="sidebar-section">
+        <h4>Space · Acme Engineering</h4>
+        <a class="nav-item" href="space.html"><span class="icon">▦</span> 概览</a>
+        <a class="nav-item" href="board.html"><span class="icon">▦</span> Boards</a>
+        <a class="nav-item" href="audit.html"><span class="icon">🪪</span> 审计</a>
+        <div class="nav-item active"><span class="icon">⚙️</span> 管理</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>管理面板</h4>
+        <div class="nav-item active" style="padding-left:24px;">Policy</div>
+        <div class="nav-item" style="padding-left:24px;">Members</div>
+        <div class="nav-item" style="padding-left:24px;">Capabilities</div>
+        <div class="nav-item" style="padding-left:24px;">Approvals <span class="pill warning" style="margin-left:auto;">2</span></div>
+        <div class="nav-item" style="padding-left:24px;">Moderation</div>
+        <div class="nav-item" style="padding-left:24px;">Federation</div>
+        <div class="nav-item" style="padding-left:24px;">Trust Bundle</div>
+        <div class="nav-item" style="padding-left:24px;">Schema / Profile</div>
+        <div class="nav-item" style="padding-left:24px;">Lifecycle</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">admin</div></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><a href="space.html">Acme Engineering</a><span class="sep">/</span><strong>管理</strong><span class="sep">·</span><span class="muted">Policy</span></div>
+        <div class="actions">
+          <span class="pill warning">policy_version 17 · uncommitted</span>
+          <button class="btn">查看 diff</button>
+          <button class="btn primary">签名 + 写入 cx.space.policy.update</button>
+        </div>
+      </header>
+
+      <div class="workspace-body">
+        <div class="callout proto" style="margin-bottom:16px;">
+          <span class="ico">⚙️</span>
+          <div>
+            <strong>Policy 是 reducer 的输入。</strong>
+            <div class="dim" style="margin-top:2px;color:#a5b4fc;">每次保存都生成一个签名 <code>cx.space.policy.update</code>，与 capability grant、history visibility 一同参与 state resolution。变更需 admin 签名，必要时叠加 approval_constraint。</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
+          <div class="surface pad">
+            <strong>Discoverability / Join Rule / History</strong>
+            <div class="muted" style="font-size:12px;">三件事独立生效。</div>
+            <div class="stack-sm" style="margin-top:10px;">
+              <div class="field">
+                <label>Discoverability</label>
+                <select class="select">
+                  <option>public</option>
+                  <option selected>listed</option>
+                  <option>restricted</option>
+                  <option>unlisted</option>
+                  <option>invite_only</option>
+                  <option>secret</option>
+                </select>
+                <div class="hint">listed = 仅在 Acme 组织目录与父 Space 中可见。</div>
+              </div>
+              <div class="field">
+                <label>Join Rule</label>
+                <select class="select">
+                  <option>public</option>
+                  <option>knock</option>
+                  <option>knock_restricted</option>
+                  <option selected>invite_only</option>
+                  <option>restricted</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>History Visibility</label>
+                <select class="select">
+                  <option>world_readable</option>
+                  <option selected>shared_history</option>
+                  <option>invited</option>
+                  <option>joined</option>
+                </select>
+                <div class="hint">shared_history = 历史成员可见所有时段。</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="surface pad">
+            <strong>Encryption / Plaintext Visibility</strong>
+            <div class="stack-sm" style="margin-top:10px;">
+              <div class="field">
+                <label>Encryption Profile</label>
+                <select class="select">
+                  <option selected>mls_rfc9420</option>
+                  <option>none</option>
+                </select>
+                <div class="hint">关闭加密会停止 MLS Welcome 与新 epoch；现有历史不变。</div>
+              </div>
+              <div class="field">
+                <label>plaintext_visible_services</label>
+                <div class="surface" style="padding:6px 8px;background:var(--surface);">
+                  <span class="dim" style="font-size:12px;">空（推荐）— 不允许任何受托服务看明文</span>
+                </div>
+                <div class="hint">如果加入，搜索 / inbox / 通知摘要 / embedding 服务必须列在这里。</div>
+              </div>
+              <div class="field">
+                <label>Federation</label>
+                <select class="select">
+                  <option>off</option>
+                  <option selected>allowlist</option>
+                  <option>open</option>
+                </select>
+                <div class="hint">允许的 Principal Server：<code>did:web:partner.example</code>, <code>did:web:beta.example</code>。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="section-title">成员 / Capability</h3>
+        <div class="surface" style="margin-bottom:16px;">
+          <table class="tbl">
+            <thead><tr><th>Subject</th><th>类型</th><th>Capability</th><th>Constraints</th><th>到期</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><div class="row gap-8"><div class="avatar">A</div> Alice (you)</div></td>
+                <td>user</td>
+                <td><span class="pill success">admin</span> read · write · moderate · grant</td>
+                <td class="muted">—</td>
+                <td>—</td>
+                <td><button class="btn sm ghost">⋯</button></td>
+              </tr>
+              <tr>
+                <td><div class="row gap-8"><div class="avatar">M</div> Mei</div></td>
+                <td>user</td>
+                <td><span class="pill accent">moderator</span> read · write · moderate</td>
+                <td class="muted">—</td>
+                <td>—</td>
+                <td><button class="btn sm ghost">⋯</button></td>
+              </tr>
+              <tr>
+                <td><div class="row gap-8"><div class="avatar bot">B</div> Build-bot</div></td>
+                <td>applet</td>
+                <td>write_message · reaction</td>
+                <td class="muted">approval=auto</td>
+                <td>120 d</td>
+                <td><button class="btn sm">续签</button></td>
+              </tr>
+              <tr style="background:var(--warning-soft);">
+                <td><div class="row gap-8"><div class="avatar agent">α</div> Researcher Agent</div></td>
+                <td>agent</td>
+                <td>申请 <strong>read_flow</strong></td>
+                <td class="muted">2 of 3 admin · 1/3 已批准</td>
+                <td>30 d</td>
+                <td><button class="btn sm primary">批准</button> <button class="btn sm danger">拒绝</button></td>
+              </tr>
+              <tr>
+                <td><div class="row gap-8"><div class="avatar org">P</div> partner.example</div></td>
+                <td>organization</td>
+                <td>federation_in</td>
+                <td class="muted">trust_bundle v3</td>
+                <td>—</td>
+                <td><button class="btn sm ghost">⋯</button></td>
+              </tr>
+              <tr>
+                <td><div class="row gap-8"><div class="avatar ghost">U</div> ghost-u92@slack-bridge</div></td>
+                <td>ghost actor</td>
+                <td>read · write_message in portal</td>
+                <td class="muted">accountable→slack-bridge</td>
+                <td>—</td>
+                <td><button class="btn sm ghost">⋯</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:grid;grid-template-columns: 1fr 1fr; gap:16px;">
+          <div class="surface pad">
+            <strong>Moderation Policy</strong>
+            <div class="muted" style="font-size:12px;margin-bottom:8px;">deny / quarantine / require_review，不能授予权限。</div>
+            <div class="stack-sm" style="font-size:13px;">
+              <div class="row gap-8"><span>外部链接</span><span class="grow"></span><span class="pill warning">quarantine_pending_review</span></div>
+              <div class="row gap-8"><span>来自 ghost actor 的消息</span><span class="grow"></span><span class="pill info">需 moderator review</span></div>
+              <div class="row gap-8"><span>非 allowlist DID method</span><span class="grow"></span><span class="pill danger">deny</span></div>
+              <div class="row gap-8"><span>未签名设备</span><span class="grow"></span><span class="pill danger">deny</span></div>
+            </div>
+            <button class="btn sm" style="margin-top:8px;">编辑规则</button>
+          </div>
+
+          <div class="surface pad">
+            <strong>Trust Bundle (Federation)</strong>
+            <div class="muted" style="font-size:12px;margin-bottom:8px;">列出可参与 federation 的 organization DID + service DID。</div>
+            <table class="tbl">
+              <tr><td><div class="avatar org">P</div> partner.example</td><td><span class="pill success">trust_bundle v3</span></td></tr>
+              <tr><td><div class="avatar org">B</div> beta.example</td><td><span class="pill warning">v2 · 待批 attestation</span></td></tr>
+              <tr><td><div class="avatar org">G</div> github.com (mirror)</td><td><span class="pill muted">仅 portal Space</span></td></tr>
+            </table>
+            <button class="btn sm" style="margin-top:8px;">导入 trust bundle</button>
+          </div>
+        </div>
+
+        <div class="callout danger" style="margin-top:16px;">
+          <span class="ico">🚨</span>
+          <div>
+            <strong>危险操作（不可静默回退）</strong>
+            <div style="margin-top:6px;">
+              <button class="btn danger sm">归档 Space (cx.space.archive)</button>
+              <button class="btn danger sm">下沉 plaintext_visible_services</button>
+              <button class="btn danger sm">迁移到新 Principal Server (export → re-import)</button>
+              <button class="btn danger sm">永久撤销 federation_in for partner.example</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

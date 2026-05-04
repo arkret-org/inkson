@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>审计 / Sync · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header"><div class="brand"><span class="logo">C</span> Contrix</div><span class="pill accent" style="margin-left:auto;">v1</span></div>
+      <div class="sidebar-section">
+        <h4>Workspace</h4>
+        <a class="nav-item" href="home.html"><span class="icon">🏠</span> 工作台</a>
+        <a class="nav-item" href="inbox.html"><span class="icon">📥</span> Inbox</a>
+        <a class="nav-item" href="directory.html"><span class="icon">🧭</span> 发现</a>
+        <div class="nav-item active"><span class="icon">🪪</span> 审计 / Sync</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>范围</h4>
+        <div class="nav-item active" style="padding-left:24px;">所有 Space</div>
+        <div class="nav-item" style="padding-left:24px;">Acme Engineering</div>
+        <div class="nav-item" style="padding-left:24px;">Acme × Beta Co.</div>
+        <div class="nav-item" style="padding-left:24px;">Personal</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>视图</h4>
+        <div class="nav-item active" style="padding-left:24px;">Event 流</div>
+        <div class="nav-item" style="padding-left:24px;">Frontier / cursor</div>
+        <div class="nav-item" style="padding-left:24px;">Snapshot manifest</div>
+        <div class="nav-item" style="padding-left:24px;">Conflict pivots</div>
+        <div class="nav-item" style="padding-left:24px;">Capability decisions</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">did:plc:7bzr2x…</div></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><strong>审计 / Sync</strong><span class="sep">·</span><span class="muted">实时</span></div>
+        <div class="actions">
+          <span class="pill success dot">frontier 已对齐</span>
+          <button class="btn">⤴ 导出 snapshot</button>
+          <button class="btn">导入 snapshot</button>
+        </div>
+      </header>
+
+      <div class="workspace-body">
+        <div class="metric-grid" style="margin-bottom:16px;">
+          <div class="metric"><div class="lbl">本地 frontier</div><div class="val mono" style="font-size:14px;">cx:event:01js0fr…0042</div><small class="muted">HLC 01970e589d21-0004 · 2 分钟前</small></div>
+          <div class="metric"><div class="lbl">最新 snapshot</div><div class="val mono" style="font-size:14px;">cx:snap:01js0sn…0014</div><small class="muted">12 分钟前 · 31 chunks · sha256 ✓</small></div>
+          <div class="metric"><div class="lbl">离线队列</div><div class="val">0</div><small class="success">所有事件已上链</small></div>
+          <div class="metric"><div class="lbl">最近一次冲突</div><div class="val">1</div><small class="warning">Review launch checklist</small></div>
+        </div>
+
+        <h3 class="section-title">最近 Event Envelope</h3>
+        <div class="surface" style="margin-bottom:16px;">
+          <div class="event-list">
+            <div class="event-row ok">
+              <span class="dot"></span>
+              <span class="kind">cx.flow.move</span>
+              <span><span class="by"><div class="avatar xs">M</div>Mei</span> moved <em>Review launch checklist</em> → Review</span>
+              <span class="ts">14:11:23.041</span>
+            </div>
+            <div class="event-row warn">
+              <span class="dot"></span>
+              <span class="kind">cx.flow.move</span>
+              <span><span class="by"><div class="avatar xs">A</div>Alice (你)</span> moved 同 Flow → In Progress · <span class="pill warning" style="font-size:9px;">superseded by HLC ↑</span></span>
+              <span class="ts">14:11:22.018</span>
+            </div>
+            <div class="event-row ok">
+              <span class="dot"></span>
+              <span class="kind">cx.message.create</span>
+              <span><span class="by"><div class="avatar xs">M</div>Mei</span> 在 Review launch checklist / discussion 发了一条消息（密文）</span>
+              <span class="ts">14:11:14.090</span>
+            </div>
+            <div class="event-row ok">
+              <span class="dot"></span>
+              <span class="kind">cx.capability.grant.request</span>
+              <span><span class="by"><div class="avatar xs agent">α</div>Researcher Agent</span> 申请 read_flow on Acme Engineering · 需 2/3 admin</span>
+              <span class="ts">13:30:44.001</span>
+            </div>
+            <div class="event-row warn">
+              <span class="dot"></span>
+              <span class="kind">cx.moderation.quarantine</span>
+              <span><span class="by"><div class="avatar xs ghost">U</div>ghost-u92</span> 消息被 policy 拦截（链接黑名单）</span>
+              <span class="ts">06:10:01.220</span>
+            </div>
+            <div class="event-row ok">
+              <span class="dot"></span>
+              <span class="kind">cx.mls.welcome</span>
+              <span>Carlos 加入 discussion branch · epoch 12 → 13</span>
+              <span class="ts">04:21:55.412</span>
+            </div>
+            <div class="event-row ok">
+              <span class="dot"></span>
+              <span class="kind">cx.snapshot.publish</span>
+              <span>Principal Server 发布 snapshot manifest · 31 chunks · 12.4 MB</span>
+              <span class="ts">02:00:00.013</span>
+            </div>
+            <div class="event-row err">
+              <span class="dot"></span>
+              <span class="kind">cx.federation.txn</span>
+              <span><span class="by"><div class="avatar xs org">B</div>beta.example</span> 推送被拒绝 · trust_bundle v2 不在 allowlist</span>
+              <span class="ts">2026-05-03 22:04</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div class="surface pad">
+            <strong>Conflict trail · Review launch checklist</strong>
+            <div class="muted" style="font-size:12px;margin:6px 0 12px;">两个并发 cx.flow.move。reducer 取更晚 HLC，被 superseded 的事件保留在审计链。</div>
+            <div class="event-list" style="border:1px solid var(--border);border-radius:8px;">
+              <div class="event-row warn"><span class="dot"></span><span class="kind">cx.flow.move</span><span>Alice → In Progress</span><span class="ts">HLC 01…018</span></div>
+              <div class="event-row ok"><span class="dot"></span><span class="kind">cx.flow.move</span><span>Mei → Review · winner</span><span class="ts">HLC 01…041</span></div>
+              <div class="event-row"><span class="dot"></span><span class="kind">reducer.resolve</span><span>active position edge: list=Review (Mei)</span><span class="ts">本地 14:11:24</span></div>
+            </div>
+            <div class="row gap-8" style="margin-top:8px;">
+              <button class="btn sm">恢复 Alice 的写入（创建新 cx.flow.move）</button>
+              <button class="btn sm ghost">保留当前结果</button>
+            </div>
+          </div>
+
+          <div class="surface pad">
+            <strong>Capability 决策审计</strong>
+            <div class="muted" style="font-size:12px;margin:6px 0 12px;">每次 reducer 接受/拒绝写入时记录 grant 检查 trail。</div>
+            <table class="tbl">
+              <tr><td>cx.flow.update</td><td>Mei</td><td><span class="pill success">accept</span></td><td class="dim">grant cx:grant:9a…</td></tr>
+              <tr><td>cx.message.create</td><td>α (agent)</td><td><span class="pill success">accept</span></td><td class="dim">grant cx:grant:5b… approval=admin_auto</td></tr>
+              <tr><td>cx.capability.grant</td><td>α (agent)</td><td><span class="pill warning">pending 2/3</span></td><td class="dim">approval_constraint</td></tr>
+              <tr><td>cx.moderation.quarantine</td><td>policy_server</td><td><span class="pill info">enforced</span></td><td class="dim">policy v2.1</td></tr>
+              <tr><td>cx.federation.txn</td><td>beta.example</td><td><span class="pill danger">deny</span></td><td class="dim">trust_bundle missing</td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="surface pad">
+          <strong>Snapshot manifest</strong>
+          <div class="muted" style="font-size:12px;margin:6px 0 8px;">Snapshot 是同步加速器，不是真相源；缓存丢失后必须能从 signed Event 重新计算。</div>
+          <table class="tbl">
+            <thead><tr><th>chunk</th><th>digest</th><th>size</th><th>覆盖范围</th><th>state hash</th></tr></thead>
+            <tbody>
+              <tr><td>0001</td><td class="mono">sha256:7c12…a9</td><td>1.2 MB</td><td>Acme Eng / boards + lists</td><td class="mono">9d0f…</td></tr>
+              <tr><td>0002</td><td class="mono">sha256:d40b…4e</td><td>3.6 MB</td><td>Acme Eng / flows synthesis</td><td class="mono">2c81…</td></tr>
+              <tr><td>0003</td><td class="mono">sha256:8a31…11</td><td>2.1 MB</td><td>Acme Eng / messages 加密</td><td class="mono">f7a3…</td></tr>
+              <tr><td>0004</td><td class="mono">sha256:0e12…cd</td><td>0.8 MB</td><td>Capability + policy</td><td class="mono">b219…</td></tr>
+              <tr><td>0005</td><td class="mono">sha256:96fa…20</td><td>0.4 MB</td><td>Views / saved queries</td><td class="mono">7c4e…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

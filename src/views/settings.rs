@@ -1595,6 +1595,46 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-inspect-discovery",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_recovery_discovery().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "recovery discovery scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Recovery Discovery"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-readiness",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_recovery_readiness().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "recovery readiness scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Recovery Readiness"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-inspect-coauth-principal-snapshot",
                             onclick: move |_| {
                                 let auth_server = auth_server_url();
