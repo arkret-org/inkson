@@ -1597,6 +1597,111 @@ pub fn SettingsPanel(
                             },
                             "Inspect Coauth Principal Snapshot"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-state-durability",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_key_backup_restore_state_durability().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore-state durability scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore-State Durability"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-list-state-checkpoints",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.list_key_backup_restore_state_checkpoints().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore-state checkpoints scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "List Restore-State Checkpoints"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-create-state-checkpoint",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.post_key_backup_restore_state_checkpoint(serde_json::json!({
+                                        "checkpoint_mode": "manual_scaffold",
+                                        "reason": "yougen_operator_requested"
+                                    })).await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore-state checkpoint create scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Create Restore-State Checkpoint"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-timeline",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_key_backup_restore_timeline(&ticket_id).await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore timeline scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Timeline"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-audit-feed",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_key_backup_restore_audit_feed(&ticket_id).await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore audit-feed scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Audit Feed"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }

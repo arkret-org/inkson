@@ -1116,6 +1116,42 @@ impl ContrixApi {
         self.get_json("api/v1/recovery/live-snapshot").await
     }
 
+    pub async fn get_key_backup_restore_timeline(
+        &self,
+        ticket_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/timeline"))
+            .await
+    }
+
+    pub async fn get_key_backup_restore_audit_feed(
+        &self,
+        ticket_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/audit-feed"))
+            .await
+    }
+
+    pub async fn get_key_backup_restore_state_durability(
+        &self,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/restore-state/durability").await
+    }
+
+    pub async fn list_key_backup_restore_state_checkpoints(
+        &self,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/restore-state/checkpoints").await
+    }
+
+    pub async fn post_key_backup_restore_state_checkpoint(
+        &self,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json("api/v1/keys/backups/restore-state/checkpoints", payload)
+            .await
+    }
+
     pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
         let request = self
             .http
