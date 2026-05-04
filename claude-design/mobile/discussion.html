@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>讨论 · Contrix Mobile</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="mobile-stage">
+    <div class="frame-meta">📱 mobile/discussion.html · <a href="../index.html">返回设计稿</a></div>
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
+
+      <div class="phone-screen" style="display:flex;flex-direction:column;background:var(--surface);">
+        <div class="m-app-bar">
+          <a class="iconbtn" href="flow-detail.html">←</a>
+          <div class="grow">
+            <div>discussion · Review …</div>
+            <div class="dim" style="font-size:11px;font-weight:normal;">🔒 4 名成员 · MLS epoch 12</div>
+          </div>
+          <button class="iconbtn">📞</button>
+          <button class="iconbtn">⋯</button>
+        </div>
+
+        <!-- e2ee banner -->
+        <div style="margin:8px 12px;padding:8px 10px;border-radius:8px;background:var(--success-soft);color:#166534;font-size:11px;line-height:1.4;display:flex;gap:6px;">
+          <span>🔒</span>
+          <span>消息端到端加密。Sync Service 与 Push Gateway 看不到正文。</span>
+        </div>
+
+        <div style="flex:1;overflow-y:auto;padding:6px 12px 12px;display:flex;flex-direction:column;gap:14px;">
+          <div class="day-divider">2026-04-25</div>
+
+          <div class="msg system">Mei 启用了 discussion branch · branch-scoped membership</div>
+
+          <div class="msg">
+            <div class="avatar xs">M</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">Mei</span><time>10:02</time></div>
+              <div class="msg-content" style="font-size:13px;">@Alice 帮忙复核 trust_bundle 外部 issuer。</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar xs">A</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">你</span><time>10:14</time></div>
+              <div class="msg-content" style="font-size:13px;">收到。今天给 Carlos 走 capability grant。</div>
+              <div class="msg-attachment">📎 trust_bundle_v1.json</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar xs agent">α</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">Researcher Agent</span><time>13:08</time><span class="pill muted" style="font-size:9px;">agent</span></div>
+              <div class="msg-content" style="font-size:13px;">从 Beta Co. brief 提取 2 个风险点（脱敏）。要落成 Flow 吗？</div>
+              <div class="row gap-4" style="margin-top:6px;">
+                <button class="btn sm">变成 Flow</button>
+                <button class="btn sm ghost">忽略</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="day-divider">今天</div>
+
+          <div class="msg">
+            <div class="avatar xs">M</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">Mei</span><time>14:11</time></div>
+              <div class="msg-content" style="font-size:13px;">
+                <span class="pill accent" style="font-size:10px;">@你</span> trust bundle 复核完了吗？
+              </div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar xs">A</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">你</span><time>14:14</time><span class="dim">已编辑</span></div>
+              <div class="msg-content" style="font-size:13px;">起了 cx.capability.grant，需 2 名 admin 同意。</div>
+              <div class="reactions" style="margin-top:4px;"><span class="reaction">✅ 1</span></div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar xs bot">B</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">Build-bot</span><time>14:22</time><span class="pill muted" style="font-size:9px;">bot</span></div>
+              <div class="msg-content" style="font-size:13px;">CI ✅ 文档校验通过</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar xs">M</div>
+            <div class="msg-body">
+              <div class="msg-head"><span class="name">Mei</span><time>14:30</time></div>
+              <div class="msg-content redacted" style="font-size:13px;">[此消息已撤回]</div>
+            </div>
+          </div>
+
+          <div class="msg system">Carlos 加入了 discussion · MLS Welcome epoch 13</div>
+        </div>
+
+        <div class="composer" style="border-top:1px solid var(--border);padding:8px 10px;">
+          <div class="composer-box">
+            <textarea placeholder="🔒 加密消息…" style="min-height:30px;"></textarea>
+            <div class="composer-toolbar">
+              <button class="btn ghost sm">📎</button>
+              <button class="btn ghost sm">＠</button>
+              <button class="btn ghost sm">🎙</button>
+              <span class="grow"></span>
+              <button class="btn primary sm">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phone-bottom">
+        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
+        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
+        <a class="phone-tab" href="board.html"><div class="ico">▦</div><span>看板</span></a>
+        <div class="phone-tab active"><div class="ico">💬</div><span>讨论</span></div>
+        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

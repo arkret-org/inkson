@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbox · Contrix Mobile</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="mobile-stage">
+    <div class="frame-meta">📱 mobile/inbox.html · <a href="../index.html">返回设计稿</a></div>
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
+
+      <div class="phone-screen">
+        <div class="m-app-bar">
+          <a class="iconbtn" href="home.html">←</a>
+          <div class="grow">
+            <div>Inbox</div>
+            <div class="dim" style="font-size:11px;font-weight:normal;">7 条 · 4 条 @ 提及</div>
+          </div>
+          <button class="iconbtn">⚲</button>
+          <button class="iconbtn">⋯</button>
+        </div>
+
+        <!-- segmented filter -->
+        <div style="overflow-x:auto;padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid var(--border);background:var(--surface);">
+          <span class="pill accent">所有 · 7</span>
+          <span class="pill muted">@ 提及 · 4</span>
+          <span class="pill muted">分配 · 3</span>
+          <span class="pill muted">审批 · 2</span>
+          <span class="pill muted">外部</span>
+          <span class="pill muted">Agent</span>
+        </div>
+
+        <div style="margin:10px 12px;padding:8px 10px;border-radius:8px;background:var(--info-soft);color:#075985;font-size:11px;line-height:1.4;display:flex;gap:6px;">
+          <span>🔒</span>
+          <span class="grow">Push 是脱敏唤醒（background_sync_needed），所有正文在本地解密。</span>
+          <a style="color:inherit;text-decoration:underline;">设置</a>
+        </div>
+
+        <div style="padding:0 12px 90px;display:flex;flex-direction:column;gap:8px;">
+
+          <a class="m-list-item" href="discussion.html" style="border-color:var(--accent);background:var(--accent-soft);">
+            <span style="font-size:18px;">📌</span>
+            <div class="grow">
+              <div class="title">Mei 提到了你</div>
+              <div class="sub truncate">"@Alice trust bundle 复核完了吗？"</div>
+              <div class="dim" style="font-size:10px;">Acme Eng · 🔒 E2EE · 14:11</div>
+            </div>
+            <span class="pill danger" style="font-size:10px;">@</span>
+          </a>
+
+          <div class="m-list-item">
+            <span style="font-size:18px;">👤</span>
+            <div class="grow">
+              <div class="title">Beta Co. 共享文档 · 分配</div>
+              <div class="sub truncate">外部 Space 把你设为 reviewer</div>
+              <div class="dim" style="font-size:10px;">cx.relation.create assigned_to · 13:55</div>
+            </div>
+            <span class="pill warning" style="font-size:10px;">外</span>
+          </div>
+
+          <div class="m-list-item">
+            <span style="font-size:18px;">✋</span>
+            <div class="grow">
+              <div class="title">Capability 申请 (1/2)</div>
+              <div class="sub truncate">α agent → read_flow Acme Eng</div>
+              <div class="dim" style="font-size:10px;">approval_constraint=2_of_3_admin · 13:30</div>
+            </div>
+          </div>
+
+          <div class="m-list-item">
+            <span style="font-size:18px;">⚠️</span>
+            <div class="grow">
+              <div class="title">并发收敛 conflict</div>
+              <div class="sub truncate">Mei 的 cx.flow.move 胜出</div>
+              <div class="dim" style="font-size:10px;">12:08</div>
+            </div>
+          </div>
+
+          <div class="m-list-item">
+            <span style="font-size:18px;">🤖</span>
+            <div class="grow">
+              <div class="title">Researcher Agent 创建 Flow</div>
+              <div class="sub truncate">"竞品调研 Q2"</div>
+              <div class="dim" style="font-size:10px;">cx.flow.create · 10:55</div>
+            </div>
+          </div>
+
+          <div class="m-list-item">
+            <span style="font-size:18px;">📞</span>
+            <div class="grow">
+              <div class="title">"Design review" 会议纪要可读</div>
+              <div class="sub truncate">未录制 · Morph 已落地</div>
+              <div class="dim" style="font-size:10px;">09:00</div>
+            </div>
+          </div>
+
+          <a class="m-list-item" href="devices.html" style="border-color:var(--accent);">
+            <span style="font-size:18px;">🪪</span>
+            <div class="grow">
+              <div class="title">新设备配对请求</div>
+              <div class="sub truncate">"MacBook · alice@home" · 等待 SAS</div>
+              <div class="dim" style="font-size:10px;">08:42</div>
+            </div>
+            <span class="pill accent" style="font-size:10px;">→</span>
+          </a>
+
+          <div class="m-list-item" style="opacity:.7;">
+            <span style="font-size:18px;">🚫</span>
+            <div class="grow">
+              <div class="title">Moderation 自动隔离</div>
+              <div class="sub truncate">ghost-actor 链接 quarantine</div>
+              <div class="dim" style="font-size:10px;">06:10</div>
+            </div>
+          </div>
+
+          <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:11px;color:var(--text-3);line-height:1.6;">
+            手势：<strong>左滑</strong>归档 · <strong>右滑</strong>已读 · <strong>长按</strong>静音 actor / Space。
+          </div>
+        </div>
+      </div>
+
+      <div class="phone-bottom">
+        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
+        <div class="phone-tab active"><div class="ico">📥</div><span>Inbox</span></div>
+        <a class="phone-tab" href="board.html"><div class="ico">▦</div><span>看板</span></a>
+        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
+        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>看板 · Contrix Mobile</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="mobile-stage">
+    <div class="frame-meta">📱 mobile/board.html · <a href="../index.html">返回设计稿</a></div>
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
+
+      <div class="phone-screen">
+        <div class="m-app-bar">
+          <a class="iconbtn" href="home.html">←</a>
+          <div class="grow">
+            <div>Release Board</div>
+            <div class="dim" style="font-size:11px;font-weight:normal;">Acme Engineering · kind=board</div>
+          </div>
+          <button class="iconbtn">⚲</button>
+          <button class="iconbtn">⋯</button>
+        </div>
+
+        <!-- horizontal list switcher -->
+        <div style="overflow-x:auto;padding:10px 16px;display:flex;gap:6px;border-bottom:1px solid var(--border);background:var(--surface);">
+          <span class="pill muted">Backlog · 14</span>
+          <span class="pill accent">In Progress · 7</span>
+          <span class="pill muted">Review · 4</span>
+          <span class="pill muted">Done · 23</span>
+          <span class="pill muted" style="border-style:dashed;">＋ List</span>
+        </div>
+
+        <!-- conflict banner -->
+        <div style="margin:10px 16px 0;padding:8px 10px;border-radius:8px;background:var(--warning-soft);color:#92400e;font-size:11px;line-height:1.4;display:flex;gap:6px;">
+          <span>⚠️</span>
+          <span class="grow">并发收敛：Mei 的 cx.flow.move 胜出，你的写入已 superseded。</span>
+          <a style="color:inherit;text-decoration:underline;">详情</a>
+        </div>
+
+        <div style="padding: 10px 16px 100px;">
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin:6px 0;">In Progress · 7</div>
+
+          <a href="flow-detail.html" class="kcard" style="margin-bottom:8px;">
+            <div class="kcard-labels"><span class="lbl bug">bug</span><span class="lbl infra">infra</span></div>
+            <div class="kcard-title">支付重构 — 风控回调</div>
+            <div class="kcard-meta"><span>📌 P1</span><span>·</span><span>05-09</span><span class="grow"></span><span>💬 4</span><div class="avatar xs">A</div></div>
+          </a>
+
+          <div class="kcard kcard-pending" style="margin-bottom:8px;">
+            <div class="kcard-labels"><span class="lbl feature">feature</span></div>
+            <div class="kcard-title">Branch-scoped E2EE override <span class="pill warning" style="font-size:9px;">pending sync</span></div>
+            <div class="kcard-meta dim"><span>离线写入 · 待回放</span><span class="grow"></span><div class="avatar xs">A</div></div>
+          </div>
+
+          <div class="kcard" style="margin-bottom:8px;">
+            <div class="kcard-labels"><span class="lbl compliance">compliance</span></div>
+            <div class="kcard-title">合规：DID method allowlist</div>
+            <div class="kcard-meta"><span>📌 P2</span><span>·</span><span>05-15</span><span class="grow"></span><div class="avatar xs">C</div></div>
+          </div>
+
+          <div class="kcard" style="margin-bottom:8px;">
+            <div class="kcard-labels"><span class="lbl docs">docs</span></div>
+            <div class="kcard-title">替换 channel → discussion 文案 <span class="pill success" style="font-size:9px;">✅ done</span></div>
+            <div class="kcard-meta"><span class="grow"></span><div class="avatar xs">C</div></div>
+          </div>
+
+          <button class="add-card-btn" style="margin-top:10px;">＋ 新建 Flow（cx.flow.create）</button>
+
+          <div style="margin-top:18px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:11px;color:var(--text-3);line-height:1.55;">
+            手势：<br>
+            · <strong>左右滑</strong>切换 List<br>
+            · <strong>长按</strong> Flow 拖动 → cx.flow.move / cx.flow.reorder<br>
+            · <strong>左滑</strong> Flow → assign / archive<br>
+          </div>
+        </div>
+
+        <button class="m-fab" title="新建 Flow">＋</button>
+      </div>
+
+      <div class="phone-bottom">
+        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
+        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
+        <div class="phone-tab active"><div class="ico">▦</div><span>看板</span></div>
+        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
+        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

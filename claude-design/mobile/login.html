@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · Contrix Mobile</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="mobile-stage">
+    <div class="frame-meta">📱 mobile/login.html · <a href="../index.html">返回设计稿</a></div>
+    <div class="phone">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div>
+      </div>
+      <div class="phone-screen" style="background:linear-gradient(180deg,#1f2030 0%,#4f46e5 70%);color:white;display:flex;flex-direction:column;">
+        <div style="padding:48px 28px 24px;">
+          <div class="row gap-8">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.18);display:grid;place-items:center;font-weight:700;">C</div>
+            <strong style="font-size:20px;">Contrix</strong>
+          </div>
+          <h1 style="font-size:26px;line-height:1.25;margin:32px 0 8px;">用主设备<br>把这台手机加入身份网</h1>
+          <p style="color:#cbd0e8;font-size:14px;line-height:1.5;">Contrix 不储存密码。手机的 device key 在本地生成；主设备扫码后才把它授权进 device set。</p>
+        </div>
+
+        <div style="background:white;color:var(--text);border-radius:24px 24px 0 0;flex:1;padding:24px 22px 30px;display:flex;flex-direction:column;gap:14px;">
+          <div class="qr-block" style="margin-top:0;">
+            <div class="qr"></div>
+            <div class="muted" style="font-size:12px;margin-top:8px;">在主设备扫描，或粘贴 <code>cx://pair?ch=…</code></div>
+            <div class="row gap-4" style="justify-content:center;font-size:11px;color:var(--text-3);margin-top:6px;">
+              <span class="dot-online"></span> 等待主设备 · 04:23
+            </div>
+          </div>
+          <div style="text-align:center;color:var(--text-3);font-size:12px;">— 或 —</div>
+          <button class="btn full" style="padding:12px;font-size:14px;">🪪 用 Passkey 登录</button>
+          <button class="btn full" style="padding:12px;font-size:14px;">🏢 企业 SSO (acme)</button>
+          <a class="btn full ghost" href="home.html" style="padding:12px;font-size:14px;">▶ 跳过 · 进入 Demo</a>
+          <small class="muted" style="text-align:center;margin-top:6px;">登录因子只签发短期 session；E2EE 历史仍需 device 授权。</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
