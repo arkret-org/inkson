@@ -1573,6 +1573,30 @@ pub fn SettingsPanel(
                             },
                             "Inspect Recovery Live Snapshot"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-coauth-principal-snapshot",
+                            onclick: move |_| {
+                                let auth_server = auth_server_url();
+                                spawn(async move {
+                                    match CoauthApi::new(&auth_server) {
+                                        Ok(api) => match api.principal_recovery_snapshot().await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "coauth principal snapshot scaffold:\n{}",
+                                                serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "coauth recovery bridge unavailable: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "coauth recovery bridge unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Coauth Principal Snapshot"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }
