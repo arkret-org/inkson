@@ -211,6 +211,26 @@ pub struct CoauthOidcExchangeDescribe {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct CoauthRecoveryDescribe {
+    pub contract: String,
+    pub version: String,
+    pub recovery_start_path: String,
+    pub recovery_status_path: String,
+    pub recovery_resend_path: String,
+    pub key_backup_rest_base: String,
+    pub key_backup_schema: String,
+    pub device_message_schema: String,
+    #[serde(default)]
+    pub verification_event_kinds: Vec<String>,
+    #[serde(default)]
+    pub recovery_modes: Vec<String>,
+    #[serde(default)]
+    pub example_backup_payload: Value,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct CoauthOidcClientHint {
     #[serde(default)]
     pub id: String,
@@ -360,6 +380,10 @@ impl CoauthApi {
 
     pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
         self.get_json("api/v1/integration/describe").await
+    }
+
+    pub async fn recovery_describe(&self) -> anyhow::Result<CoauthRecoveryDescribe> {
+        self.get_json("api/v1/auth/recovery/describe").await
     }
 
     pub async fn password_login(
@@ -548,6 +572,42 @@ pub fn summarize_coauth_integration_manifest(
         surfaces,
         todos,
     )
+}
+
+pub fn summarize_coauth_recovery_bridge(
+    recovery: &CoauthRecoveryDescribe,
+) -> anyhow::Result<String> {
+    let kinds = if recovery.verification_event_kinds.is_empty() {
+        "none".to_owned()
+    } else {
+        recovery.verification_event_kinds.join(", ")
+    };
+    let modes = if recovery.recovery_modes.is_empty() {
+        "none".to_owned()
+    } else {
+        recovery.recovery_modes.join(", ")
+    };
+    let todos = if recovery.todos.is_empty() {
+        "none".to_owned()
+    } else {
+        recovery.todos.join(" ")
+    };
+
+    Ok(format!(
+        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\ntodos={}",
+        recovery.contract,
+        recovery.version,
+        recovery.recovery_start_path,
+        recovery.recovery_status_path,
+        recovery.recovery_resend_path,
+        recovery.key_backup_rest_base,
+        recovery.key_backup_schema,
+        recovery.device_message_schema,
+        kinds,
+        modes,
+        serde_json::to_string_pretty(&recovery.example_backup_payload)?,
+        todos,
+    ))
 }
 
 pub fn build_soland_session_grant_plan(

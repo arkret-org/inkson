@@ -13,7 +13,7 @@ use crate::{
         persist_oidc_scaffold, restore_oidc_scaffold,
         extract_authorization_code_from_callback, extract_state_from_callback,
         extract_error_description_from_callback, extract_error_from_callback,
-        summarize_password_login_bridge,
+        summarize_coauth_recovery_bridge, summarize_password_login_bridge,
     },
     config::LocalConfigStore,
     push::{summarize_push_gateway_bridge, summarize_push_gateway_integration},
@@ -1169,6 +1169,46 @@ pub fn LoginPanel(
                                 }
                             },
                             "OIDC Code + Push Bridge"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "inspect-recovery-bridge-button",
+                            onclick: {
+                                move |_| {
+                                    let auth = auth_server_url();
+                                    let principal = base_url();
+                                    spawn(async move {
+                                        match CoauthApi::new(&auth) {
+                                            Ok(coauth) => {
+                                                let recovery = coauth.recovery_describe().await;
+                                                let integration = coauth.integration_describe().await;
+                                                let principal_manifest = match ContrixApi::new(&principal) {
+                                                    Ok(api) => match api.integration_describe().await {
+                                                        Ok(manifest) => summarize_principal_integration_manifest(&manifest),
+                                                        Err(error) => format!("principal integration fetch failed: {error}"),
+                                                    },
+                                                    Err(error) => format!("invalid principal server URL: {error}"),
+                                                };
+                                                match (recovery, integration) {
+                                                    (Ok(recovery), Ok(integration)) => match summarize_coauth_recovery_bridge(&recovery) {
+                                                        Ok(summary) => integration_plan_status.set(format!(
+                                                            "coauth_recovery_bridge:\n{}\n\ncoauth_integration_manifest:\n{}\n\nprincipal_integration_manifest:\n{}",
+                                                            summary,
+                                                            crate::coauth::summarize_coauth_integration_manifest(&integration),
+                                                            principal_manifest,
+                                                        )),
+                                                        Err(error) => integration_plan_status.set(format!("recovery bridge summary failed: {error}")),
+                                                    },
+                                                    (Err(error), _) => integration_plan_status.set(format!("coauth recovery describe failed: {error}")),
+                                                    (_, Err(error)) => integration_plan_status.set(format!("coauth integration describe failed: {error}")),
+                                                }
+                                            }
+                                            Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Inspect Recovery Bridge"
                         }
                         button {
                             class: "primary",
