@@ -900,6 +900,64 @@ pub fn SettingsPanel(
                             },
                             "Inspect Recovery Contracts"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-principal-restore",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_describe(&backup_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_describe:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore describe failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Principal Restore"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-start-restore-scaffold",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let actor = account_did();
+                                let device = device_id();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_start(&backup_id, json!({
+                                            "backup_id": backup_id,
+                                            "actor": actor,
+                                            "device_id": device,
+                                            "verification_event_kind": "cx.key.verification.done",
+                                            "todo": "replace scaffold restore start with verified restore ticket handoff"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_start:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore start failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Start Restore Scaffold"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }

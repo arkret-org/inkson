@@ -220,6 +220,7 @@ pub struct CoauthRecoveryDescribe {
     pub key_backup_rest_base: String,
     pub key_backup_schema: String,
     pub device_message_schema: String,
+    pub principal_restore_describe_path: String,
     pub principal_authz_check_path: String,
     pub principal_policy_collection_path: String,
     pub principal_policy_item_path: String,
@@ -599,7 +600,7 @@ pub fn summarize_coauth_recovery_bridge(
     };
 
     Ok(format!(
-        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_authz_check={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
+        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_restore_describe={}\nprincipal_authz_check={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
         recovery.contract,
         recovery.version,
         recovery.recovery_start_path,
@@ -608,6 +609,7 @@ pub fn summarize_coauth_recovery_bridge(
         recovery.key_backup_rest_base,
         recovery.key_backup_schema,
         recovery.device_message_schema,
+        recovery.principal_restore_describe_path,
         recovery.principal_authz_check_path,
         recovery.principal_policy_collection_path,
         recovery.principal_policy_item_path,

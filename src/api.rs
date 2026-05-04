@@ -874,6 +874,26 @@ impl ContrixApi {
         self.get_json(&format!("api/v1/keys/backups/{backup_id}")).await
     }
 
+    pub async fn get_key_backup_restore_describe(
+        &self,
+        backup_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/{backup_id}/restore/describe"))
+            .await
+    }
+
+    pub async fn post_key_backup_restore_start(
+        &self,
+        backup_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/{backup_id}/restore/start"),
+            payload,
+        )
+        .await
+    }
+
     pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
         let request = self
             .http
