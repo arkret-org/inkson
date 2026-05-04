@@ -1,7 +1,8 @@
 use chime::{
-    PushDeviceConfig, PushPreferences, PushRegistrationState, RegisterDeviceRequest,
-    RegisterDeviceResponse, UnregisterDeviceRequest, build_register_device_request,
-    build_registration_state, build_unregister_device_request,
+    PushBridgeDescribeResponse, PushDeviceConfig, PushPreferences, PushRegistrationState,
+    RegisterDeviceRequest, RegisterDeviceResponse, UnregisterDeviceRequest,
+    build_register_device_request, build_registration_state, build_unregister_device_request,
+    push_bridge_describe_url,
 };
 use chrono::Utc;
 
@@ -110,6 +111,43 @@ pub fn registration_state_from_response(
     )
 }
 
+pub async fn describe_push_gateway_bridge(
+    push_gateway_url: &str,
+) -> anyhow::Result<PushBridgeDescribeResponse> {
+    let describe_url = push_bridge_describe_url(push_gateway_url)?;
+    let response = reqwest::Client::new().get(&describe_url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("push gateway bridge describe returned HTTP {status}");
+    }
+    Ok(response.json().await?)
+}
+
+pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeResponse) -> String {
+    format!(
+        "contract={} version={} notify_path={} providers={} auth_modes={} privacy_mode={} todos={}",
+        bridge.contract,
+        bridge.version,
+        bridge.notify.notify_path,
+        if bridge.gateway.supported_providers.is_empty() {
+            "none".to_owned()
+        } else {
+            bridge.gateway.supported_providers.join(",")
+        },
+        if bridge.gateway.auth_modes.is_empty() {
+            "none".to_owned()
+        } else {
+            bridge.gateway.auth_modes.join(",")
+        },
+        bridge.privacy.default_mode,
+        if bridge.todos.is_empty() {
+            "none".to_owned()
+        } else {
+            bridge.todos.join(" | ")
+        },
+    )
+}
+
 fn push_preferences() -> PushPreferences {
     PushPreferences {
         enabled: true,
@@ -200,6 +238,29 @@ mod tests {
         assert_eq!(unregister.device_id, "dev_yougen");
         assert_eq!(unregister.registration_id.as_deref(), Some("cx:push:test"));
         assert_eq!(unregister.app_id.as_deref(), Some("yougen"));
+    }
+
+    #[test]
+    fn summarizes_push_bridge_contract() {
+        let summary = summarize_push_gateway_bridge(&PushBridgeDescribeResponse {
+            contract: "cx.push.bridge.describe".to_owned(),
+            version: "2026-05-03".to_owned(),
+            api_base_path: "/api/v1/push".to_owned(),
+            gateway: Default::default(),
+            notify: chime::PushBridgeDescribeNotifyDescriptor {
+                notify_path: "/api/v1/push/notify".to_owned(),
+                ..Default::default()
+            },
+            privacy: chime::PushBridgeDescribePrivacyDescriptor {
+                default_mode: "e2ee_blind_wakeup".to_owned(),
+                ..Default::default()
+            },
+            todos: vec!["TODO(push-bridge)".to_owned()],
+        });
+
+        assert!(summary.contains("cx.push.bridge.describe"));
+        assert!(summary.contains("/api/v1/push/notify"));
+        assert!(summary.contains("e2ee_blind_wakeup"));
     }
 
     #[test]

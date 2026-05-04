@@ -15,6 +15,7 @@ use crate::{
         summarize_password_login_bridge,
     },
     config::LocalConfigStore,
+    push::summarize_push_gateway_bridge,
     views::helpers::persist_config,
 };
 
@@ -1031,6 +1032,10 @@ pub fn LoginPanel(
                                                                                 return;
                                                                             }
                                                                         };
+                                                                        let push_gateway_bridge_summary = match crate::push::describe_push_gateway_bridge(&register_request.push_gateway).await {
+                                                                            Ok(bridge) => summarize_push_gateway_bridge(&bridge),
+                                                                            Err(error) => format!("bridge_lookup_failed={error}"),
+                                                                        };
                                                                         let api = api.with_bearer(session.access_token.clone());
                                                                         match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                             Ok(response) => {
@@ -1054,7 +1059,7 @@ pub fn LoginPanel(
                                                                                     session.actor
                                                                                 ));
                                                                                 integration_plan_status.set(format!(
-                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
                                                                                     summarize_password_login_bridge(
                                                                                         &login,
                                                                                         response.registration_id.as_deref(),
@@ -1063,6 +1068,7 @@ pub fn LoginPanel(
                                                                                     plan.authorize_url_preview,
                                                                                     plan.token_endpoint,
                                                                                     principal_target,
+                                                                                    push_gateway_bridge_summary,
                                                                                     session.expires_at,
                                                                                     response.registration_id.as_deref().unwrap_or("missing"),
                                                                                 ));
@@ -1149,6 +1155,10 @@ pub fn LoginPanel(
                                                                         return;
                                                                     }
                                                                 };
+                                                                let push_gateway_bridge_summary = match crate::push::describe_push_gateway_bridge(&register_request.push_gateway).await {
+                                                                    Ok(bridge) => summarize_push_gateway_bridge(&bridge),
+                                                                    Err(error) => format!("bridge_lookup_failed={error}"),
+                                                                };
                                                                 let api = api.with_bearer(session.access_token.clone());
                                                                 match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                     Ok(response) => {
@@ -1171,13 +1181,14 @@ pub fn LoginPanel(
                                                                             session.actor
                                                                         ));
                                                                         integration_plan_status.set(format!(
-                                                                            "{}\n\nprincipal_target={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                            "{}\n\nprincipal_target={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
                                                                             summarize_password_login_bridge(
                                                                                 &login,
                                                                                 response.registration_id.as_deref(),
                                                                                 &register_request_preview,
                                                                             ),
                                                                             principal_target,
+                                                                            push_gateway_bridge_summary,
                                                                             session.expires_at,
                                                                             response.registration_id.as_deref().unwrap_or("missing"),
                                                                         ));
