@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbox · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app three-col">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand"><span class="logo">C</span> Contrix</div>
+        <span class="pill accent" style="margin-left:auto;">v1</span>
+      </div>
+      <div class="sidebar-section">
+        <h4>Workspace</h4>
+        <a class="nav-item" href="home.html"><span class="icon">🏠</span> 工作台</a>
+        <div class="nav-item active"><span class="icon">📥</span> Inbox <span class="pill danger" style="margin-left:auto;">7</span></div>
+        <a class="nav-item" href="directory.html"><span class="icon">🧭</span> 发现</a>
+        <a class="nav-item" href="audit.html"><span class="icon">🪪</span> 审计 / Sync</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Inbox 视图</h4>
+        <div class="nav-item active" style="padding-left:24px;">所有</div>
+        <div class="nav-item" style="padding-left:24px;">@ 提及 <span class="pill danger" style="margin-left:auto;">4</span></div>
+        <div class="nav-item" style="padding-left:24px;">分配给我 <span class="pill warning" style="margin-left:auto;">3</span></div>
+        <div class="nav-item" style="padding-left:24px;">审批 <span class="pill warning" style="margin-left:auto;">2</span></div>
+        <div class="nav-item" style="padding-left:24px;">外部 Space</div>
+        <div class="nav-item" style="padding-left:24px;">Agent 输出</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>个人 Blocklist</h4>
+        <div class="nav-item dim" style="padding-left:24px;">2 个 actor</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">did:plc:7bzr2x…</div></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><strong>Inbox</strong><span class="sep">·</span><span class="muted">所有 (7)</span></div>
+        <div class="actions">
+          <button class="btn">全部已读</button>
+          <button class="btn ghost">⋯</button>
+        </div>
+      </header>
+
+      <div class="workspace-body" style="padding:0;">
+        <div class="callout info" style="border-radius:0;border-left:0;border-right:0;border-bottom:1px solid var(--border);">
+          <span class="ico">ℹ️</span>
+          <div>
+            <strong>Notification 是 projection。</strong>
+            <span class="dim">所有条目从 Event / Flow / Message / Relation / capability 派生。Push gateway 默认只收脱敏唤醒。</span>
+            <a class="dim" style="margin-left:6px;text-decoration:underline;" href="settings.html">通知偏好</a>
+          </div>
+        </div>
+
+        <table class="tbl" style="margin:0;">
+          <tbody>
+            <tr style="background:var(--accent-soft);">
+              <td style="width:24px;"><input type="checkbox"></td>
+              <td style="width:24px;">📌</td>
+              <td>
+                <div><strong>Mei 在 Review launch checklist 提到了你</strong></div>
+                <div class="dim" style="font-size:12px;">"@Alice trust bundle 复核完了吗？checklist 还差这个就能 close 了。"</div>
+                <div class="dim" style="font-size:11px;">Acme Engineering · branch=discussion · 🔒 E2EE · cx.message.create · 14:11</div>
+              </td>
+              <td><a class="btn sm" href="discussion.html">打开</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>👤</td>
+              <td>
+                <div><strong>分配 — Beta Co. 共享文档</strong></div>
+                <div class="dim" style="font-size:12px;">外部 Space 把你设为 reviewer。该 Flow 的 synthesis 内容仍受 Beta Co. policy 约束（lazy_link）。</div>
+                <div class="dim" style="font-size:11px;">Acme × Beta Co. · cx.relation.create kind=assigned_to · 13:55</div>
+              </td>
+              <td><a class="btn sm" href="flow-detail.html">查看</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>✋</td>
+              <td>
+                <div><strong>Capability 申请：Researcher Agent → read_flow on Acme Engineering</strong></div>
+                <div class="dim" style="font-size:12px;">需 2 / 3 admin 同意。现已 1/3。grant 由 <code>did:web:acme.example</code> issuer 签发。</div>
+                <div class="dim" style="font-size:11px;">approval_constraint=2_of_3_admin · 13:30</div>
+              </td>
+              <td>
+                <a class="btn sm primary" href="space-admin.html">批准</a>
+                <a class="btn sm danger" href="space-admin.html">拒绝</a>
+              </td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>⚠️</td>
+              <td>
+                <div><strong>并发收敛 conflict — Review launch checklist 在不同 List 间被同时移动</strong></div>
+                <div class="dim" style="font-size:12px;">reducer 已选取 Mei 的 cx.flow.move（更晚 HLC）。你的 cx.flow.move 被 superseded 但保留在审计链。</div>
+                <div class="dim" style="font-size:11px;">cx:event:01js0fr…0042 · 12:08</div>
+              </td>
+              <td><a class="btn sm" href="audit.html">查看 trail</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>🤖</td>
+              <td>
+                <div><strong>Researcher Agent 创建了 Flow “竞品调研 Q2”</strong></div>
+                <div class="dim" style="font-size:12px;">Agent 输出已经签名落到 Launch Plan / Backlog。预览：3 个竞品、2 处风险点。</div>
+                <div class="dim" style="font-size:11px;">cx.flow.create · capability=write_flow · 10:55</div>
+              </td>
+              <td><a class="btn sm" href="flow-detail.html">查看</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>📞</td>
+              <td>
+                <div><strong>会议纪要可获取 — “Design review”</strong></div>
+                <div class="dim" style="font-size:12px;">SFU=did:web:sfu.acme.example · 录制需显式授权（未录制）· 摘要 Morph 已落到 Flow。</div>
+                <div class="dim" style="font-size:11px;">cx.morph.create morph_type=call · 09:00</div>
+              </td>
+              <td><a class="btn sm" href="flow-detail.html">查看</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>🪪</td>
+              <td>
+                <div><strong>新设备配对请求 — “MacBook · Studio (alice@home)”</strong></div>
+                <div class="dim" style="font-size:12px;">主设备扫码 + SAS 验证才能签发 cx.device.authorized。短期 session 已生效 15 分钟。</div>
+                <div class="dim" style="font-size:11px;">08:42</div>
+              </td>
+              <td><a class="btn sm primary" href="verify-device.html">验证</a></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td>🚫</td>
+              <td>
+                <div><strong>Moderation：消息已自动隔离</strong></div>
+                <div class="dim" style="font-size:12px;">Acme × Beta Co. policy 拦截了一条来自 ghost-actor:slack:U92 的链接（quarantine_pending_review）。</div>
+                <div class="dim" style="font-size:11px;">cx.moderation.quarantine · 06:10</div>
+              </td>
+              <td><a class="btn sm" href="space-admin.html">复核</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="right-panel">
+      <div class="right-panel-header">通知偏好</div>
+      <div class="right-panel-section">
+        <h5>Push 脱敏</h5>
+        <div class="callout success" style="font-size:12px;">
+          <span class="ico">🔒</span>
+          <div>所有移动端 push 都是 <code>background_sync_needed</code> 唤醒，不携带正文、附件名、Space 标题。</div>
+        </div>
+      </div>
+      <div class="right-panel-section">
+        <h5>触发规则</h5>
+        <div class="stack-sm" style="font-size:13px;">
+          <div class="row gap-8"><span>@ 提及</span><span class="grow"></span><span class="pill success">推送</span></div>
+          <div class="row gap-8"><span>分配 / due</span><span class="grow"></span><span class="pill success">推送</span></div>
+          <div class="row gap-8"><span>审批请求</span><span class="grow"></span><span class="pill success">推送</span></div>
+          <div class="row gap-8"><span>外部 Space 内容</span><span class="grow"></span><span class="pill warning">仅 inbox</span></div>
+          <div class="row gap-8"><span>Agent 输出</span><span class="grow"></span><span class="pill muted">仅 inbox</span></div>
+          <div class="row gap-8"><span>所有 channel 消息</span><span class="grow"></span><span class="pill muted">关闭</span></div>
+        </div>
+      </div>
+      <div class="right-panel-section">
+        <h5>静默时段</h5>
+        <small class="muted">22:00 — 08:00 · 紧急 capability approval 仍会推送</small>
+      </div>
+      <div class="right-panel-section">
+        <h5>个人 Blocklist</h5>
+        <small class="muted">个人 blocklist 仅影响你自己客户端，不会广播；ghost actor 也可加入。</small>
+        <a class="btn full sm" href="settings.html" style="margin-top:8px;">编辑</a>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

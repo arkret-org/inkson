@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review launch checklist · Flow</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app three-col">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand"><span class="logo">C</span> Contrix</div>
+        <span class="pill accent" style="margin-left:auto;">v1</span>
+      </div>
+      <div class="sidebar-section">
+        <h4>Workspace</h4>
+        <a class="nav-item" href="home.html"><span class="icon">🏠</span> 工作台</a>
+        <a class="nav-item" href="inbox.html"><span class="icon">📥</span> Inbox <span class="pill danger" style="margin-left:auto;">7</span></a>
+        <a class="nav-item" href="directory.html"><span class="icon">🧭</span> 发现</a>
+        <a class="nav-item" href="audit.html"><span class="icon">🪪</span> 审计 / Sync</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Acme Engineering</h4>
+        <a class="nav-item" href="board.html"><span class="icon">▦</span> Release Board</a>
+        <a class="nav-item" href="board.html"><span class="icon">▦</span> Triage Board</a>
+        <a class="nav-item" href="board.html"><span class="icon">▦</span> Q3 Roadmap</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>当前 Flow</h4>
+        <div class="nav-item active"><span class="icon">📌</span> Review launch checklist</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">did:plc:7bzr2x…</div></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><a href="home.html">Workspace</a><span class="sep">/</span><a href="space.html">Acme Engineering</a><span class="sep">/</span><a href="board.html">Release Board</a><span class="sep">/</span><strong>Review launch checklist</strong></div>
+        <div class="actions">
+          <span class="pill warning">overdue</span>
+          <button class="btn">⤴ Share</button>
+          <button class="btn">⋯</button>
+        </div>
+      </header>
+
+      <div class="workspace-body no-pad">
+        <div class="flow-doc">
+          <div class="breadcrumb">cx:flow:01js0fk…0042 · schema cx.schema.flow.v1 · revised 12 分钟前</div>
+          <h1>Review launch checklist</h1>
+          <div class="flow-meta">
+            <span class="pill info dot">status: review</span>
+            <span class="pill warning dot">priority: high</span>
+            <span class="pill muted">due 2026-05-03 (overdue)</span>
+            <span class="pill success">E2EE</span>
+            <span>· assigned <div class="avatar xs">M</div> Mei + <div class="avatar xs">A</div> Alice</span>
+          </div>
+
+          <div class="branch-tabs">
+            <div class="tab active">Synthesis</div>
+            <a class="tab" href="discussion.html">Discussion <span class="pill accent" style="font-size:9px;">12</span></a>
+            <div class="tab dim">Activity</div>
+            <div class="tab dim">Audit</div>
+            <span class="grow"></span>
+            <div class="row gap-4" style="padding:8px 4px;">
+              <span class="dim" style="font-size:11px;">primary branch:</span>
+              <span class="pill accent">synthesis</span>
+              <button class="btn sm ghost" title="cx.flow.branch.set_primary">切换</button>
+            </div>
+          </div>
+
+          <div class="flow-fields">
+            <div class="label">Status</div><div class="value"><span class="pill info dot">review</span> <span class="dim">· cx.flow.update fields.status</span></div>
+            <div class="label">Priority</div><div class="value"><span class="pill warning dot">high</span></div>
+            <div class="label">Due</div><div class="value">2026-05-03 <span class="pill danger">逾期 1 天</span></div>
+            <div class="label">Assignees</div><div class="value"><div class="avatar xs">M</div> Mei <div class="avatar xs">A</div> Alice <button class="btn sm ghost">＋</button></div>
+            <div class="label">Labels</div><div class="value"><span class="lbl legal" style="padding:2px 6px;border-radius:4px;font-size:11px;">legal</span> <span class="lbl compliance" style="padding:2px 6px;border-radius:4px;font-size:11px;">compliance</span></div>
+            <div class="label">Position</div><div class="value">Release Board / Review · rank=mV <span class="dim">· cx.flow.move</span></div>
+            <div class="label">Branches</div><div class="value">
+              <span class="pill accent">synthesis · primary</span>
+              <span class="pill success">discussion · branch-scoped E2EE</span>
+              <button class="btn sm ghost">＋ enable branch</button>
+            </div>
+          </div>
+
+          <div class="flow-body">
+            <h3>Brief</h3>
+            <p>对所有 v1.0 release 阻塞项做 legal + compliance 终审。在 2026-05-03 之前完成所有签字。</p>
+            <h3>正文</h3>
+            <ul>
+              <li>✅ DID method allowlist 已复核（Carlos）</li>
+              <li>✅ Snapshot manifest 落地 — <code>cx:event:01js0snp…</code></li>
+              <li>🟡 Federation trust bundle — Beta Co. 仍待 attestation</li>
+              <li>🔴 Push gateway 脱敏 contract — 等运维确认</li>
+              <li>🔴 隐私披露文案（progressive-disclosure 提示）</li>
+            </ul>
+
+            <h3>附件 / Blob</h3>
+            <div class="row gap-8" style="flex-wrap:wrap;">
+              <div class="msg-attachment">📎 release-checklist.md · 8 KB</div>
+              <div class="msg-attachment">📎 trust_bundle_v1.json · 21 KB</div>
+              <div class="msg-attachment">🖼 launch-banner.png · 480 KB <span class="dim">· authenticated media</span></div>
+            </div>
+
+            <h3>Relations</h3>
+            <div class="relations-list">
+              <div class="relation-item"><span class="relation-kind">depends_on</span><span>支付重构 — 风控回调</span><span class="grow dim">cx:flow:01js0cd…001</span></div>
+              <div class="relation-item"><span class="relation-kind">blocks</span><span>v1.0 release tag</span><span class="grow dim">cx:morph:01js0re…</span></div>
+              <div class="relation-item"><span class="relation-kind">references</span><span>Beta Co. 共享文档</span><span class="grow dim">🔒 cross-space lazy_link</span></div>
+              <div class="relation-item"><span class="relation-kind">summarized_from</span><span>Researcher Agent · brief 2026-04-22</span><span class="grow dim">cx:morph:01js0ag…</span></div>
+            </div>
+          </div>
+
+          <div class="callout proto" style="margin-top:18px;">
+            <span class="ico">⚙️</span>
+            <div>
+              <strong>写入将映射为 canonical event</strong>
+              <div class="dim" style="margin-top:4px;color:#a5b4fc;line-height:1.7;">
+                改字段 → <code>cx.flow.update</code> ·
+                改 list → <code>cx.flow.move</code> ·
+                同 list 排序 → <code>cx.flow.reorder</code> ·
+                启用讨论 → <code>cx.flow.branch.enable</code> ·
+                切换 primary → <code>cx.flow.branch.set_primary</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right-panel">
+      <div class="right-panel-header">Flow 上下文</div>
+      <div class="right-panel-section">
+        <h5>Discussion 入口</h5>
+        <a class="surface pad" href="discussion.html" style="display:flex;flex-direction:column;gap:6px;">
+          <div class="row gap-8"><strong>Branch · discussion</strong><span class="pill success" style="margin-left:auto;">E2EE</span></div>
+          <div class="muted" style="font-size:12px;">branch-scoped membership · 4 人 · MLS epoch 12</div>
+          <div class="muted" style="font-size:12px;">"Mei 让 Alice 复核 trust bundle…" <span class="dim">14:11</span></div>
+        </a>
+      </div>
+      <div class="right-panel-section">
+        <h5>People</h5>
+        <div class="stack-sm">
+          <div class="row gap-8"><div class="avatar">A</div> Alice <span class="muted">creator · synthesis owner</span></div>
+          <div class="row gap-8"><div class="avatar">M</div> Mei <span class="muted">assignee · 在线</span><span class="dot-online" style="margin-left:auto;"></span></div>
+          <div class="row gap-8"><div class="avatar">C</div> Carlos <span class="muted">reviewer</span></div>
+          <div class="row gap-8"><div class="avatar agent">α</div> Researcher Agent <span class="muted">read_flow capability</span></div>
+        </div>
+      </div>
+      <div class="right-panel-section">
+        <h5>Recent Activity</h5>
+        <div class="activity-stream">
+          <div class="activity-item"><div class="avatar xs">M</div><div class="activity-body"><div>Mei 把 status 改为 <strong>review</strong></div><div class="meta">12 分钟前 · cx.flow.update</div></div></div>
+          <div class="activity-item"><div class="avatar xs bot">B</div><div class="activity-body"><div>Build-bot 把 Flow 移到 Review</div><div class="meta">28 分钟前 · cx.flow.move</div></div></div>
+          <div class="activity-item"><div class="avatar xs agent">α</div><div class="activity-body"><div>Researcher Agent 添加了 brief 摘要</div><div class="meta">1 天前 · cx.morph.create + Relation</div></div></div>
+        </div>
+      </div>
+      <div class="right-panel-section">
+        <h5>Capability check</h5>
+        <div class="stack-sm" style="font-size:12px;">
+          <div class="spread"><span>read_flow</span><span class="pill success">✓</span></div>
+          <div class="spread"><span>write_flow</span><span class="pill success">✓ via grant</span></div>
+          <div class="spread"><span>read_discussion</span><span class="pill warning">仅 4 名成员</span></div>
+          <div class="spread"><span>moderate</span><span class="pill muted">无</span></div>
+        </div>
+      </div>
+      <div class="right-panel-section">
+        <h5>风险 / Lazy Link</h5>
+        <div class="callout warn">
+          <span class="ico">🔒</span>
+          <div>跨 Space 引用 <strong>Beta Co. 共享文档</strong> 不会展开标题与成员，只显示 opaque ref。</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

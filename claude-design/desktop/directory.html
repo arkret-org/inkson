@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>发现 · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header"><div class="brand"><span class="logo">C</span> Contrix</div><span class="pill accent" style="margin-left:auto;">v1</span></div>
+      <div class="sidebar-section">
+        <h4>Workspace</h4>
+        <a class="nav-item" href="home.html"><span class="icon">🏠</span> 工作台</a>
+        <a class="nav-item" href="inbox.html"><span class="icon">📥</span> Inbox</a>
+        <div class="nav-item active"><span class="icon">🧭</span> 发现</a>
+        <a class="nav-item" href="audit.html"><span class="icon">🪪</span> 审计 / Sync</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Directory 范围</h4>
+        <div class="nav-item active" style="padding-left:24px;">所有目录</div>
+        <div class="nav-item" style="padding-left:24px;">公共目录</div>
+        <div class="nav-item" style="padding-left:24px;">Acme 组织目录</div>
+        <div class="nav-item" style="padding-left:24px;">私密联系人</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>Resolver</h4>
+        <div class="stack-sm" style="padding:0 8px;font-size:12px;">
+          <div class="spread"><span>did:plc</span><span class="pill success">in policy</span></div>
+          <div class="spread"><span>did:web</span><span class="pill success">in policy</span></div>
+          <div class="spread"><span>did:webvh</span><span class="pill warning">witness 1/2</span></div>
+          <div class="spread"><span>did:key</span><span class="pill muted">受限</span></div>
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar">A</div>
+        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">did:plc:7bzr2x…</div></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div class="crumbs"><strong>发现 / Directory</strong></div>
+        <div class="actions">
+          <div class="search-bar" style="width: 380px;">🔍 <span class="dim">@handle / cx:space:… / 邀请链接 / DID</span></div>
+          <button class="btn">⊞ Resolver 设置</button>
+        </div>
+      </header>
+
+      <div class="workspace-body">
+        <div class="callout proto" style="margin-bottom:16px;">
+          <span class="ico">⚙️</span>
+          <div>
+            <strong>Discoverability ≠ Join Rule ≠ History Visibility</strong>
+            <div class="dim" style="margin-top:2px;color:#a5b4fc;">列表能看到 ≠ 能加入；能加入 ≠ 能读历史。每条结果都标注三个独立维度。<code>invite_only</code> 与 <code>secret</code> 的不可见 Space 只能通过精确 ID / 邀请链接解析。</div>
+          </div>
+        </div>
+
+        <div class="auth-tabs" style="margin:0 0 16px;max-width:560px;">
+          <button class="active">Spaces</button>
+          <button>Organizations</button>
+          <button>Actors</button>
+          <button>Applets / Bots</button>
+          <button>Agents</button>
+        </div>
+
+        <h3 class="section-title">Spaces · 28 results</h3>
+        <div class="stack" style="margin-bottom:24px;">
+          <div class="discovery-tile">
+            <div class="avatar org">AE</div>
+            <div class="grow">
+              <div class="row gap-8">
+                <div class="title">Acme Engineering</div>
+                <span class="pill info">listed</span>
+                <span class="pill warning">join: invite_only</span>
+                <span class="pill muted">history: shared_history</span>
+                <span class="pill success">E2EE</span>
+              </div>
+              <div class="sub">cx:space:01js0sp…001 · owned by did:web:acme.example · 24 成员（bucketed）</div>
+            </div>
+            <a class="btn" href="space.html">打开</a>
+          </div>
+
+          <div class="discovery-tile">
+            <div class="avatar org">CX</div>
+            <div class="grow">
+              <div class="row gap-8">
+                <div class="title">Contrix Open Forum</div>
+                <span class="pill success">public</span>
+                <span class="pill info">join: knock</span>
+                <span class="pill muted">history: world_readable</span>
+                <span class="pill muted">无 E2EE</span>
+              </div>
+              <div class="sub">cx:space:01jcommunity… · trusted issuer: did:web:contrix.org · 1.2k bucketed</div>
+            </div>
+            <button class="btn">敲门加入</button>
+          </div>
+
+          <div class="discovery-tile">
+            <div class="avatar org">AB</div>
+            <div class="grow">
+              <div class="row gap-8">
+                <div class="title">Acme × Beta Co.</div>
+                <span class="pill warning">restricted</span>
+                <span class="pill warning">join: restricted</span>
+                <span class="pill muted">history: invited</span>
+                <span class="pill success">E2EE</span>
+                <span class="pill accent">controlled collab</span>
+              </div>
+              <div class="sub">需 attestation: <code>org_membership(acme.example)</code> 或受邀。Sovereign profile=high_assurance。</div>
+            </div>
+            <button class="btn">申请加入</button>
+          </div>
+
+          <div class="discovery-tile" style="opacity:.7;">
+            <div class="avatar org" style="background:linear-gradient(135deg,#475569,#1f2030)">??</div>
+            <div class="grow">
+              <div class="row gap-8">
+                <div class="title">[unlisted Space]</div>
+                <span class="pill muted">unlisted</span>
+                <span class="pill muted">join: invite</span>
+              </div>
+              <div class="sub">仅当输入精确 cx:space ID 或带 invite proof 才能解析。无法通过关键词搜索发现。</div>
+            </div>
+            <button class="btn ghost" disabled>无法预览</button>
+          </div>
+
+          <div class="discovery-tile" style="opacity:.5;">
+            <div class="avatar org" style="background:linear-gradient(135deg,#0f172a,#0b1326)">🔒</div>
+            <div class="grow">
+              <div class="row gap-8">
+                <div class="title">[secret · 无可枚举 metadata]</div>
+                <span class="pill danger">secret</span>
+              </div>
+              <div class="sub">仅在本地或端到端加密上下文中可见。Directory 与 Sync Service 都不公开此 Space。</div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="section-title">Actors · 11 results</h3>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:24px;">
+          <div class="discovery-tile">
+            <div class="avatar">M</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>Mei Tanaka</strong><span class="pill success">联系人</span></div>
+              <div class="sub mono">did:plc:8djrfj4yqps23r62qdb84j8x · @mei@contrix.social</div>
+              <div class="sub">3 个共同 Space · cross-signed · last seen 14:11</div>
+            </div>
+            <button class="btn sm">提到 / 邀请</button>
+          </div>
+          <div class="discovery-tile">
+            <div class="avatar agent">α</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>Researcher Agent</strong><span class="pill muted">agent</span><span class="pill warning">accountable: did:web:acme.example</span></div>
+              <div class="sub mono">did:web:agent.copy.acme.example#researcher</div>
+              <div class="sub">capability set: read_flow · write_message · 不允许 write_capability</div>
+            </div>
+            <button class="btn sm">检查 capability</button>
+          </div>
+          <div class="discovery-tile">
+            <div class="avatar ghost">U</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>Brian (Slack)</strong><span class="pill muted">ghost actor</span></div>
+              <div class="sub mono">did:web:slack-bridge.example#ghost-u92</div>
+              <div class="sub">来源：slack workspace=beta-co · 由 Beta Slack Bridge controller 担保</div>
+            </div>
+            <button class="btn sm ghost">不能直接邀请 ghost</button>
+          </div>
+          <div class="discovery-tile" style="opacity:.6;">
+            <div class="avatar" style="background:linear-gradient(135deg,#94a3b8,#475569);">?</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>持有 claim 但未公开 handle 的主体</strong><span class="pill muted">progressive disclosure</span></div>
+              <div class="sub">需要先通过 presentation request 协商可见字段，才能看到 profile。</div>
+            </div>
+            <button class="btn sm">发送披露请求</button>
+          </div>
+        </div>
+
+        <h3 class="section-title">Applets / Bots · 6 results</h3>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
+          <div class="discovery-tile">
+            <div class="avatar bot">B</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>Build-bot</strong><span class="pill success">受信</span></div>
+              <div class="sub">acme.example 注册 · namespace cx:space:* · 仅 write_message + reaction</div>
+            </div>
+            <a class="btn sm" href="applets.html">查看注册</a>
+          </div>
+          <div class="discovery-tile">
+            <div class="avatar bot">SL</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>Slack Bridge</strong><span class="pill warning">桥接</span><span class="pill muted">外部网络</span></div>
+              <div class="sub">portal_space namespace · ghost actor 来源 · plaintext_visible=true（仅 portal）</div>
+            </div>
+            <a class="btn sm" href="applets.html">查看</a>
+          </div>
+          <div class="discovery-tile">
+            <div class="avatar bot">GH</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>GitHub Mirror</strong><span class="pill warning">桥接</span></div>
+              <div class="sub">把 issue/pr 镜像为 Flow + Morph · agent transaction 写入</div>
+            </div>
+            <a class="btn sm" href="applets.html">查看</a>
+          </div>
+          <div class="discovery-tile">
+            <div class="avatar bot">MM</div>
+            <div class="grow">
+              <div class="row gap-8"><strong>MIMI Provider Facade</strong><span class="pill info">互操作</span></div>
+              <div class="sub">把 Contrix Space 暴露为 MIMI Room 端点，仅 metadata 与 ciphertext envelope</div>
+            </div>
+            <a class="btn sm" href="applets.html">查看</a>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+</body>
+</html>
