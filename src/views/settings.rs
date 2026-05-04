@@ -1582,7 +1582,7 @@ pub fn SettingsPanel(
                                     match CoauthApi::new(&auth_server) {
                                         Ok(api) => match api.principal_recovery_snapshot().await {
                                             Ok(response) => recovery_contract_status.set(format!(
-                                                "coauth principal snapshot scaffold:\n{}",
+                                                "coauth principal snapshot cache scaffold:\n{}",
                                                 serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
                                             )),
                                             Err(error) => recovery_contract_status.set(format!(
@@ -1606,7 +1606,7 @@ pub fn SettingsPanel(
                                     match CoauthApi::new(&auth_server) {
                                         Ok(api) => match api.principal_recovery_cache_status().await {
                                             Ok(response) => recovery_contract_status.set(format!(
-                                                "coauth principal cache scaffold:\n{}",
+                                                "coauth principal cache status scaffold:\n{}",
                                                 serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
                                             )),
                                             Err(error) => recovery_contract_status.set(format!(
