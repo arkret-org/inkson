@@ -20,12 +20,19 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
 }
 
 pub fn build_register_request(device_id: &str) -> anyhow::Result<RegisterDeviceRequest> {
+    build_register_request_for_actor(device_id, None)
+}
+
+pub fn build_register_request_for_actor(
+    device_id: &str,
+    principal_did: Option<&str>,
+) -> anyhow::Result<RegisterDeviceRequest> {
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
     let prefs = push_preferences();
     let idempotency_key = format!("yougen-push-register-{device_id}");
     let config = PushDeviceConfig {
-        principal_did: None,
+        principal_did,
         device_id,
         push_key: Some(&push_key),
         platform: Some(platform),

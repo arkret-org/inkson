@@ -45,7 +45,7 @@ pub fn production_release_workflows() -> Vec<ProductWorkflow> {
             name: "Password/passkey login",
             stage: WorkflowStage::Blocked,
             client_surface: "Release panel gap",
-            server_dependency: "Needs production auth challenge, passkey assertion, token refresh, and session grant model",
+            server_dependency: "Needs coauth-owned OIDC/passkey challenge, code/token exchange, soland session-grant handoff, and chime push registration grant reuse",
         },
         ProductWorkflow {
             id: "identity.device_verification",

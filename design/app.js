@@ -79,7 +79,7 @@ const cards = [
     assignee: "Alice",
     status: "Done",
     labels: ["blue"],
-    badge: "cx.card.create",
+    badge: "cx.flow.create",
     roomState: "",
     state: "done",
   },
@@ -352,7 +352,7 @@ function dashboard() {
         <div class="panel pad">
           <div class="section-head"><h2>Inbox</h2><button class="btn small" data-route="inbox">View all</button></div>
           ${activity("@mention · Review room", "Bob mentioned you", "Open Card detail + target Room if both are visible.", "card/legal")}
-          ${activity("conflict · cx.card.move", "Move needs review", "Your offline card move needs replay.", "audit")}
+          ${activity("conflict · cx.flow.move", "Move needs review", "Your offline card move needs replay.", "audit")}
           ${activity("device · keys", "iPhone key package expires soon", "Verify or rotate the pending key package.", "devices")}
         </div>
       </section>
@@ -378,9 +378,9 @@ function space() {
         </div>
         <div class="panel pad">
           <h2>Recent activity</h2>
-          ${activity("cx.card.move", "Legal review moved into Doing", "Reducer accepted active position edge.", "card/legal")}
-          ${activity("cx.message.create", "New message in Review room", "Message references cx:card:01legal.", "room/review")}
-          ${activity("cx.room.member", "External counsel joined", "History visibility is joined.", "admin")}
+          ${activity("cx.flow.move", "Legal review moved into Doing", "Reducer accepted active position edge.", "card/legal")}
+          ${activity("cx.message.create", "New message in Review room", "Message references cx:flow:01legal.", "room/review")}
+          ${activity("cx.flow.branch.member", "External counsel joined", "History visibility is joined.", "admin")}
         </div>
       </section>
     </main>
@@ -451,7 +451,7 @@ function cardDetail(card) {
         <aside class="drawer">
           <div class="panel detail-hero">
             <div class="detail-title-row">
-              <div><div class="eyebrow">cx:card:01${card.id}...</div><h1>${card.title}</h1></div>
+              <div><div class="eyebrow">cx:flow:01${card.id}...</div><h1>${card.title}</h1></div>
               <span class="badge ${card.state === "conflict" ? "red" : "green"}">${card.state}</span>
             </div>
             <p>${card.summary} Card state is separate from Room discussion and permissions.</p>
@@ -473,8 +473,8 @@ function cardDetail(card) {
           </div>
           <div class="panel pad">
             <h2>Activity and audit</h2>
-            ${activity("cx.card.move", "Move conflict handled", "Doing -> Review was rejected as stale; current card remains in Doing.", "audit")}
-            ${activity("cx.card.link_room", "Review room linked", "purpose=review; link does not grant Room access.", "audit")}
+            ${activity("cx.flow.move", "Move conflict handled", "Doing -> Review was rejected as stale; current card remains in Doing.", "audit")}
+            ${activity("discussion branch enablement", "Review room linked", "purpose=review; link does not grant Room access.", "audit")}
           </div>
         </aside>
       </section>
@@ -496,7 +496,7 @@ function room(room) {
             <span class="badge green">member</span>
           </div>
           <div class="message-scroll">
-            ${messageRow("A", "Alice", "09:41 · cx.message.create", "@bob 请确认 privacy clause 是否可以进入 public beta。", ["mentions did:web:bob.example", "references cx:card:01legal"])}
+            ${messageRow("A", "Alice", "09:41 · cx.message.create", "@bob 请确认 privacy clause 是否可以进入 public beta。", ["mentions did:web:bob.example", "references cx:flow:01legal"])}
             ${messageRow("B", "Bob", "09:58 · revised", "需要把 external processor 的表述收窄，我会给出替换文本。", ["revision chain", "reaction +2"])}
             ${messageRow("C", "Carol", "10:03 · cx.message.redact", "[Message redacted]", ["tombstone"])}
           </div>
@@ -524,7 +524,7 @@ function inbox() {
           <h2>Actionable</h2>
           ${activity("@mention · Review room", "Bob mentioned you", "Open Card detail + target Room if both are visible.", "card/legal")}
           ${activity("assigned · Security sign-off", "Card assigned to you", "Assignment relation is visible; linked private Room remains locked.", "card/security")}
-          ${activity("conflict · cx.card.move", "Move needs review", "Your offline move was stale after sync; replay from latest projection.", "audit")}
+          ${activity("conflict · cx.flow.move", "Move needs review", "Your offline move was stale after sync; replay from latest projection.", "audit")}
         </div>
         <div class="panel pad"><h2>Read state and mute rules</h2>${table(["Source", "Read marker", "Mute", "Policy"], [["Review room", "private account data", "off", "joined history"], ["Launch board", "public receipt allowed", "off", "shared"], ["External counsel", "private only", "on", "restricted"]])}</div>
       </section>
@@ -602,8 +602,8 @@ function audit() {
     <main class="page">
       ${pageHead("Audit", "查看 Event Envelope、frontier、snapshot、projection 来源、authz decision 和冲突记录。", `<button class="btn">Backfill</button><button class="btn">Verify snapshot</button><button class="btn primary">Refresh</button>`)}
       <section class="grid four">${metric("Frontier", "cx:event:review-44", "current")}${metric("Cursor", "sx:e2e:product", "saved")}${metric("State hash", "verified", "ok")}${metric("Conflicts", "1", "needs review")}</section>
-      <section class="panel pad"><h2>Event log</h2>${table(["Event", "Kind", "Target", "Reducer result"], [["cx:event:01move...", "cx.card.move", "cx:card:01legal...", "accepted"], ["cx:event:01stale...", "cx.card.move", "cx:card:01security...", "cas_conflict"], ["cx:event:01msg...", "cx.message.redact", "cx:message:01...", "tombstone"]])}</section>
-      <section class="grid two"><div class="panel pad"><h2>Conflict detail</h2><p>同一 `(board_id, card_id)` 出现多个 active position edge，reducer 按授权权重、HLC、Actor ID、Event ID 收敛，并记录 loser。</p></div><div class="panel pad"><h2>Authz explanation</h2><p>Card 可见、Room 不可见时，projection 返回 locked lazy link，不返回 Room title、member list 或 unread exact count。</p></div></section>
+      <section class="panel pad"><h2>Event log</h2>${table(["Event", "Kind", "Target", "Reducer result"], [["cx:event:01move...", "cx.flow.move", "cx:flow:01legal...", "accepted"], ["cx:event:01stale...", "cx.flow.move", "cx:flow:01security...", "cas_conflict"], ["cx:event:01msg...", "cx.message.redact", "cx:message:01...", "tombstone"]])}</section>
+      <section class="grid two"><div class="panel pad"><h2>Conflict detail</h2><p>同一 `(list_id, flow_id)` 出现多个 active position edge，reducer 按授权权重、HLC、Actor ID、Event ID 收敛，并记录 loser。</p></div><div class="panel pad"><h2>Authz explanation</h2><p>Card 可见、Room 不可见时，projection 返回 locked lazy link，不返回 Room title、member list 或 unread exact count。</p></div></section>
     </main>
   `;
 }

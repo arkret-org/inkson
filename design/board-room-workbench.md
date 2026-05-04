@@ -72,10 +72,10 @@ Card 卡片：
 
 | 分区 | 内容 | 写入 |
 | --- | --- | --- |
-| Header | title、status、priority、archive、copy link | `cx.card.update` / `cx.card.archive` |
-| Fields | body、acceptance criteria、labels、due_at、assignees | `cx.card.update` / `assigned_to` relation |
+| Header | title、status、priority、archive、copy link | `cx.flow.update` / `cx.flow.archive` |
+| Fields | body、acceptance criteria、labels、due_at、assignees | `cx.flow.update` / `assigned_to` relation |
 | Work graph | depends_on、blocks、references | relation events |
-| Rooms | primary Room、linked Rooms、create/link/unlink/set primary | `cx.card.link_room` / `cx.card.unlink_room` / `cx.card.set_primary_room` |
+| Rooms | primary Room、linked Rooms、create/link/unlink/set primary | `discussion branch enablement` / `discussion branch disablement` / `primary discussion branch state` |
 | Chat | 当前 Room message timeline、composer、reply、reaction、redact | `cx.message.create` / `cx.message.revise` / `cx.message.redact` / `cx.reaction.*` |
 | Activity | Card update events、move/reorder history、visible Room summaries | derived timeline projection |
 | Audit | Event IDs、frontier、authz decision、conflict records | read-only |
@@ -116,7 +116,7 @@ Room 类型视觉规则：
 3. 用户在 Board 内添加 `Todo / Doing / Review / Done`。
 4. 每个 List 使用 `cx.list.create`，并用 `board --contains--> list` relation 表达归属与 rank。
 5. 用户在 Todo 下添加 Card。
-6. 客户端提交 `cx.card.create`，再建立 `list --contains--> card` active position edge。
+6. 客户端提交 `cx.flow.create`，再建立 `list --contains--> card` active position edge。
 7. Board projection 重新拉取或本地归约后显示 Card。
 
 通过标准：新 Card 只出现在目标 List；不依赖 Card canonical 字段里的 `board_id/list_id` 作为唯一真相。
@@ -125,24 +125,24 @@ Room 类型视觉规则：
 
 1. 用户把 Card 从 Doing 拖到 Review。
 2. UI 立即做 optimistic move，Card 显示 pending。
-3. 客户端提交 `cx.card.move`，携带 `expected_position.relation_id` 和旧 rank。
+3. 客户端提交 `cx.flow.move`，携带 `expected_position.relation_id` 和旧 rank。
 4. 若服务器接受，projection frontier 前进，pending 消失。
 5. 若并发导致 `expected_position` 过期，返回 `cas_conflict` 或 stale projection。
 6. UI 显示冲突状态：`Refresh position`、`Replay my move`、`Open audit`。
-7. 用户重放时基于最新 projection 重新生成 `cx.card.move`。
+7. 用户重放时基于最新 projection 重新生成 `cx.flow.move`。
 
 并发规则：
 
 - reducer 不使用到达顺序。
-- 同一 `(board_id, card_id)` 只能有一个 active position edge。
+- 同一 `(list_id, flow_id)` 只能有一个 active position edge。
 - tie-break 按授权权重、HLC、Actor ID、Event ID。
 
 ### 流程 C：Card 上创建 primary Room 并讨论
 
 1. 用户打开 Card 抽屉，点击 `Create discussion room`。
-2. 客户端提交 `cx.room.create`，默认 `room_kind=discussion`，私密/E2EE 场景默认 `history_visibility=joined`。
-3. 客户端提交 `cx.card.link_room`，`purpose=implementation`。
-4. 若设为默认讨论入口，再提交 `cx.card.set_primary_room` 或 `cx.card.link_room` 中 `primary=true`。
+2. 客户端提交 `cx.flow.create`，默认 `room_kind=discussion`，私密/E2EE 场景默认 `history_visibility=joined`。
+3. 客户端提交 `discussion branch enablement`，`purpose=implementation`。
+4. 若设为默认讨论入口，再提交 `primary discussion branch state` 或 `discussion branch enablement` 中 `primary=true`。
 5. Chat tab 展示 Room timeline，用户发送消息。
 6. 消息写入 `cx.message.create`，mention 从结构化正文或 relation 派生 notification。
 
@@ -153,7 +153,7 @@ Room 类型视觉规则：
 1. 用户在 Card 抽屉点击 `Link existing room`。
 2. 搜索结果只展示当前 actor 可发现的 Room；不可读但可发现的结果用 locked lazy link。
 3. 用户选择 Room 并设置 purpose：design / implementation / review / external_partner / private。
-4. 客户端提交 `cx.card.link_room`。
+4. 客户端提交 `discussion branch enablement`。
 5. Card room badge 更新 linked count。
 6. 其他成员打开 Card 时分别按 Room policy 裁剪。
 
@@ -208,14 +208,14 @@ Room 类型视觉规则：
 | 更新 Board title / summary | `cx.board.update` |
 | 新建 / 更新 / 归档 List | `cx.list.create` / `cx.list.update` / `cx.list.archive` |
 | List 排序 | `cx.list.reorder` |
-| 新建 / 更新 / 归档 / 恢复 Card | `cx.card.create` / `cx.card.update` / `cx.card.archive` / `cx.card.restore` |
-| Card 跨 List 移动 | `cx.card.move` |
-| Card 同 List 排序 | `cx.card.reorder` |
-| 为 Card 关联 Room | `cx.card.link_room` |
-| 移除 Card Room 关联 | `cx.card.unlink_room` |
-| 设置默认讨论 Room | `cx.card.set_primary_room` |
-| 新建 / 更新 / 归档 Room | `cx.room.create` / `cx.room.update` / `cx.room.archive` |
-| Room 成员变化 | `cx.room.member` |
+| 新建 / 更新 / 归档 / 恢复 Card | `cx.flow.create` / `cx.flow.update` / `cx.flow.archive` / `cx.flow.restore` |
+| Card 跨 List 移动 | `cx.flow.move` |
+| Card 同 List 排序 | `cx.flow.reorder` |
+| 为 Card 关联 Room | `discussion branch enablement` |
+| 移除 Card Room 关联 | `discussion branch disablement` |
+| 设置默认讨论 Room | `primary discussion branch state` |
+| 新建 / 更新 / 归档 Room | `cx.flow.create` / `cx.flow.update` / `cx.flow.archive` |
+| Room 成员变化 | `cx.flow.branch.member` |
 | 发送 / 编辑 / 撤回消息 | `cx.message.create` / `cx.message.revise` / `cx.message.redact` |
 | Reaction | `cx.reaction.add` / `cx.reaction.remove` |
 | 保存共享 View 配置 | `cx.view.update` |
@@ -231,4 +231,4 @@ Room 类型视觉规则：
 - 所有拖拽和排序都要有 optimistic、pending、accepted、conflict 四种状态。
 - 不可见 Room 不泄露标题、成员、消息摘要或精确 unread 数。
 - View 保存动作必须区分 shared View 和 personal preference。
-- 当前实现中的 `cx:channel` 概念应迁移为 `cx:room` / `cx.message.*`。
+- 当前实现中的 `cx:flow` 概念应迁移为 `cx:room` / `cx.message.*`。

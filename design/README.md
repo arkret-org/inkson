@@ -66,7 +66,7 @@
 - Card 可见不代表 Room 可见，Room 可见不代表 Card 可见。
 - Card 归档、删除或移动不会自动删除 Room。
 - 发送、编辑、撤回聊天消息必须落到 `cx.message.*`，不是 Card comment 字段。
-- 拖拽和排序必须落到 `cx.card.move` / `cx.card.reorder`，View projection 只负责展示。
+- 拖拽和排序必须落到 `cx.flow.move` / `cx.flow.reorder`，View projection 只负责展示。
 
 ## 协议依据
 
@@ -84,9 +84,9 @@
 
 ## 后续实现影响
 
-当前 `src/views/kanban.rs` 仍是本地示例状态，`src/views/chat.rs` 仍使用旧的 `cx:channel` / `cx.channel.create` 概念。后续实现应按本设计迁移为：
+当前 `src/views/kanban.rs` 仍是本地示例状态，`src/views/chat.rs` 仍使用旧的 `cx:flow` / `cx.flow.create` 概念。后续实现应按本设计迁移为：
 
 - Board projection：`View{kind=collection, renderer=board}` + `board/list/card/contains relation`。
 - Chat surface：`room/message` 标准对象，而不是 channel entity。
-- Card detail：通过 `cx.card.link_room`、`cx.card.unlink_room`、`cx.card.set_primary_room` 管理 Room 关联。
+- Card detail：通过 `discussion branch enablement`、`discussion branch disablement`、`primary discussion branch state` 管理 Room 关联。
 - 同步/并发：所有拖拽、排序、消息和 Room membership 写入都生成 signed Event Envelope，UI 只做 optimistic projection。

@@ -34,13 +34,13 @@
         <h2>Event log</h2>
         <div class="table-card">
           <div class="table-row"><div class="table-cell">Event</div><div class="table-cell">Kind</div><div class="table-cell">Target</div><div class="table-cell">Reducer result</div></div>
-          <div class="table-row"><div class="table-cell">cx:event:01move...</div><div class="table-cell">cx.card.move</div><div class="table-cell">cx:card:01legal...</div><div class="table-cell">accepted</div></div>
-          <div class="table-row"><div class="table-cell">cx:event:01stale...</div><div class="table-cell">cx.card.move</div><div class="table-cell">cx:card:01security...</div><div class="table-cell">cas_conflict</div></div>
+          <div class="table-row"><div class="table-cell">cx:event:01move...</div><div class="table-cell">cx.flow.move</div><div class="table-cell">cx:flow:01legal...</div><div class="table-cell">accepted</div></div>
+          <div class="table-row"><div class="table-cell">cx:event:01stale...</div><div class="table-cell">cx.flow.move</div><div class="table-cell">cx:flow:01security...</div><div class="table-cell">cas_conflict</div></div>
           <div class="table-row"><div class="table-cell">cx:event:01msg...</div><div class="table-cell">cx.message.redact</div><div class="table-cell">cx:message:01...</div><div class="table-cell">tombstone</div></div>
         </div>
       </section>
       <section class="panel-grid">
-        <div class="page-panel"><h2>Conflict detail</h2><p>同一 `(board_id, card_id)` 出现多个 active position edge，reducer 按授权权重、HLC、Actor ID、Event ID 收敛，并记录 loser。</p></div>
+        <div class="page-panel"><h2>Conflict detail</h2><p>同一 `(list_id, flow_id)` 出现多个 active position edge，reducer 按授权权重、HLC、Actor ID、Event ID 收敛，并记录 loser。</p></div>
         <div class="page-panel"><h2>Authz explanation</h2><p>Card 可见、Room 不可见的情况下，projection 返回 locked lazy link，不返回 Room title、member list 或 unread exact count。</p></div>
       </section>
     </main>

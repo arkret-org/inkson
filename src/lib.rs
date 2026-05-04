@@ -2,6 +2,7 @@ pub mod api;
 pub mod app;
 pub mod capability;
 pub mod components;
+pub mod coauth;
 pub mod config;
 pub mod conflict;
 pub mod conformance;

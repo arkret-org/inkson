@@ -459,7 +459,7 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "queue-link-discussion-event",
                             onclick: {
-                                let card_id = card.id.clone();
+                                let flow_id = card.id.clone();
                                 let branch_id = card.primary_flow_id.clone();
                                 let space = selected_space.clone();
                                 let actor = account_did.clone();
@@ -467,7 +467,7 @@ pub fn KanbanPanel(
                                     let event = cx_ops::flow_branch_member_event(
                                         &space,
                                         &actor,
-                                        &card_id,
+                                        &flow_id,
                                         "discussion",
                                         &branch_id,
                                         true,
