@@ -859,8 +859,12 @@ pub fn SettingsPanel(
                                     };
 
                                     let principal_result = match ContrixApi::new(&principal) {
-                                        Ok(api) => match api.integration_describe().await {
-                                            Ok(manifest) => {
+                                        Ok(api) => match (
+                                            api.integration_describe().await,
+                                            api.device_messages_describe().await,
+                                            api.key_backups_describe().await,
+                                        ) {
+                                            (Ok(manifest), Ok(device_messages_describe), Ok(key_backups_describe)) => {
                                                 let authz_examples = manifest
                                                     .examples
                                                     .get("authz_protocol")
@@ -868,16 +872,24 @@ pub fn SettingsPanel(
                                                     .unwrap_or_else(|| serde_json::json!({
                                                         "todo": "principal integration manifest did not publish authz_protocol examples"
                                                     }));
-                                                match serde_json::to_string_pretty(&authz_examples) {
-                                                    Ok(pretty) => Ok(format!(
-                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}",
+                                                match (
+                                                    serde_json::to_string_pretty(&authz_examples),
+                                                    serde_json::to_string_pretty(&device_messages_describe),
+                                                    serde_json::to_string_pretty(&key_backups_describe),
+                                                ) {
+                                                    (Ok(pretty_authz), Ok(pretty_device_messages), Ok(pretty_key_backups)) => Ok(format!(
+                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\ndevice_messages_describe:\n{}\n\nkey_backups_describe:\n{}",
                                                         summarize_principal_integration_manifest(&manifest),
-                                                        pretty,
+                                                        pretty_authz,
+                                                        pretty_device_messages,
+                                                        pretty_key_backups,
                                                     )),
-                                                    Err(error) => Err(format!("principal authz examples formatting failed: {error}")),
+                                                    _ => Err("principal recovery describe formatting failed".to_owned()),
                                                 }
                                             }
-                                            Err(error) => Err(format!("principal integration describe failed: {error}")),
+                                            (Err(error), _, _) => Err(format!("principal integration describe failed: {error}")),
+                                            (_, Err(error), _) => Err(format!("principal device_messages describe failed: {error}")),
+                                            (_, _, Err(error)) => Err(format!("principal key_backups describe failed: {error}")),
                                         },
                                         Err(error) => Err(format!("invalid principal URL: {error}")),
                                     };

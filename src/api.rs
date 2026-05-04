@@ -426,6 +426,14 @@ impl ContrixApi {
         self.get_json("api/v1/policies/describe").await
     }
 
+    pub async fn device_messages_describe(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/device_messages/describe").await
+    }
+
+    pub async fn key_backups_describe(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/describe").await
+    }
+
     pub async fn dev_login(
         &self,
         actor: &str,
