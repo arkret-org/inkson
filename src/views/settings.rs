@@ -1532,6 +1532,47 @@ pub fn SettingsPanel(
                             },
                             "Inspect Restore Bundle"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-activity",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_key_backup_restore_activity(&ticket_id).await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "restore activity scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Activity"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-live-snapshot",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_recovery_live_snapshot().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "recovery live snapshot scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Recovery Live Snapshot"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }

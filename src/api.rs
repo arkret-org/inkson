@@ -1104,6 +1104,18 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn get_key_backup_restore_activity(
+        &self,
+        ticket_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/activity"))
+            .await
+    }
+
+    pub async fn get_recovery_live_snapshot(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/recovery/live-snapshot").await
+    }
+
     pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
         let request = self
             .http

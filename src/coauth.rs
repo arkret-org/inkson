@@ -244,6 +244,8 @@ pub struct CoauthRecoveryDescribe {
     pub principal_restore_receipt_path: String,
     pub principal_restore_materialized_device_handoff_path: String,
     pub principal_restore_bundle_path: String,
+    pub principal_restore_activity_path: String,
+    pub principal_recovery_live_snapshot_path: String,
     pub principal_authz_describe_path: String,
     pub principal_authz_check_path: String,
     pub principal_policy_describe_path: String,
