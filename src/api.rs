@@ -32,6 +32,7 @@ pub struct PrincipalAuthBridgeDescribeResponse {
     pub api_base_path: String,
     pub auth: PrincipalAuthBridgeAuthDescriptor,
     pub push: PrincipalAuthBridgePushDescriptor,
+    pub examples: PrincipalAuthBridgeExamples,
     #[serde(default)]
     pub todos: Vec<String>,
 }
@@ -51,6 +52,16 @@ pub struct PrincipalAuthBridgePushDescriptor {
     pub session_grant_header: String,
     pub principal_did_body_field: String,
     pub register_device_mode: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PrincipalAuthBridgeExamples {
+    #[serde(default)]
+    pub session_grant_exchange_request: Value,
+    #[serde(default)]
+    pub register_device_request: Value,
+    #[serde(default)]
+    pub unregister_device_request: Value,
 }
 
 impl CancellationToken {

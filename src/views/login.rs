@@ -1110,7 +1110,7 @@ pub fn LoginPanel(
                                                                                     session.actor
                                                                                 ));
                                                                                 integration_plan_status.set(format!(
-                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
+                                                                                    "{}\n\nauthorize_url_preview={}\ntoken_endpoint={}\nprincipal_target={}\nprincipal_session_grant_example={}\nprincipal_register_device_example={}\npush_gateway_bridge={}\nsoland_bearer_session_expires={}\npush_registration_id={}",
                                                                                     summarize_password_login_bridge(
                                                                                         &login,
                                                                                         response.registration_id.as_deref(),
@@ -1119,6 +1119,8 @@ pub fn LoginPanel(
                                                                                     plan.authorize_url_preview,
                                                                                     plan.token_endpoint,
                                                                                     principal_target,
+                                                                                    serde_json::to_string_pretty(&bridge.examples.session_grant_exchange_request).unwrap_or_else(|_| "{}".to_owned()),
+                                                                                    serde_json::to_string_pretty(&bridge.examples.register_device_request).unwrap_or_else(|_| "{}".to_owned()),
                                                                                     push_gateway_bridge_summary,
                                                                                     session.expires_at,
                                                                                     response.registration_id.as_deref().unwrap_or("missing"),
