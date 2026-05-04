@@ -1395,6 +1395,32 @@ pub fn SettingsPanel(
                             },
                             "Handoff Materialized Device"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-bundle",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_bundle(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_bundle:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore bundle failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Bundle"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }
