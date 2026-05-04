@@ -95,6 +95,8 @@ pub struct CoauthAuthBridgeOAuthDescriptor {
     pub discovery_path: String,
     #[serde(default)]
     pub browser_bridge_session_path: String,
+    #[serde(default)]
+    pub exchange_describe_path: String,
     pub exchange_path: String,
     #[serde(default)]
     pub supported_flows: Vec<String>,
@@ -124,6 +126,7 @@ pub struct CoauthTopologySnapshot {
     pub scopes_supported: Vec<String>,
     pub oidc_clients: Vec<CoauthOidcClientHint>,
     pub oidc_browser_bridge_session_path: String,
+    pub oidc_exchange_describe_path: String,
     pub oidc_exchange_path: String,
     pub auth_bridge_contract: String,
     pub auth_bridge_todos: Vec<String>,
@@ -147,6 +150,22 @@ pub struct CoauthOidcBrowserBridgeSession {
     pub code_challenge_method: String,
     pub principal_audience: String,
     pub todo: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthOidcExchangeDescribe {
+    pub contract: String,
+    pub version: String,
+    pub exchange_path: String,
+    pub upstream_boundary_mode: String,
+    #[serde(default)]
+    pub required_fields: Vec<String>,
+    #[serde(default)]
+    pub validation_layers: Vec<String>,
+    #[serde(default)]
+    pub example_request: Value,
+    #[serde(default)]
+    pub todos: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -272,6 +291,7 @@ impl CoauthApi {
                 .transpose()?
                 .unwrap_or_default(),
             oidc_browser_bridge_session_path: bridge.oauth.browser_bridge_session_path,
+            oidc_exchange_describe_path: bridge.oauth.exchange_describe_path,
             oidc_exchange_path: bridge.oauth.exchange_path,
             auth_bridge_contract: bridge.contract,
             auth_bridge_todos: bridge.todos,
@@ -280,6 +300,13 @@ impl CoauthApi {
 
     pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
         self.get_json("api/v1/auth/bridge/describe").await
+    }
+
+    pub async fn describe_oidc_exchange(
+        &self,
+        exchange_describe_path: &str,
+    ) -> anyhow::Result<CoauthOidcExchangeDescribe> {
+        self.get_json(exchange_describe_path).await
     }
 
     pub async fn password_login(
