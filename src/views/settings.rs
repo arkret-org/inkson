@@ -1058,6 +1058,93 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-resume-restore-ticket",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_ticket_resume(&ticket_id, json!({
+                                            "resume_mode": "resume_from_current_state",
+                                            "note": "resume restore scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket_resume:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket resume failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Resume Restore Ticket"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-cancel-restore-ticket",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_ticket_cancel(&ticket_id, json!({
+                                            "reason": "operator_cancelled",
+                                            "note": "cancel restore scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket_cancel:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket cancel failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Cancel Restore Ticket"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-retry-restore-ticket",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_ticket_retry(&ticket_id, json!({
+                                            "retry_mode": "reuse_backup_material",
+                                            "note": "retry restore scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket_retry:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket retry failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Retry Restore Ticket"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-inspect-restore-approvals",
                             onclick: move |_| {
                                 let principal = base_url();

@@ -962,6 +962,42 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn post_key_backup_restore_ticket_resume(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/resume"),
+            payload,
+        )
+        .await
+    }
+
+    pub async fn post_key_backup_restore_ticket_cancel(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/cancel"),
+            payload,
+        )
+        .await
+    }
+
+    pub async fn post_key_backup_restore_ticket_retry(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/retry"),
+            payload,
+        )
+        .await
+    }
+
     pub async fn get_key_backup_restore_approval_status(
         &self,
         ticket_id: &str,
