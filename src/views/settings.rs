@@ -861,10 +861,11 @@ pub fn SettingsPanel(
                                     let principal_result = match ContrixApi::new(&principal) {
                                         Ok(api) => match (
                                             api.integration_describe().await,
+                                            api.recovery_contract_stack().await,
                                             api.device_messages_describe().await,
                                             api.key_backups_describe().await,
                                         ) {
-                                            (Ok(manifest), Ok(device_messages_describe), Ok(key_backups_describe)) => {
+                                            (Ok(manifest), Ok(recovery_contract_stack), Ok(device_messages_describe), Ok(key_backups_describe)) => {
                                                 let authz_examples = manifest
                                                     .examples
                                                     .get("authz_protocol")
@@ -874,22 +875,25 @@ pub fn SettingsPanel(
                                                     }));
                                                 match (
                                                     serde_json::to_string_pretty(&authz_examples),
+                                                    serde_json::to_string_pretty(&recovery_contract_stack),
                                                     serde_json::to_string_pretty(&device_messages_describe),
                                                     serde_json::to_string_pretty(&key_backups_describe),
                                                 ) {
-                                                    (Ok(pretty_authz), Ok(pretty_device_messages), Ok(pretty_key_backups)) => Ok(format!(
-                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\ndevice_messages_describe:\n{}\n\nkey_backups_describe:\n{}",
+                                                    (Ok(pretty_authz), Ok(pretty_recovery_stack), Ok(pretty_device_messages), Ok(pretty_key_backups)) => Ok(format!(
+                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\nrecovery_contract_stack:\n{}\n\ndevice_messages_describe:\n{}\n\nkey_backups_describe:\n{}",
                                                         summarize_principal_integration_manifest(&manifest),
                                                         pretty_authz,
+                                                        pretty_recovery_stack,
                                                         pretty_device_messages,
                                                         pretty_key_backups,
                                                     )),
                                                     _ => Err("principal recovery describe formatting failed".to_owned()),
                                                 }
                                             }
-                                            (Err(error), _, _) => Err(format!("principal integration describe failed: {error}")),
-                                            (_, Err(error), _) => Err(format!("principal device_messages describe failed: {error}")),
-                                            (_, _, Err(error)) => Err(format!("principal key_backups describe failed: {error}")),
+                                            (Err(error), _, _, _) => Err(format!("principal integration describe failed: {error}")),
+                                            (_, Err(error), _, _) => Err(format!("principal recovery contract stack failed: {error}")),
+                                            (_, _, Err(error), _) => Err(format!("principal device_messages describe failed: {error}")),
+                                            (_, _, _, Err(error)) => Err(format!("principal key_backups describe failed: {error}")),
                                         },
                                         Err(error) => Err(format!("invalid principal URL: {error}")),
                                     };

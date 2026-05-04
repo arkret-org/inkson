@@ -220,6 +220,7 @@ pub struct CoauthRecoveryDescribe {
     pub key_backup_rest_base: String,
     pub key_backup_schema: String,
     pub device_message_schema: String,
+    pub principal_recovery_contract_stack_path: String,
     pub principal_device_messages_describe_path: String,
     pub principal_key_backups_describe_path: String,
     pub principal_restore_start_path: String,
@@ -609,7 +610,7 @@ pub fn summarize_coauth_recovery_bridge(
     };
 
     Ok(format!(
-        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_device_messages_describe={}\nprincipal_key_backups_describe={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
+        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_recovery_contract_stack={}\nprincipal_device_messages_describe={}\nprincipal_key_backups_describe={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
         recovery.contract,
         recovery.version,
         recovery.recovery_start_path,
@@ -618,6 +619,7 @@ pub fn summarize_coauth_recovery_bridge(
         recovery.key_backup_rest_base,
         recovery.key_backup_schema,
         recovery.device_message_schema,
+        recovery.principal_recovery_contract_stack_path,
         recovery.principal_device_messages_describe_path,
         recovery.principal_key_backups_describe_path,
         recovery.principal_restore_start_path,

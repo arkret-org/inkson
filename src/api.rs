@@ -434,6 +434,10 @@ impl ContrixApi {
         self.get_json("api/v1/keys/backups/describe").await
     }
 
+    pub async fn recovery_contract_stack(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/recovery/contract-stack").await
+    }
+
     pub async fn dev_login(
         &self,
         actor: &str,
