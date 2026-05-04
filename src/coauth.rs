@@ -103,6 +103,43 @@ pub struct CoauthAuthBridgeOAuthDescriptor {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct CoauthIntegrationManifest {
+    pub contract: String,
+    pub version: String,
+    pub service: String,
+    pub service_kind: String,
+    pub api_base_path: String,
+    pub describe_path: String,
+    #[serde(default)]
+    pub dependencies: Vec<CoauthIntegrationDependency>,
+    #[serde(default)]
+    pub surfaces: Vec<CoauthIntegrationSurface>,
+    #[serde(default)]
+    pub examples: Value,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthIntegrationDependency {
+    pub service: String,
+    pub purpose: String,
+    pub required_contract: String,
+    pub discovery_path: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthIntegrationSurface {
+    pub name: String,
+    pub method: String,
+    pub path: String,
+    pub contract: String,
+    pub stability: String,
+    pub todo: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct CoauthAuthBridgeContrixDescriptor {
     pub login_path: String,
     pub logout_path: String,
@@ -130,6 +167,7 @@ pub struct CoauthTopologySnapshot {
     pub oidc_exchange_path: String,
     pub auth_bridge_contract: String,
     pub auth_bridge_todos: Vec<String>,
+    pub integration_manifest: CoauthIntegrationManifest,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -195,6 +233,7 @@ pub struct SolandSessionGrantPlan {
     pub device_id: String,
     pub authorize_url_preview: String,
     pub token_endpoint: Option<String>,
+    pub integration_manifest_summary: String,
     pub todo: &'static str,
 }
 
@@ -217,6 +256,7 @@ pub struct OidcCodeExchangePlan {
     pub authorize_url_preview: String,
     pub token_endpoint: String,
     pub exchange_request_preview: String,
+    pub integration_manifest_summary: String,
     pub todo: &'static str,
 }
 
@@ -274,6 +314,10 @@ impl CoauthApi {
             .get_json::<CoauthAuthBridgeDescribe>("api/v1/auth/bridge/describe")
             .await
             .context("coauth auth bridge describe failed")?;
+        let integration_manifest = self
+            .get_json::<CoauthIntegrationManifest>("api/v1/integration/describe")
+            .await
+            .context("coauth integration describe failed")?;
 
         Ok(CoauthTopologySnapshot {
             service_did: value_string(&server, "service_did"),
@@ -299,6 +343,7 @@ impl CoauthApi {
             oidc_exchange_path: bridge.oauth.exchange_path,
             auth_bridge_contract: bridge.contract,
             auth_bridge_todos: bridge.todos,
+            integration_manifest,
         })
     }
 
@@ -311,6 +356,10 @@ impl CoauthApi {
         exchange_describe_path: &str,
     ) -> anyhow::Result<CoauthOidcExchangeDescribe> {
         self.get_json(exchange_describe_path).await
+    }
+
+    pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
+        self.get_json("api/v1/integration/describe").await
     }
 
     pub async fn password_login(
@@ -450,6 +499,57 @@ pub fn active_oidc_redirect_uri() -> String {
     current_oidc_redirect_uri()
 }
 
+pub fn summarize_coauth_integration_manifest(
+    manifest: &CoauthIntegrationManifest,
+) -> String {
+    let dependencies = if manifest.dependencies.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                format!(
+                    "{}:{}@{}",
+                    dependency.service, dependency.purpose, dependency.discovery_path
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let surfaces = if manifest.surfaces.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest
+            .surfaces
+            .iter()
+            .map(|surface| {
+                format!(
+                    "{} {} {} [{}]",
+                    surface.method, surface.path, surface.contract, surface.stability
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let todos = if manifest.todos.is_empty() {
+        "none".to_owned()
+    } else {
+        manifest.todos.join(" ")
+    };
+
+    format!(
+        "service={} kind={} contract={} version={}\ndependencies={}\nsurfaces:\n{}\ntodos={}",
+        manifest.service,
+        manifest.service_kind,
+        manifest.contract,
+        manifest.version,
+        dependencies,
+        surfaces,
+        todos,
+    )
+}
+
 pub fn build_soland_session_grant_plan(
     topology: &CoauthTopologySnapshot,
     principal_server_url: &str,
@@ -468,6 +568,9 @@ pub fn build_soland_session_grant_plan(
         device_id: device_id.to_owned(),
         authorize_url_preview,
         token_endpoint: topology.token_endpoint.clone(),
+        integration_manifest_summary: summarize_coauth_integration_manifest(
+            &topology.integration_manifest,
+        ),
         todo: "TODO: after the coauth code exchange, request a short-lived session grant for the soland audience and swap it into yougen's authenticated principal-server session.",
     })
 }
@@ -532,6 +635,9 @@ pub fn build_oidc_code_exchange_plan(
         authorize_url_preview,
         token_endpoint,
         exchange_request_preview,
+        integration_manifest_summary: summarize_coauth_integration_manifest(
+            &topology.integration_manifest,
+        ),
         todo: "TODO: drive the browser/passkey flow through coauth, exchange the returned authorization code at the token endpoint, request a short-lived audience-specific session grant for soland, then swap it at /api/v1/auth/session-grant/exchange.",
     })
 }
