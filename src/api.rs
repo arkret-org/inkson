@@ -857,6 +857,31 @@ impl ContrixApi {
         self.get_json("api/v1/device_messages").await
     }
 
+    pub async fn put_key_backup(
+        &self,
+        backup_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.put_json(&format!("api/v1/keys/backups/{backup_id}"), payload)
+            .await
+    }
+
+    pub async fn list_key_backups(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups").await
+    }
+
+    pub async fn get_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/{backup_id}")).await
+    }
+
+    pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
+        let request = self
+            .http
+            .delete(self.endpoint(&format!("api/v1/keys/backups/{backup_id}"))?);
+        self.send_json(self.prepare_request(request), Method::DELETE)
+            .await
+    }
+
     pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResponse> {
         let request = self
             .http

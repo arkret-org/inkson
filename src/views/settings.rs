@@ -42,6 +42,7 @@ pub fn SettingsPanel(
     let mut read_receipts_visible = use_signal(|| true);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
+    let mut key_backup_id = use_signal(|| "backup-scaffold-current-device".to_owned());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let workflows = production_release_workflows();
@@ -243,18 +244,109 @@ pub fn SettingsPanel(
                     div { class: "muted", "Current: {crypto_state}" }
                     label { "Key Backup" }
                     div { class: "muted", "{key_backup_status}" }
-                    if push_ready {
                     div { class: "actions",
+                        input {
+                            "data-testid": "key-backup-id-input",
+                            value: "{key_backup_id}",
+                            oninput: move |evt| key_backup_id.set(evt.value()),
+                        }
                         button {
                             class: "secondary",
                             "data-testid": "key-backup-setup",
-                            onclick: move |_| key_backup_status.set("Setup not yet available".to_owned()),
-                            "Setup Key Backup"
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let backup_id = key_backup_id();
+                                let actor = account_did();
+                                let device = device_id();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.put_key_backup(&backup_id, json!({
+                                            "schema": "cx.schema.key_backup.v1",
+                                            "backup_id": backup_id,
+                                            "class": "mls_export",
+                                            "encryption": {
+                                                "alg": "xchacha20poly1305",
+                                                "kdf": "argon2id"
+                                            },
+                                            "created_by_actor": actor,
+                                            "created_by_device": device,
+                                            "items": [
+                                                {
+                                                    "kind": "mls_group_state",
+                                                    "ref": "group:default",
+                                                    "todo": "replace scaffold payload with encrypted export blob"
+                                                }
+                                            ],
+                                            "todo": "server-side durable encrypted backup storage"
+                                        })).await {
+                                            Ok(response) => key_backup_status.set(format!("Backup scaffold stored: {response}")),
+                                            Err(error) => key_backup_status.set(format!("Backup store failed: {error}")),
+                                        },
+                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    }
+                                });
+                            },
+                            "Store Backup Scaffold"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "key-backup-list",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.list_key_backups().await {
+                                            Ok(response) => key_backup_status.set(format!("Backups: {response}")),
+                                            Err(error) => key_backup_status.set(format!("Backup list failed: {error}")),
+                                        },
+                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    }
+                                });
+                            },
+                            "List Backups"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "key-backup-load",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.get_key_backup(&backup_id).await {
+                                            Ok(response) => key_backup_status.set(format!("Backup {backup_id}: {response}")),
+                                            Err(error) => key_backup_status.set(format!("Backup load failed: {error}")),
+                                        },
+                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    }
+                                });
+                            },
+                            "Load Backup"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "key-backup-delete",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.delete_key_backup(&backup_id).await {
+                                            Ok(response) => key_backup_status.set(format!("Backup deleted: {response}")),
+                                            Err(error) => key_backup_status.set(format!("Backup delete failed: {error}")),
+                                        },
+                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    }
+                                });
+                            },
+                            "Delete Backup"
                         }
                     }
-                    } else {
-                        div { class: "muted", "Push registration controls are hidden until /server/describe advertises push.register_device." }
-                    }
+                    div { class: "muted", "Contract: cx.schema.key_backup.v1 over /api/v1/keys/backups/*; encrypted blob persistence remains TODO." }
                 }
             }
 
@@ -720,15 +812,19 @@ pub fn SettingsPanel(
             if active_section() == SettingsSection::Recovery {
                 div { class: "event", "data-testid": "recovery-settings",
                     div { class: "event-head", span { "Account Recovery" } span { "policy" } }
-                    div { class: "muted", "Configure recovery methods for your account." }
+                    div { class: "muted", "Recovery currently fronts key-backup scaffolds and coauth recovery policy. Secure restore proofing remains TODO." }
                     div { class: "actions",
                         button {
                             class: "secondary",
                             "data-testid": "recovery-setup-button",
-                            onclick: move |_| {
-                                // Recovery setup would open a flow
-                            },
+                            onclick: move |_| key_backup_status.set("Recovery flow will reuse key backup scaffold until secure restore is implemented".to_owned()),
                             "Setup Recovery"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-refresh-backups",
+                            onclick: move |_| active_section.set(SettingsSection::Encryption),
+                            "Open Backup Controls"
                         }
                     }
                 }

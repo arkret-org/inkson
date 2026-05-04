@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{local_state::LocalStateStore, models::*, views::helpers::authed_api};
 
@@ -21,6 +21,19 @@ pub fn DevicesPanel(
     let mut upload_status = use_signal(|| String::new());
     let mut rotate_status = use_signal(|| String::new());
     let mut group_id = use_signal(|| "default".to_owned());
+    let device_id_request = device_id.clone();
+    let device_id_ready = device_id.clone();
+    let device_id_done = device_id.clone();
+    let verification_kinds = [
+        "cx.key.verification.request",
+        "cx.key.verification.ready",
+        "cx.key.verification.start",
+        "cx.key.verification.accept",
+        "cx.key.verification.key",
+        "cx.key.verification.mac",
+        "cx.key.verification.done",
+        "cx.key.verification.cancel",
+    ];
 
     // Clone String params for use in multiple closures
     let base_url_c = base_url.clone();
@@ -56,11 +69,17 @@ pub fn DevicesPanel(
                 div { class: "muted",
                     "Verification is modeled as a device-scoped flow. Revocation explains MLS epoch impact before any destructive action."
                 }
+                div { class: "muted", "Device message contract: cx.schema.device_message.v1" }
                 div { class: "metric-grid",
                     div { class: "metric", strong { "SAS" } span { "473 918" } div { class: "muted", "compare on both devices" } }
                     div { class: "metric", strong { "QR" } span { "cx:verify:{device_id}" } div { class: "muted", "short-lived verification token" } }
                     div { class: "metric", strong { "KeyPackage" } span { "published" } div { class: "muted", "ready for MLS Welcome" } }
                     div { class: "metric", strong { "Epoch impact" } span { "proposal required" } div { class: "muted", "revoked device is removed at next commit" } }
+                }
+                div { class: "actions", "data-testid": "verification-kinds",
+                    for kind in verification_kinds {
+                        span { class: "chip", "{kind}" }
+                    }
                 }
                 div { class: "actions",
                     button {
@@ -80,6 +99,68 @@ pub fn DevicesPanel(
                         "data-testid": "revoke-impact-button",
                         onclick: move |_| crypto_state.set("Revocation will require MLS remove proposal and epoch advance".to_owned()),
                         "Preview revoke impact"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "queue-verification-request",
+                        onclick: move |_| {
+                            let device_id = device_id_request.clone();
+                            let mut queue = to_device_messages();
+                            queue.insert(0, json!({
+                                "type": "cx.key.verification.request",
+                                "sender_device_id": device_id.clone(),
+                                "recipient_device_id": device_id,
+                                "content": {
+                                    "method": "sas",
+                                    "transaction_id": "verify-scaffold-request"
+                                },
+                                "todo": "replace local scaffold with outbound /api/v1/device_messages PUT"
+                            }));
+                            to_device_messages.set(queue);
+                            crypto_state.set("Queued local verification.request scaffold".to_owned());
+                        },
+                        "Queue request scaffold"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "queue-verification-ready",
+                        onclick: move |_| {
+                            let device_id = device_id_ready.clone();
+                            let mut queue = to_device_messages();
+                            queue.insert(0, json!({
+                                "type": "cx.key.verification.ready",
+                                "sender_device_id": device_id.clone(),
+                                "recipient_device_id": device_id,
+                                "content": {
+                                    "methods": ["sas", "qr"],
+                                    "transaction_id": "verify-scaffold-ready"
+                                },
+                                "todo": "replace local scaffold with signed device envelope"
+                            }));
+                            to_device_messages.set(queue);
+                            crypto_state.set("Queued local verification.ready scaffold".to_owned());
+                        },
+                        "Queue ready scaffold"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "queue-verification-done",
+                        onclick: move |_| {
+                            let device_id = device_id_done.clone();
+                            let mut queue = to_device_messages();
+                            queue.insert(0, json!({
+                                "type": "cx.key.verification.done",
+                                "sender_device_id": device_id.clone(),
+                                "recipient_device_id": device_id,
+                                "content": {
+                                    "transaction_id": "verify-scaffold-done"
+                                },
+                                "todo": "replace local scaffold with verified-device trust writeback"
+                            }));
+                            to_device_messages.set(queue);
+                            crypto_state.set("Queued local verification.done scaffold".to_owned());
+                        },
+                        "Queue done scaffold"
                     }
                 }
             }
@@ -154,6 +235,7 @@ pub fn DevicesPanel(
             // To-device message inbox
             div { class: "event", "data-testid": "to-device-inbox",
                 div { class: "event-head", span { "To-Device Messages" } span { "{to_device_messages().len()} pending" } }
+                div { class: "muted", "Inbox accepts cx.schema.device_message.v1 scaffolds and live /api/v1/device_messages fetches." }
                 div { class: "actions",
                     button {
                         class: "secondary",
