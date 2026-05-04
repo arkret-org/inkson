@@ -93,6 +93,8 @@ pub struct CoauthAuthBridgeDescribe {
 #[derive(Clone, Debug, Deserialize)]
 pub struct CoauthAuthBridgeOAuthDescriptor {
     pub discovery_path: String,
+    #[serde(default)]
+    pub browser_bridge_session_path: String,
     pub exchange_path: String,
     #[serde(default)]
     pub supported_flows: Vec<String>,
@@ -121,9 +123,30 @@ pub struct CoauthTopologySnapshot {
     pub code_challenge_methods_supported: Vec<String>,
     pub scopes_supported: Vec<String>,
     pub oidc_clients: Vec<CoauthOidcClientHint>,
+    pub oidc_browser_bridge_session_path: String,
     pub oidc_exchange_path: String,
     pub auth_bridge_contract: String,
     pub auth_bridge_todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthOidcBrowserBridgeSession {
+    pub contract: String,
+    pub version: String,
+    pub authorize_url: String,
+    pub callback_uri: String,
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub userinfo_endpoint: String,
+    pub client_id: String,
+    pub state: String,
+    pub nonce: String,
+    pub code_verifier: String,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
+    pub principal_audience: String,
+    pub todo: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -248,6 +271,7 @@ impl CoauthApi {
                 .map(serde_json::from_value)
                 .transpose()?
                 .unwrap_or_default(),
+            oidc_browser_bridge_session_path: bridge.oauth.browser_bridge_session_path,
             oidc_exchange_path: bridge.oauth.exchange_path,
             auth_bridge_contract: bridge.contract,
             auth_bridge_todos: bridge.todos,
@@ -339,6 +363,28 @@ impl CoauthApi {
             state,
             expected_state,
         ).await
+    }
+
+    pub async fn start_oidc_browser_bridge(
+        &self,
+        session_path: &str,
+        redirect_uri: &str,
+        login_hint: &str,
+        device_id: &str,
+        principal_audience: Option<&str>,
+        client_id_hint: Option<&str>,
+    ) -> anyhow::Result<CoauthOidcBrowserBridgeSession> {
+        self.post_json(
+            session_path,
+            json!({
+                "redirect_uri": redirect_uri,
+                "login_hint": login_hint,
+                "device_id": device_id,
+                "principal_audience": principal_audience,
+                "client_id_hint": client_id_hint,
+            }),
+        )
+        .await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
@@ -501,6 +547,22 @@ pub fn build_oidc_scaffold_bundle(
         principal_audience,
         todo: "TODO: replace the deterministic scaffold state/nonce/challenge with real browser-generated PKCE material and a callback handler that captures the returned authorization code automatically.",
     })
+}
+
+pub fn oidc_scaffold_bundle_from_bridge_session(
+    session: &CoauthOidcBrowserBridgeSession,
+) -> OidcScaffoldBundle {
+    OidcScaffoldBundle {
+        client_id: session.client_id.clone(),
+        state: session.state.clone(),
+        nonce: session.nonce.clone(),
+        code_verifier: session.code_verifier.clone(),
+        code_challenge: session.code_challenge.clone(),
+        authorize_url: session.authorize_url.clone(),
+        callback_uri: session.callback_uri.clone(),
+        principal_audience: session.principal_audience.clone(),
+        todo: "TODO: replace scaffold state/nonce/challenge with browser-generated PKCE material and automatic callback handling.",
+    }
 }
 
 pub fn extract_authorization_code_from_callback(callback_url: &str) -> anyhow::Result<String> {

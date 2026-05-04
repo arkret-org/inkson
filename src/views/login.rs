@@ -9,6 +9,7 @@ use crate::{
         CoauthApi, active_oidc_redirect_uri, build_chime_push_grant_plan, build_oidc_code_exchange_plan,
         build_oidc_scaffold_bundle, build_soland_session_grant_plan,
         clear_persisted_oidc_scaffold, capture_current_browser_callback_url,
+        oidc_scaffold_bundle_from_bridge_session,
         persist_oidc_scaffold, restore_oidc_scaffold,
         extract_authorization_code_from_callback, extract_state_from_callback,
         extract_error_description_from_callback, extract_error_from_callback,
@@ -870,8 +871,34 @@ pub fn LoginPanel(
                                     spawn(async move {
                                         match CoauthApi::new(&auth) {
                                             Ok(api) => match api.inspect_topology().await {
-                                                Ok(topology) => match build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev) {
-                                                    Ok(bundle) => {
+                                                Ok(topology) => {
+                                                    let redirect_uri = active_oidc_redirect_uri();
+                                                    let prepared = match api.start_oidc_browser_bridge(
+                                                        topology.oidc_browser_bridge_session_path.as_str(),
+                                                        redirect_uri.as_str(),
+                                                        actor.as_str(),
+                                                        dev.as_str(),
+                                                        Some(principal.as_str()),
+                                                        None,
+                                                    ).await {
+                                                        Ok(session) => Ok((
+                                                            oidc_scaffold_bundle_from_bridge_session(&session),
+                                                            format!(
+                                                                "server-driven browser bridge session prepared\ncontract={}\nversion={}\nauthorization_endpoint={}\ntoken_endpoint={}\nuserinfo_endpoint={}\ncode_challenge_method={}\n{}",
+                                                                session.contract,
+                                                                session.version,
+                                                                session.authorization_endpoint,
+                                                                session.token_endpoint,
+                                                                session.userinfo_endpoint,
+                                                                session.code_challenge_method,
+                                                                session.todo,
+                                                            ),
+                                                        )),
+                                                        Err(_) => build_oidc_scaffold_bundle(&topology, &principal, &actor, &dev)
+                                                            .map(|bundle| (bundle, "local fallback scaffold prepared".to_owned())),
+                                                    };
+                                                    match prepared {
+                                                    Ok((bundle, bridge_source)) => {
                                                         let persistence_status = match persist_oidc_scaffold(&bundle, auth.as_str(), principal.as_str(), actor.as_str(), dev.as_str()) {
                                                             Ok(()) => "browser scaffold persisted for callback recovery".to_owned(),
                                                             Err(error) => format!("browser scaffold persistence unavailable: {error}"),
@@ -883,7 +910,7 @@ pub fn LoginPanel(
                                                         coauth_imported_state.set(String::new());
                                                         coauth_state_verified.set(false);
                                                         integration_plan_status.set(format!(
-                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n{}\n\nImport the returned callback URL next. The client will verify the callback state before allowing `OIDC Code + Push Bridge`.\n\n{}",
+                                                            "Open this authorize URL in the browser:\n{}\n\ncallback_uri={}\nprincipal_audience={}\nstate={}\nnonce={}\ncode_verifier={}\ncode_challenge={}\n{}\n{}\n\nImport the returned callback URL next. The client will verify the callback state before allowing `OIDC Code + Push Bridge`.\n\n{}",
                                                             bundle.authorize_url,
                                                             bundle.callback_uri,
                                                             bundle.principal_audience,
@@ -891,12 +918,13 @@ pub fn LoginPanel(
                                                             bundle.nonce,
                                                             bundle.code_verifier,
                                                             bundle.code_challenge,
+                                                            bridge_source,
                                                             persistence_status,
                                                             bundle.todo,
                                                         ));
                                                     }
                                                     Err(error) => integration_plan_status.set(format!("oidc browser scaffold failed: {error}")),
-                                                },
+                                                }},
                                                 Err(error) => integration_plan_status.set(format!("coauth inspect failed: {error}")),
                                             },
                                             Err(error) => integration_plan_status.set(format!("invalid auth server URL: {error}")),
