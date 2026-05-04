@@ -159,9 +159,13 @@ pub struct CoauthOidcExchangeDescribe {
     pub exchange_path: String,
     pub upstream_boundary_mode: String,
     #[serde(default)]
+    pub upstream_modes_supported: Vec<String>,
+    #[serde(default)]
     pub required_fields: Vec<String>,
     #[serde(default)]
     pub validation_layers: Vec<String>,
+    #[serde(default)]
+    pub failure_codes: Vec<String>,
     #[serde(default)]
     pub example_request: Value,
     #[serde(default)]

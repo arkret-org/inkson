@@ -839,14 +839,16 @@ pub fn LoginPanel(
                                                 Ok(topology) => match build_oidc_code_exchange_plan(&topology, &principal, &actor, &dev) {
                                                     Ok(plan) => match api.describe_oidc_exchange(topology.oidc_exchange_describe_path.as_str()).await {
                                                         Ok(exchange) => integration_plan_status.set(format!(
-                                                            "Authorize URL preview:\n{}\n\nExchange contract: {}@{}\nExchange path: {}\nUpstream boundary mode: {}\nRequired fields: {}\nValidation layers: {}\nToken endpoint: {}\nPrincipal URL: {}\nAudience: {}\nActor DID: {}\nDevice ID: {}\nExample request:\n{}\n\nLocal plan preview:\n{}\n\nContract TODOs:\n{}\n\n{}",
+                                                            "Authorize URL preview:\n{}\n\nExchange contract: {}@{}\nExchange path: {}\nUpstream boundary mode: {}\nUpstream modes supported: {}\nRequired fields: {}\nValidation layers: {}\nFailure codes: {}\nToken endpoint: {}\nPrincipal URL: {}\nAudience: {}\nActor DID: {}\nDevice ID: {}\nExample request:\n{}\n\nLocal plan preview:\n{}\n\nContract TODOs:\n{}\n\n{}",
                                                             plan.authorize_url_preview,
                                                             exchange.contract,
                                                             exchange.version,
                                                             exchange.exchange_path,
                                                             exchange.upstream_boundary_mode,
+                                                            if exchange.upstream_modes_supported.is_empty() { "none".to_owned() } else { exchange.upstream_modes_supported.join(", ") },
                                                             if exchange.required_fields.is_empty() { "none".to_owned() } else { exchange.required_fields.join(", ") },
                                                             if exchange.validation_layers.is_empty() { "none".to_owned() } else { exchange.validation_layers.join(" -> ") },
+                                                            if exchange.failure_codes.is_empty() { "none".to_owned() } else { exchange.failure_codes.join(", ") },
                                                             plan.token_endpoint,
                                                             plan.principal_server_url,
                                                             plan.principal_audience,
