@@ -418,6 +418,14 @@ impl ContrixApi {
         self.get_json("api/v1/integration/describe").await
     }
 
+    pub async fn authz_describe(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/authz/describe").await
+    }
+
+    pub async fn policies_describe(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/policies/describe").await
+    }
+
     pub async fn dev_login(
         &self,
         actor: &str,

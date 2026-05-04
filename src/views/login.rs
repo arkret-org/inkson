@@ -1218,8 +1218,12 @@ pub fn LoginPanel(
                                     let principal = base_url();
                                     spawn(async move {
                                         match ContrixApi::new(&principal) {
-                                            Ok(api) => match api.integration_describe().await {
-                                                Ok(manifest) => {
+                                            Ok(api) => match (
+                                                api.integration_describe().await,
+                                                api.authz_describe().await,
+                                                api.policies_describe().await,
+                                            ) {
+                                                (Ok(manifest), Ok(authz_describe), Ok(policies_describe)) => {
                                                     let authz_examples = manifest
                                                         .examples
                                                         .get("authz_protocol")
@@ -1227,16 +1231,24 @@ pub fn LoginPanel(
                                                         .unwrap_or_else(|| serde_json::json!({
                                                             "todo": "principal integration manifest did not publish authz_protocol examples"
                                                         }));
-                                                    match serde_json::to_string_pretty(&authz_examples) {
-                                                        Ok(pretty) => integration_plan_status.set(format!(
-                                                            "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}",
+                                                    match (
+                                                        serde_json::to_string_pretty(&authz_examples),
+                                                        serde_json::to_string_pretty(&authz_describe),
+                                                        serde_json::to_string_pretty(&policies_describe),
+                                                    ) {
+                                                        (Ok(pretty_examples), Ok(pretty_authz_describe), Ok(pretty_policies_describe)) => integration_plan_status.set(format!(
+                                                            "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\nauthz_describe:\n{}\n\npolicies_describe:\n{}",
                                                             summarize_principal_integration_manifest(&manifest),
-                                                            pretty,
+                                                            pretty_examples,
+                                                            pretty_authz_describe,
+                                                            pretty_policies_describe,
                                                         )),
-                                                        Err(error) => integration_plan_status.set(format!("principal authz examples formatting failed: {error}")),
+                                                        _ => integration_plan_status.set("principal authz/policies describe formatting failed".to_owned()),
                                                     }
                                                 }
-                                                Err(error) => integration_plan_status.set(format!("principal integration describe failed: {error}")),
+                                                (Err(error), _, _) => integration_plan_status.set(format!("principal integration describe failed: {error}")),
+                                                (_, Err(error), _) => integration_plan_status.set(format!("principal authz describe failed: {error}")),
+                                                (_, _, Err(error)) => integration_plan_status.set(format!("principal policies describe failed: {error}")),
                                             },
                                             Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
                                         }

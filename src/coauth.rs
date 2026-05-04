@@ -224,7 +224,9 @@ pub struct CoauthRecoveryDescribe {
     pub principal_restore_describe_path: String,
     pub principal_restore_ticket_path: String,
     pub principal_restore_ticket_advance_path: String,
+    pub principal_authz_describe_path: String,
     pub principal_authz_check_path: String,
+    pub principal_policy_describe_path: String,
     pub principal_policy_collection_path: String,
     pub principal_policy_item_path: String,
     #[serde(default)]
@@ -605,7 +607,7 @@ pub fn summarize_coauth_recovery_bridge(
     };
 
     Ok(format!(
-        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_authz_check={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
+        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
         recovery.contract,
         recovery.version,
         recovery.recovery_start_path,
@@ -618,7 +620,9 @@ pub fn summarize_coauth_recovery_bridge(
         recovery.principal_restore_describe_path,
         recovery.principal_restore_ticket_path,
         recovery.principal_restore_ticket_advance_path,
+        recovery.principal_authz_describe_path,
         recovery.principal_authz_check_path,
+        recovery.principal_policy_describe_path,
         recovery.principal_policy_collection_path,
         recovery.principal_policy_item_path,
         kinds,
