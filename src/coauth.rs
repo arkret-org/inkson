@@ -218,6 +218,8 @@ pub struct CoauthRecoveryDescribe {
     pub recovery_status_path: String,
     pub recovery_resend_path: String,
     pub recovery_principal_snapshot_path: String,
+    pub recovery_principal_cache_status_path: String,
+    pub recovery_principal_cache_refresh_path: String,
     pub key_backup_rest_base: String,
     pub key_backup_schema: String,
     pub device_message_schema: String,
@@ -428,6 +430,15 @@ impl CoauthApi {
 
     pub async fn principal_recovery_snapshot(&self) -> anyhow::Result<Value> {
         self.get_json("api/v1/auth/recovery/principal-snapshot").await
+    }
+
+    pub async fn principal_recovery_cache_status(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/auth/recovery/principal-cache/status").await
+    }
+
+    pub async fn refresh_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
+        self.post_json("api/v1/auth/recovery/principal-cache/refresh", &payload)
+            .await
     }
 
     pub async fn password_login(

@@ -1599,6 +1599,57 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-inspect-coauth-principal-cache",
+                            onclick: move |_| {
+                                let auth_server = auth_server_url();
+                                spawn(async move {
+                                    match CoauthApi::new(&auth_server) {
+                                        Ok(api) => match api.principal_recovery_cache_status().await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "coauth principal cache scaffold:\n{}",
+                                                serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "coauth recovery bridge unavailable: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "coauth recovery bridge unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Coauth Principal Cache"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-refresh-coauth-principal-cache",
+                            onclick: move |_| {
+                                let auth_server = auth_server_url();
+                                spawn(async move {
+                                    match CoauthApi::new(&auth_server) {
+                                        Ok(api) => match api.refresh_principal_recovery_cache(serde_json::json!({
+                                            "refresh_mode": "manual_scaffold",
+                                            "reason": "yougen_operator_refresh"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "coauth principal cache refresh scaffold:\n{}",
+                                                serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "coauth recovery bridge unavailable: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "coauth recovery bridge unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Refresh Coauth Principal Cache"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-inspect-state-durability",
                             onclick: move |_| {
                                 let principal = base_url();
