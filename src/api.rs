@@ -1116,6 +1116,10 @@ impl ContrixApi {
         self.get_json("api/v1/recovery/live-snapshot").await
     }
 
+    pub async fn get_recovery_stack_bundle(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/recovery/stack-bundle").await
+    }
+
     pub async fn get_key_backup_restore_timeline(
         &self,
         ticket_id: &str,

@@ -1575,6 +1575,26 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-inspect-stack-bundle",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let client = ApiClient::new(&principal);
+                                    match client.get_recovery_stack_bundle().await {
+                                        Ok(response) => recovery_contract_status.set(format!(
+                                            "recovery stack bundle scaffold:\n{}",
+                                            serde_json::to_string_pretty(&response).unwrap_or_else(|_| response.to_string())
+                                        )),
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Recovery Stack Bundle"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-inspect-coauth-principal-snapshot",
                             onclick: move |_| {
                                 let auth_server = auth_server_url();

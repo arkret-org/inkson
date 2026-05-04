@@ -227,6 +227,7 @@ pub struct CoauthRecoveryDescribe {
     pub key_backup_schema: String,
     pub device_message_schema: String,
     pub principal_recovery_contract_stack_path: String,
+    pub principal_recovery_stack_bundle_path: String,
     pub principal_device_messages_describe_path: String,
     pub principal_key_backups_describe_path: String,
     pub principal_restore_state_describe_path: String,
