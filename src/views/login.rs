@@ -1211,6 +1211,41 @@ pub fn LoginPanel(
                             "Inspect Recovery Bridge"
                         }
                         button {
+                            class: "secondary",
+                            "data-testid": "inspect-principal-authz-contract-button",
+                            onclick: {
+                                move |_| {
+                                    let principal = base_url();
+                                    spawn(async move {
+                                        match ContrixApi::new(&principal) {
+                                            Ok(api) => match api.integration_describe().await {
+                                                Ok(manifest) => {
+                                                    let authz_examples = manifest
+                                                        .examples
+                                                        .get("authz_protocol")
+                                                        .cloned()
+                                                        .unwrap_or_else(|| serde_json::json!({
+                                                            "todo": "principal integration manifest did not publish authz_protocol examples"
+                                                        }));
+                                                    match serde_json::to_string_pretty(&authz_examples) {
+                                                        Ok(pretty) => integration_plan_status.set(format!(
+                                                            "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}",
+                                                            summarize_principal_integration_manifest(&manifest),
+                                                            pretty,
+                                                        )),
+                                                        Err(error) => integration_plan_status.set(format!("principal authz examples formatting failed: {error}")),
+                                                    }
+                                                }
+                                                Err(error) => integration_plan_status.set(format!("principal integration describe failed: {error}")),
+                                            },
+                                            Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Inspect Principal Authz"
+                        }
+                        button {
                             class: "primary",
                             "data-testid": "bridge-password-login-push-button",
                             onclick: {
