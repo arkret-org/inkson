@@ -958,6 +958,60 @@ pub fn SettingsPanel(
                             },
                             "Start Restore Scaffold"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-ticket",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let ticket_id = format!("restore-ticket-{}", key_backup_id());
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_ticket(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Ticket"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-advance-restore-ticket",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let ticket_id = format!("restore-ticket-{backup_id}");
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_ticket_advance(&ticket_id, json!({
+                                            "transition": "authz_checked",
+                                            "note": "TODO: replace scaffold advance with verified restore approval transitions"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket_advance:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket advance failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Advance Restore Ticket"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }
