@@ -902,6 +902,28 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn get_key_backup_restore_state_describe(
+        &self,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/restore-state/describe")
+            .await
+    }
+
+    pub async fn get_key_backup_restore_state_export(
+        &self,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/restore-state/export")
+            .await
+    }
+
+    pub async fn post_key_backup_restore_state_import(
+        &self,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json("api/v1/keys/backups/restore-state/import", payload)
+            .await
+    }
+
     pub async fn post_key_backup_restore_start(
         &self,
         backup_id: &str,

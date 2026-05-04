@@ -864,8 +864,9 @@ pub fn SettingsPanel(
                                             api.recovery_contract_stack().await,
                                             api.device_messages_describe().await,
                                             api.key_backups_describe().await,
+                                            api.get_key_backup_restore_state_describe().await,
                                         ) {
-                                            (Ok(manifest), Ok(recovery_contract_stack), Ok(device_messages_describe), Ok(key_backups_describe)) => {
+                                            (Ok(manifest), Ok(recovery_contract_stack), Ok(device_messages_describe), Ok(key_backups_describe), Ok(restore_state_describe)) => {
                                                 let authz_examples = manifest
                                                     .examples
                                                     .get("authz_protocol")
@@ -878,22 +879,25 @@ pub fn SettingsPanel(
                                                     serde_json::to_string_pretty(&recovery_contract_stack),
                                                     serde_json::to_string_pretty(&device_messages_describe),
                                                     serde_json::to_string_pretty(&key_backups_describe),
+                                                    serde_json::to_string_pretty(&restore_state_describe),
                                                 ) {
-                                                    (Ok(pretty_authz), Ok(pretty_recovery_stack), Ok(pretty_device_messages), Ok(pretty_key_backups)) => Ok(format!(
-                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\nrecovery_contract_stack:\n{}\n\ndevice_messages_describe:\n{}\n\nkey_backups_describe:\n{}",
+                                                    (Ok(pretty_authz), Ok(pretty_recovery_stack), Ok(pretty_device_messages), Ok(pretty_key_backups), Ok(pretty_restore_state)) => Ok(format!(
+                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}\n\nrecovery_contract_stack:\n{}\n\ndevice_messages_describe:\n{}\n\nkey_backups_describe:\n{}\n\nrestore_state_describe:\n{}",
                                                         summarize_principal_integration_manifest(&manifest),
                                                         pretty_authz,
                                                         pretty_recovery_stack,
                                                         pretty_device_messages,
                                                         pretty_key_backups,
+                                                        pretty_restore_state,
                                                     )),
                                                     _ => Err("principal recovery describe formatting failed".to_owned()),
                                                 }
                                             }
-                                            (Err(error), _, _, _) => Err(format!("principal integration describe failed: {error}")),
-                                            (_, Err(error), _, _) => Err(format!("principal recovery contract stack failed: {error}")),
-                                            (_, _, Err(error), _) => Err(format!("principal device_messages describe failed: {error}")),
-                                            (_, _, _, Err(error)) => Err(format!("principal key_backups describe failed: {error}")),
+                                            (Err(error), _, _, _, _) => Err(format!("principal integration describe failed: {error}")),
+                                            (_, Err(error), _, _, _) => Err(format!("principal recovery contract stack failed: {error}")),
+                                            (_, _, Err(error), _, _) => Err(format!("principal device_messages describe failed: {error}")),
+                                            (_, _, _, Err(error), _) => Err(format!("principal key_backups describe failed: {error}")),
+                                            (_, _, _, _, Err(error)) => Err(format!("principal restore-state describe failed: {error}")),
                                         },
                                         Err(error) => Err(format!("invalid principal URL: {error}")),
                                     };
@@ -1052,6 +1056,112 @@ pub fn SettingsPanel(
                                 });
                             },
                             "Inspect Restore Approvals"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-state-store",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_state_describe().await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_state_describe:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore-state describe failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore-state API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore State Store"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-export-restore-state-store",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_state_export().await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_state_export:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore-state export failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore-state API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Export Restore State"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-import-restore-state-store",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let actor = account_did();
+                                let device = device_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_state_import(json!({
+                                            "merge_mode": "replace_owned",
+                                            "records": {
+                                                "tickets": {
+                                                    (ticket_id.clone()): {
+                                                        "contract": "contrix.rest.key_backup_restore_ticket.v1",
+                                                        "backup_id": backup_id,
+                                                        "actor": actor,
+                                                        "lifecycle_state": "approval_pending",
+                                                        "request": {
+                                                            "device_id": device,
+                                                            "todo": "replace restore-state import scaffold with durable snapshot restore"
+                                                        }
+                                                    }
+                                                },
+                                                "approvals": {
+                                                    (ticket_id.clone()): {
+                                                        "contract": "contrix.rest.key_backup_restore_approval_status.v1",
+                                                        "actor": actor,
+                                                        "state": "pending_review"
+                                                    }
+                                                },
+                                                "executors": {
+                                                    (ticket_id): {
+                                                        "contract": "contrix.rest.key_backup_restore_executor_status.v1",
+                                                        "actor": actor,
+                                                        "queue_state": "not_queued"
+                                                    }
+                                                }
+                                            }
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_state_import:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore-state import failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore-state API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Import Restore State Scaffold"
                         }
                         button {
                             class: "secondary",
