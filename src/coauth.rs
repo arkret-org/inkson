@@ -79,6 +79,35 @@ pub struct CoauthPrincipalServerInfo {
     pub endpoint: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthAuthBridgeDescribe {
+    pub contract: String,
+    pub version: String,
+    pub api_base_path: String,
+    pub oauth: CoauthAuthBridgeOAuthDescriptor,
+    pub contrix: CoauthAuthBridgeContrixDescriptor,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthAuthBridgeOAuthDescriptor {
+    pub discovery_path: String,
+    pub exchange_path: String,
+    #[serde(default)]
+    pub supported_flows: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthAuthBridgeContrixDescriptor {
+    pub login_path: String,
+    pub logout_path: String,
+    pub providers_path: String,
+    pub session_grants_path: String,
+    pub session_grants_introspect_path: String,
+    pub session_grant_scope: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct CoauthTopologySnapshot {
     pub service_did: Option<String>,
@@ -92,6 +121,9 @@ pub struct CoauthTopologySnapshot {
     pub code_challenge_methods_supported: Vec<String>,
     pub scopes_supported: Vec<String>,
     pub oidc_clients: Vec<CoauthOidcClientHint>,
+    pub oidc_exchange_path: String,
+    pub auth_bridge_contract: String,
+    pub auth_bridge_todos: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -192,6 +224,10 @@ impl CoauthApi {
             .get_json::<OidcDiscoveryDocument>(".well-known/openid-configuration")
             .await
             .context("coauth OIDC discovery failed")?;
+        let bridge = self
+            .get_json::<CoauthAuthBridgeDescribe>("api/v1/auth/bridge/describe")
+            .await
+            .context("coauth auth bridge describe failed")?;
 
         Ok(CoauthTopologySnapshot {
             service_did: value_string(&server, "service_did"),
@@ -212,7 +248,14 @@ impl CoauthApi {
                 .map(serde_json::from_value)
                 .transpose()?
                 .unwrap_or_default(),
+            oidc_exchange_path: bridge.oauth.exchange_path,
+            auth_bridge_contract: bridge.contract,
+            auth_bridge_todos: bridge.todos,
         })
+    }
+
+    pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
+        self.get_json("api/v1/auth/bridge/describe").await
     }
 
     pub async fn password_login(
@@ -232,6 +275,7 @@ impl CoauthApi {
 
     pub async fn exchange_oidc_code(
         &self,
+        exchange_path: &str,
         authorization_code: &str,
         code_verifier: &str,
         redirect_uri: &str,
@@ -246,7 +290,7 @@ impl CoauthApi {
         expected_state: Option<&str>,
     ) -> anyhow::Result<CoauthLoginResponse> {
         self.post_json(
-            "api/v1/auth/oidc/exchange",
+            exchange_path,
             json!({
                 "authorization_code": authorization_code,
                 "code_verifier": code_verifier,
@@ -263,6 +307,38 @@ impl CoauthApi {
             }),
         )
         .await
+    }
+
+    pub async fn exchange_oidc_code_legacy(
+        &self,
+        authorization_code: &str,
+        code_verifier: &str,
+        redirect_uri: &str,
+        issuer: &str,
+        token_endpoint: &str,
+        userinfo_endpoint: &str,
+        client_id: &str,
+        login_hint: &str,
+        device_id: &str,
+        principal_audience: Option<&str>,
+        state: Option<&str>,
+        expected_state: Option<&str>,
+    ) -> anyhow::Result<CoauthLoginResponse> {
+        self.exchange_oidc_code(
+            "api/v1/auth/oidc/exchange",
+            authorization_code,
+            code_verifier,
+            redirect_uri,
+            issuer,
+            token_endpoint,
+            userinfo_endpoint,
+            client_id,
+            login_hint,
+            device_id,
+            principal_audience,
+            state,
+            expected_state,
+        ).await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {

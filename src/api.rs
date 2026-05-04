@@ -11,7 +11,7 @@ use chime::{RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
 use reqwest::{
     Client, Method, StatusCode,
-    header::{HeaderMap, RETRY_AFTER},
+    header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER},
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -23,6 +23,34 @@ use url::Url;
 #[derive(Clone, Debug)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PrincipalAuthBridgeDescribeResponse {
+    pub contract: String,
+    pub version: String,
+    pub api_base_path: String,
+    pub auth: PrincipalAuthBridgeAuthDescriptor,
+    pub push: PrincipalAuthBridgePushDescriptor,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PrincipalAuthBridgeAuthDescriptor {
+    pub dev_login_path: String,
+    pub session_grant_exchange_path: String,
+    pub bearer_auth_scheme: String,
+    pub principal_did_body_field: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PrincipalAuthBridgePushDescriptor {
+    pub register_device_path: String,
+    pub unregister_device_path: String,
+    pub session_grant_header: String,
+    pub principal_did_body_field: String,
+    pub register_device_mode: String,
 }
 
 impl CancellationToken {
@@ -285,6 +313,10 @@ impl ContrixApi {
         self.get_json("api/v1/server/describe").await
     }
 
+    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
+        self.get_json("api/v1/auth/bridge/describe").await
+    }
+
     pub async fn dev_login(
         &self,
         actor: &str,
@@ -295,6 +327,39 @@ impl ContrixApi {
             json!({"actor": actor, "device_id": device_id, "display_name": "yougen"}),
         )
         .await
+    }
+
+    pub async fn exchange_session_grant_at(
+        &self,
+        path: &str,
+        grant_jwt: &str,
+        principal_did: &str,
+        device_id: &str,
+    ) -> anyhow::Result<DevLoginResponse> {
+        self.post_json(
+            path,
+            json!({
+                "grant_jwt": grant_jwt,
+                "principal_did": principal_did,
+                "device_id": device_id,
+                "display_name": "yougen session-grant bridge",
+            }),
+        )
+        .await
+    }
+
+    pub async fn exchange_session_grant(
+        &self,
+        grant_jwt: &str,
+        principal_did: &str,
+        device_id: &str,
+    ) -> anyhow::Result<DevLoginResponse> {
+        self.exchange_session_grant_at(
+            "api/v1/auth/session-grant/exchange",
+            grant_jwt,
+            principal_did,
+            device_id,
+        ).await
     }
 
     pub async fn register_account(
@@ -579,15 +644,36 @@ impl ContrixApi {
         self.register_push_device_with_request(&request).await
     }
 
+    pub async fn register_push_device_with_request_at(
+        &self,
+        path: &str,
+        request: &RegisterDeviceRequest,
+    ) -> anyhow::Result<PushRegisterResponse> {
+        self.post_json(path, serde_json::to_value(request)?).await
+    }
+
     pub async fn register_push_device_with_request(
         &self,
         request: &RegisterDeviceRequest,
     ) -> anyhow::Result<PushRegisterResponse> {
-        self.post_json(
-            "api/v1/push/register-device",
-            serde_json::to_value(request)?,
-        )
-        .await
+        self.register_push_device_with_request_at("api/v1/push/register-device", request)
+            .await
+    }
+
+    pub async fn register_push_device_with_session_grant(
+        &self,
+        request: &RegisterDeviceRequest,
+        session_grant: &str,
+    ) -> anyhow::Result<PushRegisterResponse> {
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/push/register-device")?)
+            .header(
+                HeaderName::from_bytes(chime::CONTRIX_SESSION_GRANT_HEADER.as_bytes())?,
+                HeaderValue::from_str(session_grant)?,
+            )
+            .json(request);
+        self.send_json(self.prepare_request(request), Method::POST).await
     }
 
     pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {

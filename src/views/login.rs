@@ -979,6 +979,7 @@ pub fn LoginPanel(
                                                             .then_some(expected_state.as_str());
                                                         match coauth
                                                             .exchange_oidc_code(
+                                                                &topology.oidc_exchange_path,
                                                                 &authorization_code,
                                                                 &code_verifier,
                                                                 &redirect_uri,
@@ -1013,7 +1014,8 @@ pub fn LoginPanel(
                                                                 .map(|server| server.endpoint.clone())
                                                                 .unwrap_or_else(|| principal.clone());
                                                             match ContrixApi::new(&principal_target) {
-                                                                Ok(api) => match api.exchange_session_grant(&grant.grant_jwt, &actor, &dev).await {
+                                                                Ok(api) => match api.auth_bridge_describe().await {
+                                                                    Ok(bridge) => match api.exchange_session_grant_at(&bridge.auth.session_grant_exchange_path, &grant.grant_jwt, &actor, &dev).await {
                                                                     Ok(session) => {
                                                                         let register_request = match crate::push::build_register_request_for_actor(&dev, Some(&actor)) {
                                                                             Ok(request) => request,
@@ -1030,7 +1032,7 @@ pub fn LoginPanel(
                                                                             }
                                                                         };
                                                                         let api = api.with_bearer(session.access_token.clone());
-                                                                        match api.register_push_device_with_request(&register_request).await {
+                                                                        match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                             Ok(response) => {
                                                                                 let _ = clear_persisted_oidc_scaffold();
                                                                                 token.set(session.access_token.clone());
@@ -1074,6 +1076,10 @@ pub fn LoginPanel(
                                                                     }
                                                                     Err(error) => integration_plan_status.set(format!(
                                                                         "soland session-grant exchange after oidc-code scaffold failed: {error}"
+                                                                    )),
+                                                                },
+                                                                    Err(error) => integration_plan_status.set(format!(
+                                                                        "principal auth bridge describe failed: {error}"
                                                                     )),
                                                                 },
                                                                 Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
@@ -1126,7 +1132,8 @@ pub fn LoginPanel(
                                                         .map(|server| server.endpoint.clone())
                                                         .unwrap_or_else(|| principal.clone());
                                                     match ContrixApi::new(&principal_target) {
-                                                        Ok(api) => match api.exchange_session_grant(&grant.grant_jwt, &actor, &dev).await {
+                                                        Ok(api) => match api.auth_bridge_describe().await {
+                                                            Ok(bridge) => match api.exchange_session_grant_at(&bridge.auth.session_grant_exchange_path, &grant.grant_jwt, &actor, &dev).await {
                                                             Ok(session) => {
                                                                 let register_request = match crate::push::build_register_request_for_actor(&dev, Some(&actor)) {
                                                                     Ok(request) => request,
@@ -1143,7 +1150,7 @@ pub fn LoginPanel(
                                                                     }
                                                                 };
                                                                 let api = api.with_bearer(session.access_token.clone());
-                                                                match api.register_push_device_with_request(&register_request).await {
+                                                                match api.register_push_device_with_request_at(&bridge.push.register_device_path, &register_request).await {
                                                                     Ok(response) => {
                                                                         token.set(session.access_token.clone());
                                                                         persist_config(
@@ -1184,6 +1191,10 @@ pub fn LoginPanel(
                                                             }
                                                             Err(error) => integration_plan_status.set(format!(
                                                                 "soland session-grant exchange failed: {error}"
+                                                            )),
+                                                        },
+                                                            Err(error) => integration_plan_status.set(format!(
+                                                                "principal auth bridge describe failed: {error}"
                                                             )),
                                                         },
                                                         Err(error) => integration_plan_status.set(format!("invalid principal server URL: {error}")),
