@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
+    api::{ContrixApi, summarize_principal_integration_manifest},
+    coauth::{CoauthApi, summarize_coauth_integration_manifest, summarize_coauth_recovery_bridge},
     config::LocalConfigStore,
     i18n::Locale,
     local_state::LocalStateStore,
@@ -43,6 +45,7 @@ pub fn SettingsPanel(
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id = use_signal(|| "backup-scaffold-current-device".to_owned());
+    let mut recovery_contract_status = use_signal(|| String::new());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let workflows = production_release_workflows();
@@ -813,6 +816,7 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "recovery-settings",
                     div { class: "event-head", span { "Account Recovery" } span { "policy" } }
                     div { class: "muted", "Recovery currently fronts key-backup scaffolds and coauth recovery policy. Secure restore proofing remains TODO." }
+                    div { class: "muted", "Contract inspection currently assumes the configured server URL can answer both principal and coauth recovery discovery surfaces." }
                     div { class: "actions",
                         button {
                             class: "secondary",
@@ -826,6 +830,79 @@ pub fn SettingsPanel(
                             onclick: move |_| active_section.set(SettingsSection::Encryption),
                             "Open Backup Controls"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-contracts",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    let coauth_result = match CoauthApi::new(&principal) {
+                                        Ok(api) => {
+                                            let recovery = api.recovery_describe().await;
+                                            let integration = api.integration_describe().await;
+                                            match (recovery, integration) {
+                                                (Ok(recovery), Ok(integration)) => {
+                                                    match summarize_coauth_recovery_bridge(&recovery) {
+                                                        Ok(recovery_summary) => Ok(format!(
+                                                            "coauth_recovery_bridge:\n{}\n\ncoauth_integration_manifest:\n{}",
+                                                            recovery_summary,
+                                                            summarize_coauth_integration_manifest(&integration),
+                                                        )),
+                                                        Err(error) => Err(format!("coauth recovery summary failed: {error}")),
+                                                    }
+                                                }
+                                                (Err(error), _) => Err(format!("coauth recovery describe failed: {error}")),
+                                                (_, Err(error)) => Err(format!("coauth integration describe failed: {error}")),
+                                            }
+                                        }
+                                        Err(error) => Err(format!("invalid coauth/principal URL: {error}")),
+                                    };
+
+                                    let principal_result = match ContrixApi::new(&principal) {
+                                        Ok(api) => match api.integration_describe().await {
+                                            Ok(manifest) => {
+                                                let authz_examples = manifest
+                                                    .examples
+                                                    .get("authz_protocol")
+                                                    .cloned()
+                                                    .unwrap_or_else(|| serde_json::json!({
+                                                        "todo": "principal integration manifest did not publish authz_protocol examples"
+                                                    }));
+                                                match serde_json::to_string_pretty(&authz_examples) {
+                                                    Ok(pretty) => Ok(format!(
+                                                        "principal_integration_manifest:\n{}\n\nauthz_protocol_examples:\n{}",
+                                                        summarize_principal_integration_manifest(&manifest),
+                                                        pretty,
+                                                    )),
+                                                    Err(error) => Err(format!("principal authz examples formatting failed: {error}")),
+                                                }
+                                            }
+                                            Err(error) => Err(format!("principal integration describe failed: {error}")),
+                                        },
+                                        Err(error) => Err(format!("invalid principal URL: {error}")),
+                                    };
+
+                                    let coauth_text = match coauth_result {
+                                        Ok(text) => text,
+                                        Err(error) => error,
+                                    };
+                                    let principal_text = match principal_result {
+                                        Ok(text) => text,
+                                        Err(error) => error,
+                                    };
+
+                                    recovery_contract_status.set(format!(
+                                        "{}\n\n{}",
+                                        coauth_text,
+                                        principal_text,
+                                    ));
+                                });
+                            },
+                            "Inspect Recovery Contracts"
+                        }
+                    }
+                    if !recovery_contract_status().is_empty() {
+                        pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }
                     }
                 }
             }
