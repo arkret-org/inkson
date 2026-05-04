@@ -1311,6 +1311,90 @@ pub fn SettingsPanel(
                             },
                             "Complete Restore Executor"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-result",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_result(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_result:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore result failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Result"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-inspect-restore-receipt",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.get_key_backup_restore_receipt(&ticket_id).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_receipt:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore receipt failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Inspect Restore Receipt"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-handoff-materialized-device",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let device = device_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_materialized_device_handoff(&ticket_id, json!({
+                                            "target_device_id": device,
+                                            "delivery_channel": "device_messages",
+                                            "receipt_ack_mode": "scaffold_manual_ack",
+                                            "note": "handoff restore result scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_materialized_device_handoff:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore handoff failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Handoff Materialized Device"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }

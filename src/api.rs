@@ -1024,6 +1024,36 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn get_key_backup_restore_result(
+        &self,
+        ticket_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/result"))
+            .await
+    }
+
+    pub async fn get_key_backup_restore_receipt(
+        &self,
+        ticket_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/receipt"))
+            .await
+    }
+
+    pub async fn post_key_backup_restore_materialized_device_handoff(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!(
+                "api/v1/keys/backups/restore-tickets/{ticket_id}/materialized-device-handoff"
+            ),
+            payload,
+        )
+        .await
+    }
+
     pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
         let request = self
             .http
