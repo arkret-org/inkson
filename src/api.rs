@@ -1000,6 +1000,30 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn post_key_backup_restore_executor_start(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/executor/start"),
+            payload,
+        )
+        .await
+    }
+
+    pub async fn post_key_backup_restore_executor_complete(
+        &self,
+        ticket_id: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/executor/complete"),
+            payload,
+        )
+        .await
+    }
+
     pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
         let request = self
             .http

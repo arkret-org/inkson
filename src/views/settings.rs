@@ -1250,6 +1250,67 @@ pub fn SettingsPanel(
                             },
                             "Queue Restore Executor"
                         }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-start-restore-executor",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_executor_start(&ticket_id, json!({
+                                            "worker_id": "restore-worker-01",
+                                            "lease_kind": "scaffold_single_actor",
+                                            "note": "start restore worker scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_executor_start:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore executor start failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Start Restore Executor"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-complete-restore-executor",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                let backup_id = key_backup_id();
+                                let device = device_id();
+                                spawn(async move {
+                                    let ticket_id = format!("restore-ticket-{backup_id}");
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.post_key_backup_restore_executor_complete(&ticket_id, json!({
+                                            "result": "success",
+                                            "materialized_device_id": device,
+                                            "note": "complete restore worker scaffold"
+                                        })).await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_executor_complete:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore executor complete failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Complete Restore Executor"
+                        }
                     }
                     if !recovery_contract_status().is_empty() {
                         pre { class: "muted", "data-testid": "recovery-contract-status", "{recovery_contract_status}" }

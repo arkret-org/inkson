@@ -234,6 +234,8 @@ pub struct CoauthRecoveryDescribe {
     pub principal_restore_approval_submit_path: String,
     pub principal_restore_executor_status_path: String,
     pub principal_restore_executor_enqueue_path: String,
+    pub principal_restore_executor_start_path: String,
+    pub principal_restore_executor_complete_path: String,
     pub principal_authz_describe_path: String,
     pub principal_authz_check_path: String,
     pub principal_policy_describe_path: String,
@@ -617,7 +619,7 @@ pub fn summarize_coauth_recovery_bridge(
     };
 
     Ok(format!(
-        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_recovery_contract_stack={}\nprincipal_device_messages_describe={}\nprincipal_key_backups_describe={}\nprincipal_restore_state_describe={}\nprincipal_restore_state_export={}\nprincipal_restore_state_import={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_restore_approval_status={}\nprincipal_restore_approval_submit={}\nprincipal_restore_executor_status={}\nprincipal_restore_executor_enqueue={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
+        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_recovery_contract_stack={}\nprincipal_device_messages_describe={}\nprincipal_key_backups_describe={}\nprincipal_restore_state_describe={}\nprincipal_restore_state_export={}\nprincipal_restore_state_import={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_restore_approval_status={}\nprincipal_restore_approval_submit={}\nprincipal_restore_executor_status={}\nprincipal_restore_executor_enqueue={}\nprincipal_restore_executor_start={}\nprincipal_restore_executor_complete={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
         recovery.contract,
         recovery.version,
         recovery.recovery_start_path,
@@ -640,6 +642,8 @@ pub fn summarize_coauth_recovery_bridge(
         recovery.principal_restore_approval_submit_path,
         recovery.principal_restore_executor_status_path,
         recovery.principal_restore_executor_enqueue_path,
+        recovery.principal_restore_executor_start_path,
+        recovery.principal_restore_executor_complete_path,
         recovery.principal_authz_describe_path,
         recovery.principal_authz_check_path,
         recovery.principal_policy_describe_path,
