@@ -1005,6 +1005,30 @@ pub fn SettingsPanel(
                         }
                         button {
                             class: "secondary",
+                            "data-testid": "recovery-list-restore-tickets",
+                            onclick: move |_| {
+                                let principal = base_url();
+                                spawn(async move {
+                                    match authed_api(&principal, token()) {
+                                        Ok(api) => match api.list_key_backup_restore_tickets().await {
+                                            Ok(response) => recovery_contract_status.set(format!(
+                                                "principal_restore_ticket_collection:\n{}",
+                                                response
+                                            )),
+                                            Err(error) => recovery_contract_status.set(format!(
+                                                "principal restore ticket collection failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => recovery_contract_status.set(format!(
+                                            "principal restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "List Restore Tickets"
+                        }
+                        button {
+                            class: "secondary",
                             "data-testid": "recovery-advance-restore-ticket",
                             onclick: move |_| {
                                 let principal = base_url();

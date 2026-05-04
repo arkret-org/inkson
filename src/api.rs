@@ -936,6 +936,12 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn list_key_backup_restore_tickets(
+        &self,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/keys/backups/restore-tickets").await
+    }
+
     pub async fn get_key_backup_restore_ticket(
         &self,
         ticket_id: &str,
