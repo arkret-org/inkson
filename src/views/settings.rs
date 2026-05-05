@@ -704,7 +704,7 @@ pub fn SettingsPanel(
                             checked: presence_visible(),
                             onchange: move |evt| presence_visible.set(evt.value() == "true"),
                         }
-                        " Show presence to others"
+                        " Show presence to others (cx.presence)"
                     }
                     label {
                         input {
@@ -712,9 +712,115 @@ pub fn SettingsPanel(
                             checked: read_receipts_visible(),
                             onchange: move |evt| read_receipts_visible.set(evt.value() == "true"),
                         }
-                        " Send read receipts"
+                        " Send read receipts (cx.receipt.read)"
                     }
                     div { class: "muted", "Changes take effect on next sync." }
+                }
+
+                // Progressive disclosure — identity-handles.md §16
+                // Four canonical events drive selective claim sharing:
+                //   cx.identity.disclosure_policy   — actor sets which fields are
+                //                                     released to which audience.
+                //   cx.identity.disclosure_receipt  — receiver acknowledges what
+                //                                     they observed (audit trail).
+                //   cx.identity.presentation_request  — relying party asks for a
+                //                                       claim presentation.
+                //   cx.identity.presentation_response — actor satisfies the request
+                //                                       with a verifiable presentation.
+                div { class: "event", "data-testid": "progressive-disclosure",
+                    div { class: "event-head",
+                        span { "Progressive disclosure" }
+                        span { "identity-handles §16" }
+                    }
+                    div { class: "muted",
+                        "DID Document 不承担身份画像。Claim / handle / 邮箱等敏感属性按 audience 选择性披露：你设置 disclosure policy，对方发 presentation_request，你回 presentation_response，每次披露由 disclosure_receipt 留痕。"
+                    }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "Disclosure policy" }
+                            span { "cx.identity.disclosure_policy" }
+                            div { class: "muted", "声明哪些字段对哪类 audience 可见" }
+                        }
+                        div { class: "metric",
+                            strong { "Presentation request" }
+                            span { "cx.identity.presentation_request" }
+                            div { class: "muted", "对方发起的 claim 请求（含目的与最小字段集）" }
+                        }
+                        div { class: "metric",
+                            strong { "Presentation response" }
+                            span { "cx.identity.presentation_response" }
+                            div { class: "muted", "你回的 verifiable presentation；只暴露被授权字段" }
+                        }
+                        div { class: "metric",
+                            strong { "Disclosure receipt" }
+                            span { "cx.identity.disclosure_receipt" }
+                            div { class: "muted", "审计留痕；可被 redact 但 hash chain 不变" }
+                        }
+                    }
+                    div { class: "actions",
+                        button { class: "secondary", "data-testid": "disclosure-policy-edit", "编辑 disclosure policy" }
+                        button { class: "secondary", "data-testid": "disclosure-history-view", "查看 disclosure 历史" }
+                        button { class: "secondary", "data-testid": "presentation-pending", "处理 pending request (0)" }
+                    }
+                }
+
+                // Personal blocklist — discovery/client-preferences.md
+                // Block 是 actor-private filter，不影响其它 actor 客户端。
+                div { class: "event", "data-testid": "personal-blocklist",
+                    div { class: "event-head",
+                        span { "Personal blocklist" }
+                        span { "actor-private filter" }
+                    }
+                    div { class: "muted",
+                        "本地屏蔽列表只影响你客户端的渲染。需要全 Space 拦截要走 Moderation policy。写入路径：cx.account.blocklist。"
+                    }
+                    div { class: "actions",
+                        button { class: "secondary", "data-testid": "blocklist-edit", "编辑 blocklist" }
+                        span { class: "badge", "2 个 actor 已屏蔽" }
+                    }
+                }
+            }
+
+            // ── Account Data (actor-private View preferences) ─────
+            // models/views.md §2.6 + identity/account-lifecycle.md
+            // 共享 View 改 filter / sort / columns 写 cx.view.update（所有人可见）；
+            // 个人 View 偏好（折叠状态、临时 filter、列宽）写 cx.account_data.set
+            // 到 actor-private channel，不广播到 Space。
+            if active_section() == SettingsSection::Privacy {
+                div { class: "event", "data-testid": "account-data-prefs",
+                    div { class: "event-head",
+                        span { "Account Data (actor-private)" }
+                        span { "cx.account_data.set" }
+                    }
+                    div { class: "muted",
+                        "下面这些偏好写入到你账号的 actor-private channel，不会同步给 Space 其它成员；改变共享 View 设置请走该 View 的 Edit 按钮（写 cx.view.update）。"
+                    }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "View column widths" }
+                            span { "actor-private" }
+                            div { class: "muted", "key=ui.view.<view_id>.column_widths" }
+                        }
+                        div { class: "metric",
+                            strong { "Folded panels" }
+                            span { "actor-private" }
+                            div { class: "muted", "key=ui.layout.folds" }
+                        }
+                        div { class: "metric",
+                            strong { "Mute rules" }
+                            span { "actor-private" }
+                            div { class: "muted", "key=notifications.mute" }
+                        }
+                        div { class: "metric",
+                            strong { "Profile space override" }
+                            span { "cx.profile.space_override" }
+                            div { class: "muted", "在某个 Space 内显示不同 profile / handle" }
+                        }
+                    }
+                    div { class: "actions",
+                        button { class: "secondary", "data-testid": "account-data-export", "导出 account_data" }
+                        button { class: "secondary", "data-testid": "account-data-clear", "清空 actor-private 偏好" }
+                    }
                 }
             }
 

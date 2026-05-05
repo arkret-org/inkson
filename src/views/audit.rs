@@ -113,6 +113,37 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
+            // Schema evolution — conformance/schema-registry.md
+            // cx.schema.{define,update} 是 Space schema 注册 / 演进的写入路径。
+            // 客户端遇到未知 morph_type / facet 时 SHOULD 保留数据但不允许它绕开
+            // schema / capability / encryption 约束。
+            div { class: "event", "data-testid": "schema-evolution",
+                div { class: "event-head",
+                    span { "Schema evolution" }
+                    span { "cx.schema.{{define,update}}" }
+                }
+                div { class: "muted",
+                    "Schema 注册和演进由 Space 内的 cx.schema.define / cx.schema.update event 维护。新增字段 SHOULD additive；遇到未知字段时客户端必须保留 raw value。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "cx.schema.define" }
+                        span { "register" }
+                        div { class: "muted", "声明新 morph_type / facet / fields shape" }
+                    }
+                    div { class: "metric",
+                        strong { "cx.schema.update" }
+                        span { "evolve" }
+                        div { class: "muted", "兼容性更新；reducer profile 可能升级" }
+                    }
+                    div { class: "metric",
+                        strong { "Reducer profile" }
+                        span { "Event Envelope requirements{{}}" }
+                        div { class: "muted", "schema_profile_refs / reducer_profile_ref 已合并为 requirements 对象" }
+                    }
+                }
+            }
+
             // Authz explanation — claude-design desktop/audit.html
             // authz/event-auth-state-resolution.md
             div { class: "event", "data-testid": "authz-decisions",

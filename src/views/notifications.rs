@@ -110,13 +110,14 @@ pub fn NotificationsPanel(
                     span { "Push gateway 默认脱敏唤醒" }
                 }
                 div { class: "muted",
-                    "本面板的所有条目都从 Event / Flow / Message / Relation / capability 派生。Push 仅发送 background_sync_needed 唤醒，正文在本机解密。每次进入卡片或讨论前都会重新做 Card 与 Room 两层独立的权限校验。"
+                    "本面板的所有条目都从 Event / Flow / Message / Relation / capability 派生。Push 仅发送 background_sync_needed 唤醒，正文在本机解密。每次进入卡片或讨论前都会重新做 Card 与 Room 两层独立的权限校验。屏蔽 actor 通过 cx.account.blocklist 写入 actor-private channel（不影响其它 actor）。"
                 }
                 div { class: "actions",
                     span { class: "chip", "permission re-check" }
                     span { class: "chip", "card vs room visibility" }
                     span { class: "chip", "conflict pivot" }
                     span { class: "chip", "push redacted" }
+                    span { class: "chip", "cx.account.blocklist" }
                 }
             }
 

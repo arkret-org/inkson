@@ -323,6 +323,30 @@ pub fn SpaceAdminPanel(
                 }
             }
 
+            // Member state — authz/event-auth-state-resolution.md §5
+            // 5 MembershipState variants: Invited / Joined / Left / Banned / Knocked
+            // Legal transitions form a state machine; reducer rejects illegal moves
+            // with state_mismatch.
+            div { class: "event", "data-testid": "member-state-banner",
+                div { class: "event-head",
+                    span { "Member state machine" }
+                    span { "cx.member.state · 5 variants" }
+                }
+                div { class: "muted",
+                    "成员状态由 cx.member.state event 驱动。`knock` Space 允许未邀请的 actor 敲门，admin 同意后 transition 为 invited 再 join。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "Invited" }
+                    span { class: "badge green", "Joined" }
+                    span { class: "badge", "Left" }
+                    span { class: "badge red", "Banned" }
+                    span { class: "badge amber", "Knocked" }
+                }
+                div { class: "muted",
+                    "合法转移：none → {{join, invite, knock}} | invite → {{join, leave}} | knock → {{invite, leave}} | join → {{leave, ban}} | leave → {{invite, knock}} | ban → leave (via unban)。"
+                }
+            }
+
             // Member table
             div { class: "event", "data-testid": "member-table",
                 div { class: "event-head", span { "Members" } span { "{members().len()}" } }
@@ -410,6 +434,32 @@ pub fn SpaceAdminPanel(
                 }
                 if members().is_empty() {
                     div { class: "muted", "No members loaded." }
+                }
+            }
+
+            // Space invites — sync/third-party-invites.md + invite event family
+            // 6 canonical events drive the invite lifecycle:
+            //   cx.invite.create        — 创建 invite（主动邀请已知 DID）
+            //   cx.invite.third_party   — 邀请 3PID（邮箱 / 手机号），未知 DID 时使用
+            //   cx.invite.claim         — 受邀人接收 invite proof（绑定到他们的 DID）
+            //   cx.invite.accept        — 受邀人正式接受（写入 membership）
+            //   cx.invite.cancel        — 邀请方撤销（receiver 未 claim 前）
+            //   cx.invite.revoke        — 邀请方撤销（receiver 已 claim 但未 accept）
+            div { class: "event", "data-testid": "invite-lifecycle-banner",
+                div { class: "event-head",
+                    span { "Invite lifecycle" }
+                    span { "6 canonical events" }
+                }
+                div { class: "muted",
+                    "Invite 不直接授予 capability — 接受后才进入有效集合。MUST 携带 expires_at；默认 7 天，高安全 Space 24 小时。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "cx.invite.create" }
+                    span { class: "badge blue", "cx.invite.third_party" }
+                    span { class: "badge", "cx.invite.claim" }
+                    span { class: "badge green", "cx.invite.accept" }
+                    span { class: "badge amber", "cx.invite.cancel" }
+                    span { class: "badge red", "cx.invite.revoke" }
                 }
             }
 
@@ -777,6 +827,101 @@ pub fn SpaceAdminPanel(
                 }
                 div { class: "muted",
                     "Reducer 决策入口：cx.capability.grant / cx.capability.revoke / approval_constraint resolved。详细 trail 在 /audit。"
+                }
+            }
+
+            // Organization governance — identity/identity-did.md §6 + content-moderation
+            // Organization 作为 Principal（不是 Space）。一个 Space 可以由多个 organization
+            // 共同治理，Space 的 organization 关系通过 cx.space.organization event 维护。
+            div { class: "event", "data-testid": "organization-governance",
+                div { class: "event-head",
+                    span { "Organization governance" }
+                    span { "Space ≠ Organization" }
+                }
+                div { class: "muted",
+                    "Organization 是 Principal（DID），不是 Space。多组织共治通过 cx.space.organization 关系表达；组织目录与审核策略独立维护，不绑定到任何单一 Space。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Owning organizations" }
+                        span { "cx.space.organization" }
+                        div { class: "muted", "声明 Space 的归属组织（可多个）" }
+                    }
+                    div { class: "metric",
+                        strong { "Org directory listing" }
+                        span { "cx.organization.discovery" }
+                        div { class: "muted", "组织级 discoverability policy（独立于 Space）" }
+                    }
+                    div { class: "metric",
+                        strong { "Org moderation policy" }
+                        span { "cx.organization.moderation_policy" }
+                        div { class: "muted", "组织级审核策略；Space 可继承 / 覆写" }
+                    }
+                    div { class: "metric",
+                        strong { "Sovereign DID policy" }
+                        span { "cx.sovereign.did_policy" }
+                        div { class: "muted", "高安全部署：限制可接受的 DID method / resolver trust" }
+                    }
+                }
+            }
+
+            // Space hierarchy — models/space-hierarchy.md
+            // 4 canonical events for parent/child + lifecycle:
+            //   cx.space.child  — 声明 child Space
+            //   cx.space.parent — 声明 parent Space（双向 declaration）
+            //   cx.space.upgrade — 升级 schema profile / reducer profile
+            //   cx.space.lifecycle.set — active / archived / suspended / draft 状态切换
+            div { class: "event", "data-testid": "space-hierarchy",
+                div { class: "event-head",
+                    span { "Space hierarchy & lifecycle" }
+                    span { "models/space-hierarchy.md" }
+                }
+                div { class: "muted",
+                    "Parent / child Space 关系可形成层级或图状组织。Child security-boundary Space 仍是独立边界 — 默认不级联 membership / capability / encryption。任何继承 MUST 由 child Space 显式声明。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Child link" }
+                        span { "cx.space.child" }
+                        div { class: "muted", "声明子 Space" }
+                    }
+                    div { class: "metric",
+                        strong { "Parent link" }
+                        span { "cx.space.parent" }
+                        div { class: "muted", "声明父 Space" }
+                    }
+                    div { class: "metric",
+                        strong { "Schema upgrade" }
+                        span { "cx.space.upgrade" }
+                        div { class: "muted", "升级 reducer / schema profile（不破坏现有 frontier）" }
+                    }
+                    div { class: "metric",
+                        strong { "Lifecycle state" }
+                        span { "cx.space.lifecycle.set" }
+                        div { class: "muted", "active / archived / suspended / draft" }
+                    }
+                }
+            }
+
+            // Policy events — authz/policy-server.md
+            // cx.policy.{rule,action,set} 三个 event 是 reducer 决策输入：
+            //   cx.policy.rule    — 单条规则（match condition + effect + scope）
+            //   cx.policy.action  — 单条 action 模板（被 rule 引用）
+            //   cx.policy.set     — 把 rule + action 打包发布为 policy version
+            div { class: "event", "data-testid": "policy-event-family",
+                div { class: "event-head",
+                    span { "Policy authoring" }
+                    span { "cx.policy.{{rule,action,set}}" }
+                }
+                div { class: "muted",
+                    "Policy 是 reducer / 服务节点判断请求是否可接受的输入。Policy 通过 rule + action 组合发布为 set；同一 policy_version 一次写入。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "cx.policy.rule" }
+                    span { class: "badge", "cx.policy.action" }
+                    span { class: "badge green", "cx.policy.set" }
+                    span { class: "muted", "—— 三 event 联合发布为 policy version" }
+                    span { class: "muted", "policy_version_ref 由 cx.space.policy.set 选取" }
                 }
             }
 

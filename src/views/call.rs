@@ -66,6 +66,13 @@ pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
                         div { class: "muted", "由 Flow discussion branch member 集合决定" }
                     }
                 }
+                // Three canonical call events — webrtc-signaling.md §4
+                div { class: "actions", "data-testid": "call-event-kinds",
+                    span { class: "muted", "Wire events:" }
+                    span { class: "badge blue", "cx.call.signal · ephemeral (offer/answer/ICE)" }
+                    span { class: "badge", "cx.call.state · ephemeral (ringing / in_call / ended)" }
+                    span { class: "badge red", "cx.call.recording.start · durable + capability gated" }
+                }
             }
 
             // Call initiation

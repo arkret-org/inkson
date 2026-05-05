@@ -548,6 +548,32 @@ pub fn DevicesPanel(
                 }
             }
 
+            // MLS lifecycle event family — encryption-and-audit.md
+            // Six canonical events drive a Space's MLS group:
+            //   cx.mls.genesis        — 第一次创建 MLS group（empty membership）
+            //   cx.mls.keypackage     — 设备发布 KeyPackage 进入 OTK pool
+            //   cx.mls.proposal       — Add / Remove / Update proposal（待 commit）
+            //   cx.mls.commit         — 接受一组 proposal，epoch++
+            //   cx.mls.commit_failed  — Commit 验证失败（state_mismatch / 旧 epoch）
+            //   cx.mls.welcome        — 把新成员加入 group（带历史 epoch 的 KeyPackage）
+            div { class: "event", "data-testid": "mls-lifecycle-events",
+                div { class: "event-head",
+                    span { "MLS lifecycle events" }
+                    span { "encryption-and-audit.md" }
+                }
+                div { class: "muted",
+                    "MLS group 状态由 6 个 cx.mls.* event 驱动。本机收到的所有 epoch 转移都可在 audit 流追溯到上述 event 序列。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "cx.mls.genesis" }
+                    span { class: "badge blue", "cx.mls.keypackage" }
+                    span { class: "badge", "cx.mls.proposal" }
+                    span { class: "badge green", "cx.mls.commit" }
+                    span { class: "badge red", "cx.mls.commit_failed" }
+                    span { class: "badge accent", "cx.mls.welcome" }
+                }
+            }
+
             // KeyPackage / OTK / Fallback summary — claude-design desktop/devices.html
             // crypto-media/encryption-and-audit.md (KeyPackage lifecycle)
             div { class: "event", "data-testid": "device-keypackage-otk",

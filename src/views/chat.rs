@@ -100,6 +100,27 @@ pub fn ChatPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "chat-panel",
+            // Ephemeral presence / typing — discovery/profiles-presence.md
+            // 这两个 event 是 Ephemeral Channel events（不写入 Space history）：
+            //   cx.presence — 发送方在线 / 离线 / dnd 状态
+            //   cx.typing   — 发送方正在输入（短期 TTL；reducer 不会持久化）
+            // 客户端 SHOULD 显示但 MUST NOT 把它们当作 audit / capability 输入。
+            div { class: "event", "data-testid": "ephemeral-channel-banner",
+                div { class: "event-head",
+                    span { "Ephemeral signals" }
+                    span { "cx.presence · cx.typing" }
+                }
+                div { class: "muted",
+                    "Presence 与 typing 通过 Sync Service Ephemeral Channel 传播，不写入 Space history。Privacy 设置可关闭这两类对外发送（cx.account_data.set 控制）。"
+                }
+                div { class: "actions",
+                    span { class: "badge green", "Mei · online" }
+                    span { class: "badge blue", "Carlos · typing…" }
+                    span { class: "badge", "α agent · idle" }
+                    span { class: "muted", "TTL ≈ 30s · 不进入 audit 流" }
+                }
+            }
+
             div { class: "event", "data-testid": "channel-list",
                 div { class: "event-head", span { "Discussions" } span { "{channels().len()}" } }
                 div { class: "muted",

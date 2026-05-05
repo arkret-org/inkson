@@ -61,6 +61,50 @@ pub fn AppletsPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
+            // Protocol session event family — extensions/applet-integration + agent-protocol-interop
+            // Applet 与 Agent 的协议会话生命周期由下列 canonical events 驱动：
+            //   cx.applet.protocol_session.start / status         (bridge / bot 发起 + 状态汇报)
+            //   cx.applet.bridge_error                            (桥接异常)
+            //   cx.agent.protocol_session.start / status / result (agent 发起 + 状态 + 最终结果)
+            // Agent 输出最终通过 signed Event（Flow / Message / Morph）落入 Space 才成为协议事实；
+            // protocol_session.result 是会话级签名 receipt，便于审计 / 二次入仓。
+            div { class: "event", "data-testid": "protocol-session-events",
+                div { class: "event-head",
+                    span { "Protocol session events" }
+                    span { "applet + agent lifecycle" }
+                }
+                div { class: "muted",
+                    "Applet 桥接与 Agent 协议会话都通过下列 event 落入审计链；result 是 agent 会话的 canonical 签名 receipt。原始正文 / 工具调用细节通过 Flow / Morph 派生，不堆在 status event 里。"
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Applet session" }
+                        span { "cx.applet.protocol_session.{{start,status}}" }
+                        div { class: "muted", "桥接 / Bot 发起的会话生命周期" }
+                    }
+                    div { class: "metric",
+                        strong { "Bridge error" }
+                        span { "cx.applet.bridge_error" }
+                        div { class: "muted", "桥接异常 / 外部网络断连" }
+                    }
+                    div { class: "metric",
+                        strong { "Agent session" }
+                        span { "cx.agent.protocol_session.{{start,status}}" }
+                        div { class: "muted", "A2A / ACP / MCP 会话生命周期" }
+                    }
+                    div { class: "metric",
+                        strong { "Agent endpoint" }
+                        span { "cx.agent.endpoint" }
+                        div { class: "muted", "声明 agent 可达性 / 协议版本" }
+                    }
+                    div { class: "metric",
+                        strong { "Agent result" }
+                        span { "cx.agent.protocol_session.result" }
+                        div { class: "muted", "签名会话 receipt（最终输出 + 工具调用摘要）" }
+                    }
+                }
+            }
+
             // Agents
             div { class: "event", "data-testid": "agents-section",
                 div { class: "event-head",
