@@ -271,12 +271,9 @@ mod tests {
     #[test]
     fn builds_persistable_registration_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let response = RegisterDeviceResponse {
-            ok: true,
-            registration_id: Some("cx:push:test".to_owned()),
-            expires_at: None,
-            ..Default::default()
-        };
+        let mut response = RegisterDeviceResponse::default();
+        response.ok = true;
+        response.registration_id = Some("cx:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
 
         assert_eq!(state.registration_id.as_deref(), Some("cx:push:test"));
@@ -288,12 +285,9 @@ mod tests {
     #[test]
     fn builds_unregister_request_from_existing_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let response = RegisterDeviceResponse {
-            ok: true,
-            registration_id: Some("cx:push:test".to_owned()),
-            expires_at: None,
-            ..Default::default()
-        };
+        let mut response = RegisterDeviceResponse::default();
+        response.ok = true;
+        response.registration_id = Some("cx:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
         let unregister = build_unregister_request("dev_yougen", Some(&state)).unwrap();
 
@@ -329,12 +323,8 @@ mod tests {
     #[test]
     fn push_status_label_treats_state_without_registration_id_as_registered() {
         let request = build_register_request("dev_yougen").unwrap();
-        let response = RegisterDeviceResponse {
-            ok: true,
-            registration_id: None,
-            expires_at: None,
-            ..Default::default()
-        };
+        let mut response = RegisterDeviceResponse::default();
+        response.ok = true;
         let state = registration_state_from_response(&request, &response);
 
         assert_eq!(push_status_label(Some(&state)), "registered");

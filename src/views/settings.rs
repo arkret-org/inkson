@@ -587,12 +587,10 @@ pub fn SettingsPanel(
                                             Ok(api) => match crate::push::build_register_request(&dev) {
                                                 Ok(request) => match api.register_push_device_with_request(&request).await {
                                                     Ok(push) => {
-                                                        let local_push = chime::RegisterDeviceResponse {
-                                                            ok: push.ok,
-                                                            registration_id: push.registration_id.clone(),
-                                                            expires_at: push.expires_at.clone(),
-                                                            ..Default::default()
-                                                        };
+                                                        let mut local_push = chime::RegisterDeviceResponse::default();
+                                                        local_push.ok = push.ok;
+                                                        local_push.registration_id = push.registration_id.clone();
+                                                        local_push.expires_at = push.expires_at.clone();
                                                         let local_state = crate::push::registration_state_from_response(
                                                             &request,
                                                             &local_push,

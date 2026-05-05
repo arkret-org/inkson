@@ -8,6 +8,7 @@ pub mod conflict;
 pub mod conformance;
 pub mod crypto;
 pub mod cursor;
+pub mod device_revoke;
 pub mod discovery;
 pub mod entity;
 pub mod hlc;

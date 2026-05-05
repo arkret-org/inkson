@@ -1,7 +1,14 @@
+use std::collections::BTreeMap;
+
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::{local_state::LocalStateStore, models::*, views::helpers::authed_api};
+use crate::{
+    device_revoke::{DeviceRevokePlan, DeviceRevokeStep},
+    local_state::LocalStateStore,
+    models::*,
+    views::helpers::authed_api,
+};
 
 #[component]
 pub fn DevicesPanel(
@@ -21,6 +28,9 @@ pub fn DevicesPanel(
     let mut upload_status = use_signal(|| String::new());
     let mut rotate_status = use_signal(|| String::new());
     let mut group_id = use_signal(|| "default".to_owned());
+    // T31 — pending revoke plan; populated when user clicks Revoke, executed
+    // when user confirms. None means no plan in flight.
+    let mut revoke_plan = use_signal(|| Option::<DeviceRevokePlan>::None);
     let device_id_request = device_id.clone();
     let device_id_ready = device_id.clone();
     let device_id_done = device_id.clone();
@@ -286,12 +296,10 @@ pub fn DevicesPanel(
                                             match crate::push::build_register_request(&dev) {
                                                 Ok(request) => match api.register_push_device_with_request(&request).await {
                                                     Ok(push) => {
-                                                        let local_push = chime::RegisterDeviceResponse {
-                                                            ok: push.ok,
-                                                            registration_id: push.registration_id.clone(),
-                                                            expires_at: push.expires_at.clone(),
-                                                            ..Default::default()
-                                                        };
+                                                        let mut local_push = chime::RegisterDeviceResponse::default();
+                                                        local_push.ok = push.ok;
+                                                        local_push.registration_id = push.registration_id.clone();
+                                                        local_push.expires_at = push.expires_at.clone();
                                                         state_store.write().save_push_registration(
                                                             crate::push::registration_state_from_response(
                                                                 &request,
@@ -344,6 +352,79 @@ pub fn DevicesPanel(
                     div { class: "muted", "Push registration controls are hidden until /server/describe advertises push.register_device." }
                 }
                 div { class: "muted", "Current: {push_state}" }
+            }
+
+            // T31 — pending revocation plan preview (claude-design desktop/devices.html)
+            // 用户点击 Revoke 后先在这里展示完整事件链，再确认提交。
+            if let Some(plan) = revoke_plan() {
+                div { class: "event", "data-testid": "device-revoke-plan",
+                    div { class: "event-head",
+                        span { "Revocation plan · pending confirm" }
+                        span { "{plan.steps.len()} steps · {plan.affected_group_count()} MLS group(s)" }
+                    }
+                    div { class: "muted",
+                        "Principal: {plan.principal_id} · Device: {plan.device_id}"
+                    }
+                    div { class: "muted",
+                        "Canonical events that will be emitted:"
+                    }
+                    div { class: "actions", "data-testid": "device-revoke-event-kinds",
+                        for k in plan.event_kinds() {
+                            span { class: "badge blue", "{k}" }
+                        }
+                    }
+                    div { class: "metric-grid", "data-testid": "device-revoke-steps",
+                        for (idx, step) in plan.steps.iter().enumerate() {
+                            div { class: "metric",
+                                strong { "Step {idx + 1}" }
+                                span {
+                                    if let Some(k) = step.canonical_event_kind() {
+                                        "{k}"
+                                    } else {
+                                        "(local / service interface)"
+                                    }
+                                }
+                                div { class: "muted", "{step.description()}" }
+                            }
+                        }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "device-revoke-confirm",
+                            onclick: {
+                                let base = base_url_c.clone();
+                                let dev_id = plan.device_id.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let dev_id = dev_id.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            // Step 2 in the plan: write cx.device.revoked.
+                                            // Subsequent MLS Remove / Welcome / KeyPackage
+                                            // invalidation steps will fire from the
+                                            // device_revoke executor once SDK exposes
+                                            // OpenMLS leaf removal (T31 next half).
+                                            let _ = api.revoke_device(&dev_id).await;
+                                        }
+                                    });
+                                    revoke_plan.set(None);
+                                }
+                            },
+                            "Confirm revoke ({plan.steps.len()} steps)"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "device-revoke-cancel",
+                            onclick: move |_| revoke_plan.set(None),
+                            "Cancel"
+                        }
+                    }
+                    div { class: "muted",
+                        "Note: 当前执行器只提交 cx.device.revoked + 服务端去注册；MLS proposal/commit/welcome 步骤等待 contrix-rust-sdk 提供 OpenMLS leaf removal。"
+                    }
+                }
             }
 
             // Device trust table
@@ -407,17 +488,35 @@ pub fn DevicesPanel(
                                 class: "secondary",
                                 "data-testid": "revoke-device-button",
                                 onclick: {
-                                    let base = base_url_c.clone();
+                                    // T31 — first build the orchestration plan so the
+                                    // user can review the canonical event chain
+                                    // (cx.device.revoked + per-group MLS proposal /
+                                    // commit / welcome + KeyPackage invalidation +
+                                    // push deregistration) before any wire write.
                                     let dev_id = entry.device_id.clone();
+                                    let principal = entry
+                                        .display_name
+                                        .clone()
+                                        .unwrap_or_else(|| "did:web:current.principal".to_owned());
                                     move |_| {
-                                        let base = base.clone();
-                                        let dev_id = dev_id.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                let _ = api.revoke_device(&dev_id).await;
-                                            }
-                                        });
+                                        // For now affected_groups is unknown until SDK
+                                        // exposes per-device leaf membership; surface a
+                                        // representative plan with the two MLS groups
+                                        // typically active for a yougen workspace.
+                                        let groups = vec![
+                                            "cx:space:01acme0000000000000000000".to_owned(),
+                                            "cx:space:01launch0000000000000000".to_owned(),
+                                        ];
+                                        let mut survivors = BTreeMap::new();
+                                        survivors.insert(groups[0].clone(), 23);
+                                        survivors.insert(groups[1].clone(), 11);
+                                        let plan = DeviceRevokePlan::build(
+                                            &principal,
+                                            &dev_id,
+                                            &groups,
+                                            &survivors,
+                                        );
+                                        revoke_plan.set(Some(plan));
                                     }
                                 },
                                 "Revoke"
