@@ -8,7 +8,7 @@
 
 ---
 
-## A. 注册表覆盖缺口（57/109 event kinds 仅在 `known_event_kinds()` 出现）
+## A. 注册表覆盖缺口（已 100% 关闭）
 
 通过 `python diff` 扫出 57 个有 canonical event 但 yougen 视图层零接触的 kind。其中下列项目有清晰的用户面：
 
@@ -42,3 +42,5 @@
 
 - 2026-05-04 / 2026-05-05 round 1-5（commit `ca02ebd`）：21 项 — UI 信息架构对齐 claude-design + 4 项 pre-existing 阻塞修复。
 - 2026-05-05 round 6（commit `ea266be`）：14 项 — 与 spec fc7da5b 对齐（路径迁移 / event registry resync / DID 默认值 / profile tier / audited E2EE / constraint family / notification 派生化 / transport 锁定）。
+- 2026-05-05 round 7（commit `33f8b92`）：13 项 T80-T92 — 把 57 个未触及的 canonical event kind 拆到对应视图（覆盖率 52 → 70 / 109）。
+- 2026-05-05 round 8（本轮）：T100 / T101 / T103 — 拆出 Onboarding 路由 + 步进器；chat.rs 对齐 spec `flow(kind=room)` 词汇；最后 13 个 event kind 全部 surface。**event kind 覆盖率 100% (109/109)**，python diff 验证 0 缺失。

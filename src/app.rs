@@ -1066,6 +1066,12 @@ pub fn RouterView() -> Element {
                             token,
                         }
                     },
+                    Route::Onboarding => rsx! {
+                        crate::views::onboarding::OnboardingPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
                 }
             }
 

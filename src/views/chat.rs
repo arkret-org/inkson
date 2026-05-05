@@ -121,6 +121,36 @@ pub fn ChatPanel(
                 }
             }
 
+            // Spec vocabulary banner — current-model.md §3, object-model-standard §5
+            // 这里的 "Discussion" UI 实际投影的是 Flow 的 discussion branch（即 spec 称之为
+            // `flow(kind="room")` 形态时的入口）。底层 canonical 对象仍是 Flow + Message；
+            // discussion branch 启用 / 关闭 / 元数据更新分别由下列 event 维护：
+            //   cx.flow.branch.enable             — 启用 discussion branch
+            //   cx.flow.branch.disable            — 关闭 discussion branch（保留历史）
+            //   cx.flow.branch.update             — 改 branch 元数据（topic / mute rules / etc.）
+            //   cx.flow.branch.history_visibility — 改 history visibility 范围
+            //   cx.flow.branch.policy_components  — 调整 branch-scoped policy
+            //   cx.flow.branch.member             — branch-scoped membership 变化
+            //   cx.flow.branch.set_primary        — 切换 primary branch（synthesis ↔ discussion）
+            div { class: "event", "data-testid": "discussion-branch-vocab-banner",
+                div { class: "event-head",
+                    span { "Discussion = flow(kind=room) discussion branch" }
+                    span { "object-model-standard §5" }
+                }
+                div { class: "muted",
+                    "本面板 \"Discussion\" / \"channel\" 是 UI 用语；底层 canonical 对象仍是 Flow + Message。Flow 的 discussion branch 提供与 Matrix Room 等价的能力，但不是独立对象类型。Branch 生命周期由 cx.flow.branch.* 七个 event 维护。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "cx.flow.branch.enable" }
+                    span { class: "badge", "cx.flow.branch.disable" }
+                    span { class: "badge", "cx.flow.branch.update" }
+                    span { class: "badge", "cx.flow.branch.history_visibility" }
+                    span { class: "badge", "cx.flow.branch.policy_components" }
+                    span { class: "badge", "cx.flow.branch.member" }
+                    span { class: "badge accent", "cx.flow.branch.set_primary" }
+                }
+            }
+
             div { class: "event", "data-testid": "channel-list",
                 div { class: "event-head", span { "Discussions" } span { "{channels().len()}" } }
                 div { class: "muted",

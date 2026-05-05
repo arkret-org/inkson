@@ -171,10 +171,15 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                         div { class: "muted", "approval_constraint=2_of_3_admin" }
                     }
                     div { class: "metric",
-                        strong { "cx.federation.txn (beta.example)" }
-                        span { "deny" }
-                        div { class: "muted", "trust_bundle missing" }
+                        strong { "cx.capability.derived" }
+                        span { "computed" }
+                        div { class: "muted", "reducer 内部派生 capability set；不需要单独签名" }
                     }
+                }
+                div { class: "actions",
+                    span { class: "muted", "Redaction events:" }
+                    span { class: "badge red", "cx.redaction" }
+                    span { class: "muted", "(cross-object — 比 cx.message.redact 更宽，可作用于 morph / relation / event metadata)" }
                 }
             }
 

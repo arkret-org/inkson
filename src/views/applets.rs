@@ -79,7 +79,7 @@ pub fn AppletsPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Applet session" }
-                        span { "cx.applet.protocol_session.{{start,status}}" }
+                        span { "cx.applet.protocol_session.start · cx.applet.protocol_session.status" }
                         div { class: "muted", "桥接 / Bot 发起的会话生命周期" }
                     }
                     div { class: "metric",
@@ -89,7 +89,7 @@ pub fn AppletsPanel(base_url: String, token: Signal<String>) -> Element {
                     }
                     div { class: "metric",
                         strong { "Agent session" }
-                        span { "cx.agent.protocol_session.{{start,status}}" }
+                        span { "cx.agent.protocol_session.start · cx.agent.protocol_session.status" }
                         div { class: "muted", "A2A / ACP / MCP 会话生命周期" }
                     }
                     div { class: "metric",

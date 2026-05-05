@@ -54,6 +54,7 @@ pub mod kanban;
 pub mod login;
 pub mod memory_review;
 pub mod notifications;
+pub mod onboarding;
 pub mod product;
 pub mod readiness;
 pub mod recovery;
@@ -97,6 +98,10 @@ pub enum View {
     /// Applets / Bots / Bridges / Agents / Portal Spaces
     /// (claude-design `desktop/applets.html`, extensions/applet-integration.md)
     Applets,
+    /// Onboarding 步进器 — 4 步引导（DID method / Handle / Device / Recovery）。
+    /// 与 Register 互补：register 是详细向导，onboarding 是轻量步进入口。
+    /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
+    Onboarding,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

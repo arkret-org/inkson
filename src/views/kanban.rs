@@ -166,7 +166,7 @@ pub fn KanbanPanel(
                     span { class: "badge", "data-testid": "renderer-calendar", role: "tab", "calendar" }
                     span { class: "badge", "data-testid": "renderer-timeline", role: "tab", "timeline" }
                     span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
-                    span { class: "muted", "切换 renderer 写入 cx.view.update（不改变 Board/Flow/Relation）" }
+                    span { class: "muted", "新 View → cx.view.create · 改 filter/sort/columns → cx.view.update · 重建 projection cache → cx.view.reconcile · Morph 内容更新 → cx.morph.update" }
                 }
                 div { class: "metric-grid", "data-testid": "board-projection-model",
                     div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
@@ -543,7 +543,10 @@ pub fn KanbanPanel(
                         }
                         div { class: "muted", "cx.flow.move · superseded(HLC older) → {card.id}" }
                         div { class: "muted", "cx.flow.update · fields.status / fields.priority" }
-                        div { class: "muted", "cx.relation.create · contains list→flow（rank stable tie-break）" }
+                        div { class: "muted", "cx.relation.create / cx.relation.update · contains list→flow（rank stable tie-break）" }
+                        div { class: "muted", "cx.relation.delete · 切换 list 时旧 contains 边 tombstone" }
+                        div { class: "muted", "cx.flow.archive / cx.flow.restore · 进入或离开 archived 状态" }
+                        div { class: "muted", "cx.morph.archive / cx.morph.restore · 卡片关联 morph 的归档与恢复" }
                         div { class: "muted", "Auth refs 与 prev_refs 在 Audit 页可展开为完整 envelope。" }
                     }
                     div { class: "actions",

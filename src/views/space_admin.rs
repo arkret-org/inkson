@@ -710,6 +710,12 @@ pub fn SpaceAdminPanel(
                     "禁用 marketing 措辞：不得宣称 \"end-to-end encrypted\" 不加修饰；必须使用 \"E2EE with disclosed/attested audit\"。详见 audited-e2ee.md §3.5。"
                 }
                 div { class: "actions",
+                    span { class: "muted", "Audit-bound key share events:" }
+                    span { class: "badge blue", "cx.space_key.share" }
+                    span { class: "badge", "cx.space_key.share_audit" }
+                    span { class: "badge red", "cx.space_key.withheld" }
+                }
+                div { class: "actions",
                     button { class: "secondary", "data-testid": "audited-e2ee-set-none", "无 audit profile" }
                     button { class: "secondary", "data-testid": "audited-e2ee-set-disclosed", "启用 disclosed_audit" }
                     button { class: "secondary", "data-testid": "audited-e2ee-set-attested", "启用 attested_audit" }
@@ -922,6 +928,26 @@ pub fn SpaceAdminPanel(
                     span { class: "badge green", "cx.policy.set" }
                     span { class: "muted", "—— 三 event 联合发布为 policy version" }
                     span { class: "muted", "policy_version_ref 由 cx.space.policy.set 选取" }
+                }
+            }
+
+            // Moderation events — governance/content-moderation.md
+            // Two canonical events drive content-level moderation:
+            //   cx.moderation.report — actor 提交举报（针对 message / flow / morph / actor）
+            //   cx.moderation.frank  — E2EE franking proof（让加密内容也可被审核）
+            // Quarantine / require_review 等是 reducer 决策结果，不是独立 event。
+            div { class: "event", "data-testid": "moderation-events",
+                div { class: "event-head",
+                    span { "Moderation events" }
+                    span { "governance/content-moderation.md" }
+                }
+                div { class: "muted",
+                    "举报和审核证据由两 event 驱动；reducer 输出 (deny / quarantine / require_review) 通过 cx.policy.action 落地。E2EE 内容通过 franking 让审核者可验证发送方又不破坏密文。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "cx.moderation.report" }
+                    span { class: "badge accent", "cx.moderation.frank" }
+                    span { class: "muted", "→ reducer 输出 cx.policy.action（deny/quarantine/require_review）" }
                 }
             }
 
