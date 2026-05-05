@@ -13,7 +13,15 @@ use crate::{
 struct ChannelEntity {
     entity_id: String,
     name: String,
+    /// Canonical Flow.kind on the wire — always "discussion" per
+    /// `models/object-model-standard.md` (the chat-style "room" form is
+    /// `flow(kind="discussion")` with the discussion branch enabled).
+    /// Sub-classification (announce / support / activity) lives in `category`.
     kind: String,
+    /// UI-only sub-classification. NOT a canonical event field; it's preserved
+    /// for filter / icon purposes in the channel list. To make this
+    /// audit-bearing later, persist it as `fields.category` on the Flow object.
+    category: String,
     topic: Option<String>,
     unread: usize,
     operation_id: Option<String>,
@@ -56,6 +64,7 @@ pub fn ChatPanel(
                 entity_id: "cx:flow:general".to_owned(),
                 name: "Launch board discussion".to_owned(),
                 kind: "discussion".to_owned(),
+                category: "general".to_owned(),
                 topic: Some("Default long-lived discussion for board coordination".to_owned()),
                 unread: 0,
                 operation_id: None,
@@ -64,7 +73,8 @@ pub fn ChatPanel(
             ChannelEntity {
                 entity_id: "cx:flow:announce".to_owned(),
                 name: "Announcements discussion".to_owned(),
-                kind: "announce".to_owned(),
+                kind: "discussion".to_owned(),
+                category: "announce".to_owned(),
                 topic: Some("Discussion-scoped release notes and broadcast updates".to_owned()),
                 unread: 2,
                 operation_id: None,
@@ -73,7 +83,8 @@ pub fn ChatPanel(
             ChannelEntity {
                 entity_id: "cx:flow:support".to_owned(),
                 name: "Support desk discussion".to_owned(),
-                kind: "support".to_owned(),
+                kind: "discussion".to_owned(),
+                category: "support".to_owned(),
                 topic: Some("Issue triage discussion for operator escalations".to_owned()),
                 unread: 0,
                 operation_id: None,
@@ -82,7 +93,8 @@ pub fn ChatPanel(
             ChannelEntity {
                 entity_id: "cx:flow:activity".to_owned(),
                 name: "Activity audit discussion".to_owned(),
-                kind: "activity".to_owned(),
+                kind: "discussion".to_owned(),
+                category: "activity".to_owned(),
                 topic: Some("Machine and workflow messages with audit references".to_owned()),
                 unread: 0,
                 operation_id: None,
@@ -118,6 +130,32 @@ pub fn ChatPanel(
                     span { class: "badge blue", "Carlos · typing…" }
                     span { class: "badge", "α agent · idle" }
                     span { class: "muted", "TTL ≈ 30s · 不进入 audit 流" }
+                }
+            }
+
+            // T21 — wire kind vs UI category clarification:
+            //
+            //   Flow.kind on the wire = "discussion"  (canonical for chat-style flows;
+            //                                          the spec's `flow(kind="room")` form)
+            //   ChannelEntity.category in this UI = general / announce / support / activity
+            //                                       (NOT a canonical Flow field; UI label only)
+            //
+            // To make the category audit-bearing without repurposing `Flow.kind`, persist
+            // it as `fields.category` once the SDK exposes typed Flow field updates.
+            div { class: "event", "data-testid": "wire-kind-vs-category-banner",
+                div { class: "event-head",
+                    span { "Wire kind vs UI category" }
+                    span { "T21 migration" }
+                }
+                div { class: "muted",
+                    "本视图创建的所有 chat-style flow 在 wire 上都是 Flow.kind=\"discussion\"。
+                     UI 上的 general / announce / support / activity 是 ChannelEntity.category，
+                     仅用于本端筛选与图标，不是 canonical Flow 字段；后续会落到 fields.category。"
+                }
+                div { class: "actions",
+                    span { class: "badge blue", "Flow.kind = discussion" }
+                    span { class: "badge", "category (UI) = general / announce / support / activity" }
+                    span { class: "badge accent", "future: fields.category" }
                 }
             }
 
@@ -165,7 +203,7 @@ pub fn ChatPanel(
                             move |_| selected_channel.set(id.clone())
                         },
                         div { class: "space-title", "{channel.name}" }
-                        div { class: "space-meta", "kind={channel.kind} / id={channel.entity_id}" }
+                        div { class: "space-meta", "kind={channel.kind} · category={channel.category} · id={channel.entity_id}" }
                         if let Some(topic) = &channel.topic {
                             div { class: "muted", "{topic}" }
                         }
@@ -235,7 +273,13 @@ pub fn ChatPanel(
                                     status_msg.set("discussion name is required".to_owned());
                                     return;
                                 }
-                                let kind = new_channel_kind();
+                                // T21: canonical Flow.kind for chat-style flows is
+                                // "discussion" per `models/object-model-standard.md`.
+                                // The user-selected sub-classification (general /
+                                // announce / support / activity) is kept as a UI
+                                // category — it MAY be persisted as `fields.category`
+                                // when SDK exposes typed Flow field updates.
+                                let category = new_channel_kind();
                                 let topic = new_channel_topic().trim().to_owned();
                                 let flow_id = format!("cx:flow:{}", uuid_v8());
                                 let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
@@ -245,7 +289,7 @@ pub fn ChatPanel(
                                     &space,
                                     &flow_id,
                                     &name,
-                                    &kind,
+                                    "discussion",
                                     &rank,
                                 )
                                 .build("yougen");
@@ -282,7 +326,8 @@ pub fn ChatPanel(
                                                     channels.write().push(ChannelEntity {
                                                         entity_id: flow_id.clone(),
                                                         name: name.clone(),
-                                                        kind: kind.clone(),
+                                                        kind: "discussion".to_owned(),
+                                                        category: category.clone(),
                                                         topic: channel_topic.clone(),
                                                         unread: 0,
                                                         operation_id: Some(op.operation_id.clone()),
