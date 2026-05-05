@@ -272,3 +272,52 @@ pub fn OnboardingPanel(base_url: String, token: Signal<String>) -> Element {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn onboarding_step_indices_are_unique_and_one_based() {
+        let steps = [
+            OnboardingStep::DidMethod,
+            OnboardingStep::Handle,
+            OnboardingStep::Device,
+            OnboardingStep::Recovery,
+        ];
+        let indices: Vec<usize> = steps.iter().copied().map(OnboardingStep::index).collect();
+        assert_eq!(indices, vec![1, 2, 3, 4], "indices must be 1..=4 in declared order");
+    }
+
+    #[test]
+    fn onboarding_step_labels_are_unique() {
+        let labels = [
+            OnboardingStep::DidMethod.label(),
+            OnboardingStep::Handle.label(),
+            OnboardingStep::Device.label(),
+            OnboardingStep::Recovery.label(),
+        ];
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for l in labels {
+            assert!(seen.insert(l), "duplicate onboarding label `{l}`");
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn onboarding_step_labels_are_human_readable() {
+        for step in [
+            OnboardingStep::DidMethod,
+            OnboardingStep::Handle,
+            OnboardingStep::Device,
+            OnboardingStep::Recovery,
+        ] {
+            let label = step.label();
+            assert!(!label.is_empty(), "label cannot be empty");
+            assert!(
+                !label.starts_with("cx."),
+                "labels are human strings, not event kinds: got `{label}`"
+            );
+        }
+    }
+}

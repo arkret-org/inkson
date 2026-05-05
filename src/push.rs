@@ -317,6 +317,7 @@ mod tests {
                 default_mode: "e2ee_blind_wakeup".to_owned(),
                 ..Default::default()
             },
+            examples: Default::default(),
             todos: vec!["TODO(push-bridge)".to_owned()],
         });
 

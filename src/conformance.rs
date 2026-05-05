@@ -808,6 +808,64 @@ mod tests {
         }
     }
 
+    /// Lock-down: registry counts at the time of last alignment.
+    ///
+    /// Spec `artifacts/registry/event-kind-registry.json` (commit fc7da5b)
+    /// declares 109 active event kinds. Bumping yougen above this floor is
+    /// fine; dropping below means we silently lost alignment with a spec
+    /// upgrade (an upstream rename or addition that yougen forgot to land).
+    ///
+    /// When the spec adds new kinds, raise this lower bound. When yougen
+    /// intentionally retires legacy kinds (after a deprecation window), keep
+    /// the bound monotonic — never below 109 without an explicit decision.
+    #[test]
+    fn known_event_kinds_meet_registry_floor() {
+        let kinds = known_event_kinds();
+        assert!(
+            kinds.len() >= 109,
+            "yougen surfaces {} event kinds; spec registry fc7da5b declares 109 active. Drop below this floor only after deliberately retiring a legacy kind.",
+            kinds.len()
+        );
+    }
+
+    /// Lock-down: every entry in `known_event_kinds()` is unique.
+    ///
+    /// Drift detector — if a refactor accidentally double-listed an event
+    /// kind, this catches it before it ships into the conformance surface.
+    #[test]
+    fn known_event_kinds_are_unique() {
+        let kinds = known_event_kinds();
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for k in &kinds {
+            assert!(
+                seen.insert(k),
+                "duplicate event kind in known_event_kinds(): `{k}`"
+            );
+        }
+    }
+
+    /// Lock-down: structural shape of each event kind.
+    ///
+    /// All canonical event kinds follow the segment pattern `cx.<group>.<verb>[.<sub>]…`
+    /// with lowercase ASCII + underscore; payloads in identifiers are forbidden.
+    #[test]
+    fn known_event_kinds_are_well_formed() {
+        for kind in known_event_kinds() {
+            for (i, segment) in kind.split('.').enumerate() {
+                assert!(
+                    !segment.is_empty(),
+                    "event kind `{kind}` has empty segment at index {i}"
+                );
+                for ch in segment.chars() {
+                    assert!(
+                        ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_',
+                        "event kind `{kind}` has illegal char `{ch}` in segment `{segment}`"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn known_event_kinds_have_no_duplicates() {
         let kinds = known_event_kinds();
