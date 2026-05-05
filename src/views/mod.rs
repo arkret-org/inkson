@@ -7,20 +7,20 @@
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
-// | login              | desktop/login.html, mobile/login  | crypto-media/devices-and-auth §1-3                     | cx.session.grant, cx.device.authorized                            |
+// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorized                            |
 // | register           | desktop/onboarding.html (拆分中)  | identity/identity-did, identity-handles                | cx.actor.profile.update, cx.identity.recovery (initial)            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
 // | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
-// | chat / forum       | desktop/discussion.html           | models/conversation-model, current-model §3            | cx.flow.branch.{enable,disable,set_primary}, cx.message.*          |
+// | chat / forum       | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.branch.{enable,disable,set_primary}, cx.message.*          |
 // | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis branch                                 |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
-// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/{push-notifications,read-notification-schema}| (projection only)                                                  |
-// | devices            | desktop/devices.html, mobile      | crypto-media/devices-and-auth, device-crypto-verif.    | cx.device.{authorized,cross_sign,revoked}                          |
-// | verify_device      | desktop/verify-device.html        | crypto-media/device-crypto-verification                | cx.device.cross_sign, cx.mls.welcome                               |
-// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server,moderation}, sync/federation | cx.space.policy.update, cx.capability.{grant,revoke}        |
+// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
+// | devices            | desktop/devices.html, mobile      | crypto-media/device-lifecycle                          | cx.device.{authorized,revoked}, cx.device.list_update              |
+// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
+// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.space.policy.set, cx.capability.{grant,revoke,delegate}  |
 // | audit              | desktop/audit.html                | sync/operations-sync, conformance/snapshot-schema      | (审计派生流；无独立写入)                                             |
-// | settings           | desktop/settings.html             | identity/progressive-disclosure, authz/account-lifecycle| cx.actor.profile.update, cx.account.suspend / lifecycle             |
+// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
 // | call               | desktop/call.html                 | crypto-media/webrtc-signaling                          | ephemeral signaling + cx.morph.create morph_type=call               |
 // | readiness          | (settings 内嵌)                   | overview/release-readiness, conformance/conformance-suite | (read-only)                                                      |
 // | agent_runs         | desktop/applets.html (Agent tab)  | extensions/agent-protocol-interop                      | applet/agent transactions + signed result events                   |
@@ -82,11 +82,17 @@ pub enum View {
     Forum,
     MemoryReview,
     AgentRuns,
+    /// Inbox / Notifications. Per `models/object-model-core.md` §1 (after Round 7),
+    /// `notification` is a *derived* projection — NOT a canonical wire object.
+    /// The only canonical events feeding this view are `cx.read.marker`,
+    /// `cx.receipt.read`, `@-mention` extractions, plus capability/grant
+    /// approval requests. Writes here MUST land on those canonical kinds, not
+    /// on a synthetic `cx.notification.*` event.
     Notifications,
     Document,
     Call,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
-    /// (claude-design `desktop/recovery.html`, crypto-media/devices-and-auth.md §4)
+    /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
     /// Applets / Bots / Bridges / Agents / Portal Spaces
     /// (claude-design `desktop/applets.html`, extensions/applet-integration.md)

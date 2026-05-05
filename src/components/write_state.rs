@@ -8,7 +8,7 @@
 //! - `sync/operations-sync.md`：offline-first 写入；Event Envelope 是 truth source。
 //! - `authz/event-auth-state-resolution.md`：reducer 拒绝时落入 `state_mismatch` 或
 //!   `cas_conflict`。
-//! - `authz/moderation.md`：被 quarantine 的写入仍可见，但走审核队列。
+//! - `governance/content-moderation.md`：被 quarantine 的写入仍可见，但走审核队列。
 //!
 //! 状态机：
 //! ```text

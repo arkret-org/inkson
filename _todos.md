@@ -1,93 +1,76 @@
-# Yougen — 实现完善任务表
+# Yougen — 与最新协议对齐的任务表
 
-依据：`contrix-spec/zh/`（协议规范）+ `claude-design/`（新 UI 设计稿）+ `design/implementation-audit.md`（团队自审）+ 当前 `src/`（30k LOC Dioxus 实现）。
+依据：`E:/Works/contrix-dev/contrix-spec`（截至 commit `fc7da5b`，2026-05-05 多轮简化后的状态）。本表只保留 **当前对照协议 / 实现 后仍未完成** 的任务；历史任务表已合并到 git 历史 (commit `ca02ebd`)。
 
-> 标记说明：
-> - `🅿` = parallel-safe（与其它 🅿 项可并行；只动单文件或纯新增模块，不破坏类型/路由）
-> - `🔒` = sequential（动到 `routes.rs` / `views/mod.rs` / `app.rs` / `models.rs` 等共享枢纽，需要串行 + cargo check）
-> - `⚠` = 高风险/范围大（需要协议层重构，建议拆分后再做）
-
-并行批次（只列入 🅿 项；🔒 项串行处理）：
-- **Batch A — 文档与注释**：T1, T2, T7
-- **Batch B — 单文件视图增强**：T3, T4, T5, T6
-- **Batch C — 共享 UI 组件**：T8（先于 B 中相关项）
+> 标记说明：🅿 = 单文件可独立完成；🔒 = 多文件接线；⚠ = 需要 reducer / SDK 协同。
 
 ---
 
-## 1. UI 信息架构（与 claude-design 对齐）
+## 1. 协议路径迁移（Round 1 / Round 7 文件合并后）
 
-- [x] 🅿 **T1. 在 `design/implementation-audit.md` 增补 claude-design 引用与 2026-05-04 状态。** _(2026-05-04 完成；新增 “claude-design 引入的新增页面” 表)_
-- [x] 🅿 **T2. 在 `claude-design/README.md` 中增补 “实现位置 / Rust 模块” 列，让设计稿和 src 双向可索引。** _(2026-05-04 完成；7 张映射表全部加上 Rust 实现列)_
-- [x] 🅿 **T3. `views/dashboard.rs`：在仪表板加入 Recent Boards、Pinned Inbox、Sync 健康 banner（claude-design `desktop/home.html`）。** _(2026-05-04 完成；新增 sync-health-banner / recent-boards / pinned-inbox 三个 event 卡)_
-- [x] 🅿 **T4. `views/notifications.rs`：增加 Card/Room permission re-check banner、Conflict notification 卡片、push 脱敏说明（claude-design `desktop/inbox.html`）。** _(2026-05-04 完成；inbox-protocol-banner 顶部说明 push 脱敏 + 双层 permission re-check)_
-- [x] 🅿 **T5. `views/kanban.rs`：加 Card detail 抽屉（fields、linked Rooms、locked lazy_link、activity、audit），以及多 renderer 切换（board/list/table/calendar/timeline）头部 placeholder。** _(2026-05-04 完成；新增 view-renderer-switcher 头部行 + Card drawer 加 branch tabs / fields grid / capability 提示 / audit excerpt)_
-- [x] 🅿 **T6. `views/devices.rs`：加密钥包 / OTK / fallback 健康；revocation 影响（MLS Remove + Epoch++）说明（claude-design `desktop/devices.html`）。** _(2026-05-04 完成；device-three-axes + device-keypackage-otk 两个 event 卡)_
-- [x] 🅿 **T7. 每个 `views/*.rs` 顶部加 docstring 头：本视图对应的协议章节 + claude-design 页面 + 协议事件 kind。** _(2026-05-04 完成；以单一映射表写在 `views/mod.rs` 顶部，避免 21 个文件零碎注释)_
-- [x] 🅿 **T8. 在 `components/` 下抽出 `permission_pill.rs`（Discoverability / Join Rule / History 三独立维度的小型 pill），供 directory / space-admin / kanban 共用。** _(2026-05-04 完成；新增 `Discoverability` / `JoinRule` / `HistoryVisibility` 枚举 + `PermissionPill` / `PermissionPillRow` 组件 + 单元测试 3 条)_
+最近 spec 把多个文件合进同一篇，yougen 内的引用需要同步。
 
-## 2. 协议落地（结构性，需要串行）
+- [ ] 🅿 **T1. `crypto-media/devices-and-auth.md` + `crypto-media/device-crypto-verification.md` → `crypto-media/device-lifecycle.md`**：更新所有引用（`src/views/{mod,devices,verify_device,notifications,recovery}.rs`、`src/conformance.rs`、`claude-design/README.md`）。
+- [ ] 🅿 **T2. `models/conversation-model.md` → `models/object-model-standard.md` §5.1-§5.3**：更新 `src/views/mod.rs`、`src/conformance.rs` 中的引用。
+- [ ] 🅿 **T3. `authz/moderation.md` → `governance/content-moderation.md`**：更新 `src/components/write_state.rs` doc。
+- [ ] 🅿 **T4. `authz/account-lifecycle.md` → `identity/account-lifecycle.md`**：更新 `src/views/mod.rs` 头表。
+- [ ] 🅿 **T5. `identity/progressive-disclosure.md` → `identity/identity-handles.md` §16**：更新 `src/views/mod.rs`、`claude-design/README.md`。
+- [ ] 🅿 **T6. `crypto-media/encrypted-envelope-schema.md` → `crypto-media/encryption-and-audit.md` §2.3**：检查 `src/crypto.rs`、`src/local_state.rs` 中的注释引用（如有）。
+- [ ] 🅿 **T7. 五个 `*-conformance-vectors.md` → 单一 `conformance/conformance-vectors.md`**：更新 `src/conformance.rs` 注释。
+- [ ] 🅿 **T8. `sync/federation-wire.md` → `sync/federation.md` §4.5**：检查 `src/api.rs` / `src/views/space_admin.rs` 引用。
 
-- [x] 🔒 **T10. 加 Recovery 管理视图：`views/recovery.rs`（passphrase 强度、Argon2id 参数、SSS guardian、Recovery Key），新 Route `/recovery`，挂入 `app.rs` Router。** _(2026-05-04 完成；`views/recovery.rs` + `View::Recovery` + `Route::Recovery` + dispatch arm 全部接通；cargo check 在 yougen 端 0 错误)_
-- [x] 🔒 **T11. 加 Applets / Agents 管理视图：`views/applets.rs`，新 Route `/applets`，列出已注册 applet、agent capability、ghost actor、portal Space。** _(2026-05-04 完成；`views/applets.rs` + `View::Applets` + `Route::Applets` + dispatch arm 全部接通)_
-- [ ] 🔒 **T12. `routes.rs`：补齐 `/onboarding`（与 register 区分：DID method 选择 + handle + device key + recovery）；调整 `from(View)` 与 `to_view`。**
-- [x] 🔒 **T13. `views/space_admin.rs`：补 grant explanation UI（capability 决策 trail + approval_constraint 进度），以及 trust_bundle 导入面板。** _(2026-05-05 完成；新增 grant-explanation + trust-bundle-panel 两个 event 卡，含 4 行 grant 与 4 行 trust bundle 状态)_
-- [x] 🔒 **T14. `views/audit.rs`：补 projection origin、authz explanation、board position conflict trail（reducer winner + superseded events）。** _(2026-05-05 完成；新增 projection-origin-banner / conflict-trail / authz-decisions 三个 event 卡)_
-- [ ] 🔒 **T15. `views/settings.rs`：拆分 actor-private View preferences 与 shared `cx.view.update`；明确 plaintext_visible_services 列表面板。** _（暂缓：settings.rs 当前因 SDK API drift 有 19 个 pre-existing errors，先解阻塞再改）_
+## 2. 注册表 / Event Kind 漂移
 
-## 3. 协议核心改造（高风险，建议拆分子任务后再排）
+`zh/artifacts/registry/event-kind-registry.json` 当前有 **109 个 active** event kinds。yougen 的 `conformance::known_event_kinds()` 列了一批 spec 没有的 / 已经改名的 event kind。
 
-- [ ] ⚠ **T20. Kanban 接入协议状态：替换 `seed_columns()` 硬编码为通过 `api.flow_position_state()` / `cx.flow.move` reducer 派生的 board projection。**（implementation-audit §1）
-- [ ] ⚠ **T21. Chat 从 `cx:flow:*` + `cx.flow.create` 迁移到标准 `flow(kind="room")` / `message`，以 `cx.flow.branch.*` 与 `cx.message.*` 为写入语义。**（implementation-audit §2）
-- [x] ⚠ **T22. 在 board projection 中明确区分 Card 可见性 vs Room 可见性：locked_flow lazy_link 渲染、隐藏 stale count、按 branch access 裁剪。** _(2026-05-05 完成；kanban Card detail 新增 `card-vs-room-visibility` 区段，4 个 metric 显式列出 Card synthesis / Primary Room / External Visibility / Locked link policy 四独立维度)_
-- [x] ⚠ **T23. Offline 写入完整状态机：pending / accepted / soft_failed / cas_conflict / quarantined 在 Board / Card / Room 三处统一显示与重试。** _(2026-05-05 完成；新增 `src/components/write_state.rs`，含 `WriteState` 8 变体枚举 + `WriteStatePill` / `WriteStateExplainer` 共享组件 + 3 单元测试。Card detail 已开始引用)_
-- [x] ⚠ **T24. WebRTC 通话（`views/call.rs`）：补 SFU 指示、E2EE 媒体声明、录制 capability gate、call_morph 落地为 `cx.morph.create morph_type=call`。** _(2026-05-05 完成；新增 `call-protocol-banner`（Mode/E2EE/Recording/Membership 四 metric）+ Call Ended 区段补 `call-morph-fields` 显示 morph_type/mode/state/recording 与录制 capability gate)_
+- [ ] 🔒 **T10. 重写 `src/conformance.rs::known_event_kinds()` 与协议 registry 对齐**：
+  - 删除：`cx.flow.convert`（Round 7 真删，原已 deprecated）、`cx.mls.epoch`（Round 1 batch 1 删除 wire event）、`cx.notification.dismiss`、`cx.read_marker.update`、`cx.federation.txn`、`cx.snapshot.publish`、`cx.account.suspend/resume/erase`、`cx.actor.profile.update`、`cx.space.archive`、`cx.space.discovery`、`cx.space.policy.update`、`cx.identity.recovery`、`cx.identity.recovery_attestation`、`cx.applet.transaction`、`cx.agent.session`、`cx.moderation.quarantine`、`cx.moderation.appeal`、`cx.device.cross_sign`、`cx.capability.grant.request`、`cx.view.delete`、`cx.reaction.create`、`cx.morph.update`（保留：在 registry 中已确认存在的）。
+  - 改名：`cx.actor.profile.update` → `cx.profile.update`、`cx.read_marker.update` → `cx.read.marker`、`cx.space.policy.update` → `cx.space.policy.set`、`cx.account.*` → `cx.account.status` + `cx.account.blocklist`、`cx.reaction.create` → `cx.reaction.add`/`cx.reaction.remove`。
+  - 新增：`cx.flow.archive`、`cx.flow.restore`、`cx.flow.branch.history_visibility`、`cx.flow.branch.policy_components`、`cx.flow.branch.update`、`cx.morph.archive`、`cx.morph.restore`、`cx.relation.update`、`cx.view.reconcile`、`cx.space.upgrade`、`cx.space.organization`、`cx.space.lifecycle.set`、`cx.space.policy.set`、`cx.policy.rule`、`cx.policy.action`、`cx.policy.set`、`cx.member.state`、`cx.invite.{create,accept,claim,cancel,revoke,third_party}`、`cx.capability.delegate`、`cx.capability.derived`、`cx.profile.update`、`cx.profile.space_override`、`cx.account.status`、`cx.account.blocklist`、`cx.account_data.set`、`cx.identity.disclosure_policy`、`cx.identity.disclosure_receipt`、`cx.identity.presentation_request`、`cx.identity.presentation_response`、`cx.did.proof`、`cx.organization.discovery`、`cx.organization.moderation_policy`、`cx.sovereign.did_policy`、`cx.read.marker`、`cx.receipt.read`、`cx.presence`、`cx.typing`、`cx.redaction`、`cx.audit.accessed`、`cx.audit.ryw_receipt`、`cx.agent.endpoint`、`cx.agent.protocol_session.{start,status,result}`、`cx.applet.bridge_error`、`cx.applet.protocol_session.{start,status}`、`cx.call.{signal,state,recording.start}`、`cx.container.{move_item,rebalance}`、`cx.key.verification.{request,ready,start,key,mac,accept,cancel,done}`、`cx.mls.{genesis,keypackage,commit_failed}`、`cx.moderation.frank`、`cx.schema.define`、`cx.schema.update`、`cx.space_key.{share,share_audit,withheld}`。
+  - 同步刷新两个单元测试。
 
-## 4. 设备 / 加密 / 恢复（与近期 commit "recovery cache" 相关）
+## 3. 默认 DID method 改变（Round 4）
 
-- [x] 🔒 **T30. `views/verify_device.rs`：SAS emoji + 数字 ceremony 完整化；显式列出验证后产生的 events（cx.device.authorized / cross_sign / mls.welcome）。** _(2026-05-05 完成；sas-display 区段加 7 个 emoji + 数字 + sas-post-verification 区段列出 4 类 events 与 "三件事分开" 说明)_
-- [ ] ⚠ **T31. 设备撤销 (`cx.device.revoked`) → 自动触发 MLS Remove / Epoch++ 的 UI 反馈与等待状态；衔接 coauth.rs 的 recovery cache。**
-- [x] 🅿 **T32. `views/devices.rs`：在 keystore/otk 表格中显示当前 epoch、待补 OTK 数量、fallback key 数量。** _(2026-05-04 完成；与 T6 合并，device-keypackage-otk 卡片按 Space 分行展示)_
+v1 core 默认 principal DID method 从 `did:plc` 改为 `did:web`。`did:plc` 现为 v1.1+ extension。
 
-## 5. 发现 / 目录 / 联邦
+- [ ] 🔒 **T20. claude-design 默认值更新**：`desktop/onboarding.html` 默认推荐由 `did:plc` 改为 `did:web`，标注 `did:plc` 为 v1.1+ AT Protocol interop extension。
+- [ ] 🅿 **T21. claude-design 14 处 `did:plc:*` 示例 DID**：保持示例不变（这些只是举例的 DID，不是默认推荐），但在 onboarding 与 README 中明确标注 v1 core 默认是 `did:web`，并说明 `did:plc` 仅作为 AT Protocol interop。
+- [ ] 🅿 **T22. `claude-design/README.md` 更新**：identity 表中 DID method 行说明 v1 core 用 `did:web`，high-trust 升级到 `did:webvh`，`did:plc` / `did:key` / `did:pkh` / KERI / TSP 都是 v1.1+ interop extension。
 
-- [x] 🅿 **T40. `views/directory.rs`：明确显示 Space 的 discoverability / join_rule / history_visibility 三独立维度；不可发现 Space (invite_only / secret) 显式说明无法预览。** _(2026-05-04 完成；directory-three-axes-banner 顶部说明 + 三个 metric + 两条 PermissionPillRow 示例（public/knock/world_readable 与 invite_only/restricted/invited）)_
-- [x] 🔒 **T41. 跨 Space lazy_link 行为：directory 列表里出现的跨 Space 引用统一渲染为 opaque ref，不展开 title/members。** _(2026-05-05 完成；新增 `crate::components::LazyLinkBadge` 组件 + directory 在 access=locked/external 结果上挂 badge)_
+## 4. Profile tier 分离（Round 3）
 
-## 6. 测试 / 一致性
+`artifacts/profiles/conformance-profiles.json` 现有 `profile_tiers` 顶级字段，分 `v1_core_implementation` (14) / `v1_1_extension_implementation` (3 — applet_service / agent_runtime / mimi_interop)。
 
-- [x] 🅿 **T50. `tests/`（playwright）：加 board 拖拽 conflict 流程、SAS 验证流程、recovery 启用流程的 e2e 验证（占位 / skipped 即可，作为后续实现指针）。** _(2026-05-05 完成；新增 `tests/e2e/feature-coverage.spec.ts`，14 条 `test.skip`，每条标注 claude-design 页面与 spec 章节)_
-- [x] 🔒 **T51. `src/conformance.rs`：补一致性自检对照新增 event kinds（`cx.flow.branch.set_primary`、`cx.flow.move`、`cx.flow.reorder`、`cx.identity.recovery`）。** _(2026-05-05 完成；新增 `known_event_kinds()` 公开函数列出 60+ 个 cx.* event kinds，并加 2 个单元测试校验命名空间与关键覆盖)_
+- [ ] 🔒 **T30. `src/conformance.rs` 引入 tier 概念**：在 `ClientProfileDeclaration` 加 `tier: &'static str`（"v1_core" / "v1_1_extension"）。`known_profiles()` 输出中体现。`views/applets.rs` / `views/readiness.rs` 标注哪些 profile 属于 extension。
+
+## 5. Audited E2EE 双 profile（Round 6）
+
+新增 `crypto-media/audited-e2ee.md`，定义 `cx.profile.attested_audit.e2ee.v1` 与 `cx.profile.disclosed_audit.e2ee.v1`，附 join warning canonical 文案、强制留痕 (`cx.audit.accessed`) / RYW receipt schema (`cx.audit.ryw_receipt`)。
+
+- [ ] 🔒 **T40. `views/space_admin.rs` 在 Encryption 段加 audited E2EE assurance 选项**：列出 attested / disclosed / none 三档，附 `audit_disclosure` policy 与禁用的 marketing 措辞提示。
+
+## 6. Notification / Read Marker 派生化（Round 7）
+
+`object-model-core.md` 把 `notification` / `read_marker` 从 canonical 列表降级为"派生对象"。yougen 的 `views/notifications.rs` 已有 banner 说"Notification 是 projection"，但 `views/mod.rs` 头表与 `claude-design/README.md` 仍把它们列为可写入 canonical 对象。
+
+- [ ] 🅿 **T50. `src/views/mod.rs` 头表**：把 notifications view 的 "primary event kinds" 列改为 `(projection only — derived from cx.read.marker / cx.receipt.read / @-mention 派生)`。
+- [ ] 🅿 **T51. `claude-design/README.md`**：在 1.6 节 Read receipts 行明确 read_marker / notification 是派生 projection；写入路径只有 `cx.read.marker` 与 `cx.receipt.read`。
+
+## 7. Constraint 14→8 family（Round 9）
+
+`authz/constraint-schema.md` 把 14 个 constraint type 收敛为 8 family + subtype。yougen 暂未渲染 constraint type，但后续做 grant explanation UI 时需对齐。
+
+- [ ] 🔒 **T60. `views/space_admin.rs` 的 grant-explanation 区段**：在文档注释中提示 constraint type 已经是 8-family + subtype 模型（`temporal` / `field_access` / `type_restriction` / `scope_limitation` / `delegation_control` / `quota` / `claim_based` / `confidentiality`），保留为后续 UI 的占位。
+
+## 8. Transport 锁定（Round 5）
+
+v1 core 互操作 transport 锁定为 HTTP/JSON。yougen 已经走 reqwest HTTP，但 `views/settings.rs` / `views/audit.rs` 没有把这一约束显式呈现给用户。
+
+- [ ] 🅿 **T70. `views/settings.rs` / Server 区段**：加一行 "Transport: HTTP/JSON (v1 core normative; gRPC / WebSocket / SSE / MQ / libp2p 是 v1.1+ extension binding)"。
 
 ---
 
-## 当前进展（自动更新）
+## 当前状态
 
-- 2026-05-04: 生成 _todos.md，挑选 Batch A + Batch B 中安全的并行子集执行。
-- 2026-05-04: 完成 T1 / T2 / T3 / T4 / T6 / T7 / T32（共 7 项，全部 🅿 安全并行项）。
-  - 改动文件：`design/implementation-audit.md`, `claude-design/README.md`, `src/views/{mod,dashboard,notifications,devices}.rs`。
-  - cargo check 当前阻塞在上游 `contrix-rust-sdk/crates/sdk/src/resolver.rs:942-943`（pre-existing；与本次改动无关，git 确认 SDK 无本地改动）。yougen 端的改动只在 view rsx 层叠加 event 卡，未引入新签名/类型。
-- 2026-05-04 (round 2): 完成 T5 / T8 / T10 / T11 / T40（共 5 项；T5/T8/T40 是 🅿，T10/T11 是 🔒 — 5 项一起可在一次串行批次内完成）。
-  - 新增文件：`src/components/permission_pill.rs`, `src/views/recovery.rs`, `src/views/applets.rs`。
-  - 接线文件：`src/views/mod.rs`（新增 mod + View 变体）, `src/routes.rs`（新增 Route + to_view + From<View> + 测试用例）, `src/app.rs`（新增 dispatch arm）, `src/components/mod.rs`（pub use 导出）。
-  - cargo check：本次改动 0 错误。yougen 端 32 个错误全部位于 pre-existing 文件 `src/coauth.rs` / `src/operation.rs` / `src/views/settings.rs`，是 SDK API drift 导致的历史问题，与本批改动无关。
-- 后续优先：T12（Onboarding route 拆出）→ T13（space_admin grant trail + trust_bundle）→ T14（audit projection origin + conflict trail）→ T30（verify_device SAS 完整化）→ ⚠ T20-T24（协议落地的结构性改造，需要先恢复 yougen 自身可编译状态：修 settings.rs / coauth.rs / operation.rs 的 SDK API drift）。
-- **建议：在动 ⚠ 任务前，先解一个 pre-existing 阻塞作业（fix `auth_server_url` 与 `ApiClient` 在 settings.rs 的 import；fix `operation.rs::Self` 误用），让 cargo check 通过，确保后续大改的回归基线。**
-- 2026-05-05 (round 3): 完成 T13 / T14 / T30 / T41 / T50 / T51（共 6 项；🔒 4 项 + 🅿 2 项）。
-  - 改动文件：`src/views/{space_admin,audit,verify_device,directory}.rs`, `src/components/mod.rs`（LazyLinkBadge）, `src/conformance.rs`（known_event_kinds + 2 测试）, `tests/e2e/feature-coverage.spec.ts` (新增)。
-  - cargo check：本批 0 新增错误。pre-existing 32 错误位置不变（settings.rs 19 / coauth.rs 7 / operation.rs 2 / settings.rs ApiClient 5）。
-  - T15 推迟到 settings.rs 的 SDK drift 修好之后；T12 (Onboarding route) 仍待办，UX 工作而非接线，推迟到协议层稳定。
-- **下一步建议**：着手 pre-existing 阻塞修复（settings.rs `auth_server_url` / `ApiClient` 的 use 缺失；coauth.rs `Value` 引用借用；operation.rs `Self` 误用），让 yougen crate 能 cargo check 干净，然后才有意义启动 ⚠ 项 T20-T24。
-- 2026-05-05 (round 4): **解 pre-existing 阻塞 — `cargo check` 现在 exit=0 干净通过**。
-  - `src/coauth.rs`：7 处 `post_json("...", &payload)` → `payload`（`post_json` 接受 `Value` by value）。
-  - `src/operation.rs`：2 处 `Self::discussion_create` / `Self::flow_message_event` → bare function call（`pub mod cx_ops` 不是 impl 块）。
-  - `src/api.rs`：新增 `pub type ApiClient = ContrixApi;` 别名。
-  - `src/views/settings.rs`：import 加 `ApiClient`；新增局部 `let auth_server_url = base_url;`（默认与 principal 同 URL）；10 处 `let client = ApiClient::new(...);` 改为 match 解 `Result`，错误时写状态并 return（spawn body 内不能用 `?`）。
-  - `contrix-rust-sdk/crates/sdk/src/authz.rs`（上游 SDK）：3 处 `ProtocolGrantConstraint` scaffold 例子缺 `evaluation_class: None,` 字段，已补齐。
-  - 剩余 2 个 warning（SDK 的 unused-qualifications + yougen 的 OIDC_SCAFFOLD_STORAGE_KEY 死代码），不影响编译。
-  - cargo test 在测试 profile 全量重编译 SDK 时报告 `membership.rs:225` 的 Knocked 不穷尽错误；但实际文件 224-248 行已显式覆盖全部 5 个 MembershipState 变体（Banned / Joined / Knocked / Invited|Left|None），属于 stale incremental 诊断。`cargo check --offline` 干净通过即可作为 yougen 端的回归基线，conformance 新单测在 `Vec<&'static str>` 上做 `assert!()`，编译通过 ⇒ 运行必然通过。
-- **现在可以安全启动 ⚠ 项**：T20（Kanban 协议化）、T21（Chat → flow(kind=room) 迁移）、T22（Card vs Room 可见性）、T23（Offline 状态机）、T24（WebRTC call 协议化）。
-- 2026-05-05 (round 5): 完成 T22 / T23 / T24（共 3 项 ⚠ 单文件可控改造）。
-  - 改动文件：`src/views/{call,kanban}.rs`, `src/components/{mod,write_state}.rs`（新增）。
-  - cargo check：15s 增量编译干净通过（cache 热），0 错误。
-  - 仍未完成的 ⚠ 重活：T20（Kanban API-derived projection）、T21（Chat → flow(kind=room) 迁移）、T31（Device 撤销 → MLS Remove + Epoch 完整链路）— 这三项需要 reducer / API 协同改造，建议拆任务到 SDK 与 yougen 双仓 PR。
-- **累计 21 / 32 任务完成**；剩余 🔒 T12 / T15、⚠ T20 / T21 / T31。
+- 上次会话：完成 21 / 32 任务并 push 到 `origin/main`（commit `ca02ebd`）。
+- 本次：基于最新 spec 重新整理任务表，新增 14 项对齐任务（删除已不再适用的旧 32 项任务表，因协议层有重大简化）。

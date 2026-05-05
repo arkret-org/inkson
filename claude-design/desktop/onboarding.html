@@ -34,29 +34,29 @@
           <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;border-color:var(--accent);background:var(--accent-soft);">
             <input type="radio" name="m" checked>
             <div>
-              <div class="row gap-8" style="margin-bottom:2px;"><strong>did:plc</strong><span class="pill accent">推荐</span></div>
-              <div class="muted" style="font-size:12px;">公共 PLC directory；支持 key rotation、recovery、可验证 history。适合没有自有域名的个人用户。</div>
+              <div class="row gap-8" style="margin-bottom:2px;"><strong>did:web</strong><span class="pill accent">v1 core 默认</span></div>
+              <div class="muted" style="font-size:12px;">绑定到 HTTPS 域名。Auth/Account Server 可在自有子域代为托管（<code>did:web:users.contrix.social</code>）。生态成熟、互操作门槛低；没有 history chain。</div>
             </div>
           </label>
           <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;">
             <input type="radio" name="m">
             <div>
-              <div class="row gap-8"><strong>did:web</strong><span class="pill muted">org / service</span></div>
-              <div class="muted" style="font-size:12px;">绑定到你拥有的域名。组织主体首选，<code>did:web:acme.example</code>。</div>
+              <div class="row gap-8"><strong>did:webvh</strong><span class="pill info">high-trust</span></div>
+              <div class="muted" style="font-size:12px;">在 did:web 之上叠加 <code>did.jsonl</code> 历史 + SCID + 可选 witness。组织治理 / 合规审计 / 长期可追溯部署 SHOULD 选这个。</div>
             </div>
           </label>
-          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;">
+          <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;opacity:.7;">
             <input type="radio" name="m">
             <div>
-              <div class="row gap-8"><strong>did:webvh</strong><span class="pill muted">verifiable history</span></div>
-              <div class="muted" style="font-size:12px;">高要求场景，DID log + witness。</div>
+              <div class="row gap-8"><strong>did:plc</strong><span class="pill warning">v1.1+ extension</span></div>
+              <div class="muted" style="font-size:12px;">AT Protocol interop only。v1 core 不要求实现；如需与 Bluesky / atproto 生态互通才启用。</div>
             </div>
           </label>
           <label class="surface pad" style="display:flex;gap:12px;cursor:pointer;opacity:.6;">
             <input type="radio" name="m" disabled>
             <div>
-              <div class="row gap-8"><strong>did:key</strong> · <strong>did:pkh</strong><span class="pill muted">受限</span></div>
-              <div class="muted" style="font-size:12px;">仅用于临时主体、设备、邀请、钱包。不可作为长期默认身份。</div>
+              <div class="row gap-8"><strong>did:key</strong> · <strong>did:pkh</strong> · <strong>did:keri</strong><span class="pill muted">受限 / extension</span></div>
+              <div class="muted" style="font-size:12px;">仅用于临时主体、设备、邀请、钱包绑定，或 KERI / TSP 互操作（v1.1+ extension）。不可作为长期默认身份。</div>
             </div>
           </label>
         </div>
@@ -81,7 +81,7 @@
             <span class="pill success">已校验</span>
           </div>
           <div class="mono" style="font-size:11px;color:var(--text-2);line-height:1.7;">
-            principal_id = did:plc:7bzr2xrh4wkynjs8xlcd2ntm<br>
+            principal_id = did:web:users.contrix.social:alice<br>
             handle       = @alice@contrix.social<br>
             device_key   = ed25519/Q4n…F9 (本机仅，未上传)<br>
             session      = cx.session.grant ttl=15m

@@ -9,12 +9,12 @@
 ### 1.1 身份与设备 (Identity / Devices)
 | 协议主题 | 文档 | UI 落点 | Rust 实现 |
 | --- | --- | --- | --- |
-| DID method 选择、Handle 绑定 | `identity/identity-did.md`、`identity-handles.md` | `desktop/onboarding.html`、`desktop/settings.html` | `src/views/register.rs` · 待拆 `views/onboarding.rs`（_todos T12） |
-| 渐进披露 (claim presentation) | `identity/progressive-disclosure.md` | `desktop/settings.html`（隐私披露面板） | `src/views/settings.rs`（privacy 段） |
-| Key management、Recovery | `identity/key-management.md`、`crypto-media/devices-and-auth.md` | `desktop/recovery.html` | 待新增 `views/recovery.rs`（_todos T10）；底层 `coauth.rs` recovery cache |
-| 设备配对 / 撤销 | `crypto-media/devices-and-auth.md` | `desktop/devices.html`、`mobile/devices.html` | `src/views/devices.rs` |
-| 设备验证 (SAS/QR) | `crypto-media/device-crypto-verification.md` | `desktop/verify-device.html` | `src/views/verify_device.rs` |
-| Auth Gateway / SSO / Passkey | `crypto-media/devices-and-auth.md` §3 | `desktop/login.html`、`mobile/login.html` | `src/views/login.rs` |
+| DID method 选择、Handle 绑定 | `identity/identity-did.md` §3（v1 core 默认 `did:web`，high-trust 升级 `did:webvh`；`did:plc` / `did:key` / `did:pkh` / KERI / TSP 都是 v1.1+ interop extension）、`identity-handles.md` | `desktop/onboarding.html`、`desktop/settings.html` | `src/views/register.rs` · 待拆 `views/onboarding.rs` |
+| 渐进披露 (claim presentation) | `identity/identity-handles.md` §16 | `desktop/settings.html`（隐私披露面板） | `src/views/settings.rs`（privacy 段） |
+| Key management、Recovery | `identity/key-management.md`、`crypto-media/device-lifecycle.md` §10-§13 | `desktop/recovery.html` | `src/views/recovery.rs`；底层 `coauth.rs` recovery cache |
+| 设备配对 / 撤销 | `crypto-media/device-lifecycle.md` §1-§6 | `desktop/devices.html`、`mobile/devices.html` | `src/views/devices.rs` |
+| 设备验证 (SAS/QR) | `crypto-media/device-lifecycle.md` §7-§9 | `desktop/verify-device.html` | `src/views/verify_device.rs` |
+| Auth Gateway / SSO / Passkey | `crypto-media/device-lifecycle.md` §3 | `desktop/login.html`、`mobile/login.html` | `src/views/login.rs` |
 
 ### 1.2 协作对象 (Collaboration Model)
 | 协议主题 | 文档 | UI 落点 | Rust 实现 |
@@ -30,8 +30,8 @@
 | 协议主题 | 文档 | UI 落点 | Rust 实现 |
 | --- | --- | --- | --- |
 | Capability 模型、Grant、Delegation、Revoke | `authz/capabilities.md` | `desktop/space-admin.html` | `src/capability.rs`、`src/views/space_admin.rs` |
-| Policy / Moderation / Approval | `authz/policy-server.md`、`authz/moderation.md` | `desktop/space-admin.html`（policy 面板） | `src/views/space_admin.rs`、`src/conformance.rs` |
-| Account lifecycle / 停用 | `authz/account-lifecycle.md` | `desktop/settings.html` | `src/views/settings.rs` |
+| Policy / Moderation / Approval | `authz/policy-server.md`、`governance/content-moderation.md` | `desktop/space-admin.html`（policy 面板） | `src/views/space_admin.rs`、`src/conformance.rs` |
+| Account lifecycle / 停用 | `identity/account-lifecycle.md` | `desktop/settings.html` | `src/views/settings.rs` |
 | Discoverability / Join Rule / History Visibility | `discovery/discovery-directory.md` | `desktop/space-admin.html`、`desktop/directory.html` | `src/discovery.rs`、`src/views/directory.rs`、`src/views/space_admin.rs` |
 | 个人 blocklist / 通知偏好 | `discovery/client-preferences.md` | `desktop/settings.html` | `src/views/settings.rs`、`src/views/notifications.rs` |
 
@@ -42,12 +42,12 @@
 | Sync frontier / cursor / snapshot | `sync/client-sync.md`、`conformance/snapshot-schema.md` | `desktop/audit.html`、`desktop/home.html` (sync 健康) | `src/cursor.rs`、`src/local_state.rs`、`src/views/audit.rs` |
 | Federation / 跨 Principal Server | `sync/federation.md` | `desktop/space-admin.html`（federation 配置） | `src/api.rs`、`src/views/space_admin.rs` |
 | Sovereign / Controlled Collaboration Space | `sync/sovereign-deployment.md` | `desktop/space-admin.html`（trust bundle） | `src/views/space_admin.rs`（待补 trust_bundle，_todos T13） |
-| Push notification（脱敏唤醒） | `discovery/push-notifications.md`、`crypto-media/devices-and-auth.md` §5 | `desktop/settings.html`、`mobile/inbox.html` | `src/push.rs` |
+| Push notification（脱敏唤醒） | `discovery/push-notifications.md`、`crypto-media/device-lifecycle.md` §5 | `desktop/settings.html`、`mobile/inbox.html` | `src/push.rs` |
 
 ### 1.5 加密与媒体 (Crypto / Media)
 | 协议主题 | 文档 | UI 落点 | Rust 实现 |
 | --- | --- | --- | --- |
-| MLS E2EE / branch-scoped encryption | `crypto-media/encryption-and-audit.md` | `desktop/discussion.html`（密钥 banner）、`flow-detail.html` | `src/crypto.rs`、`src/views/chat.rs`、`src/coauth.rs` |
+| MLS E2EE / branch-scoped encryption | `crypto-media/encryption-and-audit.md` + `crypto-media/audited-e2ee.md`（v1 core attested / disclosed audit profile） | `desktop/discussion.html`（密钥 banner）、`flow-detail.html` | `src/crypto.rs`、`src/views/chat.rs`、`src/coauth.rs` |
 | Blob / 媒体管线 / 缩略图 | `crypto-media/media-and-blob.md` | `desktop/flow-detail.html`（附件区） | `src/media.rs` |
 | WebRTC 通话 / 会议 | `crypto-media/webrtc-signaling.md` | `desktop/call.html`、`mobile/call.html`(链接) | `src/views/call.rs`（待补 SFU 指示与 morph_type=call，_todos T24） |
 
@@ -56,7 +56,7 @@
 | --- | --- | --- | --- |
 | Space / Org / Actor / Applet directory | `discovery/discovery-directory.md` | `desktop/directory.html` | `src/views/directory.rs`、`src/discovery.rs` |
 | Profile / Presence / Typing | `discovery/profiles-presence.md` | `desktop/discussion.html`（成员侧栏） | `src/views/chat.rs`（presence 占位） |
-| Read receipts / Read marker | `discovery/read-receipts.md` | `desktop/discussion.html`、`inbox.html` | `src/views/{chat,notifications}.rs`、`local_state.rs` |
+| Read receipts / Read marker | `discovery/read-receipts.md` §6（read-notification schema 已合并到此） | `desktop/discussion.html`、`inbox.html` | `src/views/{chat,notifications}.rs`、`local_state.rs` · 注意 `read_marker` / `notification` 是派生 projection，不是 canonical 对象，写入路径只有 `cx.read.marker` / `cx.receipt.read` |
 
 ### 1.7 扩展 / Agent / Applet
 | 协议主题 | 文档 | UI 落点 | Rust 实现 |

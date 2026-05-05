@@ -142,7 +142,7 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                     }
                                 }
                                 // Post-verification events panel
-                                // crypto-media/device-crypto-verification.md + devices-and-auth.md §1.2
+                                // crypto-media/device-lifecycle.md §1.2 + §7-§9 (verification)
                                 div { class: "event", "data-testid": "sas-post-verification",
                                     div { class: "event-head",
                                         span { "Verification 通过后写入" }

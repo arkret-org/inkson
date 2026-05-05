@@ -21,6 +21,9 @@ pub struct ConformanceProfile {
     pub version: String,
     pub description: String,
     pub supported: bool,
+    /// Profile tier label — "v1_core" or "v1.1+ extension".
+    /// Mirrors `artifacts/profiles/conformance-profiles.json profile_tiers`.
+    pub tier: String,
 }
 
 /// All known conformance profiles.
@@ -32,8 +35,32 @@ pub fn known_profiles() -> Vec<ConformanceProfile> {
             version: "1.0".to_owned(),
             description: declaration.description.to_owned(),
             supported: declaration.local_supported,
+            tier: declaration.tier.label().to_owned(),
         })
         .collect()
+}
+
+/// Conformance tier per `artifacts/profiles/conformance-profiles.json` `profile_tiers`
+/// (Round 3 of the 2026-05-05 spec simplification).
+///
+/// - `V1Core` — must be implemented to claim v1 conformance. 14 profiles total at
+///   the spec level; yougen exposes the client-side subset.
+/// - `V1_1Extension` — opt-in extension shipping after v1 core stable. Currently
+///   `applet_service`, `agent_runtime`, `mimi_interop`. Implementations MAY
+///   declare these without violating v1 core conformance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConformanceTier {
+    V1Core,
+    V1_1Extension,
+}
+
+impl ConformanceTier {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::V1Core => "v1_core",
+            Self::V1_1Extension => "v1.1+ extension",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +70,7 @@ pub struct ClientProfileDeclaration {
     pub description: &'static str,
     pub local_supported: bool,
     pub degradation_path: &'static str,
+    pub tier: ConformanceTier,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +92,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Minimal client: sync, directory lookup, timeline, and plaintext message flow.",
             local_supported: true,
             degradation_path: "Read-only shell with server discovery and local cached state.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_CHAT_ONLY_CLIENT,
@@ -71,6 +100,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Chat-only client: channels, timeline, message send/edit/redaction, reactions, and read markers.",
             local_supported: true,
             degradation_path: "Timeline can remain visible, but chat write controls stay gated.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_KANBAN_ONLY_CLIENT,
@@ -78,6 +108,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Kanban-only client: board/list/card projection and repo-backed entity operations.",
             local_supported: true,
             degradation_path: "Directory/index projections remain available without board mutation controls.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_FULL_CLIENT,
@@ -85,6 +116,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Full client: product workflows, space lifecycle, audit, notifications, app views, and admin surfaces.",
             local_supported: true,
             degradation_path: "Fall back to minimal, chat-only, and kanban-only surfaces.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_E2EE_CLIENT,
@@ -92,6 +124,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "E2EE client: MLS payload preservation, key lifecycle, device queues, and verification UX.",
             local_supported: true,
             degradation_path: "Use plaintext development mode and preserve encrypted payloads without claiming decryptability.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_FEDERATION_MINIMAL,
@@ -99,6 +132,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Federation-minimal client: remote service DID display, transaction/backfill errors, and quarantine warnings.",
             local_supported: true,
             degradation_path: "Hide federation actions and show local-domain resources only.",
+            tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
             profile_id: PROFILE_PUSH_GATEWAY,
@@ -106,6 +140,36 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Push gateway client: chime registration, unregister, local push state, and notification projection.",
             local_supported: true,
             degradation_path: "Keep in-app notification projection and skip push registration controls.",
+            tier: ConformanceTier::V1Core,
+        },
+        // ---- v1.1+ extensions ----
+        // These three profiles are explicitly listed in
+        // `artifacts/profiles/conformance-profiles.json` `profile_tiers
+        // .v1_1_extension_implementation`. v1 core conformance does NOT
+        // require them; servers that don't ship them stay v1 core compliant.
+        ClientProfileDeclaration {
+            profile_id: "cx.profile.applet_service.v1",
+            label: "applet_service",
+            description: "Applet integration: bridge / bot registration, ghost actor, portal Space (extensions/applet-integration).",
+            local_supported: false,
+            degradation_path: "Surface registry view-only; writes gated until server declares the extension.",
+            tier: ConformanceTier::V1_1Extension,
+        },
+        ClientProfileDeclaration {
+            profile_id: "cx.profile.agent_runtime.v1",
+            label: "agent_runtime",
+            description: "Agent runtime: A2A / ACP / MCP protocol session events (extensions/agent-protocol-interop).",
+            local_supported: false,
+            degradation_path: "Show agent capability claims read-only; do not initiate protocol sessions.",
+            tier: ConformanceTier::V1_1Extension,
+        },
+        ClientProfileDeclaration {
+            profile_id: "cx.profile.mimi_interop.v1",
+            label: "mimi_interop",
+            description: "MIMI interop: provider facade, room binding, ciphertext envelope (extensions/mimi-interop).",
+            local_supported: false,
+            degradation_path: "Treat MIMI rooms as opaque external Spaces; do not parse provider state.",
+            tier: ConformanceTier::V1_1Extension,
         },
     ]
 }
@@ -126,78 +190,162 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// - 后续 `tests/` 端到端流程的 fixture 锚点。
 ///
 /// 协议来源：`overview/current-model.md`、`models/object-model-core.md`、
-/// `models/conversation-model.md`、`crypto-media/devices-and-auth.md`、
-/// `authz/capabilities.md`、`sync/operations-sync.md`、
-/// `crypto-media/encryption-and-audit.md`、`crypto-media/webrtc-signaling.md`、
-/// `extensions/applet-integration.md`、`extensions/mimi-interop.md`。
+/// `models/object-model-standard.md` §5（Flow / Message / 编辑撤回）、
+/// `crypto-media/device-lifecycle.md`、`authz/capabilities.md`、
+/// `sync/operations-sync.md`、`crypto-media/encryption-and-audit.md`、
+/// `crypto-media/audited-e2ee.md`（attested / disclosed audit profile）、
+/// `crypto-media/webrtc-signaling.md`、`extensions/applet-integration.md`、
+/// `extensions/agent-protocol-interop.md`、`extensions/mimi-interop.md`。
+/// canonical registry: `artifacts/registry/event-kind-registry.json`（109 active kinds）。
 pub fn known_event_kinds() -> Vec<&'static str> {
+    // 109 active wire event kinds, mirrored from
+    // `artifacts/registry/event-kind-registry.json` (commit fc7da5b, 2026-05-05).
+    // ORDER MATTERS for diff-friendly maintenance: keep alphabetical inside each
+    // group. When the spec adds/removes a kind, update both this list and the
+    // registry test below.
     vec![
-        // Space / boundary
-        "cx.space.create",
-        "cx.space.update",
-        "cx.space.archive",
-        "cx.space.policy.update",
-        "cx.space.discovery",
-        "cx.space.child",
-        "cx.space.parent",
-        // Flow & branches (current-model §3, conversation-model)
+        // Account / actor profile
+        "cx.account.blocklist",
+        "cx.account.status",
+        "cx.account_data.set",
+        "cx.profile.update",
+        "cx.profile.space_override",
+        // Agent (extensions/agent-protocol-interop — v1.1+ but kinds are core)
+        "cx.agent.endpoint",
+        "cx.agent.protocol_session.result",
+        "cx.agent.protocol_session.start",
+        "cx.agent.protocol_session.status",
+        // Applet (extensions/applet-integration — v1.1+ but kinds are core)
+        "cx.applet.bridge_error",
+        "cx.applet.protocol_session.start",
+        "cx.applet.protocol_session.status",
+        "cx.applet.registration",
+        // Audited E2EE (crypto-media/audited-e2ee.md)
+        "cx.audit.accessed",
+        "cx.audit.ryw_receipt",
+        // WebRTC call (crypto-media/webrtc-signaling)
+        "cx.call.recording.start",
+        "cx.call.signal",
+        "cx.call.state",
+        // Capability (authz/capabilities)
+        "cx.capability.delegate",
+        "cx.capability.derived",
+        "cx.capability.grant",
+        "cx.capability.revoke",
+        // Container / position edge (board/list rebalance)
+        "cx.container.move_item",
+        "cx.container.rebalance",
+        // Devices (crypto-media/device-lifecycle)
+        "cx.device.authorized",
+        "cx.device.list_update",
+        "cx.device.revoked",
+        // Identity (DID proof + progressive disclosure §16)
+        "cx.did.proof",
+        "cx.identity.disclosure_policy",
+        "cx.identity.disclosure_receipt",
+        "cx.identity.presentation_request",
+        "cx.identity.presentation_response",
+        // Flow / branch (current-model §3-§4)
+        "cx.flow.archive",
+        "cx.flow.branch.disable",
+        "cx.flow.branch.enable",
+        "cx.flow.branch.history_visibility",
+        "cx.flow.branch.member",
+        "cx.flow.branch.policy_components",
+        "cx.flow.branch.set_primary",
+        "cx.flow.branch.update",
         "cx.flow.create",
-        "cx.flow.update",
         "cx.flow.move",
         "cx.flow.reorder",
-        "cx.flow.convert",
-        "cx.flow.branch.enable",
-        "cx.flow.branch.disable",
-        "cx.flow.branch.set_primary",
-        "cx.flow.branch.member",
-        // Message & redaction (conversation-model)
+        "cx.flow.restore",
+        "cx.flow.update",
+        // Invite (sync/third-party-invites + identity/invites)
+        "cx.invite.accept",
+        "cx.invite.cancel",
+        "cx.invite.claim",
+        "cx.invite.create",
+        "cx.invite.revoke",
+        "cx.invite.third_party",
+        // Key verification (device-lifecycle §7-§9)
+        "cx.key.verification.accept",
+        "cx.key.verification.cancel",
+        "cx.key.verification.done",
+        "cx.key.verification.key",
+        "cx.key.verification.mac",
+        "cx.key.verification.ready",
+        "cx.key.verification.request",
+        "cx.key.verification.start",
+        // Membership
+        "cx.member.state",
+        // Message (object-model-standard §5.1-§5.3)
         "cx.message.create",
-        "cx.message.revise",
         "cx.message.redact",
-        "cx.reaction.create",
-        // Morph & relation
+        "cx.message.revise",
+        // MIMI interop (extensions/mimi-interop — v1.1+)
+        "cx.mimi.room_binding",
+        // MLS (encryption-and-audit)
+        "cx.mls.commit",
+        "cx.mls.commit_failed",
+        "cx.mls.genesis",
+        "cx.mls.keypackage",
+        "cx.mls.proposal",
+        "cx.mls.welcome",
+        // Moderation (governance/content-moderation)
+        "cx.moderation.frank",
+        "cx.moderation.report",
+        // Morph
+        "cx.morph.archive",
         "cx.morph.create",
+        "cx.morph.restore",
         "cx.morph.update",
+        // Organization (identity-did §6 + content-moderation)
+        "cx.organization.discovery",
+        "cx.organization.moderation_policy",
+        // Policy (authz/policy-server)
+        "cx.policy.action",
+        "cx.policy.rule",
+        "cx.policy.set",
+        // Presence / typing (discovery/profiles-presence)
+        "cx.presence",
+        "cx.typing",
+        // Reaction
+        "cx.reaction.add",
+        "cx.reaction.remove",
+        // Read receipts / markers (discovery/read-receipts §6 — replaces
+        // legacy read-notification-schema; notification itself is a *derived*
+        // projection, not a canonical event).
+        "cx.read.marker",
+        "cx.receipt.read",
+        // Redaction (cross-object — separate from cx.message.redact)
+        "cx.redaction",
+        // Relation
         "cx.relation.create",
         "cx.relation.delete",
-        // View
-        "cx.view.create",
-        "cx.view.update",
-        "cx.view.delete",
-        // Capability & moderation
-        "cx.capability.grant",
-        "cx.capability.grant.request",
-        "cx.capability.revoke",
-        "cx.moderation.report",
-        "cx.moderation.quarantine",
-        "cx.moderation.appeal",
-        // Identity & devices (devices-and-auth, identity)
-        "cx.actor.profile.update",
+        "cx.relation.update",
+        // Schema evolution
+        "cx.schema.define",
+        "cx.schema.update",
+        // Session grant (device-lifecycle §1.2)
         "cx.session.grant",
-        "cx.device.authorized",
-        "cx.device.cross_sign",
-        "cx.device.revoked",
-        "cx.identity.recovery",
-        "cx.identity.recovery_attestation",
-        // Account lifecycle
-        "cx.account.suspend",
-        "cx.account.resume",
-        "cx.account.erase",
-        // MLS / E2EE
-        "cx.mls.welcome",
-        "cx.mls.commit",
-        "cx.mls.proposal",
-        // Snapshot / federation / sync
-        "cx.snapshot.publish",
-        "cx.federation.txn",
-        // Applet / agent / portal
-        "cx.applet.registration",
-        "cx.applet.transaction",
-        "cx.agent.session",
-        "cx.mimi.room_binding",
-        // Notification / read marker
-        "cx.notification.dismiss",
-        "cx.read_marker.update",
+        // Sovereign deployment (sync/sovereign-deployment)
+        "cx.sovereign.did_policy",
+        // Space / boundary
+        "cx.space.child",
+        "cx.space.create",
+        "cx.space.lifecycle.set",
+        "cx.space.organization",
+        "cx.space.parent",
+        "cx.space.policy.set",
+        "cx.space.update",
+        "cx.space.upgrade",
+        // MLS Space-key share (audited E2EE)
+        "cx.space_key.share",
+        "cx.space_key.share_audit",
+        "cx.space_key.withheld",
+        // View (View projection)
+        "cx.view.create",
+        "cx.view.reconcile",
+        "cx.view.update",
     ]
 }
 
@@ -606,7 +754,15 @@ mod tests {
     }
 
     #[test]
-    fn known_event_kinds_includes_branch_and_recovery() {
+    fn known_event_kinds_matches_registry_count() {
+        // Registry pinned to 109 active wire event kinds at commit fc7da5b.
+        // Bumping the count here in lockstep with the spec is intentional —
+        // it is a tripwire when the registry drifts under us.
+        assert_eq!(known_event_kinds().len(), 109);
+    }
+
+    #[test]
+    fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
         // current-model §3 — branch lifecycle events
         assert!(kinds.contains(&"cx.flow.branch.enable"));
@@ -614,12 +770,28 @@ mod tests {
         // current-model §4 — board / list workflow container
         assert!(kinds.contains(&"cx.flow.move"));
         assert!(kinds.contains(&"cx.flow.reorder"));
-        // identity recovery (devices-and-auth §4)
-        assert!(kinds.contains(&"cx.identity.recovery"));
-        // device three-axes (devices-and-auth §1.2)
+        // device-lifecycle §1.2 (login / authorization / verification three axes)
         assert!(kinds.contains(&"cx.session.grant"));
         assert!(kinds.contains(&"cx.device.authorized"));
-        assert!(kinds.contains(&"cx.device.cross_sign"));
+        assert!(kinds.contains(&"cx.device.revoked"));
+        // device-lifecycle §7-§9 (verification ceremony events; replaces
+        // legacy single `cx.device.cross_sign` placeholder).
+        assert!(kinds.contains(&"cx.key.verification.start"));
+        assert!(kinds.contains(&"cx.key.verification.done"));
+        // discovery/read-receipts §6 — read marker is a wire event,
+        // notification is *not* (it's a derived projection).
+        assert!(kinds.contains(&"cx.read.marker"));
+        assert!(kinds.contains(&"cx.receipt.read"));
+        assert!(!kinds.contains(&"cx.notification.dismiss"));
+        // audited-e2ee — attested + disclosed audit profiles
+        assert!(kinds.contains(&"cx.audit.accessed"));
+        assert!(kinds.contains(&"cx.audit.ryw_receipt"));
+        // Removed in spec Round 7 / batch 1
+        assert!(!kinds.contains(&"cx.flow.convert"));
+        assert!(!kinds.contains(&"cx.mls.epoch"));
+        // Renamed: cx.actor.profile.update -> cx.profile.update
+        assert!(kinds.contains(&"cx.profile.update"));
+        assert!(!kinds.contains(&"cx.actor.profile.update"));
     }
 
     #[test]
@@ -634,5 +806,18 @@ mod tests {
                 "event kind `{kind}` 不应包含空格"
             );
         }
+    }
+
+    #[test]
+    fn known_event_kinds_have_no_duplicates() {
+        let kinds = known_event_kinds();
+        let mut sorted = kinds.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            kinds.len(),
+            "event kind list must contain no duplicates"
+        );
     }
 }

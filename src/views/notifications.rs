@@ -103,7 +103,7 @@ pub fn NotificationsPanel(
     rsx! {
         div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
             // Privacy / projection banner — claude-design desktop/inbox.html
-            // discovery/push-notifications.md + crypto-media/devices-and-auth.md §5
+            // discovery/push-notifications.md + crypto-media/device-lifecycle.md §5
             div { class: "event", "data-testid": "inbox-protocol-banner",
                 div { class: "event-head",
                     span { "Inbox 是 projection" }

@@ -123,6 +123,23 @@ pub fn SettingsPanel(
 
             // ── Server / Account settings ────────────────────────
             if active_section() == SettingsSection::Server {
+                // Transport invariant — sync/transport-bindings.md (Round 5: HTTP/JSON locked)
+                div { class: "event", "data-testid": "transport-invariant",
+                    div { class: "event-head",
+                        span { "Transport" }
+                        span { "v1 core normative" }
+                    }
+                    div { class: "muted",
+                        "v1 core 互操作 transport 锁定为 HTTP/JSON。gRPC / WebSocket / SSE / Message Queue / libp2p binding 都是 v1.1+ extension binding profile，本客户端走 reqwest HTTPS。"
+                    }
+                    div { class: "actions",
+                        span { class: "badge green", "HTTP/JSON · normative" }
+                        span { class: "badge", "WebSocket · v1.1+ extension" }
+                        span { class: "badge", "gRPC · v1.1+ extension" }
+                        span { class: "badge", "SSE / MQ / libp2p · v1.1+ extension" }
+                    }
+                }
+
                 div { class: "event", "data-testid": "server-settings",
                     div { class: "event-head", span { "Settings" } span { "client configuration" } }
                     label { "Server URL" }

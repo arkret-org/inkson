@@ -626,6 +626,46 @@ pub fn SpaceAdminPanel(
                 }
             }
 
+            // Audited E2EE assurance — crypto-media/audited-e2ee.md
+            // Two profiles: cx.profile.attested_audit.e2ee.v1 (HW attestation forced)
+            // and cx.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
+            // UI MUST surface the policy choice + canonical join warning copy +
+            // forbidden marketing terms (see audited-e2ee §3.1.1 / §3.5).
+            div { class: "event", "data-testid": "audited-e2ee-assurance",
+                div { class: "event-head",
+                    span { "Audited E2EE assurance" }
+                    span { "audit_disclosure policy" }
+                }
+                div { class: "muted",
+                    "v1 core 把 audited E2EE 拆成 attested / disclosed 两类 hardening profile。Space policy 通过 audit_disclosure 对象 + audit_assurance enum 声明；UI join warning 与对外材料按 audited-e2ee.md §3.1.1 / §3.5 normative 分类与禁用措辞执行。"
+                }
+                div { class: "metric-grid", "data-testid": "audited-e2ee-tiers",
+                    div { class: "metric",
+                        strong { "none" }
+                        span { class: "badge", "default" }
+                        div { class: "muted", "标准 MLS E2EE，无 audit profile" }
+                    }
+                    div { class: "metric",
+                        strong { "disclosed_audit" }
+                        span { class: "badge amber", "disclosed_audit.e2ee.v1" }
+                        div { class: "muted", "审计 agent 流程性披露；强制留痕 cx.audit.accessed；无密码学 attestation" }
+                    }
+                    div { class: "metric",
+                        strong { "attested_audit" }
+                        span { class: "badge red", "attested_audit.e2ee.v1" }
+                        div { class: "muted", "硬件 attestation 强制；RYW receipt schema 强制 cx.audit.ryw_receipt" }
+                    }
+                }
+                div { class: "muted",
+                    "禁用 marketing 措辞：不得宣称 \"end-to-end encrypted\" 不加修饰；必须使用 \"E2EE with disclosed/attested audit\"。详见 audited-e2ee.md §3.5。"
+                }
+                div { class: "actions",
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-none", "无 audit profile" }
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-disclosed", "启用 disclosed_audit" }
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-attested", "启用 attested_audit" }
+                }
+            }
+
             // MLS epoch rotation
             div { class: "event", "data-testid": "mls-rotation",
                 div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
@@ -686,6 +726,20 @@ pub fn SpaceAdminPanel(
 
             // Capability grant explanation — claude-design desktop/space-admin.html
             // authz/capabilities.md (delegation, revocation, claim conditions)
+            //
+            // Constraint type model (Round 9, 2026-05-05): 14 types collapsed into
+            // 8 family + subtype discriminator per `authz/constraint-schema.md` §2.2:
+            //   temporal (subtype: edit_window / redact_window / session_lifetime / ...)
+            //   field_access (subtype: field_write_allow / field_write_deny)
+            //   type_restriction (subtype: object_type / morph_type / facet)
+            //   scope_limitation (subtype: container_move / view_kind / branch / ...)
+            //   delegation_control (subtype: max_depth / subset_only)
+            //   quota (subtype: rate / resource)
+            //   claim_based (subtype: approval / accountability / ...)
+            //   confidentiality (subtype: encryption / visibility / sensitive_handling)
+            // The grant-explanation rows below treat constraint as a description hint;
+            // any future write UI MUST emit `(family, subtype)` pairs, not the legacy
+            // 14-type names. v0 → v1 mapping table is in constraint-schema.md §2.2.
             div { class: "event", "data-testid": "grant-explanation",
                 div { class: "event-head",
                     span { "Capability Grants" }

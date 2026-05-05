@@ -520,11 +520,11 @@ pub fn DevicesPanel(
             }
 
             // Protocol invariant card — claude-design desktop/devices.html
-            // crypto-media/devices-and-auth.md §1.2
+            // crypto-media/device-lifecycle.md §1.2
             div { class: "event", "data-testid": "device-three-axes",
                 div { class: "event-head",
                     span { "登录、设备授权、设备验证三件事分开" }
-                    span { "crypto-media/devices-and-auth §1.2" }
+                    span { "crypto-media/device-lifecycle §1.2" }
                 }
                 div { class: "muted",
                     "Auth Service 验证因子（password / passkey / OIDC / SSO）只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized；SAS / QR 验证只确认 device key 的人工信任。三件事的组合决定是否能读 E2EE 历史。"
