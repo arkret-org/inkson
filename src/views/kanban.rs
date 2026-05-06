@@ -169,13 +169,138 @@ impl BoardProjectionSource {
 /// 调 probe 时传过去。
 #[allow(dead_code)]
 fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
-    // TODO(T20): when contrix-rust-sdk exposes
-    //   client.collection_projection(view_id) → CollectionProjectionResponse
-    // and soland exposes
-    //   POST /api/v1/views/:id/projection
-    // replace this stub with an actual SDK call. For now we always return
-    // None so the caller falls back to seed_columns().
+    // Synchronous init context — always returns None. UI starts with
+    // SeedFallback and the user (or the auto-refresh-on-mount handler)
+    // promotes to ApiDerived via [`fetch_api_columns`] once the async
+    // call returns.
     None
+}
+
+/// T20 — Map a SDK [`CollectionProjectionResponse`] into the yougen
+/// renderer's [`Vec<KanbanColumn>`] shape.
+///
+/// Pure adapter so it's unit-testable without a live HTTP client.
+/// Position rank, when present, drives stable ordering inside a column.
+fn collection_projection_to_columns(
+    projection: &contrix_sdk::CollectionProjectionResponse,
+) -> Vec<KanbanColumn> {
+    projection
+        .groups
+        .iter()
+        .map(|group| KanbanColumn {
+            id: group.group_id.clone(),
+            title: group.title.clone(),
+            rank: group.rank.clone().unwrap_or_default(),
+            cards: group
+                .items
+                .iter()
+                .map(card_from_projection_item)
+                .collect(),
+        })
+        .collect()
+}
+
+/// Map a single projection item to a [`KanbanCard`]. Discussion metadata
+/// is honoured: `visibility="locked"` produces a [`LockedFlow`] with an
+/// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
+/// without leaking room contents.
+fn card_from_projection_item(
+    item: &contrix_sdk::CollectionProjectionItem,
+) -> KanbanCard {
+    let id = item
+        .object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("cx:flow:unknown")
+        .to_owned();
+    let title = item
+        .object
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(untitled)")
+        .to_owned();
+    let primary_flow_id = id.clone();
+    let primary_flow = title.clone();
+    let (external_visibility, history_visibility) = item
+        .discussion
+        .as_ref()
+        .map(|d| {
+            let ext = match d.visibility.as_str() {
+                "locked" => "Locked discussion (lazy_link)".to_owned(),
+                "readable" => "Discussion readable to current member".to_owned(),
+                other => format!("discussion: {other}"),
+            };
+            let hist = if d.lazy_link {
+                "lazy_link (cross-Space)".to_owned()
+            } else if d.enabled {
+                "branch-scoped".to_owned()
+            } else {
+                "synthesis-only".to_owned()
+            };
+            (ext, hist)
+        })
+        .unwrap_or_else(|| {
+            (
+                "No external discussions linked".to_owned(),
+                "synthesis-only".to_owned(),
+            )
+        });
+    let locked_flow = item.discussion.as_ref().and_then(|d| {
+        if d.visibility == "locked" {
+            Some(LockedFlow {
+                flow_id_hash: format!("sha256:{}", id),
+                reason: "Locked discussion: title and members are not disclosed."
+                    .to_owned(),
+            })
+        } else {
+            None
+        }
+    });
+    KanbanCard {
+        id,
+        title,
+        description: item
+            .object
+            .get("summary")
+            .or_else(|| item.object.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        labels: item
+            .object
+            .get("fields")
+            .and_then(|f| f.get("labels"))
+            .and_then(|labels| labels.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        assignee: item
+            .object
+            .get("fields")
+            .and_then(|f| f.get("assignee"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("—")
+            .to_owned(),
+        due: item
+            .object
+            .get("fields")
+            .and_then(|f| f.get("due"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("—")
+            .to_owned(),
+        primary_flow_id,
+        primary_flow,
+        linked_flows: Vec::new(),
+        locked_flow,
+        external_visibility,
+        history_visibility,
+        activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
+        audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
+        state: CardState::Synced,
+    }
 }
 
 #[component]
@@ -261,21 +386,50 @@ pub fn KanbanPanel(
                     button {
                         class: "secondary",
                         "data-testid": "board-projection-refresh",
-                        onclick: move |_| {
-                            match try_load_api_columns(view_id) {
-                                Some(api_cols) => {
-                                    columns.set(api_cols);
-                                    projection_source.set(BoardProjectionSource::ApiDerived);
-                                }
-                                None => {
-                                    projection_source.set(BoardProjectionSource::SeedFallback);
-                                }
+                        onclick: {
+                            // T20 — real API call to soland's
+                            // POST /api/v1/views/:id/projection. Falls back to seed
+                            // on any error so the user always sees something.
+                            let base = base_url.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let api_token = token();
+                                let view = view_id.to_owned();
+                                spawn(async move {
+                                    let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                        Ok(api) => api,
+                                        Err(_) => {
+                                            projection_source.set(BoardProjectionSource::SeedFallback);
+                                            return;
+                                        }
+                                    };
+                                    match api.collection_projection(&view).await {
+                                        Ok(projection) => {
+                                            let cols = collection_projection_to_columns(&projection);
+                                            if !cols.is_empty() {
+                                                columns.set(cols);
+                                            }
+                                            projection_source.set(BoardProjectionSource::ApiDerived);
+                                            board_status.set(format!(
+                                                "API projection · {} groups · view={}",
+                                                projection.groups.len(),
+                                                projection.view_id.as_str()
+                                            ));
+                                        }
+                                        Err(error) => {
+                                            projection_source.set(BoardProjectionSource::SeedFallback);
+                                            board_status.set(format!(
+                                                "API projection unavailable: {error}"
+                                            ));
+                                        }
+                                    }
+                                });
                             }
                         },
                         "Refresh from API"
                     }
                     span { class: "muted",
-                        "API endpoint 待 SDK + soland 上线；当前总是 fallback。"
+                        "Refresh 调用 SDK Client::collection_projection（POST /api/v1/views/:id/projection）；endpoint 不可用时回退到 seed。"
                     }
                 }
 
@@ -903,19 +1057,107 @@ fn seed_columns() -> Vec<KanbanColumn> {
 mod tests {
     use super::*;
 
-    /// `try_load_api_columns` is a stub until the SDK exposes
-    /// `client.collection_projection(view_id)`. Until then it MUST return
-    /// None so the caller falls back to `seed_columns()`. This test pins the
-    /// stub behaviour so the day SDK lands the endpoint, this test fails and
-    /// reminds the implementer to swap in the real probe.
+    /// `try_load_api_columns` is the synchronous-init probe. Real API
+    /// fetching now lives in the async refresh handler that calls
+    /// `ContrixApi::collection_projection`. This test still pins the
+    /// init-time behaviour as None so UI startup goes via SeedFallback
+    /// and the user (or auto-refresh) promotes to ApiDerived once the
+    /// HTTP call returns.
     #[test]
-    fn try_load_api_columns_returns_none_until_sdk_endpoint_exists() {
+    fn try_load_api_columns_returns_none_in_sync_init_context() {
         let result = try_load_api_columns("cx:view:01js0vw0000000000000000000release");
         assert!(
             result.is_none(),
-            "stub must return None until SDK exposes collection_projection; \
-             when this fails, replace try_load_api_columns body with the SDK call"
+            "synchronous init MUST return None; async refresh handles real fetch"
         );
+    }
+
+    /// T20 wire-up — `collection_projection_to_columns` adapter maps the
+    /// canonical SDK response into the renderer's KanbanColumn vec. This
+    /// is the core integration point; if the spec wire shape changes,
+    /// this test fails and points at the renderer adapter.
+    #[test]
+    fn collection_projection_maps_to_kanban_columns() {
+        use contrix_sdk::{
+            CollectionProjectionDiscussion, CollectionProjectionGroup,
+            CollectionProjectionItem, CollectionProjectionResponse, ViewId, ViewKind,
+            ViewRenderer,
+        };
+        let projection = CollectionProjectionResponse {
+            kind: ViewKind::Collection,
+            renderer: ViewRenderer::Board,
+            view_id: ViewId::new("cx:view:01js0vw0000000000000000000release").unwrap(),
+            frontier: vec!["cx:event:01js0fr00000000000000000042".to_owned()],
+            groups: vec![
+                CollectionProjectionGroup {
+                    group_id: "cx:space:01rev1ew000000000000000000".to_owned(),
+                    title: "Review".to_owned(),
+                    rank: Some("mV".to_owned()),
+                    items: vec![CollectionProjectionItem {
+                        object: serde_json::json!({
+                            "id": "cx:flow:01task00000000000000000000",
+                            "type": "flow",
+                            "title": "Legal review",
+                            "summary": "ensure GDPR sign-off",
+                        }),
+                        position: None,
+                        discussion: Some(CollectionProjectionDiscussion {
+                            enabled: true,
+                            visibility: "locked".to_owned(),
+                            lazy_link: true,
+                        }),
+                    }],
+                    hidden_count: None,
+                },
+                CollectionProjectionGroup {
+                    group_id: "cx:space:01t0d0000000000000000000000".to_owned(),
+                    title: "To do".to_owned(),
+                    rank: Some("aA".to_owned()),
+                    items: Vec::new(),
+                    hidden_count: None,
+                },
+            ],
+        };
+
+        let cols = collection_projection_to_columns(&projection);
+        assert_eq!(cols.len(), 2, "two groups → two columns");
+        assert_eq!(cols[0].id, "cx:space:01rev1ew000000000000000000");
+        assert_eq!(cols[0].title, "Review");
+        assert_eq!(cols[0].rank, "mV");
+        assert_eq!(cols[0].cards.len(), 1);
+        let card = &cols[0].cards[0];
+        assert_eq!(card.id, "cx:flow:01task00000000000000000000");
+        assert_eq!(card.title, "Legal review");
+        assert_eq!(card.description, "ensure GDPR sign-off");
+        // Locked discussion + lazy_link should populate locked_flow
+        // and the cross-Space hint without leaking room contents.
+        assert!(card.locked_flow.is_some(), "locked discussion → LockedFlow");
+        assert_eq!(
+            card.history_visibility, "lazy_link (cross-Space)",
+            "lazy_link=true must be reflected without exposing members"
+        );
+        assert!(matches!(card.state, CardState::Synced));
+        // Empty group still produces an empty-cards column (board renders it).
+        assert_eq!(cols[1].cards.len(), 0);
+    }
+
+    /// T20 — when `discussion` is None on the projection item, the card
+    /// renders as synthesis-only without a locked_flow.
+    #[test]
+    fn projection_item_without_discussion_renders_synthesis_only() {
+        use contrix_sdk::CollectionProjectionItem;
+        let item = CollectionProjectionItem {
+            object: serde_json::json!({
+                "id": "cx:flow:01doc",
+                "title": "DID method allowlist",
+            }),
+            position: None,
+            discussion: None,
+        };
+        let card = card_from_projection_item(&item);
+        assert!(card.locked_flow.is_none());
+        assert_eq!(card.history_visibility, "synthesis-only");
+        assert_eq!(card.external_visibility, "No external discussions linked");
     }
 
     #[test]

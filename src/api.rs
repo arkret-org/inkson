@@ -1487,6 +1487,22 @@ impl ContrixApi {
         .await
     }
 
+    // ── Views — collection projection (T20) ─────────────────────────
+    //
+    // Pairs with contrix-rust-sdk@9d02761 + soland@1cdab88.
+    // POST /api/v1/views/{view_id}/projection returns the typed
+    // CollectionProjectionResponse defined in contrix_core::model.
+    pub async fn collection_projection(
+        &self,
+        view_id: &str,
+    ) -> anyhow::Result<contrix_sdk::CollectionProjectionResponse> {
+        self.post_json(
+            &format!("api/v1/views/{view_id}/projection"),
+            json!({}),
+        )
+        .await
+    }
+
     // ── Device & Crypto ─────────────────────────────────────────────
 
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
