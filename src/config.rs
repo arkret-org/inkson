@@ -86,11 +86,16 @@ impl Default for LocalConfigStore {
 }
 
 impl LocalConfigStore {
+    /// Resolve the client config. Persisted (settings panel / disk) wins;
+    /// otherwise fall back to compile-time defaults overlaid with env vars
+    /// (`CLIENTX_SERVER_URL`, `CLIENTX_ACCOUNT_DID`, `CLIENTX_DEVICE_ID`,
+    /// `CLIENTX_SESSION_TOKEN`). Env overlay only applies to the first run
+    /// — once the user persists settings, env vars no longer take effect.
     pub fn load(&self) -> ClientConfig {
         self.cached
             .clone()
             .or_else(|| self.read_persisted_config())
-            .unwrap_or_default()
+            .unwrap_or_else(default_with_env_overlay)
     }
 
     pub fn save(&mut self, config: ClientConfig) {
@@ -165,6 +170,44 @@ impl LocalConfigStore {
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_with_env_overlay() -> ClientConfig {
+    apply_env_overlay(ClientConfig::default(), |name| std::env::var(name).ok())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_with_env_overlay() -> ClientConfig {
+    ClientConfig::default()
+}
+
+fn apply_env_overlay<F>(mut config: ClientConfig, mut read: F) -> ClientConfig
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    if let Some(value) = read("CLIENTX_SERVER_URL").and_then(non_empty) {
+        config.server_url = value;
+    }
+    if let Some(value) = read("CLIENTX_ACCOUNT_DID").and_then(non_empty) {
+        config.account_did = value;
+    }
+    if let Some(value) = read("CLIENTX_DEVICE_ID").and_then(non_empty) {
+        config.device_id = value;
+    }
+    if let Some(value) = read("CLIENTX_SESSION_TOKEN").and_then(non_empty) {
+        config.session_token = value;
+    }
+    config
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -282,5 +325,35 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("yougen-{name}-{stamp}.json"))
+    }
+
+    #[test]
+    fn env_overlay_replaces_each_field_when_set() {
+        let resolved = apply_env_overlay(ClientConfig::default(), |name| {
+            Some(
+                match name {
+                    "CLIENTX_SERVER_URL" => "https://overlay.example",
+                    "CLIENTX_ACCOUNT_DID" => "did:web:overlay.example",
+                    "CLIENTX_DEVICE_ID" => "dev_overlay",
+                    "CLIENTX_SESSION_TOKEN" => "sx_overlay_token",
+                    _ => return None,
+                }
+                .to_owned(),
+            )
+        });
+        assert_eq!(resolved.server_url, "https://overlay.example");
+        assert_eq!(resolved.account_did, "did:web:overlay.example");
+        assert_eq!(resolved.device_id, "dev_overlay");
+        assert_eq!(resolved.session_token, "sx_overlay_token");
+    }
+
+    #[test]
+    fn env_overlay_ignores_blank_or_missing_values() {
+        let resolved = apply_env_overlay(ClientConfig::default(), |name| match name {
+            "CLIENTX_SERVER_URL" => Some("   ".to_owned()),
+            "CLIENTX_ACCOUNT_DID" => Some(String::new()),
+            _ => None,
+        });
+        assert_eq!(resolved, ClientConfig::default());
     }
 }

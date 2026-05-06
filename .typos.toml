@@ -16,3 +16,5 @@ serverx = "serverx"
 yougen = "yougen"
 authz = "authz"
 to_device = "to_device"
+# OT-prefixed acronyms used in MLS surfaces (OTK = one-time key, OTKs plural)
+OT = "OT"

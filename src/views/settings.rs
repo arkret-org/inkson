@@ -219,14 +219,14 @@ pub fn SettingsPanel(
                             "localStorage has a ~5MB limit. Large sync data, drafts, and cached operations may exceed this limit. Consider using IndexedDB for production."
                         }
                         div { class: "metric",
-                            strong { "No Encryption at Rest" }
+                            strong { "Private Data: ChaCha20-Poly1305" }
                             span { class: "badge",
-                                style: "background: #e74c3c; color: white; padding: 2px 8px; border-radius: 4px;",
-                                "Critical"
+                                style: "background: #f39c12; color: white; padding: 2px 8px; border-radius: 4px;",
+                                "Partial"
                             }
                         }
                         div { class: "muted",
-                            "Web localStorage is not encrypted. Session tokens and cached data are accessible to any script on the same origin. Use secure httpOnly cookies or IndexedDB with encryption for production."
+                            "Locale / theme / private prefs are sealed with ChaCha20-Poly1305 keyed off the account DID (random 96-bit nonce per write) before being written to localStorage. Session tokens, sync cursors, and operation cache remain plaintext — any script on the same origin can read them. Serve the web build over HTTPS only, lock down third-party scripts, and treat the dev-login token as a secret."
                         }
                         div { class: "metric",
                             strong { "No Cross-Tab Sync" }

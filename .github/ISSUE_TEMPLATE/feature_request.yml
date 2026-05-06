@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a feature, ergonomic improvement, or new spec
+  surfacing for the yougen client.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem are you trying to solve? Cite a contrix-spec
+        section or `claude-design` mock if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the feature. Note whether it requires SDK or
+        soland reducer changes (those belong in companion PRs).
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

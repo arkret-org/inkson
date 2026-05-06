@@ -1,6 +1,9 @@
 # yougen
 
-Cross-platform Contrix client built with Dioxus 0.7.
+Cross-platform Contrix client built with Dioxus 0.7. Licensed under
+[Apache-2.0](LICENSE). Vulnerability reporting and threat model live in
+[SECURITY.md](SECURITY.md); contributor workflow in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Targets
 
@@ -39,6 +42,35 @@ npm install
 npm run release:check
 ```
 
+## Configuration
+
+The client resolves its bootstrap config in this order: **persisted settings**
+(written by the in-app settings panel) > **environment variables** > **compile-time
+defaults**. Once the user saves anything in the settings panel, env vars no
+longer override on subsequent launches.
+
+| Variable                | Default                  | Purpose                                                     | Build target           |
+| ----------------------- | ------------------------ | ----------------------------------------------------------- | ---------------------- |
+| `CLIENTX_SERVER_URL`    | `http://127.0.0.1:8787`  | serverx (`soland`) base URL. Must be HTTPS or loopback.     | desktop / mobile       |
+| `CLIENTX_ACCOUNT_DID`   | `did:web:alice.example`  | Default account DID for dev-login bootstrap.                | desktop / mobile       |
+| `CLIENTX_DEVICE_ID`     | `dev_yougen`             | Device handle persisted next to the session token.          | desktop / mobile       |
+| `CLIENTX_SESSION_TOKEN` | _(empty)_                | Pre-seed a session grant for CI / scripted runs. Do not commit. | desktop / mobile  |
+| `CLIENTX_CONFIG_PATH`   | `<app-data>/yougen/config.json` | Override the config file location.                  | desktop / mobile       |
+| `CLIENTX_STATE_PATH`    | `<app-data>/yougen/state.json`  | Override the local-state cache location.            | desktop / mobile       |
+| `CHASK_PUSH_GATEWAY`    | (chime default)          | Push gateway URL.                                           | desktop / mobile       |
+| `CHASK_PUSH_KEY`        | development placeholder  | Platform push token (APNs / FCM / Web Push).                | desktop / mobile       |
+| `CLIENTX_E2E_BASE_URL`  | _(unset)_                | Point Playwright at an already-running web build.           | e2e harness            |
+
+Web builds (`wasm32`) read configuration from `localStorage` only — env vars do not apply
+in the browser. Set the server URL through the in-app settings panel for browser builds.
+
+> **Security:** Private preferences (locale, theme, …) are sealed with ChaCha20-Poly1305
+> keyed off the account DID before they hit `localStorage`. Session tokens, sync cursors,
+> and the operation cache are still plaintext, so production deployments must serve the
+> web build over HTTPS only and lock down third-party scripts. Treat `CLIENTX_SESSION_TOKEN`
+> as a secret; the `views/settings.rs` panel surfaces an in-app warning that mirrors this.
+> See [SECURITY.md](SECURITY.md) for the full threat model and how to report a vulnerability.
+
 ## CI
 
 ### GitHub Actions
@@ -47,8 +79,8 @@ The repository includes CI for:
 
 - `Typos`: spell checking through `crate-ci/typos`.
 - `CI`: Rust format, clippy, tests, and Dioxus web build on Ubuntu.
-- `Packages`: release binary artifacts for Linux, Windows, and macOS runners.
-- `Docker`: web image build on pull requests and GHCR push on `main`, `master`, or `v*` tags.
+- `Packages`: release binary artifacts for Linux, Windows, and macOS runners. On a `v*` tag push, the workflow also produces archived (`.zip` / `.tar.gz`) bundles, computes `SHA256SUMS`, and publishes a GitHub Release through `softprops/action-gh-release`.
+- `Docker`: web image build on pull requests and GHCR push on `main`, `master`, or `v*` tags. Pushes are multi-arch (`linux/amd64` + `linux/arm64`), keyless-signed with `cosign`, ship a SBOM, and have build provenance attested through `actions/attest-build-provenance`. Verify with `cosign verify ghcr.io/<owner>/yougen-web@<digest> --certificate-identity-regexp '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
 CI checks out `contrix-rust-sdk` and `chime` next to `yougen` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/contrix-rust-sdk` and `${OWNER}/chime`.

@@ -5,11 +5,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use chacha20poly1305::{
+    ChaCha20Poly1305, Key, Nonce,
+    aead::{Aead, KeyInit},
+};
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use contrix_sdk::EncryptedPayload;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
@@ -353,15 +359,16 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let plaintext = value.into();
-        let encrypted = xor_encrypt(account_key, &plaintext);
+        let encrypted = aead_encrypt(account_key, &plaintext);
         self.cached.private_data.insert(key.into(), encrypted);
         let _ = self.flush();
     }
 
-    /// Load and decrypt a private preference.
+    /// Load and decrypt a private preference. Reads both AEAD-format
+    /// (`v2:…`) values and legacy XOR-obfuscated hex from older builds.
     pub fn load_private_data(&self, account_key: &str, key: &str) -> Option<String> {
         let encrypted = self.load().private_data.get(key)?.clone();
-        xor_decrypt(account_key, &encrypted)
+        aead_decrypt(account_key, &encrypted)
     }
 
     /// Remove a private preference.
@@ -456,26 +463,72 @@ fn app_data_dir() -> PathBuf {
         .join("yougen")
 }
 
-/// XOR-based symmetric encryption for client-side private data.
-/// This is a simple obfuscation, not production-grade crypto.
-/// The same function encrypts and decrypts since XOR is its own inverse.
-fn xor_encrypt(key: &str, data: &str) -> String {
-    let key_bytes = key.as_bytes();
-    if key_bytes.is_empty() {
-        return data.to_owned();
-    }
-    let encrypted: Vec<u8> = data
-        .bytes()
-        .enumerate()
-        .map(|(i, b)| b ^ key_bytes[i % key_bytes.len()])
-        .collect();
-    // Encode as hex for safe storage
-    encrypted.iter().map(|b| format!("{b:02x}")).collect()
+// ── Private-data AEAD ─────────────────────────────────────────────
+//
+// Account-keyed encryption for cached preferences (locale, theme, …).
+// ChaCha20-Poly1305 over a HKDF-style salted key derivation. The
+// stored format is `v2:<base64(nonce||ciphertext_with_tag)>`. Legacy
+// hex-encoded XOR-obfuscated values written by older builds are still
+// readable through `legacy_xor_decrypt` so existing local state survives
+// an upgrade; the next save rewrites the value with the AEAD format.
+
+const AEAD_PREFIX: &str = "v2:";
+const KEY_DERIVATION_SALT: &[u8] = b"yougen.private_data.v2";
+const NONCE_LEN: usize = 12;
+
+fn derive_key(account_key: &str) -> Key {
+    let mut hasher = Sha256::new();
+    hasher.update(KEY_DERIVATION_SALT);
+    hasher.update([0u8]);
+    hasher.update(account_key.as_bytes());
+    Key::clone_from_slice(&hasher.finalize())
 }
 
-/// Decode hex-encoded XOR-encrypted data back to plaintext.
-fn xor_decrypt(key: &str, hex_data: &str) -> Option<String> {
-    let key_bytes = key.as_bytes();
+fn random_nonce() -> Option<[u8; NONCE_LEN]> {
+    let mut buf = [0u8; NONCE_LEN];
+    getrandom::fill(&mut buf).ok()?;
+    Some(buf)
+}
+
+fn aead_encrypt(account_key: &str, plaintext: &str) -> String {
+    if account_key.is_empty() {
+        return plaintext.to_owned();
+    }
+    let Some(nonce_bytes) = random_nonce() else {
+        return plaintext.to_owned();
+    };
+    let cipher = ChaCha20Poly1305::new(&derive_key(account_key));
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let Ok(sealed) = cipher.encrypt(nonce, plaintext.as_bytes()) else {
+        return plaintext.to_owned();
+    };
+    let mut combined = Vec::with_capacity(NONCE_LEN + sealed.len());
+    combined.extend_from_slice(&nonce_bytes);
+    combined.extend_from_slice(&sealed);
+    format!("{AEAD_PREFIX}{}", BASE64.encode(combined))
+}
+
+fn aead_decrypt(account_key: &str, ciphertext: &str) -> Option<String> {
+    if let Some(rest) = ciphertext.strip_prefix(AEAD_PREFIX) {
+        if account_key.is_empty() {
+            return None;
+        }
+        let combined = BASE64.decode(rest).ok()?;
+        if combined.len() < NONCE_LEN {
+            return None;
+        }
+        let (nonce_bytes, sealed) = combined.split_at(NONCE_LEN);
+        let cipher = ChaCha20Poly1305::new(&derive_key(account_key));
+        let plaintext = cipher
+            .decrypt(Nonce::from_slice(nonce_bytes), sealed)
+            .ok()?;
+        return String::from_utf8(plaintext).ok();
+    }
+    legacy_xor_decrypt(account_key, ciphertext)
+}
+
+fn legacy_xor_decrypt(account_key: &str, hex_data: &str) -> Option<String> {
+    let key_bytes = account_key.as_bytes();
     if key_bytes.is_empty() {
         return Some(hex_data.to_owned());
     }
@@ -676,18 +729,53 @@ mod tests {
     }
 
     #[test]
-    fn xor_encrypt_decrypt_roundtrip() {
+    fn aead_encrypt_decrypt_roundtrip() {
         let key = "did:web:alice.example";
         let plaintext = "my secret preference";
-        let encrypted = xor_encrypt(key, plaintext);
+        let encrypted = aead_encrypt(key, plaintext);
+        assert!(encrypted.starts_with(AEAD_PREFIX));
         assert_ne!(encrypted, plaintext);
-        let decrypted = xor_decrypt(key, &encrypted).unwrap();
+        let decrypted = aead_decrypt(key, &encrypted).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn xor_encrypt_empty_key_returns_original() {
-        assert_eq!(xor_encrypt("", "hello"), "hello");
+    fn aead_encrypt_uses_random_nonce() {
+        // Two encryptions of the same plaintext must differ — proves we
+        // are not reusing a nonce, which would leak the keystream.
+        let key = "did:web:alice.example";
+        let plaintext = "same message twice";
+        let a = aead_encrypt(key, plaintext);
+        let b = aead_encrypt(key, plaintext);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn aead_rejects_wrong_key() {
+        let plaintext = "topaz";
+        let encrypted = aead_encrypt("did:web:alice.example", plaintext);
+        assert!(aead_decrypt("did:web:eve.example", &encrypted).is_none());
+    }
+
+    #[test]
+    fn aead_decrypt_falls_back_to_legacy_xor_format() {
+        // Legacy store entries (hex-encoded XOR) must still load so a
+        // user upgrading from a pre-AEAD build does not lose their
+        // saved theme / locale.
+        let key = "did:web:alice.example";
+        let plaintext = "legacy obfuscated value";
+        let key_bytes = key.as_bytes();
+        let encoded: String = plaintext
+            .bytes()
+            .enumerate()
+            .map(|(i, b)| format!("{:02x}", b ^ key_bytes[i % key_bytes.len()]))
+            .collect();
+        assert_eq!(aead_decrypt(key, &encoded).as_deref(), Some(plaintext));
+    }
+
+    #[test]
+    fn aead_encrypt_empty_key_returns_original() {
+        assert_eq!(aead_encrypt("", "hello"), "hello");
     }
 
     #[test]

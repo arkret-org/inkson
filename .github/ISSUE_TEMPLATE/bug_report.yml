@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a defect in the yougen client.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. **Do not use this template for
+        security vulnerabilities** — see `SECURITY.md`.
+
+  - type: input
+    id: yougen-version
+    attributes:
+      label: yougen version / commit
+      description: Output of `git rev-parse HEAD` or the release tag.
+      placeholder: "e.g. v0.1.0 or 88fbe19"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Web (Dioxus web)
+        - Desktop Windows
+        - Desktop Linux
+        - Desktop macOS
+        - Mobile iOS
+        - Mobile Android
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably trigger the bug.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error envelopes
+      description: Paste relevant Contrix error envelopes, browser console
+        output, or `tracing` lines. Trim PII.
+      render: text
+
+  - type: input
+    id: server
+    attributes:
+      label: serverx version
+      description: If reachable, the `cx.profile.core_event_store.v1`
+        version reported by `/api/v1/server/describe`.
