@@ -114,6 +114,70 @@ struct BoardWriteRecord {
     note: String,
 }
 
+/// T20 — Board projection 数据来源。
+///
+/// 当 SDK 提供 `client.collection_projection(view_id)` + soland 的
+/// `POST /api/v1/views/:id/projection` endpoint 上线后，UI 会优先消费
+/// API 派生的 board 状态；endpoint 不可用 / probe 失败时退回到本地 seed。
+/// UI 在 board 头部显式展示当前数据来源，避免把 demo 数据当真。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoardProjectionSource {
+    /// 来自 Principal Server 的 collection projection 响应。
+    /// 命中条件：API 暴露 view projection endpoint 且 reducer 已 catch up
+    /// 到当前 sync frontier。
+    ApiDerived,
+    /// 来自本地 `seed_columns()` 的 demo 数据。
+    /// 命中条件：API 不可用 / 该 view 尚未在 spec 中定义 / 无网络。
+    SeedFallback,
+}
+
+impl BoardProjectionSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ApiDerived => "API-derived (collection projection)",
+            Self::SeedFallback => "seed fallback (demo)",
+        }
+    }
+
+    fn class_name(self) -> &'static str {
+        match self {
+            Self::ApiDerived => "badge green",
+            Self::SeedFallback => "badge amber",
+        }
+    }
+
+    fn explanation(self) -> &'static str {
+        match self {
+            Self::ApiDerived => {
+                "数据从 Principal Server 的 view projection endpoint 派生，与当前 sync frontier 对齐"
+            }
+            Self::SeedFallback => {
+                "API endpoint 不可用 / 尚未实现，使用本地 seed 数据；操作仍会写入 cx.flow.move / cx.flow.reorder 进入离线队列"
+            }
+        }
+    }
+}
+
+/// T20 — 尝试从 API 获取 board projection；失败 / 不可用时返回 None。
+///
+/// 当前 yougen 端 `api.rs` 没有 `collection_projection()` 方法，所以 probe
+/// 永远返回 None，调用方应回退到 `seed_columns()`。一旦 SDK 暴露
+/// `client.collection_projection(view_id)`，把 probe 的实现切换到调用 SDK 即可，
+/// 上层 UI 不需修改。
+///
+/// 函数签名带 `_view_id` 是为了固定未来调用形态：UI 持有 saved View 的 cx:view: id，
+/// 调 probe 时传过去。
+#[allow(dead_code)]
+fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
+    // TODO(T20): when contrix-rust-sdk exposes
+    //   client.collection_projection(view_id) → CollectionProjectionResponse
+    // and soland exposes
+    //   POST /api/v1/views/:id/projection
+    // replace this stub with an actual SDK call. For now we always return
+    // None so the caller falls back to seed_columns().
+    None
+}
+
 #[component]
 pub fn KanbanPanel(
     base_url: String,
@@ -125,7 +189,20 @@ pub fn KanbanPanel(
     state_store: Signal<LocalStateStore>,
     event_write_ready: bool,
 ) -> Element {
-    let mut columns = use_signal(seed_columns);
+    // T20 — load board projection from API when available, otherwise seed.
+    // Source signal lets the UI surface "API-derived" vs "seed fallback" in
+    // the board header; refresh button (added below) re-runs the probe.
+    let view_id = "cx:view:01js0vw0000000000000000000release"; // TODO(T20): wire to active saved View
+    let initial_source = if let Some(api_cols) = try_load_api_columns(view_id) {
+        let _ = api_cols; // keep API path warm for compile coverage
+        BoardProjectionSource::ApiDerived
+    } else {
+        BoardProjectionSource::SeedFallback
+    };
+    let mut columns = use_signal(|| {
+        try_load_api_columns(view_id).unwrap_or_else(seed_columns)
+    });
+    let mut projection_source = use_signal(|| initial_source);
     let mut new_column_title = use_signal(String::new);
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
@@ -168,6 +245,40 @@ pub fn KanbanPanel(
                     span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
                     span { class: "muted", "新 View → cx.view.create · 改 filter/sort/columns → cx.view.update · 重建 projection cache → cx.view.reconcile · Morph 内容更新 → cx.morph.update" }
                 }
+                // T20 — board projection source indicator. Shows whether the
+                // current columns came from the API (Principal Server view
+                // projection) or the local seed fallback. Refresh button
+                // re-runs the probe so when SDK lands the endpoint mid-session
+                // the user can flip to API-derived without restarting.
+                div { class: "actions", "data-testid": "board-projection-source",
+                    span { class: "muted", "Projection source:" }
+                    span {
+                        class: "{projection_source().class_name()}",
+                        "data-testid": "board-projection-source-pill",
+                        "title": "{projection_source().explanation()}",
+                        "{projection_source().label()}"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "board-projection-refresh",
+                        onclick: move |_| {
+                            match try_load_api_columns(view_id) {
+                                Some(api_cols) => {
+                                    columns.set(api_cols);
+                                    projection_source.set(BoardProjectionSource::ApiDerived);
+                                }
+                                None => {
+                                    projection_source.set(BoardProjectionSource::SeedFallback);
+                                }
+                            }
+                        },
+                        "Refresh from API"
+                    }
+                    span { class: "muted",
+                        "API endpoint 待 SDK + soland 上线；当前总是 fallback。"
+                    }
+                }
+
                 div { class: "metric-grid", "data-testid": "board-projection-model",
                     div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
@@ -788,3 +899,71 @@ fn seed_columns() -> Vec<KanbanColumn> {
     ]
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `try_load_api_columns` is a stub until the SDK exposes
+    /// `client.collection_projection(view_id)`. Until then it MUST return
+    /// None so the caller falls back to `seed_columns()`. This test pins the
+    /// stub behaviour so the day SDK lands the endpoint, this test fails and
+    /// reminds the implementer to swap in the real probe.
+    #[test]
+    fn try_load_api_columns_returns_none_until_sdk_endpoint_exists() {
+        let result = try_load_api_columns("cx:view:01js0vw0000000000000000000release");
+        assert!(
+            result.is_none(),
+            "stub must return None until SDK exposes collection_projection; \
+             when this fails, replace try_load_api_columns body with the SDK call"
+        );
+    }
+
+    #[test]
+    fn projection_source_label_distinguishes_api_vs_seed() {
+        assert_ne!(
+            BoardProjectionSource::ApiDerived.label(),
+            BoardProjectionSource::SeedFallback.label()
+        );
+        assert!(BoardProjectionSource::ApiDerived
+            .label()
+            .contains("API-derived"));
+        assert!(BoardProjectionSource::SeedFallback
+            .label()
+            .contains("seed"));
+    }
+
+    #[test]
+    fn projection_source_class_marks_seed_as_amber() {
+        // Seed is a warning (demo data; not synced to frontier) — must be
+        // visually distinct from API-derived to avoid confusion.
+        assert_eq!(
+            BoardProjectionSource::ApiDerived.class_name(),
+            "badge green"
+        );
+        assert_eq!(
+            BoardProjectionSource::SeedFallback.class_name(),
+            "badge amber"
+        );
+    }
+
+    #[test]
+    fn seed_columns_reflect_three_lifecycle_states_for_demo_drift_check() {
+        // Seed must include at least one Synced, one Queued (= optimistic
+        // queued write) and one Conflict so the kanban demo exercises the
+        // full WriteState rendering path. If a refactor changes seeds, fix
+        // this test along with the matching screenshot fixtures.
+        let cols = seed_columns();
+        let mut states: Vec<&'static str> = cols
+            .iter()
+            .flat_map(|c| c.cards.iter().map(|card| card.state.label()))
+            .collect();
+        states.sort();
+        states.dedup();
+        assert!(states.contains(&"synced"), "seed missing Synced demo card");
+        assert!(states.contains(&"queued"), "seed missing Queued demo card");
+        assert!(
+            states.contains(&"CAS conflict"),
+            "seed missing Conflict demo card"
+        );
+    }
+}
