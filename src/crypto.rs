@@ -12,7 +12,8 @@ pub struct ClientEncryptedMessage {
 mod native {
     use contrix_sdk::{
         ContrixMlsGroup, ContrixMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
-        MessageCryptoDecrypt, MlsAddMemberResult, MlsKeyPackageRecord, MlsWelcomeEnvelope,
+        MessageCryptoDecrypt, MlsAddMemberResult, MlsKeyPackageRecord, MlsRemoveMemberResult,
+        MlsWelcomeEnvelope,
     };
 
     use super::ClientEncryptedMessage;
@@ -70,6 +71,43 @@ mod native {
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
             Ok(group.add_member(member_key_package)?)
+        }
+
+        /// T31 — remove a member by principal DID, advancing the local
+        /// MLS epoch. The returned MlsRemoveMemberResult carries the
+        /// commit envelope; surviving members must apply this commit
+        /// (via `apply_commit`) to converge.
+        ///
+        /// Returns Err if the principal has no leaf in this group, if
+        /// the underlying group is not yet created, or if OpenMLS rejects
+        /// the operation. The caller (yougen device_revoke executor) is
+        /// expected to surface those errors back to the UI's
+        /// device-revoke-plan card so the user can retry / dismiss.
+        pub fn remove_member_by_principal(
+            &mut self,
+            target_principal: &str,
+        ) -> anyhow::Result<MlsRemoveMemberResult> {
+            let group = self
+                .group
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+            let target = Did::new(target_principal.to_owned())?;
+            Ok(group.remove_member_by_principal(&target)?)
+        }
+
+        /// T31 — remove a single device leaf by raw OpenMLS leaf index.
+        /// Used when the caller maintains a (principal, device_id) → leaf
+        /// map and wants to revoke just one device of a multi-device
+        /// principal.
+        pub fn remove_member_by_leaf(
+            &mut self,
+            leaf_index: u32,
+        ) -> anyhow::Result<MlsRemoveMemberResult> {
+            let group = self
+                .group
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+            Ok(group.remove_member_by_leaf(leaf_index)?)
         }
 
         pub fn encrypt_message(
