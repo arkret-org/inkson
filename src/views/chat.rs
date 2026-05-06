@@ -279,20 +279,33 @@ pub fn ChatPanel(
                                 // announce / support / activity) is kept as a UI
                                 // category — it MAY be persisted as `fields.category`
                                 // when SDK exposes typed Flow field updates.
+                                //
+                                // Wire payload is built via the typed
+                                // `cx_ops::discussion_flow_create` helper which
+                                // serialises a full SDK `Flow::discussion()` object
+                                // (including the synthesis + discussion branches
+                                // array). This produces a canonical wire shape that
+                                // soland reducers aware of the typed Flow can
+                                // ingest directly; the legacy `kind: "discussion"`
+                                // top-level field stays for backward compat.
                                 let category = new_channel_kind();
                                 let topic = new_channel_topic().trim().to_owned();
                                 let flow_id = format!("cx:flow:{}", uuid_v8());
-                                let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
-                                let op = cx_ops::flow_create(
+                                let _rank = format!("r{}", chrono::Utc::now().timestamp_millis());
+                                let op = match cx_ops::discussion_flow_create(
                                     &space,
                                     &actor,
-                                    &space,
                                     &flow_id,
                                     &name,
-                                    "discussion",
-                                    &rank,
-                                )
-                                .build("yougen");
+                                ) {
+                                    Ok(builder) => builder.build("yougen"),
+                                    Err(error) => {
+                                        status_msg.set(format!(
+                                            "build flow.create failed: {error}"
+                                        ));
+                                        return;
+                                    }
+                                };
                                     let commit = CommitBuilder::new(actor.clone())
                                         .add_operation(op.clone())
                                         .build();

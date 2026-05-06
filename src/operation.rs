@@ -575,6 +575,52 @@ pub mod cx_ops {
             }))
     }
 
+    /// T21 — Build a `cx.flow.create` operation whose payload is the
+    /// canonical typed [`contrix_sdk::Flow::discussion`] shape:
+    /// `flow_kind = "discussion"`, `primary_branch = "discussion"`, and
+    /// the `branches` array containing both `synthesis` and
+    /// `discussion(primary, profile=discussion)` per
+    /// `models/object-model-standard.md` §5.
+    ///
+    /// Returns `Err` if `space_id` / `actor` are not parseable into typed
+    /// `SpaceId` / `Did` values; callers SHOULD validate inputs before
+    /// reaching this helper but the result is still safer than the
+    /// loose-string [`discussion_create`].
+    ///
+    /// Use this when you want the full canonical Flow payload (including
+    /// the branches array). Use [`discussion_create`] when you only need
+    /// the legacy minimal payload that older soland reducers accept.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn discussion_flow_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        title: &str,
+    ) -> anyhow::Result<OperationBuilder> {
+        use contrix_sdk::{Did, Flow, SpaceId};
+
+        let space = SpaceId::new(space_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid space_id: {e:?}"))?;
+        let did = Did::new(actor.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
+        let flow = Flow::discussion(flow_id.to_owned(), space, title.to_owned(), did);
+        let flow_value = serde_json::to_value(&flow)?;
+        Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(space_id)
+            .body(json!({
+                "list_id": space_id,
+                "flow_id": flow_id,
+                "title": title,
+                "kind": "discussion",
+                "rank": "r0",
+                // Full typed Flow payload — soland reducers that understand
+                // the canonical shape can ingest this directly; older
+                // reducers ignore the unknown field per Flow schema
+                // evolution rules (additive by default).
+                "flow": flow_value,
+            })))
+    }
+
     pub fn card_create_event(
         space_id: &str,
         actor: &str,
