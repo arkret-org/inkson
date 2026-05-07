@@ -18,6 +18,24 @@
 - `🔒` 多文件接线
 - `⚠` 需要服务端 / SDK / 安全协同
 
+## P0 · v1 wire model rework 客户端适配 ⚠
+
+> 起源：`contrix-spec` 2026-05-07 完成 Phase 1-5。详见根 [`../_todos.md` C10.D](../_todos.md)。
+>
+> Gate：依赖 contrix-rust-sdk W1-W13 升级（typed model）。本仓 client 端不要先于 SDK 在 raw JSON 上做 wire 改动。
+
+| # | 状态 | 任务 | 文件 | 依赖 |
+|---|---|---|---|---|
+| W1 ⚠ | `[ ]` | event surface diff 同步：active event kinds **110 → 129**（17 个 per-facet `cx.space.<facet>` + `cx.space.host` + `cx.space.host.transfer` + `cx.consent.grant` + `cx.consent.revoke`）；`src/conformance.rs` 的 hermetic diff 测试与同步脚本更新。 | `src/conformance.rs`、`src/views/space_admin.rs` (现有 1 处 stale state_key 引用)、`src/views/mod.rs` | SDK W12（major bump） |
+| W2 ⚠ | `[ ]` | 移除 client wire 中的 `state_key` 字段 / 旧聚合 kind 引用；跟随 SDK 升级一次性切换。 | `src/api.rs`、`src/sync.rs`、`src/views/space_admin.rs` | SDK W1-W4 |
+| W3 ⚠ | `[ ]` | **hub Space 写入路径**：`src/api.rs` 检测目标 Space 的 `space_writer_model`，hub Space 提交事件改走 `cx.space.host.payload.host_endpoint`（host endpoint 来自 `Space.space_host` DID Document service entry）。peer_mesh Space 保持当前直发 Principal Server 路径。 | `src/api.rs`、`src/sync.rs` | SDK W7-W8 |
+| W4 ⚠ | `[ ]` | **host_endorsement 接收侧验证**：`src/sync.rs` 收到 hub Space state event 后调 SDK helper `verify_host_endorsement`；缺失 endorsement 或 host_did 不匹配 → 标记 `proof_missing` / `host_mismatch` 不进入本地 state。 | `src/sync.rs` | SDK W6 |
+| W5 ⚠ | `[ ]` | **`pending_mls_binding` UI 信号**：E2EE Space 中"已 accepted 但 MLS 未 covered"过渡状态展示。例如 ban 已生效但密钥未轮换时 UI 提示"权限变更生效中…"。同时区分 `decryption_pending`（消息待密钥）与 `pending_mls_binding`（状态待绑定）。 | `src/views/chat.rs`、`src/views/space_admin.rs` | SDK W10 |
+| W6 ⚠ | `[ ]` | **Consent UI 完整面板**：(a) 邀请前置 gate——陌生人 invite 进 quarantine inbox，UI 提示 "X 想邀请你进 Y，是否同意？" 接受 → 写 `cx.consent.grant`；(b) 已授予 consent 列表 + scope 显示 + 撤销按钮（`cx.consent.revoke`）；(c) MIMI consent 互译走 SDK，不要自定义形态。 | 新 `src/views/consent.rs`、`src/views/inbox.rs`、`src/api.rs` | SDK W5 |
+| W7 | host transfer 监控 UI（仅 admin 角色看见）：smooth transfer 触发后等 dual-sign / emergency transfer quorum 收集进度。普通用户视角不需要这些。 | 新 `src/views/space_admin/host_transfer.rs` | SDK W7 |
+
+---
+
 ## P0 · 真实登录 / session / push 主链路
 
 | # | 状态 | 任务 | 文件 | 依赖 |
@@ -60,6 +78,7 @@
 | C5 | recovery/key-backup/device verification UI 已有 scaffold API 调用面；剩余是接 durable API 和真实 device verification。 |
 | C6 | 当 soland 暴露 optional StarID resolver profile 时，客户端需要展示 resolver/profile 状态但不把 `did:webvh` 当 v1 core 必选。 |
 | C8 | 给 cotest/example-stack 提供 headless happy path。 |
+| C10.D | **客户端适配 spec Phase 1-5 wire 改动**——P0 W1-W7 是本仓全部 C10 任务。需要 SDK W1-W13 先就位；之后 P0 主链路（A1-A4）可与 W3/W4/W6 并行。 |
 
 ## 已完成（changelog）
 
