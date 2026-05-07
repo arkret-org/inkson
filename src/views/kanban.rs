@@ -341,6 +341,51 @@ pub fn KanbanPanel(
         }
     });
 
+    // T20 — auto-refresh-on-mount. The component renders SeedFallback
+    // synchronously, then immediately fires a single async fetch against
+    // soland's `/api/v1/views/:id/projection`. Success promotes the board
+    // to ApiDerived; failure leaves the seed in place with a status note.
+    // The `bootstrapped` guard ensures we run this only once per mount —
+    // matching the login view's `auto_capture_bootstrapped` pattern so a
+    // second render (e.g. from a parent signal) doesn't re-trigger the
+    // fetch.
+    let mut bootstrapped = use_signal(|| false);
+    let auto_base = base_url.clone();
+    let auto_token = token;
+    use_future(move || {
+        let base = auto_base.clone();
+        async move {
+            if bootstrapped() {
+                return;
+            }
+            bootstrapped.set(true);
+            let api_token = auto_token();
+            let api = match crate::views::helpers::authed_api(&base, api_token) {
+                Ok(api) => api,
+                Err(_) => return,
+            };
+            match api.collection_projection(view_id).await {
+                Ok(projection) => {
+                    let cols = collection_projection_to_columns(&projection);
+                    if !cols.is_empty() {
+                        columns.set(cols);
+                    }
+                    projection_source.set(BoardProjectionSource::ApiDerived);
+                    board_status.set(format!(
+                        "API projection · {} groups · view={}",
+                        projection.groups.len(),
+                        projection.view_id.as_str()
+                    ));
+                }
+                Err(error) => {
+                    board_status.set(format!(
+                        "API projection unavailable on mount: {error}"
+                    ));
+                }
+            }
+        }
+    });
+
     rsx! {
         div { class: "timeline", "data-testid": "kanban-panel",
             div { class: "event",

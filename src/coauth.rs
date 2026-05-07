@@ -1,8 +1,11 @@
 use anyhow::Context;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::config::validate_server_url;
@@ -856,19 +859,30 @@ pub fn build_oidc_scaffold_bundle(
     device_id: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
+    // Validation only — keep the previous side effect of bailing on a bad
+    // principal server URL before we generate PKCE state.
+    let _ = principal_server_url;
     let principal_audience = principal_audience(principal_server_url.as_str())?;
     let callback_uri = current_oidc_redirect_uri();
     let client_id = resolve_oidc_client_id(topology, callback_uri.as_str())?;
-    let state = format!("cx-state-{}", scaffold_slug(actor_did, device_id, "state"));
-    let nonce = format!("cx-nonce-{}", scaffold_slug(actor_did, device_id, "nonce"));
-    let code_verifier = format!(
-        "cx-pkce-verifier-{}",
-        scaffold_slug(actor_did, device_id, "verifier")
-    );
-    let code_challenge = format!(
-        "TODO-S256-{}",
-        scaffold_slug(actor_did, device_id, "challenge")
-    );
+    // RFC 6749 §10.12 / RFC 7636: state, nonce, and PKCE verifier MUST be
+    // unguessable per-flow values. The previous scaffold used deterministic
+    // strings derived from (actor_did, device_id), which would let an
+    // attacker who learned the DID + device id forge a matching callback
+    // payload. Replace with cryptographically random tokens and the spec
+    // S256 challenge transformation.
+    let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
+    let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
+    let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;
+    let _ = (actor_did, device_id); // no longer factored into PKCE state
+    let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
+    let code_challenge = match pkce_method {
+        Some("plain") => code_verifier.clone(),
+        // S256 is the spec-default + only other value we negotiate, so
+        // when the topology is silent we still emit an S256 challenge —
+        // the authorize URL builder simply omits it for non-PKCE flows.
+        _ => pkce_code_challenge_s256(&code_verifier),
+    };
     let authorize_url = build_authorize_url(
         topology,
         client_id.as_str(),
@@ -889,7 +903,7 @@ pub fn build_oidc_scaffold_bundle(
         authorize_url,
         callback_uri,
         principal_audience,
-        todo: "TODO: replace the deterministic scaffold state/nonce/challenge with real browser-generated PKCE material and a callback handler that captures the returned authorization code automatically.",
+        todo: "TODO: capture the returned authorization code automatically (the PKCE state, nonce, and S256 challenge are now generated from a cryptographic RNG; remaining gap is a callback handler + token-endpoint exchange).",
     })
 }
 
@@ -1254,14 +1268,164 @@ fn value_string(value: &Value, field: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn scaffold_slug(actor_did: &str, device_id: &str, label: &str) -> String {
-    let mut out = String::new();
-    for ch in format!("{label}-{actor_did}-{device_id}").chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
+/// Random byte length for OIDC `state` and `nonce` parameters. 16 bytes →
+/// 22-character URL-safe base64 token, well above the 128-bit unguessability
+/// threshold RFC 6749 §10.12 calls for.
+const STATE_NONCE_TOKEN_BYTES: usize = 16;
+
+/// Random byte length for the PKCE `code_verifier` (RFC 7636 §4.1). 32 bytes
+/// → 43-character URL-safe base64 string, the lower bound the spec allows
+/// (43-128 chars). Length is fixed across browser/native to keep S256
+/// challenge byte size constant.
+const PKCE_VERIFIER_BYTES: usize = 32;
+
+fn random_url_safe_token(byte_len: usize) -> anyhow::Result<String> {
+    let mut buf = vec![0u8; byte_len];
+    getrandom::fill(&mut buf)
+        .map_err(|error| anyhow::anyhow!("getrandom failed: {error}"))?;
+    Ok(URL_SAFE_NO_PAD.encode(&buf))
+}
+
+fn pkce_code_challenge_s256(code_verifier: &str) -> String {
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PKCE verifier MUST be 43 chars for our 32-byte seed (RFC 7636 §4.1
+    /// allows 43-128). Any drift from 32-byte seeds breaks the S256 fixed
+    /// challenge size; pin it so a future refactor catches the mismatch.
+    #[test]
+    fn pkce_verifier_is_url_safe_43_chars() {
+        let verifier = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
+        assert_eq!(verifier.len(), 43, "32-byte seed → 43-char URL-safe base64");
+        assert!(
+            verifier.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            "must be URL-safe base64 (no padding, no +/)"
+        );
+    }
+
+    /// Two consecutive verifier draws MUST differ. If `random_url_safe_token`
+    /// ever falls back to a deterministic source this test fires.
+    #[test]
+    fn random_tokens_are_unguessable() {
+        let a = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
+        let b = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
+        assert_ne!(a, b, "RNG must not return the same value twice in a row");
+    }
+
+    /// S256 challenge for a known verifier matches the RFC 7636 Appendix B
+    /// test vector — confirms we hash the right bytes and base64-encode
+    /// without padding.
+    #[test]
+    fn s256_challenge_matches_rfc7636_test_vector() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = pkce_code_challenge_s256(verifier);
+        assert_eq!(
+            challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "S256 challenge MUST match RFC 7636 Appendix B"
+        );
+    }
+
+    /// State and nonce tokens for the same input MUST diverge. The previous
+    /// scaffold derived both from `(actor_did, device_id, label)` so they
+    /// were predictable; this regression test pins the new behaviour.
+    #[test]
+    fn state_and_nonce_diverge_for_same_caller() {
+        let topology = test_topology();
+        let bundle_a = build_oidc_scaffold_bundle(
+            &topology,
+            "https://principal.example",
+            "did:web:alice.example",
+            "device-aaaa-1111",
+        )
+        .unwrap();
+        let bundle_b = build_oidc_scaffold_bundle(
+            &topology,
+            "https://principal.example",
+            "did:web:alice.example",
+            "device-aaaa-1111",
+        )
+        .unwrap();
+        assert_ne!(
+            bundle_a.state, bundle_b.state,
+            "same caller MUST get different state across calls"
+        );
+        assert_ne!(
+            bundle_a.nonce, bundle_b.nonce,
+            "same caller MUST get different nonce across calls"
+        );
+        assert_ne!(
+            bundle_a.code_verifier, bundle_b.code_verifier,
+            "same caller MUST get different verifier across calls"
+        );
+        assert_ne!(
+            bundle_a.state, bundle_a.nonce,
+            "state and nonce MUST be independent draws"
+        );
+    }
+
+    /// The bundle's `code_challenge` MUST be S256(code_verifier) when the
+    /// topology supports S256 — anything else means the authorize URL we
+    /// hand to the browser cannot complete the PKCE check.
+    #[test]
+    fn bundle_challenge_is_s256_of_verifier_when_supported() {
+        let topology = test_topology();
+        let bundle = build_oidc_scaffold_bundle(
+            &topology,
+            "https://principal.example",
+            "did:web:alice.example",
+            "device-bbbb-2222",
+        )
+        .unwrap();
+        assert_eq!(
+            bundle.code_challenge,
+            pkce_code_challenge_s256(&bundle.code_verifier),
+            "S256 topology must produce S256(verifier) challenge"
+        );
+    }
+
+    fn test_topology() -> CoauthTopologySnapshot {
+        CoauthTopologySnapshot {
+            service_did: None,
+            service_type: None,
+            protocol_version: None,
+            identity_service_did: None,
+            issuer: "https://issuer.example".to_owned(),
+            authorization_endpoint: "https://issuer.example/auth".to_owned(),
+            token_endpoint: Some("https://issuer.example/token".to_owned()),
+            userinfo_endpoint: Some("https://issuer.example/userinfo".to_owned()),
+            code_challenge_methods_supported: vec!["S256".to_owned()],
+            scopes_supported: vec!["openid".to_owned()],
+            oidc_clients: vec![CoauthOidcClientHint {
+                id: "test-client".to_owned(),
+                client_id: "yougen-test".to_owned(),
+                client_name: None,
+                redirect_uris: vec![current_oidc_redirect_uri()],
+                grant_types: vec!["authorization_code".to_owned()],
+                token_endpoint_auth_method: Some("none".to_owned()),
+            }],
+            oidc_browser_bridge_session_path: "api/v1/auth/oidc/browser-bridge/session"
+                .to_owned(),
+            oidc_exchange_describe_path: "api/v1/auth/oidc/exchange/describe".to_owned(),
+            oidc_exchange_path: "api/v1/auth/oidc/exchange".to_owned(),
+            auth_bridge_contract: "auth-bridge".to_owned(),
+            auth_bridge_todos: Vec::new(),
+            integration_manifest: CoauthIntegrationManifest {
+                contract: "integration".to_owned(),
+                version: "1".to_owned(),
+                service: "coauth".to_owned(),
+                service_kind: "auth".to_owned(),
+                api_base_path: "/api/v1".to_owned(),
+                describe_path: "describe".to_owned(),
+                dependencies: Vec::new(),
+                surfaces: Vec::new(),
+                examples: Value::Null,
+                todos: Vec::new(),
+            },
         }
     }
-    out.trim_matches('-').to_owned()
 }

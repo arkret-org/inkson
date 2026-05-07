@@ -113,64 +113,159 @@ pub fn DevicesPanel(
                     button {
                         class: "secondary",
                         "data-testid": "queue-verification-request",
-                        onclick: move |_| {
-                            let device_id = device_id_request.clone();
-                            let mut queue = to_device_messages();
-                            queue.insert(0, json!({
-                                "type": "cx.key.verification.request",
-                                "sender_device_id": device_id.clone(),
-                                "recipient_device_id": device_id,
-                                "content": {
+                        onclick: {
+                            // R3 — `cx.key.verification.request` is the first device
+                            // message in a SAS / QR verification chain. We optimistically
+                            // insert into the local inbox and then PUT
+                            // `/api/v1/device_messages/{txn}` so soland routes the
+                            // event to the recipient device.
+                            let base = base_url_c.clone();
+                            let dev_id = device_id_request.clone();
+                            move |_| {
+                                let device_id = dev_id.clone();
+                                let txn_id = format!("verify-request-{}", chrono::Utc::now().timestamp_millis());
+                                let content = json!({
                                     "method": "sas",
-                                    "transaction_id": "verify-scaffold-request"
-                                },
-                                "todo": "replace local scaffold with outbound /api/v1/device_messages PUT"
-                            }));
-                            to_device_messages.set(queue);
-                            crypto_state.set("Queued local verification.request scaffold".to_owned());
+                                    "transaction_id": txn_id.clone(),
+                                });
+                                let mut queue = to_device_messages();
+                                queue.insert(0, json!({
+                                    "type": "cx.key.verification.request",
+                                    "sender_device_id": device_id.clone(),
+                                    "recipient_device_id": device_id.clone(),
+                                    "txn_id": txn_id.clone(),
+                                    "content": content.clone(),
+                                }));
+                                to_device_messages.set(queue);
+                                crypto_state.set("Submitting cx.key.verification.request".to_owned());
+                                let base = base.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api
+                                            .send_device_message_envelope(
+                                                &txn_id,
+                                                &device_id,
+                                                &device_id,
+                                                "cx.key.verification.request",
+                                                content,
+                                            )
+                                            .await
+                                        {
+                                            Ok(resp) => crypto_state.set(format!(
+                                                "cx.key.verification.request delivered ok={} txn={}",
+                                                resp.ok, txn_id
+                                            )),
+                                            Err(error) => crypto_state.set(format!(
+                                                "cx.key.verification.request failed: {error}"
+                                            )),
+                                        }
+                                    }
+                                });
+                            }
                         },
-                        "Queue request scaffold"
+                        "Send verification.request"
                     }
                     button {
                         class: "secondary",
                         "data-testid": "queue-verification-ready",
-                        onclick: move |_| {
-                            let device_id = device_id_ready.clone();
-                            let mut queue = to_device_messages();
-                            queue.insert(0, json!({
-                                "type": "cx.key.verification.ready",
-                                "sender_device_id": device_id.clone(),
-                                "recipient_device_id": device_id,
-                                "content": {
+                        onclick: {
+                            let base = base_url_c.clone();
+                            let dev_id = device_id_ready.clone();
+                            move |_| {
+                                let device_id = dev_id.clone();
+                                let txn_id = format!("verify-ready-{}", chrono::Utc::now().timestamp_millis());
+                                let content = json!({
                                     "methods": ["sas", "qr"],
-                                    "transaction_id": "verify-scaffold-ready"
-                                },
-                                "todo": "replace local scaffold with signed device envelope"
-                            }));
-                            to_device_messages.set(queue);
-                            crypto_state.set("Queued local verification.ready scaffold".to_owned());
+                                    "transaction_id": txn_id.clone(),
+                                });
+                                let mut queue = to_device_messages();
+                                queue.insert(0, json!({
+                                    "type": "cx.key.verification.ready",
+                                    "sender_device_id": device_id.clone(),
+                                    "recipient_device_id": device_id.clone(),
+                                    "txn_id": txn_id.clone(),
+                                    "content": content.clone(),
+                                }));
+                                to_device_messages.set(queue);
+                                crypto_state.set("Submitting cx.key.verification.ready".to_owned());
+                                let base = base.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api
+                                            .send_device_message_envelope(
+                                                &txn_id,
+                                                &device_id,
+                                                &device_id,
+                                                "cx.key.verification.ready",
+                                                content,
+                                            )
+                                            .await
+                                        {
+                                            Ok(resp) => crypto_state.set(format!(
+                                                "cx.key.verification.ready delivered ok={} txn={}",
+                                                resp.ok, txn_id
+                                            )),
+                                            Err(error) => crypto_state.set(format!(
+                                                "cx.key.verification.ready failed: {error}"
+                                            )),
+                                        }
+                                    }
+                                });
+                            }
                         },
-                        "Queue ready scaffold"
+                        "Send verification.ready"
                     }
                     button {
                         class: "secondary",
                         "data-testid": "queue-verification-done",
-                        onclick: move |_| {
-                            let device_id = device_id_done.clone();
-                            let mut queue = to_device_messages();
-                            queue.insert(0, json!({
-                                "type": "cx.key.verification.done",
-                                "sender_device_id": device_id.clone(),
-                                "recipient_device_id": device_id,
-                                "content": {
-                                    "transaction_id": "verify-scaffold-done"
-                                },
-                                "todo": "replace local scaffold with verified-device trust writeback"
-                            }));
-                            to_device_messages.set(queue);
-                            crypto_state.set("Queued local verification.done scaffold".to_owned());
+                        onclick: {
+                            let base = base_url_c.clone();
+                            let dev_id = device_id_done.clone();
+                            move |_| {
+                                let device_id = dev_id.clone();
+                                let txn_id = format!("verify-done-{}", chrono::Utc::now().timestamp_millis());
+                                let content = json!({
+                                    "transaction_id": txn_id.clone(),
+                                });
+                                let mut queue = to_device_messages();
+                                queue.insert(0, json!({
+                                    "type": "cx.key.verification.done",
+                                    "sender_device_id": device_id.clone(),
+                                    "recipient_device_id": device_id.clone(),
+                                    "txn_id": txn_id.clone(),
+                                    "content": content.clone(),
+                                }));
+                                to_device_messages.set(queue);
+                                crypto_state.set("Submitting cx.key.verification.done".to_owned());
+                                let base = base.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api
+                                            .send_device_message_envelope(
+                                                &txn_id,
+                                                &device_id,
+                                                &device_id,
+                                                "cx.key.verification.done",
+                                                content,
+                                            )
+                                            .await
+                                        {
+                                            Ok(resp) => crypto_state.set(format!(
+                                                "cx.key.verification.done delivered ok={} txn={}",
+                                                resp.ok, txn_id
+                                            )),
+                                            Err(error) => crypto_state.set(format!(
+                                                "cx.key.verification.done failed: {error}"
+                                            )),
+                                        }
+                                    }
+                                });
+                            }
                         },
-                        "Queue done scaffold"
+                        "Send verification.done"
                     }
                 }
             }

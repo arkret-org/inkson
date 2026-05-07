@@ -903,20 +903,38 @@ impl ContrixApi {
         actor: &str,
         device_id: &str,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
-        self.put_json(
-            "api/v1/device_messages/yougen-txn-1",
-            json!({
-                "messages": {
-                    actor: {
-                        device_id: {
-                            "type": "cx.mls.test",
-                            "content": {"ciphertext": "opaque-yougen-test"}
-                        }
-                    }
-                }
-            }),
+        self.send_device_message_envelope(
+            "yougen-txn-1",
+            actor,
+            device_id,
+            "cx.mls.test",
+            json!({"ciphertext": "opaque-yougen-test"}),
         )
         .await
+    }
+
+    /// PUT a typed `cx.schema.device_message.v1` envelope to soland's
+    /// `/api/v1/device_messages/{txn_id}` endpoint. Used by device
+    /// verification flows (R3) and any other flow that needs to deliver a
+    /// message to a specific (actor, device_id) pair without going through
+    /// Space history. The body shape is the canonical
+    /// `messages -> actor -> device_id -> {type, content}` map.
+    pub async fn send_device_message_envelope(
+        &self,
+        txn_id: &str,
+        target_actor: &str,
+        target_device_id: &str,
+        message_type: &str,
+        content: serde_json::Value,
+    ) -> anyhow::Result<DeviceMessagesSendResponse> {
+        let path = format!("api/v1/device_messages/{txn_id}");
+        let payload = build_device_message_envelope(
+            target_actor,
+            target_device_id,
+            message_type,
+            content,
+        );
+        self.put_json(&path, payload).await
     }
 
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResponse> {
@@ -2206,6 +2224,41 @@ impl ContrixApi {
     }
 }
 
+/// Build the canonical `cx.schema.device_message.v1` envelope:
+///
+/// ```json
+/// {
+///   "messages": {
+///     "<target_actor_did>": {
+///       "<target_device_id>": {
+///         "type": "<message_type>",
+///         "content": <content>
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// Pure function so the wire shape is testable without a live HTTP
+/// client; used by [`ContrixApi::send_device_message_envelope`] (R3).
+pub fn build_device_message_envelope(
+    target_actor: &str,
+    target_device_id: &str,
+    message_type: &str,
+    content: serde_json::Value,
+) -> serde_json::Value {
+    json!({
+        "messages": {
+            target_actor: {
+                target_device_id: {
+                    "type": message_type,
+                    "content": content,
+                }
+            }
+        }
+    })
+}
+
 /// Project chime's full [`RegisterDeviceResponse`](chime::RegisterDeviceResponse)
 /// onto yougen's slimmer `PushRegisterResponse` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
@@ -2455,5 +2508,58 @@ mod tests {
                 .to_string()
                 .contains("HTTPS is required for non-local servers")
         );
+    }
+
+    /// R3 — `build_device_message_envelope` MUST emit the canonical
+    /// `cx.schema.device_message.v1` shape:
+    /// `{messages: {<actor>: {<device_id>: {type, content}}}}`. soland's
+    /// reducer keys verification events by this exact path; if the wire
+    /// shape drifts (extra wrapping, missing layer, etc.) device verification
+    /// silently fails because the message never reaches the target device.
+    /// This test pins the bytes so a refactor cannot change them by accident.
+    #[test]
+    fn device_message_envelope_matches_schema_v1() {
+        let envelope = build_device_message_envelope(
+            "did:web:alice.example",
+            "device-aaaa-1111",
+            "cx.key.verification.request",
+            json!({
+                "method": "sas",
+                "transaction_id": "verify-001"
+            }),
+        );
+        assert_eq!(
+            envelope,
+            json!({
+                "messages": {
+                    "did:web:alice.example": {
+                        "device-aaaa-1111": {
+                            "type": "cx.key.verification.request",
+                            "content": {
+                                "method": "sas",
+                                "transaction_id": "verify-001"
+                            }
+                        }
+                    }
+                }
+            }),
+            "wire shape must remain `messages → actor → device_id → {{type, content}}`",
+        );
+    }
+
+    /// R3 — empty content is still a valid envelope. `cx.key.verification.done`
+    /// for example carries only a transaction id; the test ensures we don't
+    /// require a populated content map.
+    #[test]
+    fn device_message_envelope_accepts_minimal_content() {
+        let envelope = build_device_message_envelope(
+            "did:web:bob.example",
+            "device-bbbb-2222",
+            "cx.key.verification.done",
+            json!({"transaction_id": "verify-done-001"}),
+        );
+        let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
+        assert_eq!(inner["type"], "cx.key.verification.done");
+        assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
     }
 }
