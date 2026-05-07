@@ -795,7 +795,7 @@ pub fn build_chime_push_grant_plan(
         principal_audience,
         device_id: device_id.to_owned(),
         register_request_preview: serde_json::to_string_pretty(&register_request)?,
-        todo: "TODO: replace the scaffold push token/proof with live device material, then attach the coauth-issued soland grant when POSTing the chime register request to /api/v1/push/register-device.",
+        todo: "TODO: supply real OS / Web Push token material via PushTokenSource (the wire body and session-grant header are already wired through chime).",
     })
 }
 

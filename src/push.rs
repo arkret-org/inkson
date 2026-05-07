@@ -1,3 +1,5 @@
+use std::sync::{Arc, OnceLock};
+
 use chime::{
     PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
     PushPreferences, PushRegistrationState,
@@ -274,20 +276,66 @@ fn current_platform() -> &'static str {
     "desktop"
 }
 
+/// Pluggable source for the platform-specific push token bundled into a
+/// register-device request. Production OS / Web Push integrations register
+/// their own implementation via [`set_push_token_source`]; until that
+/// happens, [`DevPlaceholderTokenSource`] returns the development markers
+/// pinned by `tests/dev_token_guard.rs`. Real registrations stay gated by
+/// [`ensure_production_register_request`].
+pub trait PushTokenSource: Send + Sync {
+    fn current_token(&self, platform: &str) -> Option<String>;
+
+    fn rotate_token(&self, _platform: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Default token source; emits the well-known `yougen-dev-placeholder-token`
+/// markers per platform. Replaced via [`set_push_token_source`] once a real
+/// APNs / FCM / Web Push integration is wired in.
+#[derive(Clone, Debug, Default)]
+pub struct DevPlaceholderTokenSource;
+
+impl PushTokenSource for DevPlaceholderTokenSource {
+    fn current_token(&self, platform: &str) -> Option<String> {
+        Some(match platform {
+            "web" => "webpush:yougen-dev-placeholder-token".to_owned(),
+            _ => "desktop:yougen-dev-placeholder-token".to_owned(),
+        })
+    }
+}
+
+static PUSH_TOKEN_SOURCE: OnceLock<Arc<dyn PushTokenSource>> = OnceLock::new();
+
+/// Install the process-wide push token source. May be called at most once;
+/// subsequent calls are silently ignored so test fixtures and a host
+/// integration cannot conflict at runtime.
+pub fn set_push_token_source(source: Arc<dyn PushTokenSource>) {
+    let _ = PUSH_TOKEN_SOURCE.set(source);
+}
+
+fn push_token_source() -> Arc<dyn PushTokenSource> {
+    PUSH_TOKEN_SOURCE
+        .get()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(DevPlaceholderTokenSource))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn acquire_platform_push_key() -> String {
-    std::env::var("CHASK_PUSH_KEY").unwrap_or_else(|_| {
-        // TODO(push): replace this development token with OS/Web push token
-        // acquisition (APNs, FCM, Web Push, or desktop bridge) before release.
-        "desktop:yougen-dev-placeholder-token".to_owned()
-    })
+    if let Ok(env_key) = std::env::var("CHASK_PUSH_KEY") {
+        return env_key;
+    }
+    push_token_source()
+        .current_token(current_platform())
+        .unwrap_or_else(|| "desktop:yougen-dev-placeholder-token".to_owned())
 }
 
 #[cfg(target_arch = "wasm32")]
 fn acquire_platform_push_key() -> String {
-    // TODO(push): request Notification permission, create a PushSubscription,
-    // and serialize its endpoint/auth/p256dh values as the web push key.
-    "webpush:yougen-dev-placeholder-token".to_owned()
+    push_token_source()
+        .current_token(current_platform())
+        .unwrap_or_else(|| "webpush:yougen-dev-placeholder-token".to_owned())
 }
 
 #[cfg(test)]
@@ -301,6 +349,18 @@ mod tests {
         assert_eq!(request.app_id.as_deref(), Some("yougen"));
         assert_eq!(request.platform.as_deref(), Some(current_platform()));
         assert!(!request.push_key.is_empty());
+    }
+
+    #[test]
+    fn dev_placeholder_token_source_returns_pinned_markers() {
+        let source = DevPlaceholderTokenSource;
+        let desktop = source.current_token("desktop").unwrap();
+        let web = source.current_token("web").unwrap();
+        assert_eq!(desktop, "desktop:yougen-dev-placeholder-token");
+        assert_eq!(web, "webpush:yougen-dev-placeholder-token");
+        assert!(is_placeholder_push_key(&desktop));
+        assert!(is_placeholder_push_key(&web));
+        assert!(source.rotate_token("desktop").is_none());
     }
 
     #[test]
@@ -347,6 +407,8 @@ mod tests {
                 ..Default::default()
             },
             examples: Default::default(),
+            provider_capabilities_version: None,
+            provider_capabilities: Vec::new(),
             todos: vec!["TODO(push-bridge)".to_owned()],
         });
 

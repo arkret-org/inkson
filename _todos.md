@@ -5,9 +5,10 @@
 
 ## 当前状态摘要
 
-- event kind surface 已对齐 `contrix-spec` 110 active kinds（新增 `cx.profile.create`），并落地 `tests/fixtures/event-kind-registry.snapshot.txt` + `event-kind-wire-scopes.snapshot.tsv` 的 hermetic diff 测试 + `scripts/sync-event-kind-registry.ps1` 同步脚本；spec 漂移由 conformance 测试触发 tripwire。
-- UI 层已经大量暴露 flow / recovery / device / audit / policy 概念；recovery/restore scaffold surface 已被 cotest release gate 覆盖；push placeholder 现已被 `tests/dev_token_guard.rs` + `push::ensure_production_register_request()` 锁住，不会无声 ship；OIDC、recovery durable state、device verification 仍有 scaffold 路径。
-- 客户端主线目标: `coauth -> soland session grant -> chime/floria push -> soland recovery/device` 不再依赖手写 preview payload。当前 session-grant API 已能携带 soland introspection proof；本地 JWS proof 生成和真实 token 生命周期仍未完成。
+- event kind surface 已对齐 110 active kinds + hermetic diff 测试 + 同步脚本。
+- UI 层已暴露 flow / recovery / device / audit / policy 概念；recovery/restore scaffold surface 已被 cotest release gate 覆盖。
+- push placeholder 已被 `tests/dev_token_guard.rs` + `push::ensure_production_register_request()` 锁住。
+- 主线目标: `coauth -> soland session grant -> chime/floria push -> soland recovery/device` 不再依赖手写 preview payload。
 
 ## 标记说明
 
@@ -23,7 +24,7 @@
 |---|---|---|---|---|
 | A1 ⚠ | `[ ]` | OIDC browser flow 去 scaffold | `src/coauth.rs`、`src/views/login.rs` | `coauth` 持久化 state/nonce/PKCE、真实 code exchange。 |
 | A2 ⚠ | `[~]` | session-grant exchange 真实化 | `src/coauth.rs`、`src/api.rs`、auth/session store | 已能接收 coauth grant id 并向 soland exchange API 携带可选 introspection proof；剩余：根据 grant id / challenge 生成 session-key JWS proof、持久化 token 生命周期、去掉 dev-token fallback。 |
-| A3 ⚠ | `[ ]` | push register 替换 dev token / 手写 body | `src/push.rs`、`src/views/login.rs` | `chime::ContrixPushClient`、OS/WebPush real token、`floria` bridge describe。 |
+| A3 ⚠ | `[~]` | push register 替换 dev token / 手写 body | `src/push.rs`、`src/api.rs`、`src/views/login.rs` | 已落地：`PushTokenSource` trait + `DevPlaceholderTokenSource` 默认实现 + 注入点；register/unregister 端到端走 `chime::ContrixPushClient::{register,unregister}_device_with_request`，bridge-discovered path 由 `with_register_device_path` 注入。剩余：真实 OS / Web Push token 接入。 |
 | A4 🔒 | `[ ]` | 主会话 token 生命周期 | auth store / app shell | 提前 refresh、logout 清理、跨窗口状态同步，和 sodmin/coauth 安全策略对齐。 |
 
 ## P1 · Recovery / Device / Crypto
@@ -42,9 +43,6 @@
 |---|---|---|---|---|
 | F1 ⚠ | `[ ]` | Kanban 协议化 | `src/views/kanban.rs` | 替换 seed columns 为 API-derived flow/view projection。 |
 | F2 ⚠ | `[ ]` | Chat/message canonical 切换 | `src/views/chat.rs`、message builder | 从展示 `flow(kind=room)` 词汇推进到真实 message canonical write/read。 |
-| F3 🅿 | `[x]` | Presence / typing ephemeral runtime | `src/views/chat.rs` | 展示不写 durable history，和 sync runtime 区分。chat banner 现在从 `conformance::ephemeral_event_kinds()` 派生，typed `EventKindWireScope` 由 wire-scope 快照测试守住。 |
-| F4 🅿 | `[x]` | Call signaling runtime | `src/views/call.rs` | `cx.call.signal/state` ephemeral；`recording.start` capability-gated durable。call banner 改用 `event_kind_wire_scope()` 渲染 scope 标签；同时纠正了 `cx.call.state` 在 wire 上其实是 durable 的旧错。 |
-| F5 🅿 | `[x]` | profile/event coverage diff 自动化 | tests / scripts | 跟随 `contrix-spec` artifact count 变化，避免再出现覆盖数字过期。`tests/fixtures/event-kind-registry.snapshot.txt` + `event-kind-wire-scopes.snapshot.tsv` + `scripts/sync-event-kind-registry.ps1`；conformance 里跑 hermetic diff 测试。 |
 
 ## P3 · 测试 / 发布质量
 
@@ -52,7 +50,6 @@
 |---|---|---|---|---|
 | Q1 🅿 | `[ ]` | e2e 覆盖 OIDC -> session grant -> push register | `tests/e2e/*` | 先走 compose harness。 |
 | Q2 🅿 | `[ ]` | recovery happy path e2e | `tests/e2e/*` | 依赖 soland/coauth durable recovery。 |
-| Q3 🅿 | `[x]` | privacy/dev-token regression tests | `tests/*` | production build 不得发送 placeholder push token / dev-proof。`push::is_placeholder_push_key` + `ensure_production_register_request` + `tests/dev_token_guard.rs` 五项断言锁住 placeholder 不会无声 ship；登录链路接入仍归 A3。 |
 
 ## 跨项目登记
 
@@ -60,13 +57,16 @@
 |---|---|
 | C3 | 已具备携带 introspection proof 的 API surface；剩余 JWS proof 生成、session store 和 UI 流程替换。 |
 | C4 | 用 chime/floria 做真实 push register 和 token rotation。 |
-| C5 | recovery/key-backup/device verification UI 已有 scaffold API 调用面，cotest release gate 覆盖 soland restore surface；剩余是接 durable API 和真实 device verification。 |
+| C5 | recovery/key-backup/device verification UI 已有 scaffold API 调用面；剩余是接 durable API 和真实 device verification。 |
 | C6 | 当 soland 暴露 optional StarID resolver profile 时，客户端需要展示 resolver/profile 状态但不把 `did:webvh` 当 v1 core 必选。 |
 | C8 | 给 cotest/example-stack 提供 headless happy path。 |
 
-## 已完成（短 changelog）
+## 已完成（changelog）
 
-- `[x]` T80-T92 的协议 surface 展示已经完成；原列表不再作为开放任务保留。
-- `[x]` Onboarding 路由拆分、chat 词汇对齐 `flow(kind=room)`、最后一批 event kind surface 已完成。
-- `[x]` 旧 card/room-first 视图已基本迁到 flow-first 信息架构；真实数据面仍由 P0/P1/P2 跟进。
-- `[x]` 2026-05-07 — F5 / Q3 / F3 / F4：补 `cx.profile.create` 至 110 kinds、新增 wire-scope typed classifier 与两份 hermetic snapshot 测试、PowerShell 同步脚本；push placeholder 守卫 + 5 条 regression test；chat / call banner 切到从 `conformance` 派生 scope 标签。
+- `[x]` T80-T92 的协议 surface 展示。
+- `[x]` Onboarding 路由拆分、chat 词汇对齐 `flow(kind=room)`、最后一批 event kind surface。
+- `[x]` 旧 card/room-first 视图已基本迁到 flow-first 信息架构。
+- `[x]` F3 Presence / typing ephemeral runtime。
+- `[x]` F4 Call signaling runtime。
+- `[x]` F5 profile/event coverage diff 自动化（snapshot 测试 + 同步脚本）。
+- `[x]` Q3 privacy/dev-token regression tests（`push::is_placeholder_push_key` + `ensure_production_register_request` + `tests/dev_token_guard.rs`）。

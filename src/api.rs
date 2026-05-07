@@ -7,11 +7,11 @@ use std::{
     time::Duration,
 };
 
-use chime::{RegisterDeviceRequest, UnregisterDeviceRequest};
+use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
 use reqwest::{
     Client, Method, StatusCode,
-    header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER},
+    header::{HeaderMap, RETRY_AFTER},
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -797,31 +797,25 @@ impl ContrixApi {
         path: &str,
         request: &RegisterDeviceRequest,
     ) -> anyhow::Result<PushRegisterResponse> {
-        self.post_json(path, serde_json::to_value(request)?).await
+        let response = self
+            .push_client(Some(path), None)
+            .register_device_with_request(request, request.idempotency_key.as_deref(), None)
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(map_chime_register_response(response.body))
     }
 
     pub async fn register_push_device_with_request(
         &self,
         request: &RegisterDeviceRequest,
     ) -> anyhow::Result<PushRegisterResponse> {
-        self.register_push_device_with_request_at("api/v1/push/register-device", request)
+        // Default register path is hardcoded in chime; pass `None` so it's used.
+        let response = self
+            .push_client(None, None)
+            .register_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
-    }
-
-    pub async fn register_push_device_with_session_grant(
-        &self,
-        request: &RegisterDeviceRequest,
-        session_grant: &str,
-    ) -> anyhow::Result<PushRegisterResponse> {
-        let request = self
-            .http
-            .post(self.endpoint("api/v1/push/register-device")?)
-            .header(
-                HeaderName::from_bytes(chime::CONTRIX_SESSION_GRANT_HEADER.as_bytes())?,
-                HeaderValue::from_str(session_grant)?,
-            )
-            .json(request);
-        self.send_json(self.prepare_request(request), Method::POST).await
+            .map_err(anyhow::Error::from)?;
+        Ok(map_chime_register_response(response.body))
     }
 
     pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
@@ -833,11 +827,36 @@ impl ContrixApi {
         &self,
         request: &UnregisterDeviceRequest,
     ) -> anyhow::Result<OkResponse> {
-        self.post_json(
-            "api/v1/push/unregister-device",
-            serde_json::to_value(request)?,
-        )
-        .await
+        let response = self
+            .push_client(None, None)
+            .unregister_device_with_request(request, request.idempotency_key.as_deref(), None)
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(OkResponse { ok: response.body.ok })
+    }
+
+    /// Build a [`ContrixPushClient`] that mirrors this api client's auth
+    /// state. Optional `register_device_path` / `unregister_device_path`
+    /// honor a bridge-discovered endpoint.
+    fn push_client(
+        &self,
+        register_device_path: Option<&str>,
+        unregister_device_path: Option<&str>,
+    ) -> ContrixPushClient {
+        // yougen does not currently fail-closed on session grant for push;
+        // the access_token is the session's bearer credential.
+        let mut client =
+            ContrixPushClient::new(self.base_url.as_str()).with_required_session_grant(false);
+        if let Some(token) = self.access_token.as_deref() {
+            client = client.with_bearer_token(token);
+        }
+        if let Some(path) = register_device_path {
+            client = client.with_register_device_path(path);
+        }
+        if let Some(path) = unregister_device_path {
+            client = client.with_unregister_device_path(path);
+        }
+        client
     }
 
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResponse> {
@@ -2184,6 +2203,19 @@ impl ContrixApi {
         request
             .header("x-contrix-request-id", request_id)
             .header("idempotency-key", request_id)
+    }
+}
+
+/// Project chime's full [`RegisterDeviceResponse`](chime::RegisterDeviceResponse)
+/// onto yougen's slimmer `PushRegisterResponse` view (the upstream
+/// fields not modelled here are intentionally dropped for now).
+fn map_chime_register_response(
+    response: chime::RegisterDeviceResponse,
+) -> PushRegisterResponse {
+    PushRegisterResponse {
+        ok: response.ok,
+        registration_id: response.registration_id,
+        expires_at: response.expires_at,
     }
 }
 
