@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 This audit compares the refreshed full application design pages with the current Dioxus implementation.
 
-> 2026-05-04 update: 增补的 `claude-design/`（基于 `contrix-spec/zh/` 协议规范的客户端 UI 设计稿）覆盖了桌面与移动两个版本，并把 Onboarding / Recovery / Applets / Trust Bundle 等本仓库尚未承载的页面补齐。详细任务列表见仓库根 [`_todos.md`](../_todos.md)。本审计表的 follow-up 列在持续追踪中，新发现的 gap 优先记入 `_todos.md`。
+> 2026-05-04 update: 增补的 `claude-design/`（基于 `contrix-spec/spec/v1/zh/` 协议规范的客户端 UI 设计稿）覆盖了桌面与移动两个版本，并把 Onboarding / Recovery / Applets / Trust Bundle 等本仓库尚未承载的页面补齐。详细任务列表见仓库根 [`_todos.md`](../_todos.md)。本审计表的 follow-up 列在持续追踪中，新发现的 gap 优先记入 `_todos.md`。
 
 | Design page | Current frontend area | Current state | Follow-up |
 | --- | --- | --- | --- |

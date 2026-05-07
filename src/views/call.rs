@@ -1,6 +1,10 @@
 use dioxus::prelude::*;
 
-use crate::{models::IceConfigResponse, views::helpers::authed_api};
+use crate::{
+    conformance::{EventKindWireScope, event_kind_wire_scope},
+    models::IceConfigResponse,
+    views::helpers::authed_api,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CallState {
@@ -67,11 +71,21 @@ pub fn CallPanel(base_url: String, token: Signal<String>) -> Element {
                     }
                 }
                 // Three canonical call events — webrtc-signaling.md §4
+                // The badges below derive their scope label from the typed
+                // classifier, so the conformance snapshot test catches a spec
+                // rescope here without us editing the markup again.
                 div { class: "actions", "data-testid": "call-event-kinds",
                     span { class: "muted", "Wire events:" }
-                    span { class: "badge blue", "cx.call.signal · ephemeral (offer/answer/ICE)" }
-                    span { class: "badge", "cx.call.state · ephemeral (ringing / in_call / ended)" }
-                    span { class: "badge red", "cx.call.recording.start · durable + capability gated" }
+                    {
+                        let signal_scope = call_kind_scope_label("cx.call.signal");
+                        let state_scope = call_kind_scope_label("cx.call.state");
+                        let recording_scope = call_kind_scope_label("cx.call.recording.start");
+                        rsx! {
+                            span { class: "badge blue", "cx.call.signal · {signal_scope} (offer/answer/ICE)" }
+                            span { class: "badge", "cx.call.state · {state_scope} (ringing / in_call / ended)" }
+                            span { class: "badge red", "cx.call.recording.start · {recording_scope} + capability gated" }
+                        }
+                    }
                 }
             }
 
@@ -366,6 +380,19 @@ fn refresh_ice_servers(
             Err(error) => status_msg.set(format!("Invalid URL: {error}")),
         }
     });
+}
+
+/// Render the typed `wire_scope` for a call-related kind as the human label
+/// shown in the protocol banner. Falls back to "unknown scope" for kinds the
+/// classifier doesn't recognise (which is itself caught by the conformance
+/// snapshot test, but the call view should still render rather than panic).
+fn call_kind_scope_label(kind: &str) -> &'static str {
+    match event_kind_wire_scope(kind) {
+        Some(EventKindWireScope::Ephemeral) => "ephemeral",
+        Some(EventKindWireScope::ActorPrivate) => "actor-private",
+        Some(EventKindWireScope::Durable) => "durable",
+        None => "unknown scope",
+    }
 }
 
 fn flatten_ice_servers(config: &IceConfigResponse) -> Vec<String> {

@@ -61,6 +61,8 @@ pub struct CoauthViewerInfo {
 pub struct CoauthSessionGrantInfo {
     #[serde(default)]
     pub kind: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
     pub grant_jwt: String,
     pub session_public_key: String,
     pub session_private_key_pem: String,

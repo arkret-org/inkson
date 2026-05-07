@@ -11,6 +11,41 @@ const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
 const DEFAULT_PUSH_GATEWAY: &str = "https://push.example/api/v1/push/notify";
 
+/// Markers embedded in development push tokens. Any push key containing one of
+/// these substrings is a build-time placeholder that must NEVER reach a
+/// production push gateway — see `tests/dev_token_guard.rs` for the regression
+/// suite that holds this invariant.
+pub const PLACEHOLDER_PUSH_KEY_MARKERS: &[&str] = &["placeholder", "yougen-dev-"];
+
+/// True when `key` carries one of the development placeholder markers. The
+/// login wiring uses this to gate registration against production push
+/// gateways; the regression test in `tests/dev_token_guard.rs` keeps the
+/// predicate honest as we add more `cfg`-specific defaults.
+pub fn is_placeholder_push_key(key: &str) -> bool {
+    let lowered = key.to_ascii_lowercase();
+    PLACEHOLDER_PUSH_KEY_MARKERS
+        .iter()
+        .any(|marker| lowered.contains(marker))
+}
+
+/// Returns the request when its push key is real material, otherwise an error
+/// describing why the registration must NOT be sent. Callers in the login /
+/// settings flow should funnel through this helper before POSTing a register
+/// request to a non-loopback push gateway.
+pub fn ensure_production_register_request(
+    request: &RegisterDeviceRequest,
+) -> anyhow::Result<()> {
+    if is_placeholder_push_key(&request.push_key) {
+        anyhow::bail!(
+            "refusing to register device {device_id}: push_key is a development placeholder. \
+             Provide a real OS / Web Push token via CHASK_PUSH_KEY or the platform integration \
+             before contacting the push gateway.",
+            device_id = request.device_id,
+        );
+    }
+    Ok(())
+}
+
 pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     match state {
         Some(state) => state
@@ -318,6 +353,32 @@ mod tests {
         assert!(summary.contains("cx.push.bridge.describe"));
         assert!(summary.contains("/api/v1/push/notify"));
         assert!(summary.contains("e2ee_blind_wakeup"));
+    }
+
+    #[test]
+    fn placeholder_push_key_predicate_matches_known_markers() {
+        assert!(is_placeholder_push_key("desktop:yougen-dev-placeholder-token"));
+        assert!(is_placeholder_push_key("webpush:yougen-dev-placeholder-token"));
+        assert!(is_placeholder_push_key("DESKTOP:Yougen-Dev-Placeholder"));
+        assert!(!is_placeholder_push_key("apns:abcd1234efgh"));
+        assert!(!is_placeholder_push_key("webpush:https://example.com/wp/abc123"));
+    }
+
+    #[test]
+    fn ensure_production_register_rejects_placeholder_keys() {
+        let request = build_register_request("dev_yougen").unwrap();
+        let err = ensure_production_register_request(&request)
+            .expect_err("default scaffold push key must be rejected");
+        let message = err.to_string();
+        assert!(message.contains("dev_yougen"));
+        assert!(message.contains("placeholder"));
+    }
+
+    #[test]
+    fn ensure_production_register_accepts_real_keys() {
+        let mut request = build_register_request("dev_yougen").unwrap();
+        request.push_key = "apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d".to_owned();
+        ensure_production_register_request(&request).expect("real push key must be accepted");
     }
 
     #[test]

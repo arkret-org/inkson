@@ -196,18 +196,21 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `crypto-media/audited-e2ee.md`（attested / disclosed audit profile）、
 /// `crypto-media/webrtc-signaling.md`、`extensions/applet-integration.md`、
 /// `extensions/agent-protocol-interop.md`、`extensions/mimi-interop.md`。
-/// canonical registry: `artifacts/registry/event-kind-registry.json`（109 active kinds）。
+/// canonical registry: `artifacts/registry/event-kind-registry.json`（110 active kinds）。
 pub fn known_event_kinds() -> Vec<&'static str> {
-    // 109 active wire event kinds, mirrored from
-    // `artifacts/registry/event-kind-registry.json` (commit fc7da5b, 2026-05-05).
+    // 110 active wire event kinds, mirrored from
+    // `artifacts/registry/event-kind-registry.json` (active set, 2026-05-07).
     // ORDER MATTERS for diff-friendly maintenance: keep alphabetical inside each
-    // group. When the spec adds/removes a kind, update both this list and the
-    // registry test below.
+    // group. When the spec adds/removes a kind, refresh
+    // `tests/fixtures/event-kind-registry.snapshot.txt` via
+    // `scripts/sync-event-kind-registry.ps1`, update this list, and bump the
+    // count assertions in `mod tests` below.
     vec![
         // Account / actor profile
         "cx.account.blocklist",
         "cx.account.status",
         "cx.account_data.set",
+        "cx.profile.create",
         "cx.profile.update",
         "cx.profile.space_override",
         // Agent (extensions/agent-protocol-interop — v1.1+ but kinds are core)
@@ -347,6 +350,96 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.view.reconcile",
         "cx.view.update",
     ]
+}
+
+/// `wire_scope` classification for canonical event kinds — mirrors
+/// `wire_scope_definitions` in `event-kind-registry.json`.
+///
+/// - `Durable` — written into Space history; reducer input.
+/// - `ActorPrivate` — actor-scoped; reducer input but not shared into the Space.
+/// - `Ephemeral` — short-TTL signaling; reducer MUST NOT use as state input.
+///
+/// The chat / call / verification views use this to keep ephemeral signals
+/// from being rendered as durable history. The diff test in `mod tests`
+/// pins the classification to `tests/fixtures/event-kind-wire-scopes.snapshot.tsv`,
+/// which is regenerated from contrix-spec via
+/// `scripts/sync-event-kind-registry.ps1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventKindWireScope {
+    Durable,
+    ActorPrivate,
+    Ephemeral,
+}
+
+impl EventKindWireScope {
+    pub fn as_registry_str(self) -> &'static str {
+        match self {
+            Self::Durable => "durable_event",
+            Self::ActorPrivate => "actor_private_event",
+            Self::Ephemeral => "ephemeral_event",
+        }
+    }
+
+    pub fn from_registry_str(value: &str) -> Option<Self> {
+        match value {
+            "durable_event" => Some(Self::Durable),
+            "actor_private_event" => Some(Self::ActorPrivate),
+            "ephemeral_event" => Some(Self::Ephemeral),
+            _ => None,
+        }
+    }
+}
+
+/// Event kinds whose wire_scope is `actor_private_event`.
+const ACTOR_PRIVATE_EVENT_KINDS: &[&str] = &[
+    "cx.account.blocklist",
+    "cx.account_data.set",
+    "cx.read.marker",
+];
+
+/// Event kinds whose wire_scope is `ephemeral_event`. Reducers must NOT take
+/// these as state input — they are short-TTL signaling only.
+const EPHEMERAL_EVENT_KINDS: &[&str] = &[
+    "cx.call.signal",
+    "cx.key.verification.accept",
+    "cx.key.verification.cancel",
+    "cx.key.verification.done",
+    "cx.key.verification.key",
+    "cx.key.verification.mac",
+    "cx.key.verification.ready",
+    "cx.key.verification.request",
+    "cx.key.verification.start",
+    "cx.presence",
+    "cx.receipt.read",
+    "cx.typing",
+];
+
+/// Returns the canonical `wire_scope` for `event_kind`, or `None` when the
+/// kind is unknown to yougen. Unknown kinds default to "treat as durable" at
+/// the call site so we never leak signaling into a state path by accident.
+pub fn event_kind_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
+    if ACTOR_PRIVATE_EVENT_KINDS.contains(&event_kind) {
+        return Some(EventKindWireScope::ActorPrivate);
+    }
+    if EPHEMERAL_EVENT_KINDS.contains(&event_kind) {
+        return Some(EventKindWireScope::Ephemeral);
+    }
+    if known_event_kinds().contains(&event_kind) {
+        return Some(EventKindWireScope::Durable);
+    }
+    None
+}
+
+/// All event kinds yougen currently classifies as ephemeral signaling. The
+/// chat/call views use this to render their "ephemeral signals" banners
+/// programmatically rather than re-typing kind literals.
+pub fn ephemeral_event_kinds() -> &'static [&'static str] {
+    EPHEMERAL_EVENT_KINDS
+}
+
+/// All event kinds yougen currently classifies as actor-private.
+pub fn actor_private_event_kinds() -> &'static [&'static str] {
+    ACTOR_PRIVATE_EVENT_KINDS
 }
 
 pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadiness> {
@@ -755,10 +848,10 @@ mod tests {
 
     #[test]
     fn known_event_kinds_matches_registry_count() {
-        // Registry pinned to 109 active wire event kinds at commit fc7da5b.
-        // Bumping the count here in lockstep with the spec is intentional —
-        // it is a tripwire when the registry drifts under us.
-        assert_eq!(known_event_kinds().len(), 109);
+        // Registry pinned to 110 active wire event kinds. Bumping the count
+        // here in lockstep with the spec is intentional — it is a tripwire
+        // when the registry drifts under us.
+        assert_eq!(known_event_kinds().len(), 110);
     }
 
     #[test]
@@ -810,20 +903,20 @@ mod tests {
 
     /// Lock-down: registry counts at the time of last alignment.
     ///
-    /// Spec `artifacts/registry/event-kind-registry.json` (commit fc7da5b)
-    /// declares 109 active event kinds. Bumping yougen above this floor is
-    /// fine; dropping below means we silently lost alignment with a spec
-    /// upgrade (an upstream rename or addition that yougen forgot to land).
+    /// Spec `artifacts/registry/event-kind-registry.json` declares 110 active
+    /// event kinds. Bumping yougen above this floor is fine; dropping below
+    /// means we silently lost alignment with a spec upgrade (an upstream
+    /// rename or addition that yougen forgot to land).
     ///
     /// When the spec adds new kinds, raise this lower bound. When yougen
     /// intentionally retires legacy kinds (after a deprecation window), keep
-    /// the bound monotonic — never below 109 without an explicit decision.
+    /// the bound monotonic — never below 110 without an explicit decision.
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
         assert!(
-            kinds.len() >= 109,
-            "yougen surfaces {} event kinds; spec registry fc7da5b declares 109 active. Drop below this floor only after deliberately retiring a legacy kind.",
+            kinds.len() >= 110,
+            "yougen surfaces {} event kinds; spec registry declares 110 active. Drop below this floor only after deliberately retiring a legacy kind.",
             kinds.len()
         );
     }
@@ -876,6 +969,180 @@ mod tests {
             sorted.len(),
             kinds.len(),
             "event kind list must contain no duplicates"
+        );
+    }
+
+    /// Hermetic diff against the vendored snapshot of
+    /// `contrix-spec/spec/v1/artifacts/registry/event-kind-registry.json`.
+    ///
+    /// The snapshot lives in `tests/fixtures/event-kind-registry.snapshot.txt`
+    /// and is refreshed via `scripts/sync-event-kind-registry.ps1`. When the
+    /// spec adds or renames an event kind, the script regenerates the snapshot
+    /// (which makes this test fail until `known_event_kinds()` is updated to
+    /// match), so spec drift never lands silently. The snapshot is the
+    /// authoritative reference inside the yougen tree — there is intentionally
+    /// no runtime fetch of contrix-spec.
+    const EVENT_KIND_REGISTRY_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/event-kind-registry.snapshot.txt");
+
+    fn parse_snapshot_kinds(snapshot: &str) -> Vec<String> {
+        snapshot
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn known_event_kinds_match_spec_snapshot() {
+        let snapshot: std::collections::BTreeSet<String> =
+            parse_snapshot_kinds(EVENT_KIND_REGISTRY_SNAPSHOT)
+                .into_iter()
+                .collect();
+        let yougen: std::collections::BTreeSet<String> = known_event_kinds()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+
+        let missing: Vec<&String> = snapshot.difference(&yougen).collect();
+        let extra: Vec<&String> = yougen.difference(&snapshot).collect();
+
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "yougen `known_event_kinds()` is out of sync with `tests/fixtures/event-kind-registry.snapshot.txt`. \
+             Refresh the snapshot via `scripts/sync-event-kind-registry.ps1` and reconcile both files in the same commit. \
+             missing_in_yougen={missing:?} extra_in_yougen={extra:?}"
+        );
+    }
+
+    /// Hermetic diff between the typed `event_kind_wire_scope()` classifier
+    /// and the vendored registry snapshot. Catches drift in *either* direction:
+    ///   1. spec moves a kind between scopes (e.g. ephemeral → durable)
+    ///   2. yougen forgets to update the in-code classifier alongside the spec
+    ///   3. a kind exists in one source but not the other
+    ///
+    /// Refresh `tests/fixtures/event-kind-wire-scopes.snapshot.tsv` via
+    /// `scripts/sync-event-kind-registry.ps1` and reconcile the in-code lists
+    /// (`ACTOR_PRIVATE_EVENT_KINDS`, `EPHEMERAL_EVENT_KINDS`) in the same commit.
+    const EVENT_KIND_WIRE_SCOPE_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/event-kind-wire-scopes.snapshot.tsv");
+
+    fn parse_wire_scope_snapshot(
+        snapshot: &str,
+    ) -> Vec<(String, super::EventKindWireScope)> {
+        snapshot
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let mut parts = line.splitn(2, '\t');
+                let kind = parts.next().expect("snapshot row missing kind").to_owned();
+                let scope_str = parts.next().expect("snapshot row missing scope");
+                let scope = super::EventKindWireScope::from_registry_str(scope_str)
+                    .unwrap_or_else(|| panic!("unknown wire_scope `{scope_str}` in snapshot"));
+                (kind, scope)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn event_kind_wire_scope_classifier_matches_snapshot() {
+        let snapshot = parse_wire_scope_snapshot(EVENT_KIND_WIRE_SCOPE_SNAPSHOT);
+
+        let mut mismatches: Vec<String> = Vec::new();
+        for (kind, expected) in &snapshot {
+            match super::event_kind_wire_scope(kind) {
+                Some(actual) if actual == *expected => {}
+                Some(actual) => mismatches.push(format!(
+                    "{kind}: snapshot={} but classifier={}",
+                    expected.as_registry_str(),
+                    actual.as_registry_str()
+                )),
+                None => mismatches.push(format!(
+                    "{kind}: snapshot={} but classifier returned None",
+                    expected.as_registry_str()
+                )),
+            }
+        }
+
+        let snapshot_kinds: std::collections::BTreeSet<String> =
+            snapshot.iter().map(|(k, _)| k.clone()).collect();
+        for kind in known_event_kinds() {
+            if !snapshot_kinds.contains(kind) {
+                mismatches.push(format!("{kind}: in known_event_kinds but absent from snapshot"));
+            }
+        }
+
+        assert!(
+            mismatches.is_empty(),
+            "event_kind_wire_scope classifier is out of sync with the snapshot. \
+             Refresh via `scripts/sync-event-kind-registry.ps1` and reconcile the \
+             in-code `ACTOR_PRIVATE_EVENT_KINDS` / `EPHEMERAL_EVENT_KINDS` constants. \
+             mismatches=\n - {}",
+            mismatches.join("\n - "),
+        );
+    }
+
+    #[test]
+    fn ephemeral_kinds_never_classify_as_durable() {
+        for kind in super::ephemeral_event_kinds() {
+            let scope = super::event_kind_wire_scope(kind);
+            assert_eq!(
+                scope,
+                Some(super::EventKindWireScope::Ephemeral),
+                "ephemeral kind `{kind}` must classify as Ephemeral; \
+                 leaking into Durable would let a reducer state-track signaling"
+            );
+        }
+    }
+
+    #[test]
+    fn actor_private_kinds_classify_consistently() {
+        for kind in super::actor_private_event_kinds() {
+            assert_eq!(
+                super::event_kind_wire_scope(kind),
+                Some(super::EventKindWireScope::ActorPrivate)
+            );
+        }
+    }
+
+    #[test]
+    fn event_kind_wire_scope_returns_none_for_unknown_kind() {
+        assert_eq!(super::event_kind_wire_scope("cx.bogus.kind"), None);
+    }
+
+    #[test]
+    fn event_kind_registry_snapshot_is_well_formed() {
+        let kinds = parse_snapshot_kinds(EVENT_KIND_REGISTRY_SNAPSHOT);
+        assert!(
+            !kinds.is_empty(),
+            "snapshot must list at least one event kind"
+        );
+
+        let mut seen = std::collections::BTreeSet::new();
+        for kind in &kinds {
+            assert!(
+                kind.starts_with("cx."),
+                "snapshot entry `{kind}` missing cx.* namespace"
+            );
+            assert!(
+                seen.insert(kind.clone()),
+                "snapshot contains duplicate entry `{kind}`"
+            );
+            for ch in kind.chars() {
+                assert!(
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '_',
+                    "snapshot entry `{kind}` has illegal char `{ch}`"
+                );
+            }
+        }
+
+        let mut sorted = kinds.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted, kinds,
+            "snapshot entries must stay sorted to keep diffs reviewable"
         );
     }
 }

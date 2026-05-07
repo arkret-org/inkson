@@ -2,7 +2,7 @@
 // View modules — protocol / design-doc cross reference
 // =============================================================================
 //
-// 每个 view 都在 `claude-design/`（基于 `contrix-spec/zh/` 的 UI 设计稿）和协议
+// 每个 view 都在 `claude-design/`（基于 `contrix-spec/spec/v1/zh/` 的 UI 设计稿）和协议
 // 规范之间承担一个固定的角色。引入新视图前请先核对：
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
+    conformance::{EventKindWireScope, ephemeral_event_kinds, event_kind_wire_scope},
     local_state::LocalStateStore,
     operation::{CommitBuilder, cx_ops, uuid_v8},
     views::helpers::{
@@ -110,20 +111,37 @@ pub fn ChatPanel(
     let mut new_channel_topic = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
 
+    // Source the chat-relevant ephemeral kinds straight from the typed
+    // classifier so a spec rescope (durable ↔ ephemeral) flips this banner
+    // automatically and the conformance snapshot test catches drift.
+    let ephemeral_chat_kinds: Vec<&'static str> = ephemeral_event_kinds()
+        .iter()
+        .copied()
+        .filter(|kind| matches!(*kind, "cx.presence" | "cx.typing" | "cx.receipt.read"))
+        .collect();
+    debug_assert!(
+        ephemeral_chat_kinds
+            .iter()
+            .all(|k| event_kind_wire_scope(k) == Some(EventKindWireScope::Ephemeral)),
+        "chat ephemeral banner must only list kinds the classifier marks Ephemeral"
+    );
+    let ephemeral_kind_summary = ephemeral_chat_kinds.join(" · ");
+
     rsx! {
         div { class: "timeline", "data-testid": "chat-panel",
             // Ephemeral presence / typing — discovery/profiles-presence.md
-            // 这两个 event 是 Ephemeral Channel events（不写入 Space history）：
-            //   cx.presence — 发送方在线 / 离线 / dnd 状态
-            //   cx.typing   — 发送方正在输入（短期 TTL；reducer 不会持久化）
+            // 这些 event 由 conformance::ephemeral_event_kinds() 标注为 ephemeral_event：
+            //   cx.presence    — 发送方在线 / 离线 / dnd 状态
+            //   cx.typing      — 发送方正在输入（短期 TTL；reducer 不会持久化）
+            //   cx.receipt.read — 透传读回执（actor-private 的 cx.read.marker 才是 durable）
             // 客户端 SHOULD 显示但 MUST NOT 把它们当作 audit / capability 输入。
             div { class: "event", "data-testid": "ephemeral-channel-banner",
                 div { class: "event-head",
                     span { "Ephemeral signals" }
-                    span { "cx.presence · cx.typing" }
+                    span { "{ephemeral_kind_summary}" }
                 }
                 div { class: "muted",
-                    "Presence 与 typing 通过 Sync Service Ephemeral Channel 传播，不写入 Space history。Privacy 设置可关闭这两类对外发送（cx.account_data.set 控制）。"
+                    "Presence、typing、ephemeral 读回执 通过 Sync Service Ephemeral Channel 传播，不写入 Space history；Privacy 设置可关闭对外发送（actor-private cx.account_data.set 控制）。durable 的读位置由 cx.read.marker 维护。"
                 }
                 div { class: "actions",
                     span { class: "badge green", "Mei · online" }

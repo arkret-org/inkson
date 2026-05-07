@@ -13,8 +13,8 @@ use reqwest::{
     Client, Method, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER},
 };
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use url::Url;
@@ -62,6 +62,12 @@ pub struct PrincipalAuthBridgeExamples {
     pub register_device_request: Value,
     #[serde(default)]
     pub unregister_device_request: Value,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionGrantIntrospectionProof {
+    pub challenge: String,
+    pub proof_jwt: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -462,14 +468,30 @@ impl ContrixApi {
         principal_did: &str,
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
+        self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_did, device_id, None)
+            .await
+    }
+
+    pub async fn exchange_session_grant_at_with_proof(
+        &self,
+        path: &str,
+        grant_jwt: &str,
+        principal_did: &str,
+        device_id: &str,
+        introspection_proof: Option<&SessionGrantIntrospectionProof>,
+    ) -> anyhow::Result<DevLoginResponse> {
+        let mut body = json!({
+            "grant_jwt": grant_jwt,
+            "principal_did": principal_did,
+            "device_id": device_id,
+            "display_name": "yougen session-grant bridge",
+        });
+        if let Some(introspection_proof) = introspection_proof {
+            body["introspection_proof"] = serde_json::to_value(introspection_proof)?;
+        }
         self.post_json(
             path,
-            json!({
-                "grant_jwt": grant_jwt,
-                "principal_did": principal_did,
-                "device_id": device_id,
-                "display_name": "yougen session-grant bridge",
-            }),
+            body,
         )
         .await
     }
