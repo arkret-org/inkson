@@ -18,24 +18,6 @@
 - `🔒` 多文件接线
 - `⚠` 需要服务端 / SDK / 安全协同
 
-## P0 · v1 wire model rework 客户端适配 ⚠ — **大部分作废 (2026-05-08)**
-
-> ⚠ **Supersession 通知 (2026-05-08)**：`contrix-spec` 已用 **Move / Anchor / Lattice** 三原语替换旧 state slot / hub-writer / host endorsement 模型（见 [`../contrix-spec/_state_todos.md`](../contrix-spec/_state_todos.md) 与根 [`../_todos.md` C10.D](../_todos.md)）。本节中：
->
-> - **W1（active event kinds 110 → 129）** — 阈值放宽到 134；
-> - **W2（移除 state_key 字段）** — 仍有效（envelope state_key 字段 spec 已移除）；
-> - **W3（hub Space 写入路径）** — **整体作废**；改为 Move 提交路径（统一 POST `/api/v1/moves`，不再分 hub / peer_mesh）；
-> - **W4（host_endorsement 接收侧验证）** — **整体作废**；改为 Anchor view 同步 + anchorer_sig 校验；
-> - **W5（pending_mls_binding UI 信号）** — 改为 `covered_frontier_cell` 当前 join 值 / Move 状态 `pending_anchor` UI；
-> - **W6（Consent UI）** — 仍要做，底层从 `cx.consent.grant/revoke` 改为 consent cell or-set Move（grant=add tag, revoke=remove tag）；
-> - **W7（host transfer 监控 UI）** — **整体作废**；改为 anchorer cell 切换 admin 视图（在 sodmin 而非 yougen，普通客户端无此 UI）。
->
-> **新工作请见下方 P0 · Move / Anchor / Lattice 客户端适配章节。**
-
-> 历史 Source: `contrix-spec` 2026-05-07 完成 Phase 1-5。
-
----
-
 ## P0 · Move / Anchor / Lattice 客户端适配（取代旧 P0）⚠
 
 > 起源：`contrix-spec` 2026-05-08 用 Move/Anchor/Lattice 替换旧模型。详见根 [`../_todos.md` C10.D](../_todos.md)。
@@ -98,8 +80,8 @@
 | C5 | recovery/key-backup/device verification UI 已有 scaffold API 调用面；剩余是接 durable API 和真实 device verification。 |
 | C6 | 当 soland 暴露 optional StarID resolver profile 时，客户端需要展示 resolver/profile 状态但不把 `did:webvh` 当 v1 core 必选。 |
 | C8 | 给 cotest/example-stack 提供 headless happy path。 |
-| C10.D | **客户端适配 spec 2026-05-08 Move/Anchor/Lattice rewrite**——新 P0 M0-M8 是本仓全部 C10 任务。旧 W1-W7 中 W3/W4/W7 整体作废（hub Space / host_endorsement / host transfer UI），W1/W2/W5/W6 重新映射到新模型。需要 SDK M0-M12 先就位。 |
-| C11 | 删除 `src/views/space_admin/host_transfer.rs`（如已 scaffold）；移除 `space_writer_model` / `space_host` UI 引用。 |
+| C10.D | **客户端适配 spec 2026-05-08 Move/Anchor/Lattice rewrite**——P0 M0-M8 是本仓全部 C10 任务。需要 SDK M0-M12 先就位。 |
+| C11 | 旧产物清理已完成 (2026-05-08)：未 scaffold 过 host_transfer.rs；`space_writer_model` / `space_host` UI 引用 0 命中。 |
 
 ## 已完成（changelog）
 
