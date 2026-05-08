@@ -400,6 +400,24 @@ pub fn TimelinePanel(
                                                 event_id.clone(),
                                             );
                                             write_status.set(format!("read marker saved {}", marker.body.event_id));
+
+                                            // Resolve effective send preference per spec
+                                            // discovery/client-preferences.md §3.6 (flow → space →
+                                            // default). Server-side Space `cx.space.read_receipt_policy`
+                                            // is not yet exposed to the client; until it is, treat
+                                            // policy as `Optional` (no override) and defer to user pref.
+                                            let topic_for_pref = marker.body.topic_id.clone();
+                                            let should_send = state_store.read().read_receipt_should_send(
+                                                topic_for_pref.as_deref(),
+                                                Some(marker.body.space_id.as_str()),
+                                            );
+                                            if !should_send {
+                                                receipt_status.set(format!(
+                                                    "Read receipt: skipped per preference for {}",
+                                                    marker.body.event_id
+                                                ));
+                                                return;
+                                            }
                                             receipt_status.set(format!("Read receipt: sending {}", marker.body.event_id));
 
                                             let base = base.clone();

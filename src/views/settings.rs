@@ -45,7 +45,15 @@ pub fn SettingsPanel(
     let auth_server_url = base_url;
     let mut active_section = use_signal(|| SettingsSection::Server);
     let mut presence_visible = use_signal(|| true);
-    let mut read_receipts_visible = use_signal(|| true);
+    // Read receipt preferences (spec discovery/client-preferences.md §3.6).
+    // Hydrated from persisted local state; mutations write back through
+    // `state_store.set_read_receipt_*` so the timeline view can resolve
+    // (flow → space → default) before sending `cx.receipt.read`.
+    let mut read_receipt_default_send =
+        use_signal(|| state_store.read().read_receipt_default_send());
+    let mut read_receipt_space_overrides =
+        use_signal(|| state_store.read().read_receipt_space_overrides());
+    let mut read_receipt_override_input = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id = use_signal(|| "backup-scaffold-current-device".to_owned());
@@ -704,15 +712,148 @@ pub fn SettingsPanel(
                         }
                         " Show presence to others (cx.presence)"
                     }
+                    div { class: "event-head",
+                        span { "Read receipts" }
+                        span { "cx.read_receipt.preferences" }
+                    }
                     label {
                         input {
                             r#type: "checkbox",
-                            checked: read_receipts_visible(),
-                            onchange: move |evt| read_receipts_visible.set(evt.value() == "true"),
+                            "data-testid": "read-receipts-default-toggle",
+                            checked: read_receipt_default_send(),
+                            onchange: move |evt| {
+                                let send = evt.value() == "true";
+                                read_receipt_default_send.set(send);
+                                state_store.write().set_read_receipt_default_send(send);
+                                status.set(format!(
+                                    "Read receipts: default = {}",
+                                    if send { "send" } else { "skip" }
+                                ));
+                            },
                         }
-                        " Send read receipts (cx.receipt.read)"
+                        " Send read receipts (cx.receipt.read) by default"
                     }
-                    div { class: "muted", "Changes take effect on next sync." }
+                    div { class: "muted",
+                        "Resolution order is (flow → space → default). When a Space declares "
+                        "a read-receipt policy with disclosure=required or disabled, the server "
+                        "policy overrides this preference."
+                    }
+                    div { class: "event-head",
+                        span { "Per-space overrides" }
+                        span { "{read_receipt_space_overrides().len()} configured" }
+                    }
+                    if read_receipt_space_overrides().is_empty() {
+                        div { class: "muted",
+                            "No per-space overrides. Add a Space ID below to opt this Space "
+                            "out of (or into) read receipts independently of the global default."
+                        }
+                    } else {
+                        for (space_id, send) in read_receipt_space_overrides() {
+                            div { class: "actions", "data-testid": "read-receipt-override-row",
+                                span { "{space_id}" }
+                                span { class: "badge",
+                                    {if send { "sending" } else { "skipping" }}
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "read-receipt-override-toggle",
+                                    onclick: {
+                                        let space_id = space_id.clone();
+                                        move |_| {
+                                            let next = !send;
+                                            state_store.write().set_read_receipt_space_override(
+                                                space_id.clone(),
+                                                Some(next),
+                                            );
+                                            read_receipt_space_overrides.set(
+                                                state_store.read().read_receipt_space_overrides(),
+                                            );
+                                            status.set(format!(
+                                                "Read receipts for {space_id}: {}",
+                                                if next { "send" } else { "skip" }
+                                            ));
+                                        }
+                                    },
+                                    {if send { "Switch to skip" } else { "Switch to send" }}
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "read-receipt-override-clear",
+                                    onclick: {
+                                        let space_id = space_id.clone();
+                                        move |_| {
+                                            state_store.write().set_read_receipt_space_override(
+                                                space_id.clone(),
+                                                None,
+                                            );
+                                            read_receipt_space_overrides.set(
+                                                state_store.read().read_receipt_space_overrides(),
+                                            );
+                                            status.set(format!(
+                                                "Read receipts for {space_id}: inherit default"
+                                            ));
+                                        }
+                                    },
+                                    "Inherit default"
+                                }
+                            }
+                        }
+                    }
+                    div { class: "actions", "data-testid": "read-receipt-add-override",
+                        input {
+                            r#type: "text",
+                            placeholder: "cx:space:...",
+                            value: "{read_receipt_override_input()}",
+                            oninput: move |evt| read_receipt_override_input.set(evt.value()),
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "read-receipt-add-override-skip",
+                            onclick: move |_| {
+                                let space_id = read_receipt_override_input().trim().to_owned();
+                                if space_id.is_empty() {
+                                    status.set("Enter a Space ID first".to_owned());
+                                    return;
+                                }
+                                state_store.write().set_read_receipt_space_override(
+                                    space_id.clone(),
+                                    Some(false),
+                                );
+                                read_receipt_space_overrides.set(
+                                    state_store.read().read_receipt_space_overrides(),
+                                );
+                                read_receipt_override_input.set(String::new());
+                                status.set(format!("Skipping read receipts in {space_id}"));
+                            },
+                            "Add (skip)"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "read-receipt-add-override-send",
+                            onclick: move |_| {
+                                let space_id = read_receipt_override_input().trim().to_owned();
+                                if space_id.is_empty() {
+                                    status.set("Enter a Space ID first".to_owned());
+                                    return;
+                                }
+                                state_store.write().set_read_receipt_space_override(
+                                    space_id.clone(),
+                                    Some(true),
+                                );
+                                read_receipt_space_overrides.set(
+                                    state_store.read().read_receipt_space_overrides(),
+                                );
+                                read_receipt_override_input.set(String::new());
+                                status.set(format!("Sending read receipts in {space_id}"));
+                            },
+                            "Add (send)"
+                        }
+                    }
+                    div { class: "muted",
+                        "Server-declared policy lock UI is pending — when the server publishes "
+                        "cx.space.read_receipt_policy with disclosure=required or disabled this "
+                        "panel will display a locked state for the affected Spaces."
+                    }
                 }
 
                 // Progressive disclosure — identity-handles.md §16

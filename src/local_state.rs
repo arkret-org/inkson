@@ -57,7 +57,11 @@ impl ReadMarkerRecord {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     pub raw_operations: Vec<RawOperationRecord>,
@@ -72,6 +76,22 @@ pub struct ClientLocalState {
     pub muted_spaces: BTreeMap<String, bool>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
+    /// Read receipt send preferences (spec
+    /// `discovery/client-preferences.md` §3.6, account-data key
+    /// `cx.read_receipt.preferences`).
+    ///
+    /// `read_receipt_default_send` is the global fallback (default: send).
+    /// `read_receipt_space_overrides` and `read_receipt_flow_overrides`
+    /// are per-scope overrides; resolution order is (flow → space →
+    /// default), matching the SDK's `ReadReceiptPreferences::effective_send`.
+    /// Until the server wires `cx.account_data.set` for this key,
+    /// preferences live only on this device.
+    #[serde(default = "default_true")]
+    pub read_receipt_default_send: bool,
+    #[serde(default)]
+    pub read_receipt_space_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_receipt_flow_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -81,6 +101,28 @@ pub struct ClientLocalState {
     /// Private cx.marker.read cursors keyed by space + topic/thread scope.
     #[serde(default)]
     pub read_markers: BTreeMap<String, ReadMarkerRecord>,
+}
+
+impl Default for ClientLocalState {
+    fn default() -> Self {
+        Self {
+            sync_cursor: None,
+            raw_operations: Vec::new(),
+            space_projections: BTreeMap::new(),
+            drafts: BTreeMap::new(),
+            pending_encrypted_messages: BTreeMap::new(),
+            notification_projection: Vec::new(),
+            notification_client_state: BTreeMap::new(),
+            muted_spaces: BTreeMap::new(),
+            muted_notification_kinds: BTreeMap::new(),
+            read_receipt_default_send: true,
+            read_receipt_space_overrides: BTreeMap::new(),
+            read_receipt_flow_overrides: BTreeMap::new(),
+            push_registration: None,
+            private_data: BTreeMap::new(),
+            read_markers: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -305,6 +347,91 @@ impl LocalStateStore {
             .into_iter()
             .filter_map(|(space_id, muted)| muted.then_some(space_id))
             .collect()
+    }
+
+    // ── Read receipt preferences (spec client-preferences.md §3.6) ─
+
+    pub fn read_receipt_default_send(&self) -> bool {
+        self.load().read_receipt_default_send
+    }
+
+    pub fn set_read_receipt_default_send(&mut self, send: bool) {
+        self.ensure_cached_loaded();
+        self.cached.read_receipt_default_send = send;
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_space_override(&self, space_id: &str) -> Option<bool> {
+        self.load().read_receipt_space_overrides.get(space_id).copied()
+    }
+
+    pub fn set_read_receipt_space_override(
+        &mut self,
+        space_id: impl Into<String>,
+        send: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let space_id = space_id.into();
+        match send {
+            Some(value) => {
+                self.cached.read_receipt_space_overrides.insert(space_id, value);
+            }
+            None => {
+                self.cached.read_receipt_space_overrides.remove(&space_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_space_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_space_overrides
+    }
+
+    pub fn read_receipt_flow_override(&self, flow_id: &str) -> Option<bool> {
+        self.load().read_receipt_flow_overrides.get(flow_id).copied()
+    }
+
+    pub fn set_read_receipt_flow_override(
+        &mut self,
+        flow_id: impl Into<String>,
+        send: Option<bool>,
+    ) {
+        self.ensure_cached_loaded();
+        let flow_id = flow_id.into();
+        match send {
+            Some(value) => {
+                self.cached.read_receipt_flow_overrides.insert(flow_id, value);
+            }
+            None => {
+                self.cached.read_receipt_flow_overrides.remove(&flow_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn read_receipt_flow_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_flow_overrides
+    }
+
+    /// Resolve effective send preference per spec (flow → space → default).
+    /// Mirror of `contrix_sdk::ReadReceiptPreferences::effective_send`.
+    pub fn read_receipt_should_send(
+        &self,
+        flow_id: Option<&str>,
+        space_id: Option<&str>,
+    ) -> bool {
+        let snapshot = self.load();
+        if let Some(fid) = flow_id
+            && let Some(value) = snapshot.read_receipt_flow_overrides.get(fid)
+        {
+            return *value;
+        }
+        if let Some(sid) = space_id
+            && let Some(value) = snapshot.read_receipt_space_overrides.get(sid)
+        {
+            return *value;
+        }
+        snapshot.read_receipt_default_send
     }
 
     pub fn set_notification_kind_enabled(&mut self, kind: impl Into<String>, enabled: bool) {
@@ -729,5 +856,47 @@ mod tests {
         assert!(store.load_private_data("key", "temp").is_some());
         store.remove_private_data("temp");
         assert!(store.load_private_data("key", "temp").is_none());
+    }
+
+    #[test]
+    fn read_receipt_default_is_send_until_user_opts_out() {
+        let path = temp_state_path("read-receipt-default");
+        let mut store = LocalStateStore::with_path(path.clone());
+        assert!(store.read_receipt_default_send());
+        assert!(store.read_receipt_should_send(None, Some("cx:space:any")));
+
+        store.set_read_receipt_default_send(false);
+        let reader = LocalStateStore::with_path(path);
+        assert!(!reader.read_receipt_default_send());
+        assert!(!reader.read_receipt_should_send(None, Some("cx:space:any")));
+    }
+
+    #[test]
+    fn read_receipt_resolution_flow_overrides_space_overrides_default() {
+        let path = temp_state_path("read-receipt-resolve");
+        let mut store = LocalStateStore::with_path(path.clone());
+        // default = true (send)
+        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        store.set_read_receipt_flow_override("cx:flow:demo", Some(true));
+
+        let reader = LocalStateStore::with_path(path);
+        // Flow override wins.
+        assert!(reader.read_receipt_should_send(Some("cx:flow:demo"), Some("cx:space:demo")));
+        // Space override wins over default when no flow override.
+        assert!(!reader.read_receipt_should_send(None, Some("cx:space:demo")));
+        // Default applies when nothing matches.
+        assert!(reader.read_receipt_should_send(None, Some("cx:space:other")));
+    }
+
+    #[test]
+    fn read_receipt_clearing_override_falls_back_to_default() {
+        let path = temp_state_path("read-receipt-clear");
+        let mut store = LocalStateStore::with_path(path);
+        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+
+        store.set_read_receipt_space_override("cx:space:demo", None);
+        assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
+        assert!(store.read_receipt_space_override("cx:space:demo").is_none());
     }
 }
