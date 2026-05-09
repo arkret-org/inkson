@@ -28,7 +28,7 @@
 |---|---|---|---|---|
 | M0 ⚠ | `[ ]` | 删除旧 W3/W4/W7 占位（`src/views/space_admin/host_transfer.rs` 如已 scaffold）；移除 `space_writer_model` / `space_host` UI 引用。 | `src/views/space_admin*` | 根 C11 |
 | M1 ⚠ | `[ ]` | event surface diff 同步：active event kinds 阈值更新到 134；hermetic diff 测试与同步脚本更新；新增 cx.move.v1 / cx.anchor.v1 typed surface 识别。 | `src/conformance.rs` | SDK M11 |
-| M2 ⚠ | `[ ]` | `Move` 提交路径替代直发 event：`src/api.rs` 中所有写入操作（消息 / 状态 / 撤回 / 反应 / 邀请 / 容器更新）改为构造 Move（preconditions + effects + anchor_ref + refs）→ POST `/api/v1/moves`；不再直发 event envelope。 | `src/api.rs` | SDK M1, soland MAL-2 |
+| M2 ⚠ | `[~]` | (2026-05-09 十六轮) **Move 提交基础设施已落地**: API client 加 `submit_move(&Move)` / `submit_anchor(&Anchor)` / `admin_anchors_sign(...)` 三个方法 + `models::SubmitMoveResponse` / `SubmitAnchorResponse` / `SignAnchorResponse` DTOs；新 `move_builder` 模块含 3 cell-driven builders (`build_consent_grant_move` / `build_member_state_transition_move` / `build_space_organization_update_move`) + `sign_unsigned_move` ed25519-dalek 签名 helper + did:key 编码工具；新依赖 `ed25519-dalek` + `bs58`。6 unit tests + 5 contract tests。**剩余 M2 收尾**: 修订 spec 范围 — 不是"所有写入操作"，按 spec event-kind-registry 只把声明 cell_family 的事件 (consent / capability / member.state / space.{create,update,destroy} / flow.position / anchorer / mls.epoch) 改走 Move 路径；其他 (messages / reactions / read_markers / entities / relations / redactions) 按 spec 保留 direct-event 端点。UI 接线 (consent UI / member admin UI 等替换 direct-event 调用) 是 feature-by-feature 工作。 | `src/api.rs`, `src/move_builder.rs` (NEW), `src/models.rs` | SDK M1, soland MAL-2 |
 | M3 ⚠ | `[ ]` | Anchor view 同步：`src/sync.rs` 从 `/sync` 拉取最新 Anchor leaves + frontier + state_root；本地 `effective_anchor_view` 计算；query 走 effective state。 | `src/sync.rs` | SDK M2/M10, soland MAL-4 |
 | M4 | `[ ]` | Move 状态 UI 信号：pending_anchor / effective / failed_precondition / failed_bottom / rejected_anchor / anchorer_paused 状态在消息 / state event UI 上区分；anchorer_paused = "Space 暂停推进，等待 recovery anchorer"。 | `src/views/chat.rs`、`src/views/space_admin.rs` | soland MAL-10 |
 | M5 | `[ ]` | `bottom` UI 暴露：`bottom=expose` cell 的 query 返回 `{status:"conflict", heads:[...]}`，UI 展示为"该状态存在并发候选，需冲突修复"。 | `src/views/space_admin.rs` | SDK M5 |
@@ -98,3 +98,16 @@
 - `[x]` Kanban auto-refresh-on-mount —`KanbanPanel` mount 时自动调 `collection_projection`，API-derived 成默认（F1 部分完成）。
 - `[x]` OIDC scaffold 去掉 `(actor_did, device_id)` 派生的确定性 state/nonce/verifier，改用 `getrandom::fill` 32-byte 随机 verifier + S256 challenge；新 5 条 `coauth::tests` 钉住 RFC 7636 Appendix B 测试向量（A1 部分完成）。
 - `[x]` `ContrixApi::send_device_message_envelope` + `build_device_message_envelope` 助手钉住 `cx.schema.device_message.v1` wire shape，devices.rs 的 verification.{request,ready,done} 三个按钮真正 PUT `/api/v1/device_messages/{txn}`（R3 部分完成）。
+
+## C10.D 续 — UI Move-flow PoC (2026-05-09 十八轮 并行)
+
+- `[x]` 第一个端到端 UI Move-flow 接线落地（M2 收尾的第一块 UI surface）：新建 `src/views/consent_demo.rs::ConsentGrantDemoCard` Dioxus 组件 + 嵌入 `SettingsPanel` 的 Privacy section。点击 "Grant consent (build + sign + POST)" 按钮即：
+  1. 用 `move_builder::build_consent_grant_move` 构造 `cx.consent.grant` Move（cx.component.consent.grant.v1 OrSet add）；
+  2. 用 deterministic demo ed25519 SigningKey（`[42; 32]`，标 `TODO(real-key-management)`）签名；
+  3. 通过 `ContrixApi::submit_move` POST `/api/v1/moves`；
+  4. 在 UI 状态行显示 `state=pending|rejected` + reason。
+  - 演示路径: `Settings → Privacy → "Grant consent (Move PoC)"` 卡片；测试 ID `consent-grant-{space-id,consent-id,tag,submit,status,last-move-id}`。
+  - Anchor frontier: 暂用 `cx:anchor:sha256:e3b0...b855`（empty-bytes SHA-256）占位，标 `TODO(anchor-frontier-from-sync)`；HLC 走 `crate::hlc::Hlc::now("yougen")`。
+  - 新增 4 unit tests: `build_signed_consent_grant_produces_consent_or_set_add` / `..._attaches_detached_jws_with_demo_did_key` / `..._is_content_addressed_by_canonical_bytes` / `format_submit_response_renders_state_and_optional_reason`。
+  - 测试计数: 195 → 199 (+4)；构建零警告新增。
+  - 剩余 UI surface (按 spec event-kind-registry 的 cell-driven 事件; M2 后续轮次按 P0 表分块): member admin (`cx.member.state` invited→join FSM)、space organization update (`cx.space.update` cas-register)、capability grant/revoke、consent revoke 路径、anchorer cell、MLS epoch。Direct-event 路径 (messages / reactions / read markers / entities / relations / redactions) 保留不变。

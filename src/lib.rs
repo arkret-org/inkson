@@ -16,6 +16,7 @@ pub mod i18n;
 pub mod local_state;
 pub mod media;
 pub mod models;
+pub mod move_builder;
 pub mod offline;
 pub mod operation;
 pub mod push;

@@ -920,6 +920,20 @@ pub fn SettingsPanel(
                 }
             }
 
+            // ── Move-flow PoC: Grant consent (C10.D 续 2026-05-09 十八轮) ────
+            // First user-facing button on the Move/Anchor pipeline. Builds a
+            // cx.consent.grant Move via move_builder, signs with a deterministic
+            // demo ed25519 key (TODO real-key-management), POSTs /api/v1/moves.
+            // Direct-event endpoints for messages / reactions / etc. stay in
+            // place per spec — only events that declare a `cell_family` move
+            // here.
+            if active_section() == SettingsSection::Privacy {
+                crate::views::consent_demo::ConsentGrantDemoCard {
+                    base_url,
+                    token,
+                }
+            }
+
             // ── Account Data (actor-private View preferences) ─────
             // models/views.md §2.6 + identity/account-lifecycle.md
             // 共享 View 改 filter / sort / columns 写 cx.view.update（所有人可见）；

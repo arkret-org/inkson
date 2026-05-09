@@ -206,7 +206,8 @@ use crate::models::{
     RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     SendMessageResponse, ServerDescription, SnapshotHeadResponse, SpaceHierarchyResponse,
     SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse,
-    SubmitCommitResponse, SubmitDidOperationResponse, SubmitEventResponse, SyncDescribeResponse,
+    SignAnchorResponse, SubmitAnchorResponse, SubmitCommitResponse, SubmitDidOperationResponse,
+    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
     ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
     UpdateSpaceResponse, VerifyDeviceResponse,
 };
@@ -579,6 +580,52 @@ impl ContrixApi {
 
     pub async fn delete_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
         self.delete_json(&format!("api/v1/spaces/{space_id}")).await
+    }
+
+    // C10.D (2026-05-09 十六轮) Move/Anchor pipeline — the protocol-canonical
+    // write path for cell-driven state changes (consent, capability, member
+    // state, anchorer cell, MLS epoch, etc.). Use these instead of legacy
+    // direct-event endpoints (`messages/send`, `entities/...`) when the
+    // operation maps to a `cell_family` per spec event-kind-registry.
+
+    /// Submit a signed [`contrix_sdk::Move`] for the next anchorer batch.
+    /// Returns the server's verdict (`pending` if accepted into MoveStore,
+    /// `rejected` with reason if structural / signature / replay check
+    /// failed). The Move's `id` is content-addressed (`sha256(canonical_bytes)`),
+    /// so re-submitting the same Move is idempotent at the server.
+    pub async fn submit_move(
+        &self,
+        move_obj: &contrix_sdk::Move,
+    ) -> anyhow::Result<SubmitMoveResponse> {
+        let body = serde_json::to_value(move_obj)?;
+        self.post_json("api/v1/moves", body).await
+    }
+
+    /// Submit a signed [`contrix_sdk::Anchor`]. Most clients should NOT
+    /// call this — the server's anchorer signs Anchors locally. Use this
+    /// only when implementing a separate anchorer node or replaying
+    /// federation-received Anchors.
+    pub async fn submit_anchor(
+        &self,
+        anchor: &contrix_sdk::Anchor,
+    ) -> anyhow::Result<SubmitAnchorResponse> {
+        let body = serde_json::to_value(anchor)?;
+        self.post_json("api/v1/anchors", body).await
+    }
+
+    /// Trigger one anchorer signing pass for `space_id`. Admin-only.
+    /// Useful for tests + ops; production deploys typically rely on the
+    /// server-side periodic ticker (when wired) instead.
+    pub async fn admin_anchors_sign(
+        &self,
+        space_id: &str,
+        max_moves: Option<usize>,
+    ) -> anyhow::Result<SignAnchorResponse> {
+        let mut body = json!({ "space_id": space_id });
+        if let Some(max) = max_moves {
+            body["max_moves"] = json!(max);
+        }
+        self.post_json("api/v1/admin/anchors/sign", body).await
     }
 
     pub async fn send_message(

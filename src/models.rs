@@ -37,6 +37,51 @@ pub struct SpaceLifecycleResponse {
     pub deleted: bool,
 }
 
+// C10.D (2026-05-09 十六轮) Move/Anchor pipeline response shapes — mirror
+// soland's `routing::move_anchor::SubmitMoveResponse` /
+// `SubmitAnchorResponse` / `SignAnchorResponse`. The DTOs are kept here
+// (not in `contrix-sdk`) because they're soland-server-specific surface
+// shapes, not protocol primitives.
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitMoveResponse {
+    pub move_id: String,
+    /// `pending` (queued for next anchor batch) or `rejected`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RejectedMoveEntry {
+    pub move_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAnchorResponse {
+    pub anchor_id: String,
+    #[serde(default)]
+    pub accepted_move_ids: Vec<String>,
+    #[serde(default)]
+    pub rejected_moves: Vec<RejectedMoveEntry>,
+    pub post_state_root: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignAnchorResponse {
+    /// `true` if an Anchor was published; `false` if no pending Moves.
+    pub published: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_id: Option<String>,
+    #[serde(default)]
+    pub accepted_move_ids: Vec<String>,
+    #[serde(default)]
+    pub rejected_moves: Vec<RejectedMoveEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_state_root: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendMessageResponse {
     pub event_id: String,

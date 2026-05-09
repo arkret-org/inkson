@@ -44,6 +44,11 @@ pub mod applets;
 pub mod audit;
 pub mod call;
 pub mod chat;
+/// First end-to-end UI Move-flow PoC (C10.D 续 2026-05-09 十八轮).
+/// "Grant consent" button under settings → Privacy that builds + signs +
+/// POSTs a `cx.consent.grant` Move via the move_builder + api::submit_move
+/// pipeline landed in 十六轮.
+pub mod consent_demo;
 pub mod dashboard;
 pub mod devices;
 pub mod directory;
