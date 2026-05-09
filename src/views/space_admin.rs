@@ -5,7 +5,8 @@ use crate::{
     hlc::Hlc,
     local_state::LocalStateStore,
     move_builder::{
-        UnsignedMove, build_member_state_transition_move, build_space_organization_update_move,
+        UnsignedMove, build_capability_grant_move, build_capability_revoke_move,
+        build_member_state_transition_move, build_space_organization_update_move,
         did_key_from_verifying_key, did_key_verification_method, sign_unsigned_move,
     },
     operation::{CommitBuilder, cx_ops},
@@ -37,6 +38,46 @@ pub(crate) fn build_signed_space_organization_update(
     let vm = did_key_verification_method(&signing.verifying_key());
     let unsigned: UnsignedMove =
         build_space_organization_update_move(&did, space_id, value, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+}
+
+/// Pure helper: build + sign a `cx.capability.grant` Move (OrSet add)
+/// targeting `cx.component.capability.grant.v1`. Mirrors the consent
+/// helpers — same signing path, just a different cell family. Admins
+/// use this from the Capability Grants section to extend a capability
+/// to a principal.
+pub(crate) fn build_signed_capability_grant(
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let signing = demo_signing_key();
+    let did = did_key_from_verifying_key(&signing.verifying_key());
+    let vm = did_key_verification_method(&signing.verifying_key());
+    let unsigned: UnsignedMove =
+        build_capability_grant_move(&did, space_id, grant_id, tag, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+}
+
+/// Pure helper: build + sign a `cx.capability.revoke` Move (OrSet remove)
+/// on the same cell family as the grant. `reason` shows up in the audit
+/// trail and lets the UI explain why the capability was dropped.
+pub(crate) fn build_signed_capability_revoke(
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let signing = demo_signing_key();
+    let did = did_key_from_verifying_key(&signing.verifying_key());
+    let vm = did_key_verification_method(&signing.verifying_key());
+    let unsigned: UnsignedMove = build_capability_revoke_move(
+        &did, space_id, grant_id, tag, reason, anchor_ref, hlc,
+    )?;
     Ok(sign_unsigned_move(unsigned, &signing, &vm))
 }
 
@@ -95,9 +136,140 @@ pub fn SpaceAdminPanel(
     let members = use_signal(Vec::<String>::new);
     let mut space_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
+    // Capability grant/revoke Move-flow inputs (see capability-grant-card)
+    let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
+    let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
+    let mut cap_revoke_reason =
+        use_signal(|| "rotation policy".to_owned());
+    // Read-only anchorer cell value fetched from /api/admin/v1/spaces/{id}/anchorer.
+    // The endpoint may 404 in dev — surface that inline rather than blocking the page.
+    let mut anchorer_cell_status = use_signal(String::new);
+    let mut anchorer_cell_value = use_signal(String::new);
+
+    // Read the local anchor view for this space once per render. Surfaces:
+    //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
+    //  - frontier head    → debug visibility into what Move builders thread
+    //  - state_root       → admin can confirm divergence between local + server
+    let anchor_view = state_store.read().anchor_view_for(&selected_space);
+    let bottom_cells: Vec<(String, String)> = anchor_view
+        .bottom_cells
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let anchor_frontier_label = if anchor_view.frontier.is_empty() {
+        "(no Anchor seen — using sha256(empty) sentinel)".to_owned()
+    } else {
+        anchor_view.frontier.join(", ")
+    };
+    let anchor_state_root_label = anchor_view
+        .state_root
+        .clone()
+        .unwrap_or_else(|| "(not published)".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
+            // Bottom=expose conflict banner — only rendered when at least
+            // one cell in the projection has unresolved concurrent
+            // candidates. P0 M5.
+            if !bottom_cells.is_empty() {
+                div { class: "event", "data-testid": "bottom-cells-banner",
+                    div { class: "event-head",
+                        span { "Concurrent candidates unresolved" }
+                        span { class: "badge red", "bottom=expose" }
+                    }
+                    div { class: "muted",
+                        "One or more cells in this Space's projection are in the bottom-expose state — soland received concurrent Moves it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a head_in repair Move before downstream queries return a definitive value."
+                    }
+                    for (cell_ref, status) in &bottom_cells {
+                        div { class: "muted", "data-testid": "bottom-cell-row",
+                            "{cell_ref} · status={status}"
+                        }
+                    }
+                }
+            }
+            // Anchor frontier debug — shows whether sync has surfaced a
+            // real Anchor view yet. When empty this matches the sentinel
+            // Move builders thread in.
+            div { class: "event", "data-testid": "anchor-frontier-debug",
+                div { class: "event-head",
+                    span { "Anchor frontier" }
+                    span { "leaves={anchor_view.leaves.len()}" }
+                }
+                div { class: "muted", "data-testid": "anchor-frontier-heads",
+                    "frontier: {anchor_frontier_label}"
+                }
+                div { class: "muted", "data-testid": "anchor-state-root",
+                    "state_root: {anchor_state_root_label}"
+                }
+            }
+            // Anchorer cell (read-only, P0 M4) — fetches from
+            // /api/admin/v1/spaces/{id}/anchorer; surfaces the
+            // recovery-anchorer mode (single_did / threshold / open_set /
+            // mixed) on this admin page. A separate agent is implementing
+            // the endpoint on soland; on 404 we fall back to a clear
+            // inline message.
+            div { class: "event", "data-testid": "anchorer-cell-card",
+                div { class: "event-head",
+                    span { "Anchorer cell" }
+                    span { "cx.component.anchorer.v1" }
+                }
+                div { class: "muted",
+                    "Recovery anchorer mode for this Space — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
+                }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "anchorer-cell-refresh",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let space = space.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    let api = match authed_api(&base, api_token) {
+                                        Ok(api) => api,
+                                        Err(error) => {
+                                            anchorer_cell_status
+                                                .set(format!("API client unavailable: {error}"));
+                                            return;
+                                        }
+                                    };
+                                    match api.admin_anchorer_describe(&space).await {
+                                        Ok(value) => {
+                                            anchorer_cell_status.set("ok".to_owned());
+                                            anchorer_cell_value.set(value.to_string());
+                                        }
+                                        Err(error) => {
+                                            // 404 / not-implemented falls through here.
+                                            // Keep the message clear so the operator
+                                            // knows it's a missing endpoint, not bad
+                                            // data.
+                                            anchorer_cell_status.set(format!(
+                                                "anchorer endpoint unavailable ({error}); \
+                                                 expected /api/admin/v1/spaces/{{id}}/anchorer \
+                                                 (separate agent shipping)"
+                                            ));
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        "Fetch anchorer cell"
+                    }
+                }
+                if !anchorer_cell_status().is_empty() {
+                    div { class: "muted", "data-testid": "anchorer-cell-status",
+                        "{anchorer_cell_status}"
+                    }
+                }
+                if !anchorer_cell_value().is_empty() {
+                    div { class: "muted", "data-testid": "anchorer-cell-value",
+                        "{anchorer_cell_value}"
+                    }
+                }
+            }
             // Space metadata editor
             div { class: "event", "data-testid": "space-metadata",
                 div { class: "event-head", span { "Space Metadata" } span { "{selected_space}" } }
@@ -178,10 +350,12 @@ pub fn SpaceAdminPanel(
                                         "description": desc,
                                     });
                                     let hlc = Hlc::now("yougen").to_string();
+                                    let anchor_ref =
+                                        state_store.read().anchor_ref_for_move(&space);
                                     let signed = match build_signed_space_organization_update(
                                         &space,
                                         value,
-                                        PLACEHOLDER_ANCHOR_REF,
+                                        &anchor_ref,
                                         &hlc,
                                     ) {
                                         Ok(m) => m,
@@ -555,12 +729,14 @@ pub fn SpaceAdminPanel(
                                     move |_| {
                                         let api_token = token();
                                         let hlc = Hlc::now("yougen").to_string();
+                                        let anchor_ref =
+                                            state_store.read().anchor_ref_for_move(&space);
                                         let signed = match build_signed_member_state_transition(
                                             &space,
                                             &m,
                                             "join",
                                             "leave",
-                                            PLACEHOLDER_ANCHOR_REF,
+                                            &anchor_ref,
                                             &hlc,
                                         ) {
                                             Ok(m) => m,
@@ -598,12 +774,14 @@ pub fn SpaceAdminPanel(
                                     move |_| {
                                         let api_token = token();
                                         let hlc = Hlc::now("yougen").to_string();
+                                        let anchor_ref =
+                                            state_store.read().anchor_ref_for_move(&space);
                                         let signed = match build_signed_member_state_transition(
                                             &space,
                                             &m,
                                             "join",
                                             "ban",
-                                            PLACEHOLDER_ANCHOR_REF,
+                                            &anchor_ref,
                                             &hlc,
                                         ) {
                                             Ok(m) => m,
@@ -1038,6 +1216,155 @@ pub fn SpaceAdminPanel(
                 }
             }
 
+            // Capability grant / revoke Move-flow card (P0 M-capability /
+            // 第二十轮). Mirrors the consent grant/revoke PoC but targets
+            // cx.component.capability.grant.v1 (OrSet add/remove). Signed
+            // with the demo session key (TODO real-key-management) and
+            // POST'd to /api/v1/moves. Anchor frontier is threaded from
+            // the local sync view.
+            div { class: "event", "data-testid": "capability-grant-card",
+                div { class: "event-head",
+                    span { "Capability grant / revoke (Move PoC)" }
+                    span { "cx.component.capability.grant.v1 · OrSet" }
+                }
+                div { class: "muted",
+                    "Build a cx.capability.grant or cx.capability.revoke Move on the capability OrSet cell, sign with the admin's session key, and POST /api/v1/moves. Anchor predecessor is taken from the local /sync Anchor view; falls back to sha256(empty) when sync hasn't surfaced one."
+                }
+                label { "Grant ID (cell subject)" }
+                input {
+                    "data-testid": "cap-grant-id-input",
+                    value: "{cap_grant_id}",
+                    oninput: move |evt| cap_grant_id.set(evt.value()),
+                }
+                label { "Capability tag (action / scope)" }
+                input {
+                    "data-testid": "cap-grant-tag-input",
+                    value: "{cap_tag}",
+                    oninput: move |evt| cap_tag.set(evt.value()),
+                }
+                label { "Revoke reason (optional)" }
+                input {
+                    "data-testid": "cap-revoke-reason-input",
+                    value: "{cap_revoke_reason}",
+                    oninput: move |evt| cap_revoke_reason.set(evt.value()),
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "cap-grant-submit-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let space = space.clone();
+                                let api_token = token();
+                                let grant_val = cap_grant_id().trim().to_owned();
+                                let tag_val = cap_tag().trim().to_owned();
+                                if grant_val.is_empty() || tag_val.is_empty() {
+                                    status_msg.set(
+                                        "fill grant_id + tag before submitting capability grant".to_owned(),
+                                    );
+                                    return;
+                                }
+                                let hlc = Hlc::now("yougen").to_string();
+                                let anchor_ref =
+                                    state_store.read().anchor_ref_for_move(&space);
+                                let signed = match build_signed_capability_grant(
+                                    &space,
+                                    &grant_val,
+                                    &tag_val,
+                                    &anchor_ref,
+                                    &hlc,
+                                ) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        status_msg.set(format!(
+                                            "build capability grant failed: {e}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api.submit_move(&signed).await {
+                                            Ok(resp) => status_msg.set(format!(
+                                                "capability.grant: {}",
+                                                format_submit_response(&resp)
+                                            )),
+                                            Err(e) => status_msg.set(format!(
+                                                "capability.grant submit failed: {e}"
+                                            )),
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        "Grant capability (Move)"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "cap-revoke-submit-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let space = space.clone();
+                                let api_token = token();
+                                let grant_val = cap_grant_id().trim().to_owned();
+                                let tag_val = cap_tag().trim().to_owned();
+                                let reason_val = cap_revoke_reason();
+                                let reason_opt = if reason_val.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(reason_val.clone())
+                                };
+                                if grant_val.is_empty() || tag_val.is_empty() {
+                                    status_msg.set(
+                                        "fill grant_id + tag before submitting capability revoke".to_owned(),
+                                    );
+                                    return;
+                                }
+                                let hlc = Hlc::now("yougen").to_string();
+                                let anchor_ref =
+                                    state_store.read().anchor_ref_for_move(&space);
+                                let signed = match build_signed_capability_revoke(
+                                    &space,
+                                    &grant_val,
+                                    &tag_val,
+                                    reason_opt.as_deref(),
+                                    &anchor_ref,
+                                    &hlc,
+                                ) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        status_msg.set(format!(
+                                            "build capability revoke failed: {e}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        match api.submit_move(&signed).await {
+                                            Ok(resp) => status_msg.set(format!(
+                                                "capability.revoke: {}",
+                                                format_submit_response(&resp)
+                                            )),
+                                            Err(e) => status_msg.set(format!(
+                                                "capability.revoke submit failed: {e}"
+                                            )),
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        "Revoke capability (Move)"
+                    }
+                }
+            }
+
             // Organization governance — identity/identity-did.md §6 + content-moderation
             // Organization 作为 Principal（不是 Space）。一个 Space 可以由多个 organization
             // 共同治理，Space 的 organization 关系通过 cx.space.organization event 维护。
@@ -1348,6 +1675,62 @@ mod move_flow_tests {
         let effect = &signed.effects[0];
         assert_eq!(effect.op.op_type, LatticeOpType::Transition);
         assert_eq!(effect.op.to.as_ref().and_then(|v| v.as_str()), Some("ban"));
+    }
+
+    /// "Grant capability (Move)" wiring: produces a cx.capability.grant
+    /// Move targeting cx.component.capability.grant.v1 with the form's
+    /// tag added to the OrSet.
+    #[test]
+    fn build_signed_capability_grant_targets_capability_or_set_cell() {
+        let signed = build_signed_capability_grant(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.demo-01",
+            "discussion.message.create",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &signed.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.capability.grant.v1:"),
+            "capability grant must target the capability.grant.v1 cell family"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Add);
+        assert_eq!(
+            effect.op.tag.as_deref(),
+            Some("discussion.message.create")
+        );
+        // Detached JWS attached so soland's verifier can validate.
+        assert!(!signed.sig.jws.is_empty());
+    }
+
+    /// "Revoke capability (Move)" wiring: produces a cx.capability.revoke
+    /// Move on the SAME OrSet cell — soland's causal-remove semantics
+    /// require it. Reason field flows through.
+    #[test]
+    fn build_signed_capability_revoke_attaches_reason_and_remove_op() {
+        let signed = build_signed_capability_revoke(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.demo-01",
+            "discussion.message.create",
+            Some("rotation policy"),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &signed.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.capability.grant.v1:"),
+            "capability revoke targets the same OrSet cell as the grant"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
+        assert_eq!(effect.op.reason.as_deref(), Some("rotation policy"));
     }
 
     /// Different from-state values produce different content-addressed

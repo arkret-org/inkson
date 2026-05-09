@@ -1131,8 +1131,8 @@ mod tests {
         let projection = CollectionProjectionResponse {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
-            view_id: ViewId::new("cx:view:01js0vw0000000000000000000release").unwrap(),
-            frontier: vec!["cx:event:01js0fr00000000000000000042".to_owned()],
+            view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
+            frontier: vec!["cx:event:01904100-0000-7000-8000-000000000042".to_owned()],
             groups: vec![
                 CollectionProjectionGroup {
                     group_id: "cx:space:01c3b617-7000-7000-8000-000000000000".to_owned(),

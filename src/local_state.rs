@@ -102,6 +102,129 @@ fn default_true() -> bool {
     true
 }
 
+/// Snapshot of the latest Anchor view observed for a Space. Surfaced from
+/// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
+/// every cell-driven write references the right frontier instead of the
+/// `sha256(empty)` placeholder used during Round 18.
+///
+/// `frontier` lists the Anchor head ids the local client currently treats
+/// as the predecessor set (typically a single id but multiple while a
+/// concurrent fork is unresolved). `state_root` is the post-state Merkle
+/// root soland published in the most recent Anchor — clients can use it
+/// to detect divergence between their projection and the server view.
+/// `leaves` lists the Move ids covered by the current Anchor batch (the
+/// "leaves of the lattice that the next Anchor will close over"); UIs
+/// surface this so an admin can see which pending Moves an Anchor
+/// rotation will sweep up.
+///
+/// The struct is intentionally `Default` so callers that haven't received
+/// any Anchor view yet (offline, fresh login) still have a clean empty
+/// view to feed into builders.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalAnchorView {
+    /// Anchor head ids that the next Move treats as predecessors. Empty
+    /// vec means "no Anchor seen yet" — Move builders fall back to the
+    /// `sha256(empty)` sentinel.
+    #[serde(default)]
+    pub frontier: Vec<String>,
+    /// Move ids covered by the current Anchor batch (or about to be
+    /// closed by the next Anchor rotation). Surfaced for admin UIs.
+    #[serde(default)]
+    pub leaves: Vec<String>,
+    /// Post-state Merkle root from the most recent Anchor. Optional —
+    /// brand new spaces / offline clients may not have one yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_root: Option<String>,
+    /// Cell map snapshot: cell ref → bottom status string. Populated when
+    /// the projection contains a `bottom=expose` cell so the UI can
+    /// surface a "concurrent candidates unresolved" banner. Other cells
+    /// are omitted to keep this struct compact.
+    #[serde(default)]
+    pub bottom_cells: BTreeMap<String, String>,
+}
+
+impl LocalAnchorView {
+    /// SHA-256 of empty bytes — used as the "no Anchor seen yet" sentinel
+    /// the Move builders historically defaulted to.
+    pub const EMPTY_ANCHOR_REF: &'static str =
+        "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    /// Pick the single Anchor ref to feed into a Move builder. Returns the
+    /// first frontier head if any, otherwise the empty-bytes sentinel.
+    /// When the frontier holds multiple heads (concurrent fork) this picks
+    /// the lex-min head so two clients building Moves against the same
+    /// view will agree on which predecessor they reference.
+    pub fn move_anchor_ref(&self) -> String {
+        self.frontier
+            .iter()
+            .min()
+            .cloned()
+            .unwrap_or_else(|| Self::EMPTY_ANCHOR_REF.to_owned())
+    }
+
+    /// True when the view contains at least one cell with `bottom=expose`
+    /// status — the UI should surface a banner.
+    pub fn has_bottom_cells(&self) -> bool {
+        !self.bottom_cells.is_empty()
+    }
+
+    /// Best-effort extraction of an Anchor view from a per-Space `/sync`
+    /// body. The wire shape soland is moving toward (P0 M3) is:
+    ///
+    /// ```jsonc
+    /// {
+    ///   "anchor_view": {
+    ///     "frontier": ["cx:anchor:sha256:..."],
+    ///     "leaves":   ["cx:move:sha256:..."],
+    ///     "state_root": "cx:state:sha256:...",
+    ///     "cells": {
+    ///       "cx:cell:cx.component.member.state.v1:did:web:alice": {
+    ///         "bottom": "expose"
+    ///       }
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Until soland publishes the full payload, missing fields default to
+    /// empty / `None`. The function is total and never errors — it just
+    /// degrades to `LocalAnchorView::default()` when fields are missing
+    /// or have unexpected shapes.
+    pub fn from_sync_body(body: &Value) -> Self {
+        let anchor = body.get("anchor_view");
+        let mut view = Self::default();
+        let Some(anchor) = anchor else {
+            return view;
+        };
+        if let Some(arr) = anchor.get("frontier").and_then(|v| v.as_array()) {
+            view.frontier = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+        }
+        if let Some(arr) = anchor.get("leaves").and_then(|v| v.as_array()) {
+            view.leaves = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+        }
+        if let Some(s) = anchor.get("state_root").and_then(|v| v.as_str()) {
+            view.state_root = Some(s.to_owned());
+        }
+        if let Some(cells) = anchor.get("cells").and_then(|v| v.as_object()) {
+            for (cell_ref, status) in cells {
+                let bottom = status.get("bottom").and_then(|v| v.as_str());
+                if let Some(b) = bottom
+                    && b == "expose"
+                {
+                    view.bottom_cells.insert(cell_ref.clone(), b.to_owned());
+                }
+            }
+        }
+        view
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
@@ -141,6 +264,13 @@ pub struct ClientLocalState {
     /// policy is `required` or `disabled`.
     #[serde(default)]
     pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
+    /// Latest Anchor view per Space, threaded from `/sync`'s Anchor
+    /// projection (P0 M3). Move builders pull `frontier[0]` from here
+    /// instead of using the empty-bytes sentinel. UIs use the
+    /// `bottom_cells` map to surface conflict banners when a cell is
+    /// `bottom=expose`.
+    #[serde(default)]
+    pub anchor_views: BTreeMap<String, LocalAnchorView>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -168,6 +298,7 @@ impl Default for ClientLocalState {
             read_receipt_space_overrides: BTreeMap::new(),
             read_receipt_flow_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
+            anchor_views: BTreeMap::new(),
             push_registration: None,
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
@@ -507,6 +638,44 @@ impl LocalStateStore {
         &self,
     ) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
         self.load().read_receipt_policy_snapshots
+    }
+
+    /// Get the latest Anchor view for a Space. Returns the Default view
+    /// (empty frontier / empty leaves / no state_root) when none has been
+    /// observed yet — Move builders treat that as "use sha256(empty)
+    /// sentinel".
+    pub fn anchor_view_for(&self, space_id: &str) -> LocalAnchorView {
+        self.load()
+            .anchor_views
+            .get(space_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Replace the Anchor view snapshot for a Space. Called from the sync
+    /// path once the `/sync` response surfaces the projection's Anchor
+    /// view. Tests use this to seed Move-frontier behavior.
+    pub fn set_anchor_view(
+        &mut self,
+        space_id: impl Into<String>,
+        view: LocalAnchorView,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached.anchor_views.insert(space_id.into(), view);
+        let _ = self.flush();
+    }
+
+    /// All known Anchor views — handy for app-wide UI banners.
+    pub fn anchor_views(&self) -> BTreeMap<String, LocalAnchorView> {
+        self.load().anchor_views
+    }
+
+    /// Convenience: pick the right `anchor_ref` to thread into a Move
+    /// builder for a given Space. Returns the lex-min frontier head when
+    /// available, otherwise the `sha256(empty)` sentinel. Mirrors
+    /// [`LocalAnchorView::move_anchor_ref`].
+    pub fn anchor_ref_for_move(&self, space_id: &str) -> String {
+        self.anchor_view_for(space_id).move_anchor_ref()
     }
 
     /// Resolve effective send preference per spec (server policy → flow →
@@ -1065,6 +1234,122 @@ mod tests {
         let snap = store.read_receipt_policy_for_space("cx:space:demo").unwrap();
         assert!(!snap.locks_user_choice());
         assert_eq!(snap.lock_reason(), "");
+    }
+
+    #[test]
+    fn anchor_view_default_returns_empty_bytes_sentinel() {
+        let path = temp_state_path("anchor-default");
+        let store = LocalStateStore::with_path(path);
+        let view = store.anchor_view_for("cx:space:demo");
+        assert!(view.frontier.is_empty());
+        assert!(view.leaves.is_empty());
+        assert!(view.state_root.is_none());
+        assert_eq!(
+            view.move_anchor_ref(),
+            LocalAnchorView::EMPTY_ANCHOR_REF
+        );
+        assert_eq!(
+            store.anchor_ref_for_move("cx:space:demo"),
+            LocalAnchorView::EMPTY_ANCHOR_REF
+        );
+    }
+
+    #[test]
+    fn anchor_view_set_persists_and_picks_lex_min_frontier() {
+        let path = temp_state_path("anchor-set");
+        {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store.set_anchor_view(
+                "cx:space:demo",
+                LocalAnchorView {
+                    frontier: vec![
+                        "cx:anchor:sha256:bbb".to_owned(),
+                        "cx:anchor:sha256:aaa".to_owned(),
+                    ],
+                    leaves: vec!["cx:move:sha256:lf1".to_owned()],
+                    state_root: Some("cx:state:sha256:abc".to_owned()),
+                    bottom_cells: BTreeMap::new(),
+                },
+            );
+        }
+        let reader = LocalStateStore::with_path(path);
+        let view = reader.anchor_view_for("cx:space:demo");
+        assert_eq!(view.frontier.len(), 2);
+        assert_eq!(view.leaves.len(), 1);
+        assert_eq!(view.state_root.as_deref(), Some("cx:state:sha256:abc"));
+        assert_eq!(view.move_anchor_ref(), "cx:anchor:sha256:aaa");
+        assert_eq!(
+            reader.anchor_ref_for_move("cx:space:demo"),
+            "cx:anchor:sha256:aaa"
+        );
+    }
+
+    #[test]
+    fn anchor_view_bottom_cells_signal_conflict() {
+        let mut view = LocalAnchorView::default();
+        assert!(!view.has_bottom_cells());
+        view.bottom_cells.insert(
+            "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned(),
+            "expose".to_owned(),
+        );
+        assert!(view.has_bottom_cells());
+    }
+
+    #[test]
+    fn anchor_view_from_sync_body_parses_full_payload() {
+        let body = serde_json::json!({
+            "anchor_view": {
+                "frontier": ["cx:anchor:sha256:aaa", "cx:anchor:sha256:bbb"],
+                "leaves":   ["cx:move:sha256:lf1"],
+                "state_root": "cx:state:sha256:abc",
+                "cells": {
+                    "cx:cell:cx.component.member.state.v1:did:web:alice": { "bottom": "expose" },
+                    "cx:cell:cx.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
+                }
+            }
+        });
+        let view = LocalAnchorView::from_sync_body(&body);
+        assert_eq!(view.frontier.len(), 2);
+        assert_eq!(view.leaves, vec!["cx:move:sha256:lf1".to_owned()]);
+        assert_eq!(view.state_root.as_deref(), Some("cx:state:sha256:abc"));
+        // Only `bottom=expose` cells are surfaced — `reject` cells stay
+        // out of the conflict map.
+        assert_eq!(view.bottom_cells.len(), 1);
+        assert!(
+            view.bottom_cells
+                .contains_key("cx:cell:cx.component.member.state.v1:did:web:alice")
+        );
+    }
+
+    #[test]
+    fn anchor_view_from_sync_body_missing_returns_default() {
+        let body = serde_json::json!({"summary": {"summary": "hi"}});
+        let view = LocalAnchorView::from_sync_body(&body);
+        assert_eq!(view, LocalAnchorView::default());
+    }
+
+    #[test]
+    fn anchor_views_aggregates_across_spaces() {
+        let path = temp_state_path("anchor-aggregate");
+        let mut store = LocalStateStore::with_path(path);
+        store.set_anchor_view(
+            "cx:space:one",
+            LocalAnchorView {
+                frontier: vec!["cx:anchor:sha256:one".to_owned()],
+                ..LocalAnchorView::default()
+            },
+        );
+        store.set_anchor_view(
+            "cx:space:two",
+            LocalAnchorView {
+                frontier: vec!["cx:anchor:sha256:two".to_owned()],
+                ..LocalAnchorView::default()
+            },
+        );
+        let all = store.anchor_views();
+        assert_eq!(all.len(), 2);
+        assert!(all.contains_key("cx:space:one"));
+        assert!(all.contains_key("cx:space:two"));
     }
 
     #[test]

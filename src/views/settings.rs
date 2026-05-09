@@ -977,6 +977,7 @@ pub fn SettingsPanel(
                 crate::views::consent_demo::ConsentGrantDemoCard {
                     base_url,
                     token,
+                    state_store,
                 }
             }
 

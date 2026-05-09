@@ -100,6 +100,50 @@ pub fn build_consent_revoke_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Construct a `cx.capability.grant` Move that adds a capability tag to
+/// the capability OrSet cell. Mirrors [`build_consent_grant_move`] —
+/// the cell family (`cx.component.capability.grant.v1`) is OrSet too,
+/// so the wire shape is identical save for the cell prefix. `grant_id`
+/// is the cell subject (per-grant cell), `tag` is what the OrSet records
+/// (typically the granted action / scope / capability identifier).
+pub fn build_capability_grant_move(
+    issuer: &str,
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
+    let effect = serde_json::json!({
+        "cell": cell_id,
+        "op": { "type": "add", "tag": tag }
+    });
+    build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
+}
+
+/// Construct a `cx.capability.revoke` Move that removes a capability tag
+/// from the capability OrSet cell. Mirrors [`build_consent_revoke_move`].
+/// `reason` is optional but encouraged — it surfaces in the audit trail
+/// and lets the UI explain why the capability was dropped.
+pub fn build_capability_revoke_move(
+    issuer: &str,
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
+    let mut op = serde_json::json!({ "type": "remove", "tag": tag });
+    if let Some(reason) = reason {
+        op["reason"] = serde_json::Value::String(reason.to_owned());
+    }
+    let effect = serde_json::json!({ "cell": cell_id, "op": op });
+    build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
+}
+
 /// Construct a `cx.member.state` Move that transitions an actor's
 /// membership FSM. The cell subject is the `actor_id` (per-actor cell
 /// across the whole protocol; soland's CellStore is space-scoped so
@@ -348,6 +392,85 @@ mod tests {
         let effect = &unsigned.move_obj.effects[0];
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.reason, None);
+    }
+
+    #[test]
+    fn capability_grant_builder_produces_or_set_add_effect() {
+        let unsigned = build_capability_grant_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.01abc",
+            "discussion.message.create",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert!(effect
+            .cell
+            .as_str()
+            .starts_with("cx:cell:cx.component.capability.grant.v1:"));
+        assert_eq!(effect.op.op_type, LatticeOpType::Add);
+        assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
+    }
+
+    #[test]
+    fn capability_revoke_builder_produces_or_set_remove_with_reason() {
+        let unsigned = build_capability_revoke_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.01abc",
+            "discussion.message.create",
+            Some("rotation policy quarterly"),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert!(effect
+            .cell
+            .as_str()
+            .starts_with("cx:cell:cx.component.capability.grant.v1:"));
+        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
+        assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
+        assert_eq!(
+            effect.op.reason.as_deref(),
+            Some("rotation policy quarterly")
+        );
+    }
+
+    #[test]
+    fn capability_grant_and_revoke_target_same_cell_family() {
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let granted = build_capability_grant_move(
+            "did:web:admin.example",
+            space,
+            "cap.01abc",
+            "discussion.message.create",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let revoked = build_capability_revoke_move(
+            "did:web:admin.example",
+            space,
+            "cap.01abc",
+            "discussion.message.create",
+            None,
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        // Same cell subject — OrSet causal remove demands it.
+        assert_eq!(
+            granted.move_obj.effects[0].cell.as_str(),
+            revoked.move_obj.effects[0].cell.as_str()
+        );
+        // Different op_type → different content-addressed move id.
+        assert_ne!(
+            granted.move_obj.id.as_str(),
+            revoked.move_obj.id.as_str()
+        );
     }
 
     #[test]

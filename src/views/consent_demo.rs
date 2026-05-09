@@ -27,6 +27,7 @@ use ed25519_dalek::SigningKey;
 use crate::{
     api::ContrixApi,
     hlc::Hlc,
+    local_state::LocalStateStore,
     models::SubmitMoveResponse,
     move_builder::{
         UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
@@ -35,14 +36,16 @@ use crate::{
     views::helpers::authed_api,
 };
 
-/// Placeholder anchor frontier reference used while sync hasn't surfaced
-/// the latest Anchor head. SHA-256 of empty bytes — soland's MoveStore
-/// accepts this as the "no predecessor" sentinel for tests / first Move.
+/// Sentinel anchor reference used when the local store hasn't seen any
+/// Anchor view yet (`/sync` projection didn't carry an `anchor_view`
+/// field). SHA-256 of empty bytes — soland's MoveStore accepts this as
+/// the "no predecessor" tag for tests / first-Move-in-Space scenarios.
 ///
-/// TODO(anchor-frontier-from-sync): once sync.rs (P0 M3) lands, read the
-/// latest Anchor head from `effective_anchor_view` instead and thread it
-/// into every Move submission.
-const PLACEHOLDER_ANCHOR_REF: &str =
+/// 2026-05-09 二十轮: kept as a public constant for tests; production UI
+/// callers now pull the resolved anchor_ref from
+/// [`LocalStateStore::anchor_ref_for_move`] which threads in the latest
+/// frontier head when sync has surfaced one.
+pub(crate) const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Build the deterministic demo SigningKey used for the consent-grant
@@ -111,7 +114,11 @@ pub(crate) fn format_submit_response(response: &SubmitMoveResponse) -> String {
 /// the SettingsPanel. Self-contained: owns its own form state + status
 /// signal, only needs `base_url` / `token` / `space_id` from the parent.
 #[component]
-pub fn ConsentGrantDemoCard(base_url: Signal<String>, token: Signal<String>) -> Element {
+pub fn ConsentGrantDemoCard(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
     let mut tag = use_signal(|| "scope:contacts".to_owned());
     let mut space_id = use_signal(|| String::new());
@@ -163,11 +170,12 @@ pub fn ConsentGrantDemoCard(base_url: Signal<String>, token: Signal<String>) -> 
                             return;
                         }
                         let hlc = Hlc::now("yougen").to_string();
+                        let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
                         let signed = match build_signed_consent_grant(
                             &space_val,
                             &consent_val,
                             &tag_val,
-                            PLACEHOLDER_ANCHOR_REF,
+                            &anchor_ref,
                             &hlc,
                         ) {
                             Ok(m) => m,
@@ -212,12 +220,13 @@ pub fn ConsentGrantDemoCard(base_url: Signal<String>, token: Signal<String>) -> 
                             return;
                         }
                         let hlc = Hlc::now("yougen").to_string();
+                        let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
                         let signed = match build_signed_consent_revoke(
                             &space_val,
                             &consent_val,
                             &tag_val,
                             Some("user revoked from settings UI"),
-                            PLACEHOLDER_ANCHOR_REF,
+                            &anchor_ref,
                             &hlc,
                         ) {
                             Ok(m) => m,

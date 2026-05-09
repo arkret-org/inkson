@@ -1267,6 +1267,14 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         store.save_sync_cursor(sync.next_batch.clone());
                         for (id, body) in &sync.spaces {
                             store.save_space_projection(id.clone(), body.clone());
+                            // Thread the per-Space Anchor view (frontier /
+                            // leaves / state_root / bottom cells) into the
+                            // local store so Move builders + UI can read
+                            // it. Bodies without an `anchor_view` field
+                            // produce a Default view (empty frontier =
+                            // sentinel) so we still record presence.
+                            let view = crate::local_state::LocalAnchorView::from_sync_body(body);
+                            store.set_anchor_view(id.clone(), view);
                         }
                     }
                     sync_cursor.set(sync.next_batch);

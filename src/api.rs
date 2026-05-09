@@ -613,6 +613,23 @@ impl ContrixApi {
         self.post_json("api/v1/anchors", body).await
     }
 
+    /// Read the current anchorer cell value for a Space (admin-only).
+    /// Returns the raw JSON shape the server publishes — typically
+    /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
+    ///    "principals": [...], ... }`. The endpoint is being implemented
+    /// in soland on a separate track (P0 M4); when it 404s the caller's
+    /// `Result::Err` arm should surface a clear "endpoint unavailable"
+    /// message rather than blocking the page.
+    pub async fn admin_anchorer_describe(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!(
+            "api/admin/v1/spaces/{space_id}/anchorer"
+        ))
+        .await
+    }
+
     /// Trigger one anchorer signing pass for `space_id`. Admin-only.
     /// Useful for tests + ops; production deploys typically rely on the
     /// server-side periodic ticker (when wired) instead.
