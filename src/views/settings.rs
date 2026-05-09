@@ -7,9 +7,64 @@ use crate::{
     config::LocalConfigStore,
     i18n::Locale,
     local_state::LocalStateStore,
+    models::AccountDataSetOutcome,
     views::helpers::{authed_api, persist_config},
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
+
+/// `cx.account_data` key used by the read-receipt preferences entry. Spec:
+/// `discovery/client-preferences.md` §3.6.
+pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "cx.read_receipt.preferences";
+
+/// Build the canonical `content` body for a read-receipt preferences
+/// account-data entry. Mirrors the SDK's `ReadReceiptPreferences` shape so
+/// other devices reading the value via `/sync` get the same field names.
+pub(crate) fn build_read_receipt_preferences_body(
+    default_send: bool,
+    space_overrides: &std::collections::BTreeMap<String, bool>,
+    flow_overrides: &std::collections::BTreeMap<String, bool>,
+) -> serde_json::Value {
+    json!({
+        "default_send": default_send,
+        "space_overrides": space_overrides,
+        "flow_overrides": flow_overrides,
+    })
+}
+
+/// Round 21 helper: spawn a fire-and-forget task that pushes the current
+/// read-receipt preferences to soland's `cx.account_data.set` PUT
+/// endpoint. Read latest values from the local state store at call time —
+/// the local state is always authoritative; the server-sync is best-effort.
+/// Swallows 404/501/405 via [`AccountDataSetOutcome::Unsupported`] so older
+/// soland deployments don't surface as user-visible errors.
+fn push_read_receipt_account_data(
+    base_url: String,
+    api_token: String,
+    state_store: Signal<LocalStateStore>,
+) {
+    let body = build_read_receipt_preferences_body(
+        state_store.read().read_receipt_default_send(),
+        &state_store.read().read_receipt_space_overrides(),
+        &state_store.read().read_receipt_flow_overrides(),
+    );
+    spawn(async move {
+        let api = match authed_api(&base_url, api_token) {
+            Ok(api) => api,
+            Err(_) => return,
+        };
+        match api.set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body).await {
+            Ok(AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT returned {status}; local state still authoritative"
+                );
+            }
+            Err(error) => {
+                tracing::warn!("account_data PUT for read-receipt prefs failed: {error}");
+            }
+        }
+    });
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
@@ -729,6 +784,31 @@ pub fn SettingsPanel(
                                     "Read receipts: default = {}",
                                     if send { "send" } else { "skip" }
                                 ));
+                                // Round 21: also push to soland's
+                                // cx.account_data.set so other devices pick
+                                // up the change. Endpoint may 404/501 — we
+                                // swallow and keep local authoritative.
+                                let body = build_read_receipt_preferences_body(
+                                    send,
+                                    &state_store
+                                        .read()
+                                        .read_receipt_space_overrides(),
+                                    &state_store
+                                        .read()
+                                        .read_receipt_flow_overrides(),
+                                );
+                                let base = base_url();
+                                let api_token = token();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        let _ = api
+                                            .set_account_data(
+                                                READ_RECEIPT_ACCOUNT_DATA_KEY,
+                                                body,
+                                            )
+                                            .await;
+                                    }
+                                });
                             },
                         }
                         " Send read receipts (cx.receipt.read) by default"
@@ -802,6 +882,11 @@ pub fn SettingsPanel(
                                                         "Read receipts for {space_id}: {}",
                                                         if next { "send" } else { "skip" }
                                                     ));
+                                                    push_read_receipt_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        state_store,
+                                                    );
                                                 }
                                             },
                                             {if send { "Switch to skip" } else { "Switch to send" }}
@@ -826,6 +911,11 @@ pub fn SettingsPanel(
                                                     status.set(format!(
                                                         "Read receipts for {space_id}: inherit default"
                                                     ));
+                                                    push_read_receipt_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        state_store,
+                                                    );
                                                 }
                                             },
                                             "Inherit default"
@@ -866,6 +956,11 @@ pub fn SettingsPanel(
                                 );
                                 read_receipt_override_input.set(String::new());
                                 status.set(format!("Skipping read receipts in {space_id}"));
+                                push_read_receipt_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
                             },
                             "Add (skip)"
                         }
@@ -887,6 +982,11 @@ pub fn SettingsPanel(
                                 );
                                 read_receipt_override_input.set(String::new());
                                 status.set(format!("Sending read receipts in {space_id}"));
+                                push_read_receipt_account_data(
+                                    base_url(),
+                                    token(),
+                                    state_store,
+                                );
                             },
                             "Add (send)"
                         }
@@ -2489,5 +2589,38 @@ pub fn SettingsPanel(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Round 21: the canonical `cx.read_receipt.preferences` body shape
+    /// other devices read via `/sync` account_data. Locks the field names
+    /// (`default_send`, `space_overrides`, `flow_overrides`) so a future
+    /// rename can't silently desync devices.
+    #[test]
+    fn build_read_receipt_preferences_body_has_canonical_field_shape() {
+        let mut spaces = BTreeMap::new();
+        spaces.insert("cx:space:demo".to_owned(), false);
+        let mut flows = BTreeMap::new();
+        flows.insert("cx:flow:demo".to_owned(), true);
+        let body = build_read_receipt_preferences_body(true, &spaces, &flows);
+        assert_eq!(body["default_send"], serde_json::Value::Bool(true));
+        assert_eq!(body["space_overrides"]["cx:space:demo"], false);
+        assert_eq!(body["flow_overrides"]["cx:flow:demo"], true);
+        // Keys we don't expect in this body — explicit guards so a typo
+        // (e.g. `default` instead of `default_send`) regression-bisects.
+        assert!(body.get("default").is_none());
+        assert!(body.get("read_receipt_default_send").is_none());
+    }
+
+    /// account-data key is the exact spec key — same string the SDK uses
+    /// when reading the entry back from `/sync`.
+    #[test]
+    fn read_receipt_account_data_key_matches_spec() {
+        assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "cx.read_receipt.preferences");
     }
 }

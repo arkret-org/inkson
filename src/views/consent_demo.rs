@@ -22,16 +22,17 @@
 //! organization / capability / etc. UIs to the same pattern.
 
 use dioxus::prelude::*;
+#[cfg(test)]
 use ed25519_dalek::SigningKey;
 
 use crate::{
     api::ContrixApi,
     hlc::Hlc,
-    local_state::LocalStateStore,
+    local_state::{LocalIdentity, LocalStateStore},
     models::SubmitMoveResponse,
     move_builder::{
         UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
-        did_key_from_verifying_key, did_key_verification_method, sign_unsigned_move,
+        did_key_verification_method, sign_unsigned_move,
     },
     views::helpers::authed_api,
 };
@@ -45,43 +46,61 @@ use crate::{
 /// callers now pull the resolved anchor_ref from
 /// [`LocalStateStore::anchor_ref_for_move`] which threads in the latest
 /// frontier head when sync has surfaced one.
+#[cfg(test)]
 pub(crate) const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// Build the deterministic demo SigningKey used for the consent-grant
-/// PoC. Same seed every time so test vectors are reproducible.
-///
-/// TODO(real-key-management): production yougen MUST resolve the actor
-/// DID to a private key via OS keychain (macOS/Linux/Windows), WebAuthn
-/// (browser), or an HSM. The demo seed `[42; 32]` is NOT secret and MUST
-/// NOT be used to sign anything that lands in production state.
+/// Test-only deterministic signing key used by unit tests so vectors stay
+/// reproducible across runs. Round 21 retired the production callers — UI
+/// builders now load the persisted [`LocalIdentity`] from the local state
+/// store instead. Tests still want a stable key so per-content-address
+/// assertions don't depend on `getrandom`.
+#[cfg(test)]
 pub(crate) fn demo_signing_key() -> SigningKey {
     SigningKey::from_bytes(&[42u8; 32])
+}
+
+/// Adapter for tests: build an in-memory [`LocalIdentity`] from a fixed
+/// signing key. Production UI uses
+/// [`LocalStateStore::ensure_local_identity`] to load+persist the
+/// per-device key; this helper centralises the verifying-key → did:key
+/// derivation so callers don't have to reach back into `move_builder`.
+#[cfg(test)]
+fn identity_from_signing_key(signing_key: SigningKey) -> LocalIdentity {
+    let verifying = signing_key.verifying_key();
+    let device_did = crate::move_builder::did_key_from_verifying_key(&verifying);
+    LocalIdentity { device_did, signing_key }
 }
 
 /// Pure helper: turn the form values into a signed `Move` ready for
 /// submission. Splitting this out keeps the Dioxus closure tiny and
 /// — crucially — makes it unit-testable without spawning an event loop
 /// or HTTP client.
+///
+/// Round 21: takes a [`LocalIdentity`] borrow instead of synthesising a
+/// `[42; 32]` deterministic key. UI callers thread in the result of
+/// `state_store.write().ensure_local_identity()`; tests pass an
+/// `identity_from_signing_key(demo_signing_key())` so vectors stay stable.
 pub(crate) fn build_signed_consent_grant(
+    identity: &LocalIdentity,
     space_id: &str,
     consent_id: &str,
     tag: &str,
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
-        build_consent_grant_move(&did, space_id, consent_id, tag, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+        build_consent_grant_move(did, space_id, consent_id, tag, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 /// Pure helper: build + sign a `cx.consent.revoke` Move (OrSet remove).
 /// Mirror of [`build_signed_consent_grant`] for the revoke path. Splitting
 /// it out keeps the Dioxus closure tiny and unit-testable.
 pub(crate) fn build_signed_consent_revoke(
+    identity: &LocalIdentity,
     space_id: &str,
     consent_id: &str,
     tag: &str,
@@ -89,12 +108,11 @@ pub(crate) fn build_signed_consent_revoke(
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
-        build_consent_revoke_move(&did, space_id, consent_id, tag, reason, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+        build_consent_revoke_move(did, space_id, consent_id, tag, reason, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 /// Pure helper: format a `SubmitMoveResponse` for the status-line UI.
@@ -171,7 +189,15 @@ pub fn ConsentGrantDemoCard(
                         }
                         let hlc = Hlc::now("yougen").to_string();
                         let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
+                        let identity = match state_store.write().ensure_local_identity() {
+                            Ok(id) => id,
+                            Err(err) => {
+                                status.set(format!("Identity unavailable: {err}"));
+                                return;
+                            }
+                        };
                         let signed = match build_signed_consent_grant(
+                            &identity,
                             &space_val,
                             &consent_val,
                             &tag_val,
@@ -221,7 +247,15 @@ pub fn ConsentGrantDemoCard(
                         }
                         let hlc = Hlc::now("yougen").to_string();
                         let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
+                        let identity = match state_store.write().ensure_local_identity() {
+                            Ok(id) => id,
+                            Err(err) => {
+                                status.set(format!("Identity unavailable: {err}"));
+                                return;
+                            }
+                        };
                         let signed = match build_signed_consent_revoke(
+                            &identity,
                             &space_val,
                             &consent_val,
                             &tag_val,
@@ -269,7 +303,7 @@ pub fn ConsentGrantDemoCard(
                 }
             }
             div { class: "muted",
-                "TODO(real-key-management): replace deterministic [42;32] seed with WebAuthn / OS keychain / HSM. TODO(anchor-frontier-from-sync): plumb the latest Anchor head from sync.rs once P0 M3 lands."
+                "Round 21: signing key is the per-device ed25519 key persisted in local_state (LocalIdentity). TODO(secure-key-store-handoff): production deploys must move this seed into OS keychain / WebAuthn / HSM. TODO(anchor-frontier-from-sync): plumb the latest Anchor head from sync.rs once P0 M3 lands."
             }
         }
     }
@@ -278,6 +312,7 @@ pub fn ConsentGrantDemoCard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::move_builder::did_key_from_verifying_key;
     use contrix_sdk::LatticeOpType;
 
     fn fixed_anchor_ref() -> &'static str {
@@ -288,6 +323,14 @@ mod tests {
         "0189c4d2af00-00000000-aabbccdd"
     }
 
+    /// Test-only stable identity built from `demo_signing_key()`. Used by
+    /// per-content-address assertions that need bit-identical move ids
+    /// across runs — production callers thread in
+    /// `state_store.write().ensure_local_identity()` instead.
+    fn fixed_identity() -> LocalIdentity {
+        identity_from_signing_key(demo_signing_key())
+    }
+
     /// The form-to-Move helper builds a Move with exactly the consent
     /// OrSet add effect the spec requires: cell prefix
     /// `cx:cell:cx.component.consent.grant.v1:`, op type `add`, op tag
@@ -295,7 +338,9 @@ mod tests {
     #[test]
     fn build_signed_consent_grant_produces_consent_or_set_add() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let identity = fixed_identity();
         let signed = build_signed_consent_grant(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -315,11 +360,11 @@ mod tests {
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
-        // Issuer DID must be did:key derived from the demo verifying key
-        // — the placeholder we documented as TODO real-key-management.
-        let signing = demo_signing_key();
-        let expected_did = did_key_from_verifying_key(&signing.verifying_key());
+        // Issuer DID matches the identity's device_did (round-tripped from
+        // the verifying key).
+        let expected_did = did_key_from_verifying_key(&identity.signing_key.verifying_key());
         assert_eq!(signed.issuer.as_str(), expected_did);
+        assert_eq!(signed.issuer.as_str(), identity.device_did);
     }
 
     /// The signed Move's `sig.jws` is a non-empty detached JWS with the
@@ -327,7 +372,9 @@ mod tests {
     /// payload), and the verification_method points at the demo did:key.
     #[test]
     fn build_signed_consent_grant_attaches_detached_jws_with_demo_did_key() {
+        let identity = fixed_identity();
         let signed = build_signed_consent_grant(
+            &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cnt.demo-01",
             "scope:contacts",
@@ -343,8 +390,8 @@ mod tests {
             parts[1].is_empty(),
             "middle (payload) segment must be empty for detached JWS"
         );
-        let signing = demo_signing_key();
-        let expected_vm = did_key_verification_method(&signing.verifying_key());
+        let expected_vm =
+            did_key_verification_method(&identity.signing_key.verifying_key());
         assert_eq!(signed.sig.verification_method, expected_vm);
         assert_eq!(signed.sig.alg, "EdDSA");
     }
@@ -393,7 +440,9 @@ mod tests {
     #[test]
     fn build_signed_consent_revoke_produces_consent_or_set_remove() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let identity = fixed_identity();
         let signed = build_signed_consent_revoke(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -420,10 +469,8 @@ mod tests {
             effect.op.reason.as_deref(),
             Some("user revoked from settings UI")
         );
-        // Issuer is still the demo did:key (TODO real-key-management).
-        let signing = demo_signing_key();
-        let expected_did = did_key_from_verifying_key(&signing.verifying_key());
-        assert_eq!(signed.issuer.as_str(), expected_did);
+        // Issuer matches the identity's device_did.
+        assert_eq!(signed.issuer.as_str(), identity.device_did);
     }
 
     /// Grant + revoke on the same form values produce DIFFERENT move ids
@@ -432,7 +479,9 @@ mod tests {
     #[test]
     fn grant_and_revoke_have_distinct_content_addresses() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let identity = fixed_identity();
         let granted = build_signed_consent_grant(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -441,6 +490,7 @@ mod tests {
         )
         .unwrap();
         let revoked = build_signed_consent_revoke(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -458,7 +508,9 @@ mod tests {
     #[test]
     fn build_signed_consent_grant_is_content_addressed_by_canonical_bytes() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let identity = fixed_identity();
         let one = build_signed_consent_grant(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -467,6 +519,7 @@ mod tests {
         )
         .unwrap();
         let two = build_signed_consent_grant(
+            &identity,
             space,
             "cnt.demo-01",
             "scope:contacts",
@@ -476,5 +529,39 @@ mod tests {
         .unwrap();
         assert_eq!(one.id.as_str(), two.id.as_str());
         assert!(one.id.as_str().starts_with("cx:move:sha256:"));
+    }
+
+    /// Two freshly-generated identities sign the same form values and the
+    /// resulting Move ids differ — proves the per-device key actually
+    /// participates in the canonical hash (round-trip via `getrandom::fill`).
+    /// This is the property a real key store needs to preserve: rotating a
+    /// device's key changes the issuer, which changes the content address.
+    #[test]
+    fn distinct_identities_produce_distinct_move_ids() {
+        let id_a = LocalIdentity::generate().unwrap();
+        let id_b = LocalIdentity::generate().unwrap();
+        assert_ne!(id_a.device_did, id_b.device_did);
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let move_a = build_signed_consent_grant(
+            &id_a,
+            space,
+            "cnt.demo-01",
+            "scope:contacts",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let move_b = build_signed_consent_grant(
+            &id_b,
+            space,
+            "cnt.demo-01",
+            "scope:contacts",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_ne!(move_a.id.as_str(), move_b.id.as_str());
+        assert_eq!(move_a.issuer.as_str(), id_a.device_did);
+        assert_eq!(move_b.issuer.as_str(), id_b.device_did);
     }
 }

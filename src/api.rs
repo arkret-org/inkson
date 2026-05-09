@@ -182,7 +182,7 @@ impl Default for CancellationToken {
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
+    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
     AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
     AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse, BackfillResponse,
     BanMemberResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
@@ -643,6 +643,53 @@ impl ContrixApi {
             body["max_moves"] = json!(max);
         }
         self.post_json("api/v1/admin/anchors/sign", body).await
+    }
+
+    /// PUT a per-account `cx.account_data.set` entry. Round 21: thin wrapper
+    /// around `PUT /api/v1/account_data/{type}` so settings UIs can push
+    /// preferences (e.g. `cx.read_receipt.preferences`) up to soland for
+    /// cross-device sync. The endpoint is being implemented in soland on a
+    /// separate track — when it returns 404 / 501 / 405 we treat the
+    /// outcome as `Unsupported` and let the caller swallow it (local state
+    /// stays authoritative). Anything else surfaces as `Err`.
+    ///
+    /// Structural: the body is `{ "content": <value> }` — soland's existing
+    /// `cx.account_data.set` pipeline treats the path's `{type}` segment as
+    /// the canonical account-data key.
+    pub async fn set_account_data(
+        &self,
+        type_key: &str,
+        content: Value,
+    ) -> anyhow::Result<AccountDataSetOutcome> {
+        let body = json!({ "content": content });
+        let result: anyhow::Result<Value> = self
+            .put_json(&format!("api/v1/account_data/{type_key}"), body)
+            .await;
+        match result {
+            Ok(value) => Ok(AccountDataSetOutcome::Stored { response: value }),
+            Err(error) => {
+                // Detect the "endpoint not yet implemented" shape. We accept
+                // 404 (route absent), 501 (NotImplemented), and 405 (route
+                // exists for another method but PUT not wired) as graceful
+                // degradation — anything else propagates.
+                if let Some(api_error) = error.downcast_ref::<ContrixApiError>() {
+                    let status = api_error.status;
+                    if matches!(
+                        status,
+                        StatusCode::NOT_FOUND
+                            | StatusCode::NOT_IMPLEMENTED
+                            | StatusCode::METHOD_NOT_ALLOWED
+                    ) {
+                        tracing::warn!(
+                            "account_data PUT for {type_key} returned {status}; \
+                             keeping local state authoritative until soland wires it"
+                        );
+                        return Ok(AccountDataSetOutcome::Unsupported { status });
+                    }
+                }
+                Err(error)
+            }
+        }
     }
 
     pub async fn send_message(

@@ -68,6 +68,22 @@ pub struct SubmitAnchorResponse {
     pub post_state_root: String,
 }
 
+/// Outcome of [`crate::api::ContrixApi::set_account_data`]. Captures the
+/// graceful-degradation contract: 404/501/405 are not treated as errors —
+/// soland's `account_data` PUT is being rolled out incrementally and the
+/// client must keep working when the endpoint isn't wired yet.
+#[derive(Debug, Clone)]
+pub enum AccountDataSetOutcome {
+    /// Server accepted and stored the value. The caller may inspect the
+    /// echoed body for any server-derived metadata, but most callers can
+    /// ignore the `Value`.
+    Stored { response: serde_json::Value },
+    /// Server doesn't yet support `PUT /api/v1/account_data/{type}` — the
+    /// client logged a `tracing::warn` and the local state remains the
+    /// authoritative copy.
+    Unsupported { status: reqwest::StatusCode },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SignAnchorResponse {
     /// `true` if an Anchor was published; `false` if no pending Moves.

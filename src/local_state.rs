@@ -8,6 +8,7 @@ use std::{
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use contrix_sdk::EncryptedPayload;
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -102,6 +103,125 @@ fn default_true() -> bool {
     true
 }
 
+/// Persisted shape of the device identity. Stored on disk as 32 raw seed
+/// bytes hex-encoded plus the cached `did:key:z<multibase>` derived from
+/// the verifying key. The `did_key` is recomputed from the seed on load to
+/// guard against tampering / accidental edits — but persisting it makes
+/// the file human-debuggable.
+///
+/// Round 21: this replaces the deterministic `[42; 32]` demo seed used by
+/// every Move builder caller (`consent_demo::demo_signing_key`,
+/// `space_admin::build_signed_*`, etc.). Fresh installs generate via
+/// `getrandom::fill` on first access; existing dev installs that still
+/// hold a `[42; 32]` cache are simply broken — they regenerate the next
+/// time the store is loaded with no record present (Contrix v1 protocol is
+/// pre-release, no compat path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalIdentityRecord {
+    /// Hex-encoded 32-byte ed25519 seed. Production deploys MUST move this
+    /// to OS keychain / WebAuthn / HSM and only keep a `did:key` reference
+    /// here (TODO `secure-key-store-handoff`).
+    pub seed_hex: String,
+    /// `did:key:z<multibase>` derived from the seed's verifying key.
+    pub did_key: String,
+}
+
+/// In-memory device identity: the per-device ed25519 signing key plus the
+/// derived `did:key`. Construct via [`LocalStateStore::ensure_local_identity`]
+/// (which generates+persists on first call) or [`LocalIdentity::from_record`]
+/// (round-tripping a persisted record).
+#[derive(Clone)]
+pub struct LocalIdentity {
+    pub device_did: String,
+    pub signing_key: SigningKey,
+}
+
+impl std::fmt::Debug for LocalIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never log the private bytes.
+        f.debug_struct("LocalIdentity")
+            .field("device_did", &self.device_did)
+            .field("signing_key", &"<redacted>")
+            .finish()
+    }
+}
+
+impl PartialEq for LocalIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.device_did == other.device_did
+            && self.signing_key.to_bytes() == other.signing_key.to_bytes()
+    }
+}
+
+impl Eq for LocalIdentity {}
+
+impl LocalIdentity {
+    /// Generate a fresh device identity. Uses `getrandom::fill` for the
+    /// 32-byte seed — same RNG yougen uses for OIDC PKCE state/nonce/verifier.
+    pub fn generate() -> anyhow::Result<Self> {
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
+        let signing_key = SigningKey::from_bytes(&seed);
+        let device_did = encode_did_key(&signing_key);
+        Ok(Self { device_did, signing_key })
+    }
+
+    /// Recover an identity from a persisted record. Returns `Err` if the
+    /// hex is malformed or the cached `did_key` mismatches what the seed
+    /// derives — a tamper / corruption signal.
+    pub fn from_record(record: &LocalIdentityRecord) -> anyhow::Result<Self> {
+        let bytes = hex_to_bytes(&record.seed_hex)
+            .ok_or_else(|| anyhow::anyhow!("identity seed_hex is not valid hex"))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "identity seed must be 32 bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&bytes);
+        let signing_key = SigningKey::from_bytes(&seed);
+        let derived = encode_did_key(&signing_key);
+        if derived != record.did_key {
+            return Err(anyhow::anyhow!(
+                "identity record tampered: stored did_key {} != derived {derived}",
+                record.did_key
+            ));
+        }
+        Ok(Self {
+            device_did: derived,
+            signing_key,
+        })
+    }
+
+    /// Serialize to the on-disk record shape.
+    pub fn to_record(&self) -> LocalIdentityRecord {
+        let seed_hex = self
+            .signing_key
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        LocalIdentityRecord {
+            seed_hex,
+            did_key: self.device_did.clone(),
+        }
+    }
+}
+
+/// Encode an ed25519 verifying key as a `did:key:z<multibase>` DID. Mirror
+/// of `move_builder::did_key_from_verifying_key` — duplicated here to keep
+/// `local_state` independent of `move_builder` (which depends on this
+/// module via the new identity accessor).
+fn encode_did_key(signing_key: &SigningKey) -> String {
+    let verifying = signing_key.verifying_key();
+    let mut bytes = Vec::with_capacity(34);
+    bytes.push(0xed);
+    bytes.push(0x01);
+    bytes.extend_from_slice(verifying.as_bytes());
+    format!("did:key:z{}", bs58::encode(bytes).into_string())
+}
+
 /// Snapshot of the latest Anchor view observed for a Space. Surfaced from
 /// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
@@ -141,6 +261,20 @@ pub struct LocalAnchorView {
     /// are omitted to keep this struct compact.
     #[serde(default)]
     pub bottom_cells: BTreeMap<String, String>,
+    /// Round 21: the current MLS epoch as published in the
+    /// `cx.component.mls.epoch.v1` cas-register cell, when sync surfaces
+    /// it. `None` means the Space hasn't published an MLS epoch yet (no
+    /// E2EE group or pre-genesis state).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mls_epoch: Option<u64>,
+    /// Round 21: the current `governance.covered_frontier` cell value —
+    /// the lattice frontier cell that governance Moves require predecessor
+    /// coverage of before they're accepted. Surfaced as a string so the
+    /// UI can render whatever shape soland publishes (typically a
+    /// `cx:state:sha256:...` ref). `None` means the governance cell hasn't
+    /// been observed yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered_frontier: Option<String>,
 }
 
 impl LocalAnchorView {
@@ -219,6 +353,42 @@ impl LocalAnchorView {
                 {
                     view.bottom_cells.insert(cell_ref.clone(), b.to_owned());
                 }
+                // Round 21: well-known named cells surfaced for the
+                // space_admin MLS epoch widget. We accept either a raw
+                // `value` or a typed `register.value` field — soland's
+                // canonical projection uses the latter; tests may emit
+                // the former.
+                let value_for = |status: &Value| -> Option<Value> {
+                    status
+                        .get("value")
+                        .cloned()
+                        .or_else(|| status.get("register").and_then(|r| r.get("value")).cloned())
+                };
+                if cell_ref.starts_with("cx:cell:cx.component.mls.epoch.v1")
+                    && let Some(value) = value_for(status)
+                {
+                    view.mls_epoch = value
+                        .as_u64()
+                        .or_else(|| {
+                            value
+                                .get("epoch")
+                                .and_then(|v| v.as_u64())
+                        });
+                }
+                if cell_ref
+                    .starts_with("cx:cell:cx.component.governance.covered_frontier.v1")
+                    && let Some(value) = value_for(status)
+                {
+                    view.covered_frontier = value
+                        .as_str()
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            value
+                                .get("frontier")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned)
+                        });
+                }
             }
         }
         view
@@ -273,6 +443,11 @@ pub struct ClientLocalState {
     pub anchor_views: BTreeMap<String, LocalAnchorView>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
+    /// Per-device ed25519 identity (Round 21). Generated + persisted on
+    /// first access via `LocalStateStore::ensure_local_identity`. Move
+    /// builders read this in place of the historical `[42; 32]` demo seed.
+    #[serde(default)]
+    pub local_identity: Option<LocalIdentityRecord>,
     /// Encrypted private account data (preferences, tags, custom emojis).
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
@@ -300,6 +475,7 @@ impl Default for ClientLocalState {
             read_receipt_policy_snapshots: BTreeMap::new(),
             anchor_views: BTreeMap::new(),
             push_registration: None,
+            local_identity: None,
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
         }
@@ -732,6 +908,51 @@ impl LocalStateStore {
 
     pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
         self.load().muted_notification_kinds
+    }
+
+    /// Look up the persisted device identity record without generating
+    /// a fresh one. Returns `None` when the device hasn't been initialised
+    /// yet (e.g. fresh install before `ensure_local_identity` has been
+    /// called).
+    pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
+        self.load().local_identity
+    }
+
+    /// Read the in-memory device identity. Returns `None` when no record
+    /// is persisted; callers that need a key should call
+    /// [`Self::ensure_local_identity`] which generates + persists on first
+    /// access. Distinct from `ensure_*` so callers that only want to
+    /// **observe** an existing identity (e.g. status UI) don't trigger a
+    /// write.
+    pub fn local_identity(&self) -> Option<LocalIdentity> {
+        self.local_identity_record()
+            .as_ref()
+            .and_then(|record| LocalIdentity::from_record(record).ok())
+    }
+
+    /// Load — or generate + persist — the device identity. First call on
+    /// a fresh install fills `getrandom::fill` 32-byte seed, derives the
+    /// `did:key`, and writes the record to disk. Subsequent calls return
+    /// the persisted identity. If the persisted record is malformed (e.g.
+    /// hand-edited or truncated) this regenerates and overwrites — the
+    /// alternative is bricking the client, and Contrix v1 is pre-release
+    /// so there is no user-facing key recovery story to preserve.
+    pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
+        self.ensure_cached_loaded();
+        if let Some(record) = self.cached.local_identity.as_ref() {
+            match LocalIdentity::from_record(record) {
+                Ok(id) => return Ok(id),
+                Err(err) => {
+                    tracing::warn!(
+                        "local_identity record corrupted ({err}); regenerating"
+                    );
+                }
+            }
+        }
+        let identity = LocalIdentity::generate()?;
+        self.cached.local_identity = Some(identity.to_record());
+        let _ = self.flush();
+        Ok(identity)
     }
 
     pub fn push_registration(&self) -> Option<PushRegistrationState> {
@@ -1269,6 +1490,8 @@ mod tests {
                     leaves: vec!["cx:move:sha256:lf1".to_owned()],
                     state_root: Some("cx:state:sha256:abc".to_owned()),
                     bottom_cells: BTreeMap::new(),
+                    mls_epoch: None,
+                    covered_frontier: None,
                 },
             );
         }
@@ -1322,6 +1545,48 @@ mod tests {
     }
 
     #[test]
+    fn anchor_view_from_sync_body_extracts_mls_epoch_and_covered_frontier() {
+        let body = serde_json::json!({
+            "anchor_view": {
+                "frontier": ["cx:anchor:sha256:aaa"],
+                "leaves": [],
+                "cells": {
+                    "cx:cell:cx.component.mls.epoch.v1:cx:space:demo": {
+                        "value": 7
+                    },
+                    "cx:cell:cx.component.governance.covered_frontier.v1:cx:space:demo": {
+                        "register": { "value": "cx:state:sha256:abcd" }
+                    }
+                }
+            }
+        });
+        let view = LocalAnchorView::from_sync_body(&body);
+        assert_eq!(view.mls_epoch, Some(7));
+        assert_eq!(
+            view.covered_frontier.as_deref(),
+            Some("cx:state:sha256:abcd")
+        );
+    }
+
+    #[test]
+    fn anchor_view_mls_epoch_supports_object_value_with_epoch_field() {
+        // Some soland builds emit the MLS epoch cell as `{ "value": { "epoch": N } }`
+        // (typed view) instead of a bare integer. Both shapes need to round-trip.
+        let body = serde_json::json!({
+            "anchor_view": {
+                "frontier": [],
+                "cells": {
+                    "cx:cell:cx.component.mls.epoch.v1:cx:space:demo": {
+                        "value": { "epoch": 42, "members": 3 }
+                    }
+                }
+            }
+        });
+        let view = LocalAnchorView::from_sync_body(&body);
+        assert_eq!(view.mls_epoch, Some(42));
+    }
+
+    #[test]
     fn anchor_view_from_sync_body_missing_returns_default() {
         let body = serde_json::json!({"summary": {"summary": "hi"}});
         let view = LocalAnchorView::from_sync_body(&body);
@@ -1350,6 +1615,61 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert!(all.contains_key("cx:space:one"));
         assert!(all.contains_key("cx:space:two"));
+    }
+
+    #[test]
+    fn ensure_local_identity_generates_persists_and_round_trips() {
+        let path = temp_state_path("local-identity");
+        let id = {
+            let mut store = LocalStateStore::with_path(path.clone());
+            assert!(store.local_identity_record().is_none());
+            assert!(store.local_identity().is_none());
+            let id = store.ensure_local_identity().expect("first generate");
+            assert!(id.device_did.starts_with("did:key:z"));
+            // Idempotent on the same store instance.
+            let again = store.ensure_local_identity().expect("idempotent");
+            assert_eq!(id, again);
+            id
+        };
+        // Round-trip across store instances.
+        let reader = LocalStateStore::with_path(path);
+        let loaded = reader.local_identity().expect("persisted identity loads");
+        assert_eq!(loaded.device_did, id.device_did);
+        assert_eq!(loaded.signing_key.to_bytes(), id.signing_key.to_bytes());
+    }
+
+    #[test]
+    fn local_identity_two_calls_to_generate_diverge() {
+        // Sanity: two `generate()` calls produce distinct keys (otherwise
+        // the rng plumbing is broken). This guards against an accidental
+        // regression to the deterministic [42; 32] seed.
+        let one = LocalIdentity::generate().unwrap();
+        let two = LocalIdentity::generate().unwrap();
+        assert_ne!(one.device_did, two.device_did);
+        assert_ne!(one.signing_key.to_bytes(), two.signing_key.to_bytes());
+        assert_ne!(one.signing_key.to_bytes(), [42u8; 32]);
+        assert_ne!(two.signing_key.to_bytes(), [42u8; 32]);
+    }
+
+    #[test]
+    fn local_identity_record_tamper_detection_regenerates() {
+        let path = temp_state_path("local-identity-tamper");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let original = store.ensure_local_identity().unwrap();
+        // Tamper: scramble the cached did_key while keeping the seed valid.
+        // The next `ensure_local_identity` must reject + regenerate.
+        store.cached.local_identity = Some(LocalIdentityRecord {
+            seed_hex: original.to_record().seed_hex.clone(),
+            did_key: "did:key:zTAMPERED".to_owned(),
+        });
+        let _ = store.flush();
+        let regenerated = store.ensure_local_identity().unwrap();
+        assert_ne!(regenerated.device_did, "did:key:zTAMPERED");
+        assert_ne!(
+            regenerated.signing_key.to_bytes(),
+            original.signing_key.to_bytes(),
+            "regenerated identity is fresh, not the tampered original"
+        );
     }
 
     #[test]

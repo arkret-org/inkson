@@ -3,42 +3,44 @@ use serde_json::json;
 
 use crate::{
     hlc::Hlc,
-    local_state::LocalStateStore,
+    local_state::{LocalIdentity, LocalStateStore},
     move_builder::{
         UnsignedMove, build_capability_grant_move, build_capability_revoke_move,
         build_member_state_transition_move, build_space_organization_update_move,
-        did_key_from_verifying_key, did_key_verification_method, sign_unsigned_move,
+        did_key_verification_method, sign_unsigned_move,
     },
     operation::{CommitBuilder, cx_ops},
     views::{
-        consent_demo::{demo_signing_key, format_submit_response},
+        consent_demo::format_submit_response,
         helpers::{active_sync_token, authed_api, authed_api_with_sync},
     },
 };
 
 /// Placeholder anchor frontier used until sync.rs (P0 M3) surfaces the
 /// effective Anchor head. Mirrors `consent_demo::PLACEHOLDER_ANCHOR_REF`.
+/// Test-only — the production UI now reads the resolved frontier from
+/// `LocalAnchorView` via `state_store.read().anchor_ref_for_move`.
+#[cfg(test)]
 const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Pure helper: build + sign a `cx.space.update` Move that writes the
 /// space organization cas-register cell. Mirrors the consent-grant signing
-/// flow so the Dioxus closure stays small. Until we have proper key
-/// management, the issuer DID is derived from the demo signing key —
-/// this is gated by the same `TODO(real-key-management)` as the consent
-/// PoC.
+/// flow so the Dioxus closure stays small. Round 21: takes the persisted
+/// per-device [`LocalIdentity`] in place of the historical demo seed —
+/// see `local_state::LocalStateStore::ensure_local_identity`.
 pub(crate) fn build_signed_space_organization_update(
+    identity: &LocalIdentity,
     space_id: &str,
     value: serde_json::Value,
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
-        build_space_organization_update_move(&did, space_id, value, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+        build_space_organization_update_move(did, space_id, value, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 /// Pure helper: build + sign a `cx.capability.grant` Move (OrSet add)
@@ -47,24 +49,25 @@ pub(crate) fn build_signed_space_organization_update(
 /// use this from the Capability Grants section to extend a capability
 /// to a principal.
 pub(crate) fn build_signed_capability_grant(
+    identity: &LocalIdentity,
     space_id: &str,
     grant_id: &str,
     tag: &str,
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
-        build_capability_grant_move(&did, space_id, grant_id, tag, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+        build_capability_grant_move(did, space_id, grant_id, tag, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 /// Pure helper: build + sign a `cx.capability.revoke` Move (OrSet remove)
 /// on the same cell family as the grant. `reason` shows up in the audit
 /// trail and lets the UI explain why the capability was dropped.
 pub(crate) fn build_signed_capability_revoke(
+    identity: &LocalIdentity,
     space_id: &str,
     grant_id: &str,
     tag: &str,
@@ -72,18 +75,18 @@ pub(crate) fn build_signed_capability_revoke(
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove = build_capability_revoke_move(
-        &did, space_id, grant_id, tag, reason, anchor_ref, hlc,
+        did, space_id, grant_id, tag, reason, anchor_ref, hlc,
     )?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 /// Pure helper: build + sign a `cx.member.state` FSM transition Move.
 /// Used by Kick / Ban / Unban Move-flow buttons in the member table.
 pub(crate) fn build_signed_member_state_transition(
+    identity: &LocalIdentity,
     space_id: &str,
     actor_id: &str,
     from_state: &str,
@@ -91,11 +94,10 @@ pub(crate) fn build_signed_member_state_transition(
     anchor_ref: &str,
     hlc: &str,
 ) -> anyhow::Result<contrix_sdk::Move> {
-    let signing = demo_signing_key();
-    let did = did_key_from_verifying_key(&signing.verifying_key());
-    let vm = did_key_verification_method(&signing.verifying_key());
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove = build_member_state_transition_move(
-        &did,
+        did,
         space_id,
         actor_id,
         from_state,
@@ -103,7 +105,7 @@ pub(crate) fn build_signed_member_state_transition(
         anchor_ref,
         hlc,
     )?;
-    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,6 +167,19 @@ pub fn SpaceAdminPanel(
         .state_root
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
+    // Round 21: MLS epoch + governance covered_frontier for the read-only
+    // widget. `mls_epoch` is the cas-register value of
+    // cx.component.mls.epoch.v1; `covered_frontier` is the
+    // cx.component.governance.covered_frontier.v1 cell value. Both come
+    // from the same anchor view the bottom-cells banner reads.
+    let mls_epoch_label = anchor_view
+        .mls_epoch
+        .map(|epoch| epoch.to_string())
+        .unwrap_or_else(|| "(no MLS epoch published)".to_owned());
+    let covered_frontier_label = anchor_view
+        .covered_frontier
+        .clone()
+        .unwrap_or_else(|| "(no governance covered_frontier published)".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
@@ -185,6 +200,27 @@ pub fn SpaceAdminPanel(
                             "{cell_ref} · status={status}"
                         }
                     }
+                }
+            }
+            // Round 21: MLS epoch + governance frontier read-only widget.
+            // Reads from the same LocalAnchorView the bottom-cells banner
+            // uses, so it costs no extra fetch — just surfaces two
+            // well-known cells (mls.epoch.v1, governance.covered_frontier.v1)
+            // for admin visibility into E2EE rotation status and governance
+            // gating without leaving the page.
+            div { class: "event", "data-testid": "mls-epoch-widget",
+                div { class: "event-head",
+                    span { "MLS epoch & governance frontier" }
+                    span { "cx.component.mls.epoch.v1 · governance.covered_frontier.v1" }
+                }
+                div { class: "muted",
+                    "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_frontier value Move acceptance gates against. Updates as soon as sync surfaces a new anchor view — no fetch button needed."
+                }
+                div { class: "muted", "data-testid": "mls-epoch-value",
+                    "MLS epoch: {mls_epoch_label}"
+                }
+                div { class: "muted", "data-testid": "governance-covered-frontier",
+                    "covered_frontier: {covered_frontier_label}"
                 }
             }
             // Anchor frontier debug — shows whether sync has surfaced a
@@ -352,7 +388,15 @@ pub fn SpaceAdminPanel(
                                     let hlc = Hlc::now("yougen").to_string();
                                     let anchor_ref =
                                         state_store.read().anchor_ref_for_move(&space);
+                                    let identity = match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!("identity unavailable: {err}"));
+                                            return;
+                                        }
+                                    };
                                     let signed = match build_signed_space_organization_update(
+                                        &identity,
                                         &space,
                                         value,
                                         &anchor_ref,
@@ -731,7 +775,18 @@ pub fn SpaceAdminPanel(
                                         let hlc = Hlc::now("yougen").to_string();
                                         let anchor_ref =
                                             state_store.read().anchor_ref_for_move(&space);
+                                        let identity =
+                                            match state_store.write().ensure_local_identity() {
+                                                Ok(id) => id,
+                                                Err(err) => {
+                                                    status_msg.set(format!(
+                                                        "identity unavailable: {err}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
                                         let signed = match build_signed_member_state_transition(
+                                            &identity,
                                             &space,
                                             &m,
                                             "join",
@@ -776,7 +831,18 @@ pub fn SpaceAdminPanel(
                                         let hlc = Hlc::now("yougen").to_string();
                                         let anchor_ref =
                                             state_store.read().anchor_ref_for_move(&space);
+                                        let identity =
+                                            match state_store.write().ensure_local_identity() {
+                                                Ok(id) => id,
+                                                Err(err) => {
+                                                    status_msg.set(format!(
+                                                        "identity unavailable: {err}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
                                         let signed = match build_signed_member_state_transition(
+                                            &identity,
                                             &space,
                                             &m,
                                             "join",
@@ -1270,7 +1336,18 @@ pub fn SpaceAdminPanel(
                                 let hlc = Hlc::now("yougen").to_string();
                                 let anchor_ref =
                                     state_store.read().anchor_ref_for_move(&space);
+                                let identity =
+                                    match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "identity unavailable: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                 let signed = match build_signed_capability_grant(
+                                    &identity,
                                     &space,
                                     &grant_val,
                                     &tag_val,
@@ -1329,7 +1406,18 @@ pub fn SpaceAdminPanel(
                                 let hlc = Hlc::now("yougen").to_string();
                                 let anchor_ref =
                                     state_store.read().anchor_ref_for_move(&space);
+                                let identity =
+                                    match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "identity unavailable: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                 let signed = match build_signed_capability_revoke(
+                                    &identity,
                                     &space,
                                     &grant_val,
                                     &tag_val,
@@ -1585,6 +1673,7 @@ fn expected_head(repo_state: String) -> Option<String> {
 mod move_flow_tests {
     use super::*;
     use contrix_sdk::LatticeOpType;
+    use ed25519_dalek::SigningKey;
 
     fn fixed_anchor_ref() -> &'static str {
         PLACEHOLDER_ANCHOR_REF
@@ -1594,13 +1683,24 @@ mod move_flow_tests {
         "0189c4d2af00-00000000-aabbccdd"
     }
 
+    /// Test-only stable identity. Mirrors the helper in
+    /// `views::consent_demo::tests` so vector tests stay reproducible.
+    fn fixed_identity() -> LocalIdentity {
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let device_did =
+            crate::move_builder::did_key_from_verifying_key(&signing_key.verifying_key());
+        LocalIdentity { device_did, signing_key }
+    }
+
     /// "Save Metadata (Move)" wiring: produces a cx.space.update Move
     /// targeting the cx.component.space.organization.v1 cas-register cell
     /// with the form values folded into the cell's value object.
     #[test]
     fn build_signed_space_organization_update_targets_organization_cell() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let identity = fixed_identity();
         let signed = build_signed_space_organization_update(
+            &identity,
             space,
             json!({"title": "Renamed", "topic": "new"}),
             fixed_anchor_ref(),
@@ -1631,7 +1731,9 @@ mod move_flow_tests {
     /// on cx.component.member.state.v1 keyed by the actor id.
     #[test]
     fn build_signed_member_state_transition_kick_produces_join_leave_fsm() {
+        let identity = fixed_identity();
         let signed = build_signed_member_state_transition(
+            &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
             "join",
@@ -1663,7 +1765,9 @@ mod move_flow_tests {
     /// on the same cell family (different terminal state).
     #[test]
     fn build_signed_member_state_transition_ban_produces_join_ban_fsm() {
+        let identity = fixed_identity();
         let signed = build_signed_member_state_transition(
+            &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
             "join",
@@ -1682,7 +1786,9 @@ mod move_flow_tests {
     /// tag added to the OrSet.
     #[test]
     fn build_signed_capability_grant_targets_capability_or_set_cell() {
+        let identity = fixed_identity();
         let signed = build_signed_capability_grant(
+            &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cap.demo-01",
             "discussion.message.create",
@@ -1712,7 +1818,9 @@ mod move_flow_tests {
     /// require it. Reason field flows through.
     #[test]
     fn build_signed_capability_revoke_attaches_reason_and_remove_op() {
+        let identity = fixed_identity();
         let signed = build_signed_capability_revoke(
+            &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cap.demo-01",
             "discussion.message.create",
@@ -1740,7 +1848,9 @@ mod move_flow_tests {
     fn member_state_kick_and_ban_have_distinct_content_addresses() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
         let actor = "did:web:alice.example";
+        let identity = fixed_identity();
         let kick = build_signed_member_state_transition(
+            &identity,
             space,
             actor,
             "join",
@@ -1750,6 +1860,7 @@ mod move_flow_tests {
         )
         .unwrap();
         let ban = build_signed_member_state_transition(
+            &identity,
             space,
             actor,
             "join",
