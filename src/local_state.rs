@@ -632,6 +632,42 @@ pub struct ClientLocalState {
     /// Private cx.marker.read cursors keyed by space + topic/thread scope.
     #[serde(default)]
     pub read_markers: BTreeMap<String, ReadMarkerRecord>,
+    /// Round 24 (A1): persisted OIDC token bundle — access_token,
+    /// refresh_token, expiry, audience. Written when the PKCE token
+    /// endpoint exchange succeeds; read at boot to seed the API
+    /// client. The KeyStore abstraction (round 22) provides the
+    /// signing key for session-grant proofs; this field carries the
+    /// short-lived bearer + the longer-lived refresh handle.
+    #[serde(default)]
+    pub oidc_tokens: Option<OidcTokenBundle>,
+}
+
+/// Round 24 (A1): persisted OIDC token bundle. Stored next to the
+/// device identity so a single boot sequence can rehydrate both. Fields
+/// mirror the `oauth2` token endpoint response shape.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcTokenBundle {
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    /// `Bearer` per RFC 6750; recorded verbatim for forward compat.
+    pub token_type: String,
+    /// Unix epoch seconds at which `access_token` expires. `None` when
+    /// the token endpoint did not return `expires_in`.
+    #[serde(default)]
+    pub expires_at_unix: Option<i64>,
+    /// `id_token` JWT — present when the OIDC scope was granted.
+    #[serde(default)]
+    pub id_token: Option<String>,
+    /// `scope` claim from the token response (whitespace-separated).
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// `audience` claim — typically the principal-server URL the token
+    /// is bound to; recorded so the client knows where it can present.
+    #[serde(default)]
+    pub audience: Option<String>,
+    /// RFC 3339 timestamp of when the bundle was persisted (debug aid).
+    pub stored_at: DateTime<Utc>,
 }
 
 impl Default for ClientLocalState {
@@ -656,6 +692,7 @@ impl Default for ClientLocalState {
             move_submissions: BTreeMap::new(),
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
+            oidc_tokens: None,
         }
     }
 }
@@ -1247,6 +1284,40 @@ impl LocalStateStore {
         self.cached.local_identity = Some(identity.to_record());
         let _ = self.flush();
         Ok(identity)
+    }
+
+    /// Round 24 (A1): persisted OIDC token bundle. Returns `None` when no
+    /// successful PKCE exchange has happened yet.
+    pub fn oidc_tokens(&self) -> Option<OidcTokenBundle> {
+        self.load().oidc_tokens
+    }
+
+    /// Round 24 (A1): persist a fresh OIDC token bundle (or clear via
+    /// `None`). Stores access + refresh + id_token verbatim — the
+    /// KeyStore abstraction is responsible for the at-rest secrecy of
+    /// the underlying state.json file.
+    pub fn set_oidc_tokens(&mut self, bundle: Option<OidcTokenBundle>) {
+        self.ensure_cached_loaded();
+        self.cached.oidc_tokens = bundle;
+        let _ = self.flush();
+    }
+
+    /// Round 24 (A1): true when a persisted access_token exists AND has
+    /// not yet expired (per `expires_at_unix`). Used by the API client
+    /// boot path to decide whether to refresh before issuing requests.
+    pub fn oidc_access_token_valid(&self) -> bool {
+        let Some(bundle) = self.oidc_tokens() else {
+            return false;
+        };
+        if bundle.access_token.is_empty() {
+            return false;
+        }
+        match bundle.expires_at_unix {
+            // 30s skew window so a token that's about to expire is
+            // refreshed proactively rather than dying mid-request.
+            Some(expires) => Utc::now().timestamp() + 30 < expires,
+            None => true,
+        }
     }
 
     pub fn push_registration(&self) -> Option<PushRegistrationState> {

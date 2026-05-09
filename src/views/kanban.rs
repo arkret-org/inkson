@@ -3,10 +3,15 @@ use dioxus_router::Link;
 use serde_json::json;
 
 use crate::{
-    local_state::LocalStateStore,
-    operation::{EventEnvelope, cx_ops, uuid_v8},
+    hlc::Hlc,
+    local_state::{LocalStateStore, MoveSubmissionState},
+    move_builder::{
+        UnsignedMove, build_flow_position_move, did_key_verification_method,
+        sign_unsigned_move,
+    },
+    operation::uuid_v8,
     routes::Route,
-    views::helpers::{active_sync_token, authed_api_with_sync},
+    views::helpers::authed_api,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,10 +112,21 @@ impl CardState {
     }
 }
 
+/// Round 24 (F1): board write records now track a Move pipeline submission
+/// instead of an EventEnvelope. The Move's canonical body lives in
+/// `cell_id` + `effect_summary` (string preview); `move_id` is the
+/// content-addressed `cx:move:sha256:...` id. `kind` mirrors the
+/// MoveSubmissionState classifier (`cx.list.create` / `cx.flow.create` /
+/// `cx.flow.position`) so the tracker UI can decorate state pills.
 #[derive(Clone, Debug, PartialEq)]
 struct BoardWriteRecord {
     state: CardState,
-    event: EventEnvelope,
+    move_id: String,
+    kind: String,
+    cell_id: String,
+    effect_summary: String,
+    anchor_ref: String,
+    hlc: String,
     note: String,
 }
 
@@ -332,7 +348,7 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
-    let mut write_records = use_signal(Vec::<BoardWriteRecord>::new);
+    let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if event_write_ready {
             "Event write plane ready".to_owned()
@@ -496,40 +512,50 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "add-column-button",
                             onclick: {
+                                // Round 24 (F1): list-create now travels
+                                // through the canonical Move pipeline. We
+                                // build a `cx.component.flow.position.v1`
+                                // Move whose subject is the list_id and
+                                // whose value carries the list metadata
+                                // (title + rank + container ref). soland's
+                                // reducer treats it as a cas-register set
+                                // and the position cell becomes the
+                                // canonical source of truth for the list.
+                                let base = base_url.clone();
                                 let space = selected_space.clone();
-                                let actor = account_did.clone();
                                 move |_| {
                                     let title = new_column_title().trim().to_owned();
-                                    if !title.is_empty() {
-                                        let col_count = columns().len();
-                                        let rank = format!("r{:03}", col_count + 1);
-                                        let list_id = format!("cx:list:{}", uuid_v8());
-                                        columns.write().push(KanbanColumn {
-                                            id: list_id.clone(),
-                                            title: title.clone(),
-                                            rank: rank.clone(),
-                                            cards: Vec::new(),
-                                        });
-                                        let op = cx_ops::list_create(
-                                            &space,
-                                            &actor,
-                                            "cx:board:launch",
-                                            &list_id,
-                                            &title,
-                                            &rank,
-                                        ).build("yougen");
-                                        state_store.write().append_raw_operation(
-                                            op.operation_id.clone(),
-                                            Some(space.clone()),
-                                            json!({
-                                                "kind": "cx.list.create",
-                                                "operation": op,
-                                                "write_state": "queued",
-                                            }),
-                                        );
-                                        board_status.set(format!("queued list create for {title}"));
-                                        new_column_title.set(String::new());
+                                    if title.is_empty() {
+                                        return;
                                     }
+                                    let col_count = columns().len();
+                                    let rank = format!("r{:03}", col_count + 1);
+                                    let list_id = format!("cx:list:{}", uuid_v8());
+                                    columns.write().push(KanbanColumn {
+                                        id: list_id.clone(),
+                                        title: title.clone(),
+                                        rank: rank.clone(),
+                                        cards: Vec::new(),
+                                    });
+                                    let value = json!({
+                                        "kind": "list",
+                                        "list_id": list_id,
+                                        "title": title,
+                                        "rank": rank,
+                                        "container_ref": "cx:board:launch",
+                                    });
+                                    submit_kanban_move(
+                                        base.clone(),
+                                        token,
+                                        space.clone(),
+                                        list_id.clone(),
+                                        "cx.list.create",
+                                        value,
+                                        state_store,
+                                        write_records,
+                                        board_status,
+                                    );
+                                    new_column_title.set(String::new());
                                 }
                             },
                             "Add List"
@@ -538,17 +564,19 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "replay-board-queue",
                             onclick: {
+                                // Round 24 (F1): replay path now resubmits
+                                // a queued Move via api.submit_move (no
+                                // legacy event-envelope path).
                                 let base = base_url.clone();
+                                let space = selected_space.clone();
                                 move |_| {
-                                    replay_first_event(
+                                    replay_first_move(
                                         base.clone(),
                                         token,
-                                        sync_cursor,
-                                        repo_state,
+                                        space.clone(),
                                         state_store,
                                         write_records,
                                         board_status,
-                                        event_write_ready,
                                     );
                                 }
                             },
@@ -609,9 +637,16 @@ pub fn KanbanPanel(
                                         class: "primary",
                                         "data-testid": "save-card-button",
                                         onclick: {
+                                            // Round 24 (F1): card create now
+                                            // submits a flow.position Move
+                                            // (subject = flow_id) carrying
+                                            // the canonical position record
+                                            // {list_id, rank, title}. Soland's
+                                            // reducer treats it as cas-register
+                                            // set on the flow.position cell.
+                                            let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let space = selected_space.clone();
-                                            let actor = account_did.clone();
                                             move |_| {
                                                 let title = new_card_title().trim().to_owned();
                                                 if title.is_empty() {
@@ -636,36 +671,32 @@ pub fn KanbanPanel(
                                                     locked_flow: None,
                                                     external_visibility: "Not shared externally".to_owned(),
                                                     history_visibility: "board default".to_owned(),
-                                                    activity_hint: "Activity will populate after the first accepted event.".to_owned(),
-                                                    audit_hint: "Event Envelope queued locally until cx.events.submit is ready.".to_owned(),
+                                                    activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
+                                                    audit_hint: "Move record queued locally until submit_move succeeds.".to_owned(),
                                                     state: CardState::Queued,
                                                 };
                                                 if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {
                                                     col.cards.push(card);
                                                 }
-                                                let event = cx_ops::flow_create_event(
-                                                    &space,
-                                                    &actor,
-                                                    &col_id,
-                                                    &flow_id,
-                                                    &title,
-                                                    "card",
-                                                    &rank,
-                                                )
-                                                .auth_ref("cx:capability:board.write")
-                                                .build("yougen");
-                                                persist_board_event(
-                                                    state_store,
-                                                    &space,
-                                                    &event,
-                                                    CardState::Queued,
-                                                );
-                                                write_records.write().push(BoardWriteRecord {
-                                                    state: CardState::Queued,
-                                                    event,
-                                                    note: "queued locally; replay when event write plane is ready".to_owned(),
+                                                let value = json!({
+                                                    "kind": "flow",
+                                                    "flow_id": flow_id,
+                                                    "list_id": col_id,
+                                                    "title": title,
+                                                    "rank": rank,
+                                                    "flow_kind": "card",
                                                 });
-                                                board_status.set(format!("queued card create event for {title}"));
+                                                submit_kanban_move(
+                                                    base.clone(),
+                                                    token,
+                                                    space.clone(),
+                                                    flow_id.clone(),
+                                                    "cx.flow.create",
+                                                    value,
+                                                    state_store,
+                                                    write_records,
+                                                    board_status,
+                                                );
                                                 new_card_title.set(String::new());
                                                 adding_card_to.set(None);
                                             }
@@ -697,23 +728,23 @@ pub fn KanbanPanel(
             }
 
             div { class: "event", "data-testid": "board-offline-queue",
-                div { class: "event-head", span { "Event Envelope Queue" } span { "{write_records().len()} event(s)" } }
+                div { class: "event-head", span { "Move Queue" } span { "{write_records().len()} move(s)" } }
                 div { class: "muted", "data-testid": "board-status", "{board_status}" }
                 for record in write_records() {
                     div { class: "event", "data-testid": "board-event-record",
                         div { class: "event-head",
-                            span { "{record.event.event_type}" }
+                            span { "{record.kind}" }
                             span { class: record.state.class_name(), "{record.state.label()}" }
                         }
-                        div { class: "muted", "event_id {record.event.event_id}" }
-                        div { class: "muted", "actor_seq {record.event.actor_seq} / hlc {record.event.hlc}" }
-                        div { class: "muted", "auth_refs {record.event.auth_refs.join(\", \")}" }
-                        div { class: "muted", "schema {record.event.schema_profile} / reducer {record.event.reducer_profile}" }
+                        div { class: "muted", "move_id {record.move_id}" }
+                        div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
+                        div { class: "muted", "anchor_ref {record.anchor_ref}" }
+                        div { class: "muted", "effect {record.effect_summary}" }
                         div { class: "muted", "{record.note}" }
                     }
                 }
                 if write_records().is_empty() {
-                    div { class: "muted", "No local board events queued." }
+                    div { class: "muted", "No local board Moves queued." }
                 }
             }
 
@@ -864,28 +895,35 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "queue-link-discussion-event",
                             onclick: {
+                                // Round 24 (F1): flow track member also
+                                // goes through the Move pipeline. We
+                                // record a flow.position Move whose
+                                // payload carries the track binding —
+                                // soland's reducer treats this as a
+                                // metadata update on the same cell.
+                                let base = base_url.clone();
                                 let flow_id = card.id.clone();
                                 let track_id = card.primary_flow_id.clone();
                                 let space = selected_space.clone();
-                                let actor = account_did.clone();
                                 move |_| {
-                                    let event = cx_ops::flow_track_member_event(
-                                        &space,
-                                        &actor,
-                                        &flow_id,
-                                        "discussion",
-                                        &track_id,
-                                        true,
-                                    )
-                                    .auth_ref("cx:capability:flow.track.member")
-                                    .build("yougen");
-                                    persist_board_event(state_store, &space, &event, CardState::Queued);
-                                    write_records.write().push(BoardWriteRecord {
-                                        state: CardState::Queued,
-                                        event,
-                                        note: "flow track member queued; track ACL remains independent".to_owned(),
+                                    let value = json!({
+                                        "kind": "flow.track.member",
+                                        "flow_id": flow_id,
+                                        "track": "discussion",
+                                        "track_id": track_id,
+                                        "member": true,
                                     });
-                                    board_status.set("queued cx.flow.track.member event".to_owned());
+                                    submit_kanban_move(
+                                        base.clone(),
+                                        token,
+                                        space.clone(),
+                                        flow_id.clone(),
+                                        "cx.flow.track.member",
+                                        value,
+                                        state_store,
+                                        write_records,
+                                        board_status,
+                                    );
                                 }
                             },
                             "Queue flow track member"
@@ -902,70 +940,127 @@ pub fn KanbanPanel(
     }
 }
 
-fn replay_first_event(
+/// Round 24 (F1): build + sign + submit a `cx.component.flow.position.v1`
+/// Move via `api.submit_move(...)`, recording a [`BoardWriteRecord`] in
+/// the local queue regardless of submit outcome. Used by both list and
+/// card create paths — `subject` is the cell subject (list_id or
+/// flow_id), `kind` is the classifier the MoveSubmissionState tracker
+/// uses to decorate state pills (`cx.list.create` / `cx.flow.create`).
+fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
-    mut sync_cursor: Signal<String>,
-    mut repo_state: Signal<String>,
+    space_id: String,
+    subject: String,
+    kind: &'static str,
+    value: serde_json::Value,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
-    event_write_ready: bool,
 ) {
-    if !event_write_ready {
-        let mut records = write_records.write();
-        if let Some(record) = records
-            .iter_mut()
-            .find(|record| record.state == CardState::Queued)
-        {
-            record.state = CardState::SoftFailed;
-            record.note = "server does not advertise cx.events.submit yet".to_owned();
-            board_status.set("soft_failed: cx.events.submit unavailable".to_owned());
-        } else {
-            board_status.set("no queued board event to replay".to_owned());
+    let hlc = Hlc::now("yougen").to_string();
+    let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
+    let identity = match state_store.write().ensure_local_identity() {
+        Ok(id) => id,
+        Err(err) => {
+            board_status.set(format!("identity unavailable: {err}"));
+            return;
         }
-        return;
-    }
-
-    let Some((idx, event)) = write_records
-        .read()
-        .iter()
-        .enumerate()
-        .find(|(_, record)| record.state == CardState::Queued)
-        .map(|(idx, record)| (idx, record.event.clone()))
-    else {
-        board_status.set("no queued board event to replay".to_owned());
-        return;
     };
-
-    write_records.write()[idx].state = CardState::Submitted;
-    write_records.write()[idx].note = "submitted to cx.events.submit".to_owned();
-    board_status.set(format!("submitted {}", event.event_id));
+    let did = identity.device_did.clone();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
+    let unsigned: UnsignedMove = match build_flow_position_move(
+        &did,
+        &space_id,
+        &subject,
+        value.clone(),
+        &anchor_ref,
+        &hlc,
+    ) {
+        Ok(u) => u,
+        Err(err) => {
+            board_status.set(format!("build {kind} Move failed: {err}"));
+            return;
+        }
+    };
+    let signed = sign_unsigned_move(unsigned, &identity.signing_key, &vm);
+    let move_id = signed.id.as_str().to_owned();
+    let cell_id = format!("cx:cell:cx.component.flow.position.v1:{subject}");
+    let effect_summary = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned());
+    let record = BoardWriteRecord {
+        state: CardState::Queued,
+        move_id: move_id.clone(),
+        kind: kind.to_owned(),
+        cell_id: cell_id.clone(),
+        effect_summary: effect_summary.clone(),
+        anchor_ref: anchor_ref.clone(),
+        hlc: hlc.clone(),
+        note: "submitting Move via api.submit_move".to_owned(),
+    };
+    write_records.write().push(record);
+    state_store.write().append_raw_operation(
+        move_id.clone(),
+        Some(space_id.clone()),
+        json!({
+            "kind": kind,
+            "move_id": move_id,
+            "cell": cell_id,
+            "effect": value,
+            "write_state": "queued",
+        }),
+    );
+    board_status.set(format!("submitting {kind} Move {move_id}"));
     let api_token = token();
-    let wait_for = active_sync_token(&sync_cursor());
+    let space_for_record = space_id.clone();
+    let anchor_for_record = anchor_ref.clone();
+    let kind_for_record = kind.to_owned();
+    let move_for_track = move_id.clone();
     spawn(async move {
-        match authed_api_with_sync(&base_url, api_token, wait_for) {
-            Ok(api) => match api.submit_event(&event).await {
-                Ok(response) => {
-                    if let Some(record) = write_records.write().get_mut(idx) {
-                        record.state = CardState::Accepted;
-                        record.note = format!("accepted reducer receipt {}", response.status);
+        match authed_api(&base_url, api_token) {
+            Ok(api) => match api.submit_move(&signed).await {
+                Ok(resp) => {
+                    let state = MoveSubmissionState::from_submit_state(
+                        resp.state.as_str(),
+                        resp.reason.as_deref(),
+                    );
+                    state_store.write().record_move_submission(
+                        resp.move_id.clone(),
+                        space_for_record,
+                        kind_for_record.clone(),
+                        state,
+                        resp.reason.clone(),
+                        Some(anchor_for_record),
+                    );
+                    let card_state = if state.is_failed() {
+                        CardState::SoftFailed
+                    } else {
+                        CardState::Accepted
+                    };
+                    if let Some(record) = write_records
+                        .write()
+                        .iter_mut()
+                        .find(|r| r.move_id == move_for_track)
+                    {
+                        record.state = card_state;
+                        record.note = format!(
+                            "submit_move state={} reason={:?}",
+                            resp.state, resp.reason
+                        );
                     }
-                    if let Some(sync) = response.sync_token {
-                        sync_cursor.set(sync.clone());
-                        state_store.write().save_sync_cursor(sync);
-                    }
-                    if let Some(frontier) = response.accepted_frontier.last() {
-                        repo_state.set(frontier.clone());
-                    }
-                    board_status.set(format!("accepted {}", response.event_id));
+                    board_status.set(format!(
+                        "{kind_for_record} Move {} state={}",
+                        resp.move_id, resp.state
+                    ));
                 }
                 Err(error) => {
-                    if let Some(record) = write_records.write().get_mut(idx) {
+                    if let Some(record) = write_records
+                        .write()
+                        .iter_mut()
+                        .find(|r| r.move_id == move_for_track)
+                    {
                         record.state = CardState::Quarantined;
-                        record.note = format!("submit failed: {error}");
+                        record.note = format!("submit_move failed: {error}");
                     }
-                    board_status.set(format!("quarantined event: {error}"));
+                    board_status.set(format!("quarantined Move: {error}"));
                 }
             },
             Err(error) => board_status.set(format!("invalid server URL: {error}")),
@@ -973,21 +1068,58 @@ fn replay_first_event(
     });
 }
 
-fn persist_board_event(
+/// Round 24 (F1): replay the first queued Move via api.submit_move.
+/// Replaces the legacy `replay_first_event` which targeted
+/// `cx.events.submit` — Move pipeline is the canonical write path.
+fn replay_first_move(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
     mut state_store: Signal<LocalStateStore>,
-    selected_space: &str,
-    event: &EventEnvelope,
-    state: CardState,
+    mut write_records: Signal<Vec<BoardWriteRecord>>,
+    mut board_status: Signal<String>,
 ) {
-    state_store.write().append_raw_operation(
-        event.event_id.clone(),
-        Some(selected_space.to_owned()),
-        json!({
-            "kind": event.event_type,
-            "event_envelope": event,
-            "write_state": state.label(),
-        }),
+    let Some(idx) = write_records
+        .read()
+        .iter()
+        .position(|record| record.state == CardState::Queued || record.state == CardState::SoftFailed)
+    else {
+        board_status.set("no queued Move to replay".to_owned());
+        return;
+    };
+    let queued = write_records.read()[idx].clone();
+    let value: serde_json::Value =
+        serde_json::from_str(&queued.effect_summary).unwrap_or_else(|_| json!({}));
+    // Strip the cell prefix back to a subject (`cx:cell:cx.component.flow.position.v1:<subject>`).
+    let subject = queued
+        .cell_id
+        .strip_prefix("cx:cell:cx.component.flow.position.v1:")
+        .map(str::to_owned)
+        .unwrap_or_default();
+    if subject.is_empty() {
+        board_status.set("queued record has no cell subject".to_owned());
+        return;
+    }
+    // Drop the old record — submit_kanban_move pushes a fresh one with
+    // a regenerated HLC + content-addressed move_id.
+    write_records.write().remove(idx);
+    let kind: &'static str = match queued.kind.as_str() {
+        "cx.list.create" => "cx.list.create",
+        "cx.flow.position" => "cx.flow.position",
+        _ => "cx.flow.create",
+    };
+    submit_kanban_move(
+        base_url,
+        token,
+        space_id,
+        subject,
+        kind,
+        value,
+        state_store,
+        write_records,
+        board_status,
     );
+    let _ = &mut state_store; // keep mut binding for IDE / unused-warn coverage
 }
 
 fn write_state_samples() -> Vec<CardState> {

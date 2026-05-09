@@ -435,6 +435,35 @@ pub fn build_message_create_move_with_covered_frontier(
     Ok(UnsignedMove { move_obj, canonical_bytes })
 }
 
+/// Round 24 (F1): construct a `cx.component.flow.position.v1` Move that
+/// records a Flow's position inside its containing list. Used for the
+/// canonical Move path of board-level entity create + move / position
+/// update operations (kanban.rs add card / move card / add list).
+///
+/// `flow_id` is the cell subject (per-flow position cell). `value` is the
+/// position record soland's reducer stores verbatim — typically:
+///
+///   `{"list_id": "cx:list:...", "rank": "r042", "title": "..."}`
+///
+/// Reducer treats the cell as a cas-register: concurrent writes from
+/// two devices to the same flow_id surface as `bottom=expose` and the
+/// admin operator can repair via [`build_conflict_repair_move`].
+pub fn build_flow_position_move(
+    issuer: &str,
+    space_id: &str,
+    flow_id: &str,
+    value: serde_json::Value,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.flow.position.v1:{flow_id}");
+    let effect = serde_json::json!({
+        "cell": cell_id,
+        "op": { "type": "set", "value": value }
+    });
+    build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
+}
+
 /// Round 23 (M8): construct a conflict-repair Move that points at two
 /// (or more) competing Anchor heads via `head_in` and references a
 /// `recovery_capability` so soland's authz reducer accepts the merge.
@@ -1161,6 +1190,38 @@ mod tests {
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().unwrap();
         assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("merged"));
+    }
+
+    #[test]
+    fn flow_position_builder_targets_flow_position_cell_with_subject() {
+        let unsigned = build_flow_position_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:flow:01abcd",
+            serde_json::json!({
+                "list_id": "cx:list:01todo",
+                "rank": "r042",
+                "title": "Add tests",
+            }),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert_eq!(
+            effect.cell.as_str(),
+            "cx:cell:cx.component.flow.position.v1:cx:flow:01abcd"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Set);
+        let value = effect.op.value.as_ref().expect("set carries value");
+        assert_eq!(
+            value.get("list_id").and_then(|v| v.as_str()),
+            Some("cx:list:01todo")
+        );
+        assert_eq!(
+            value.get("rank").and_then(|v| v.as_str()),
+            Some("r042")
+        );
     }
 
     #[test]

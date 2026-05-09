@@ -195,6 +195,65 @@ pub struct CoauthOidcBrowserBridgeSession {
     pub todo: String,
 }
 
+/// Round 24 (A1): canonical OIDC token endpoint response shape. Used by
+/// [`CoauthApi::exchange_pkce_code_for_tokens`] and
+/// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
+/// OpenID Connect Core §3.1.3.3 — extra provider-specific fields
+/// flow through `extras` so tokens minted by Auth0 / Keycloak / etc.
+/// don't fail to deserialize on a one-off `provider_session_id` claim.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OidcTokenResponse {
+    pub access_token: String,
+    #[serde(default)]
+    pub token_type: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub id_token: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Catches provider-specific extras (`audience`, `nonce`, …).
+    #[serde(flatten)]
+    pub extras: serde_json::Map<String, Value>,
+}
+
+impl OidcTokenResponse {
+    /// Map into the persisted [`crate::local_state::OidcTokenBundle`].
+    /// `audience` is sourced from the `audience` extra field if present
+    /// or supplied by the caller (the principal-server URL the token is
+    /// expected to authenticate against).
+    pub fn to_persisted_bundle(
+        &self,
+        audience_hint: Option<&str>,
+    ) -> crate::local_state::OidcTokenBundle {
+        let now = chrono::Utc::now();
+        let expires_at_unix = self
+            .expires_in
+            .map(|secs| now.timestamp() + secs);
+        let audience = self
+            .extras
+            .get("audience")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+            .or_else(|| audience_hint.map(ToOwned::to_owned));
+        crate::local_state::OidcTokenBundle {
+            access_token: self.access_token.clone(),
+            refresh_token: self.refresh_token.clone(),
+            token_type: self
+                .token_type
+                .clone()
+                .unwrap_or_else(|| "Bearer".to_owned()),
+            expires_at_unix,
+            id_token: self.id_token.clone(),
+            scope: self.scope.clone(),
+            audience,
+            stored_at: now,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct CoauthOidcExchangeDescribe {
     pub contract: String,
@@ -627,6 +686,94 @@ impl CoauthApi {
         ).await
     }
 
+    /// Round 24 (A1): real OIDC token-endpoint exchange. Drives the
+    /// PKCE authorization-code flow directly against the configured
+    /// OIDC provider's `token_endpoint` — no coauth bridge in between.
+    /// Returns the parsed [`OidcTokenResponse`] with access + refresh
+    /// tokens + scope + id_token + expires_in.
+    ///
+    /// Spec refs: RFC 6749 §4.1.3 (token request), RFC 7636 §4.5
+    /// (PKCE verifier delivery), OpenID Connect Core §3.1.3 (response
+    /// parsing). The caller owns the redirect URI handling — usually
+    /// the browser's `/auth/callback` page extracts `?code=` then
+    /// invokes this function with the matching PKCE verifier.
+    pub async fn exchange_pkce_code_for_tokens(
+        &self,
+        token_endpoint: &str,
+        client_id: &str,
+        code: &str,
+        code_verifier: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<OidcTokenResponse> {
+        let endpoint = Url::parse(token_endpoint)
+            .with_context(|| format!("invalid token endpoint: {token_endpoint}"))?;
+        // Token-endpoint requests use application/x-www-form-urlencoded
+        // per RFC 6749 §3.2 — JSON would be silently rejected by some
+        // providers (Okta, Azure AD) even when other endpoints accept JSON.
+        let form_params: [(&str, &str); 5] = [
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", code_verifier),
+        ];
+        let response = self
+            .http
+            .post(endpoint)
+            .form(&form_params)
+            .send()
+            .await
+            .context("token endpoint POST failed")?;
+        let status = response.status();
+        let body = response.text().await.context("read token response body")?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "token endpoint returned {status}: {body}",
+                status = status,
+                body = body.chars().take(512).collect::<String>(),
+            );
+        }
+        // Parse as OAuth2 / OIDC token response. Tolerate extra fields
+        // (Auth0 / Keycloak / etc. add provider-specific keys).
+        serde_json::from_str(&body).context("parse OIDC token response")
+    }
+
+    /// Round 24 (A1): refresh-token grant against the upstream OIDC
+    /// provider. Returns a fresh [`OidcTokenResponse`]; the new
+    /// `refresh_token` MAY be present (rotating refresh tokens) or
+    /// MAY be absent (the previous one stays valid).
+    pub async fn refresh_oidc_tokens(
+        &self,
+        token_endpoint: &str,
+        client_id: &str,
+        refresh_token: &str,
+    ) -> anyhow::Result<OidcTokenResponse> {
+        let endpoint = Url::parse(token_endpoint)
+            .with_context(|| format!("invalid token endpoint: {token_endpoint}"))?;
+        let form_params: [(&str, &str); 3] = [
+            ("grant_type", "refresh_token"),
+            ("client_id", client_id),
+            ("refresh_token", refresh_token),
+        ];
+        let response = self
+            .http
+            .post(endpoint)
+            .form(&form_params)
+            .send()
+            .await
+            .context("refresh token endpoint POST failed")?;
+        let status = response.status();
+        let body = response.text().await.context("read refresh response body")?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "refresh endpoint returned {status}: {body}",
+                status = status,
+                body = body.chars().take(512).collect::<String>(),
+            );
+        }
+        serde_json::from_str(&body).context("parse OIDC refresh response")
+    }
+
     pub async fn start_oidc_browser_bridge(
         &self,
         session_path: &str,
@@ -959,6 +1106,198 @@ pub fn oidc_scaffold_bundle_from_bridge_session(
         callback_uri: session.callback_uri.clone(),
         principal_audience: session.principal_audience.clone(),
         todo: "TODO: replace scaffold state/nonce/challenge with browser-generated PKCE material and automatic callback handling.",
+    }
+}
+
+/// Round 24 (A2): session-grant introspection proof claims. Mirrors
+/// coauth's `SessionGrantIntrospectionProofClaims` (see
+/// `coauth/crates/backend/src/handlers/contrix.rs:575`). soland forwards
+/// the proof to coauth's `/api/v1/session-grants/introspect` endpoint
+/// when calling `validate_session_grant_binding` — the JWS MUST verify
+/// against the session_public_key registered with the grant, and the
+/// claims MUST match `grant_id` / `grant_jwt_hash` / `audience` /
+/// `challenge` / `issued_at` / `expires_at` exactly.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionGrantIntrospectionProofClaims {
+    /// Always `"cx.session_grant.introspection_proof.v1"`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub grant_id: String,
+    /// `"sha256:<hex>"` of the grant JWT bytes.
+    pub grant_jwt_hash: String,
+    /// MUST match `grant.audience` (typically the principal-server URL).
+    pub audience: String,
+    /// Random per-introspection challenge string supplied by the caller.
+    pub challenge: String,
+    pub issued_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Round 24 (A2): convenience — build the full
+/// [`crate::api::SessionGrantIntrospectionProof`] (challenge + proof_jwt
+/// bundle) ready to attach to a soland `session-grant/exchange` request.
+/// The challenge is freshly minted from `current_time + grant_id` per
+/// the round-24 mission spec.
+pub fn build_session_grant_introspection_proof_bundle(
+    grant_id: &str,
+    grant_jwt: &str,
+    audience: &str,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> anyhow::Result<crate::api::SessionGrantIntrospectionProof> {
+    let challenge = format!(
+        "{ts}-{grant_id}",
+        ts = chrono::Utc::now().timestamp_millis()
+    );
+    let proof_jwt = build_session_grant_introspection_proof(
+        grant_id,
+        grant_jwt,
+        audience,
+        &challenge,
+        signing_key,
+    )?;
+    Ok(crate::api::SessionGrantIntrospectionProof {
+        challenge,
+        proof_jwt,
+    })
+}
+
+/// Round 24 (A2): build a session-grant introspection proof JWS. Signs
+/// the canonical claims with the local ed25519 device key (per the
+/// mission spec — production coauth flows register the device public
+/// key as `session_public_key` so this signature verifies upstream).
+///
+/// The `challenge` is freshly constructed by the caller, typically
+/// `format!("{ts}-{grant_id}")` where `ts` is the current Unix time.
+/// The `expires_at` window is fixed at 60s — matches coauth's
+/// reference implementation (`Duration::try_minutes(1)`).
+///
+/// Returns the JWS in compact serialization (`<header>.<payload>.<sig>`).
+/// Embed the result in a [`SessionGrantIntrospectionProof`] and post it
+/// to the soland endpoint that requires session-grant verification.
+pub fn build_session_grant_introspection_proof(
+    grant_id: &str,
+    grant_jwt: &str,
+    audience: &str,
+    challenge: &str,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> anyhow::Result<String> {
+    if grant_id.trim().is_empty() {
+        anyhow::bail!("grant_id is required");
+    }
+    if grant_jwt.trim().is_empty() {
+        anyhow::bail!("grant_jwt is required");
+    }
+    if audience.trim().is_empty() {
+        anyhow::bail!("audience is required");
+    }
+    if challenge.trim().is_empty() {
+        anyhow::bail!("challenge is required");
+    }
+    let now = chrono::Utc::now();
+    let claims = SessionGrantIntrospectionProofClaims {
+        kind: "cx.session_grant.introspection_proof.v1".to_owned(),
+        grant_id: grant_id.to_owned(),
+        grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
+        audience: audience.to_owned(),
+        challenge: challenge.to_owned(),
+        issued_at: now,
+        expires_at: now + chrono::Duration::seconds(60),
+    };
+    sign_compact_jws_eddsa(&claims, signing_key)
+}
+
+/// Round 24 (A2): hash the grant JWT bytes per coauth's
+/// `session_grant_jwt_hash` (`"sha256:" + hex(sha256(grant_jwt))`).
+/// Public so callers can verify their proof binding before sending.
+pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(grant_jwt.as_bytes())
+    )
+}
+
+/// Internal helper: serialize claims to canonical JSON, base64url-encode
+/// header + payload, sign with Ed25519, return the compact JWS.
+fn sign_compact_jws_eddsa<C: Serialize>(
+    claims: &C,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> anyhow::Result<String> {
+    use ed25519_dalek::Signer;
+    // Compact JWS header (`alg=EdDSA`). The optional `typ=JWT` claim
+    // tells generic JWT verifiers this is a JWT proof token; coauth's
+    // verifier doesn't require it but adding it improves cross-provider
+    // tooling round-trips.
+    let header_json = br#"{"alg":"EdDSA","typ":"JWT"}"#;
+    let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
+    let payload_json = serde_json::to_vec(claims)?;
+    let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_json);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+    let sig_b64 = URL_SAFE_NO_PAD.encode(signature);
+    Ok(format!("{header_b64}.{payload_b64}.{sig_b64}"))
+}
+
+/// Round 24 (A1): launch the authorize URL in the user's browser /
+/// webview. On wasm this navigates the current window — the matching
+/// `/auth/callback` handler on the same origin reads `?code=` and
+/// invokes [`CoauthApi::exchange_pkce_code_for_tokens`]. On native
+/// desktop builds this best-effort opens the system browser via the
+/// `cmd /c start` (Windows) / `xdg-open` (Linux) / `open` (macOS) shell
+/// out — production deploys SHOULD swap in a webview crate so the
+/// callback URL can be intercepted in-process.
+pub fn open_oidc_authorize_url(authorize_url: &str) -> anyhow::Result<()> {
+    open_authorize_url_impl(authorize_url)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_authorize_url_impl(authorize_url: &str) -> anyhow::Result<()> {
+    let window = web_sys::window()
+        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    window
+        .location()
+        .assign(authorize_url)
+        .map_err(|err| anyhow::anyhow!("location.assign failed: {err:?}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_authorize_url_impl(authorize_url: &str) -> anyhow::Result<()> {
+    // Validate the URL up front so we never feed an unparsed string to
+    // the system shell (defence in depth — the caller should already
+    // have validated, but a stray `;` in a hand-edited URL would
+    // otherwise compose into a shell injection on Windows `cmd`).
+    let parsed = Url::parse(authorize_url)
+        .with_context(|| format!("invalid authorize URL: {authorize_url}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("refusing to open non-http(s) authorize URL: {authorize_url}");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", authorize_url])
+            .spawn()
+            .with_context(|| "failed to spawn `cmd /C start` for OIDC authorize URL")?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(authorize_url)
+            .spawn()
+            .with_context(|| "failed to spawn `open` for OIDC authorize URL")?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(authorize_url)
+            .spawn()
+            .with_context(|| "failed to spawn `xdg-open` for OIDC authorize URL")?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        anyhow::bail!("no browser-open implementation for this target");
     }
 }
 
@@ -1367,6 +1706,187 @@ mod tests {
             challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
             "S256 challenge MUST match RFC 7636 Appendix B"
         );
+    }
+
+    /// Round 24 (A1): the token-response → persisted-bundle adapter MUST
+    /// translate `expires_in` into an absolute `expires_at_unix` and
+    /// preserve refresh_token / id_token / scope verbatim. Production
+    /// callers persist the result via `LocalStateStore::set_oidc_tokens`.
+    #[test]
+    fn oidc_token_response_to_bundle_round_trips_fields() {
+        let response = OidcTokenResponse {
+            access_token: "at-1234".to_owned(),
+            token_type: Some("Bearer".to_owned()),
+            expires_in: Some(3600),
+            refresh_token: Some("rt-abcd".to_owned()),
+            id_token: Some("eyJ...".to_owned()),
+            scope: Some("openid offline_access".to_owned()),
+            extras: serde_json::Map::new(),
+        };
+        let bundle = response.to_persisted_bundle(Some("https://principal.example/api"));
+        assert_eq!(bundle.access_token, "at-1234");
+        assert_eq!(bundle.refresh_token.as_deref(), Some("rt-abcd"));
+        assert_eq!(bundle.token_type, "Bearer");
+        assert_eq!(bundle.id_token.as_deref(), Some("eyJ..."));
+        assert_eq!(bundle.scope.as_deref(), Some("openid offline_access"));
+        assert_eq!(
+            bundle.audience.as_deref(),
+            Some("https://principal.example/api")
+        );
+        // expires_at_unix should be ~now+3600 (within a few seconds).
+        let expected_min = chrono::Utc::now().timestamp() + 3500;
+        let expected_max = chrono::Utc::now().timestamp() + 3700;
+        let actual = bundle.expires_at_unix.expect("expires_at_unix present");
+        assert!(
+            actual > expected_min && actual < expected_max,
+            "expires_at_unix={actual} out of expected window [{expected_min}, {expected_max}]"
+        );
+    }
+
+    /// Audience supplied as an `extras` field on the token response
+    /// SHOULD win over the caller-supplied hint — providers that mint
+    /// audience-scoped tokens (Auth0 RBAC) always emit it on the wire.
+    #[test]
+    fn oidc_token_response_audience_extras_wins_over_hint() {
+        let mut extras = serde_json::Map::new();
+        extras.insert(
+            "audience".to_owned(),
+            Value::String("https://wire.example/api".to_owned()),
+        );
+        let response = OidcTokenResponse {
+            access_token: "at".to_owned(),
+            token_type: None,
+            expires_in: None,
+            refresh_token: None,
+            id_token: None,
+            scope: None,
+            extras,
+        };
+        let bundle = response.to_persisted_bundle(Some("https://hint.example/api"));
+        assert_eq!(
+            bundle.audience.as_deref(),
+            Some("https://wire.example/api")
+        );
+    }
+
+    /// Round 24 (A2): the introspection proof MUST be a valid Ed25519
+    /// JWS over the canonical claims, MUST embed
+    /// `cx.session_grant.introspection_proof.v1` as `type`, MUST hash
+    /// the grant JWT into `grant_jwt_hash`, and MUST round-trip the
+    /// challenge / audience / grant_id verbatim. coauth's verifier
+    /// requires every one of those exact strings — drift here would
+    /// surface as `InvalidProof` at the principal server.
+    #[test]
+    fn session_grant_proof_signs_canonical_claims() {
+        use ed25519_dalek::{Verifier, SigningKey};
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let verifying = signing.verifying_key();
+        let proof_jwt = build_session_grant_introspection_proof(
+            "01HABC123",
+            "eyJ.opaque-grant.jwt",
+            "did:web:principal.example",
+            "challenge-deadbeef",
+            &signing,
+        )
+        .unwrap();
+        // Compact JWS: 3 segments separated by `.`.
+        let parts: Vec<&str> = proof_jwt.split('.').collect();
+        assert_eq!(parts.len(), 3, "proof must be a compact JWS");
+        // Decode + verify the signature against the matching pubkey.
+        let signing_input = format!("{}.{}", parts[0], parts[1]);
+        let sig_bytes = URL_SAFE_NO_PAD.decode(parts[2]).unwrap();
+        let sig_arr: [u8; 64] = sig_bytes.try_into().unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
+        verifying
+            .verify(signing_input.as_bytes(), &signature)
+            .expect("proof JWS must verify under matching pubkey");
+        // Decode + assert payload claims.
+        let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).unwrap();
+        let claims: SessionGrantIntrospectionProofClaims =
+            serde_json::from_slice(&payload_bytes).unwrap();
+        assert_eq!(
+            claims.kind,
+            "cx.session_grant.introspection_proof.v1",
+            "type claim must match coauth's spec"
+        );
+        assert_eq!(claims.grant_id, "01HABC123");
+        assert_eq!(claims.audience, "did:web:principal.example");
+        assert_eq!(claims.challenge, "challenge-deadbeef");
+        assert_eq!(
+            claims.grant_jwt_hash,
+            session_grant_jwt_hash("eyJ.opaque-grant.jwt"),
+            "grant_jwt_hash must be sha256(grant_jwt) hex prefixed"
+        );
+        // Header claim is `EdDSA` + `JWT`.
+        let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).unwrap();
+        let header: Value = serde_json::from_slice(&header_bytes).unwrap();
+        assert_eq!(header.get("alg").and_then(|v| v.as_str()), Some("EdDSA"));
+        assert_eq!(header.get("typ").and_then(|v| v.as_str()), Some("JWT"));
+    }
+
+    /// Empty inputs MUST be rejected — coauth's verifier treats blank
+    /// challenge / proof_jwt as `InvalidProof` so client-side validation
+    /// avoids round-tripping unsignable garbage.
+    #[test]
+    fn session_grant_proof_rejects_empty_inputs() {
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+        assert!(build_session_grant_introspection_proof(
+            "",
+            "j",
+            "a",
+            "c",
+            &signing
+        )
+        .is_err());
+        assert!(build_session_grant_introspection_proof(
+            "g",
+            "",
+            "a",
+            "c",
+            &signing
+        )
+        .is_err());
+        assert!(build_session_grant_introspection_proof(
+            "g",
+            "j",
+            "",
+            "c",
+            &signing
+        )
+        .is_err());
+        assert!(build_session_grant_introspection_proof(
+            "g",
+            "j",
+            "a",
+            "",
+            &signing
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn session_grant_jwt_hash_matches_coauth_format() {
+        // `sha256:<lowercase-hex(sha256(bytes))>`. Pin the format so a
+        // refactor that switches to base64url doesn't silently desync.
+        let hash = session_grant_jwt_hash("hello");
+        assert!(hash.starts_with("sha256:"));
+        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        assert_eq!(
+            hash,
+            "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    /// `open_oidc_authorize_url` MUST refuse non-http(s) schemes —
+    /// hand-crafted `javascript:` / `file:` URLs would be a phishing
+    /// surface on the desktop target.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn open_oidc_authorize_url_rejects_non_http_schemes() {
+        let result = open_oidc_authorize_url("javascript:alert(1)");
+        assert!(result.is_err(), "javascript: scheme MUST be rejected");
+        let result = open_oidc_authorize_url("file:///etc/passwd");
+        assert!(result.is_err(), "file: scheme MUST be rejected");
     }
 
     /// State and nonce tokens for the same input MUST diverge. The previous

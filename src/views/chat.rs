@@ -463,6 +463,14 @@ pub fn ChatPanel(
                     oninput: move |evt| chat_draft.set(evt.value()),
                 }
                 div { class: "actions",
+                    // Round 24 (F2): canonical Move cutover. The "Send"
+                    // button now constructs a message-create Move with a
+                    // covered_frontier precondition and submits it via
+                    // `api.submit_move(...)` — same wire path as the E2EE
+                    // button below, sans the MLS commit since the
+                    // plaintext path doesn't bump the MLS epoch. Legacy
+                    // `api.send_message(...)` direct-event call removed
+                    // entirely (Contrix v1 unreleased — no compat shim).
                     button {
                         class: "primary",
                         "data-testid": "send-chat-button",
@@ -498,67 +506,124 @@ pub fn ChatPanel(
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
-                                let wait_for = active_sync_token(&sync_cursor());
                                 let mention_values = mentions_to_json(&mentions);
                                 let mention_values_for_store = mention_values.clone();
                                 let mention_relations = mention_relation_json(&local_id, &mentions);
                                 let flow_id = channel.entity_id.clone();
                                 let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
+                                let hlc = Hlc::now("yougen").to_string();
+                                let anchor_view =
+                                    state_store.read().anchor_view_for(&space);
+                                let anchor_ref = anchor_view.move_anchor_ref();
+                                let covered_frontier = anchor_view
+                                    .covered_frontier
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        // Fallback: bind to the
+                                        // sha256(empty) sentinel when no
+                                        // governance frontier has been
+                                        // observed yet — soland surfaces
+                                        // a `covered_frontier` mismatch
+                                        // mapped to pending_mls_binding.
+                                        "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+                                    });
+                                let identity =
+                                    match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "identity unavailable: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                let did = identity.device_did.clone();
+                                let vm = did_key_verification_method(
+                                    &identity.signing_key.verifying_key(),
+                                );
+                                let payload = json!({
+                                    "message_id": message_id,
+                                    "msgtype": "m.text",
+                                    "body": body,
+                                    "flow_id": flow_id.clone(),
+                                    "branch": "discussion",
+                                    "flow_kind": channel_kind,
+                                    "mentions": mention_values,
+                                    "mention_relations": mention_relations,
+                                });
+                                let unsigned = match build_message_create_move_with_covered_frontier(
+                                    &did,
+                                    &space,
+                                    &message_id,
+                                    payload,
+                                    &covered_frontier,
+                                    &anchor_ref,
+                                    &hlc,
+                                ) {
+                                    Ok(u) => u,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "message move build failed: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let signed =
+                                    sign_unsigned_move(unsigned, &identity.signing_key, &vm);
+                                let space_for_record = space.clone();
+                                let anchor_for_record = anchor_ref.clone();
                                 spawn(async move {
-                                    match authed_api_with_sync(&base, api_token, wait_for) {
-                                        Ok(api) => match api
-                                            .send_message(
-                                                &space,
-                                                None,
-                                                json!({
-                                                    "message_id": message_id,
-                                                    "msgtype": "m.text",
-                                                    "body": body,
-                                                    "flow_id": flow_id.clone(),
-                                                    "branch": "discussion",
-                                                    "flow_kind": channel_kind,
-                                                    "mentions": mention_values,
-                                                    "mention_relations": mention_relations,
-                                                }),
-                                                false,
-                                            )
-                                            .await
-                                        {
-                                            Ok(sent) => {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.submit_move(&signed).await {
+                                            Ok(resp) => {
+                                                let state =
+                                                    MoveSubmissionState::from_submit_state(
+                                                        resp.state.as_str(),
+                                                        resp.reason.as_deref(),
+                                                    );
+                                                {
+                                                    let mut store = state_store.write();
+                                                    store.record_move_submission(
+                                                        resp.move_id.clone(),
+                                                        space_for_record.clone(),
+                                                        "cx.message.create".to_owned(),
+                                                        state,
+                                                        resp.reason.clone(),
+                                                        Some(anchor_for_record),
+                                                    );
+                                                    store.append_raw_operation(
+                                                        resp.move_id.clone(),
+                                                        Some(space_for_record),
+                                                        json!({
+                                                            "move_id": resp.move_id,
+                                                            "kind": "cx.message.create",
+                                                            "flow_id": flow_id,
+                                                            "mentions": mention_values_for_store,
+                                                            "submission_state": resp.state,
+                                                        }),
+                                                    );
+                                                }
                                                 if let Some(found) = messages
                                                     .write()
                                                     .iter_mut()
                                                     .find(|candidate| candidate.id == local_id)
                                                 {
-                                                    found.operation_id = Some(sent.operation_id.clone());
-                                                    found.commit_id = Some(sent.commit_id.clone());
+                                                    found.operation_id = Some(resp.move_id.clone());
+                                                    found.commit_id = Some(resp.move_id.clone());
                                                 }
-                                                sync_cursor.set(sent.sync_token.clone());
-                                                repo_state.set(
-                                                    sent.head_commit
-                                                        .clone()
-                                                        .unwrap_or(sent.commit_id.clone()),
-                                                );
-                                                {
-                                                    let mut store = state_store.write();
-                                                    store.save_sync_cursor(sent.sync_token.clone());
-                                                    store.append_raw_operation(
-                                                        sent.operation_id.clone(),
-                                                        Some(space),
-                                                        json!({
-                                                            "message_id": sent.event_id,
-                                                            "kind": "cx.message.create",
-                                                            "flow_id": flow_id,
-                                                            "mentions": mention_values_for_store,
-                                                        }),
-                                                    );
-                                                }
-                                                status_msg.set(format!("message sent {}", sent.operation_id));
+                                                status_msg.set(format!(
+                                                    "message Move {}: state={}",
+                                                    resp.move_id, resp.state
+                                                ));
                                             }
-                                            Err(error) => status_msg.set(format!("send failed: {error}")),
+                                            Err(error) => status_msg.set(format!(
+                                                "message Move submit failed: {error}"
+                                            )),
                                         },
-                                        Err(error) => status_msg.set(format!("invalid server URL: {error}")),
+                                        Err(error) => status_msg.set(format!(
+                                            "invalid server URL: {error}"
+                                        )),
                                     }
                                 });
                                 chat_draft.set(String::new());
