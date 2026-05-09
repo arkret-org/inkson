@@ -1135,12 +1135,12 @@ mod tests {
             frontier: vec!["cx:event:01js0fr00000000000000000042".to_owned()],
             groups: vec![
                 CollectionProjectionGroup {
-                    group_id: "cx:space:01rev1ew000000000000000000".to_owned(),
+                    group_id: "cx:space:01c3b617-7000-7000-8000-000000000000".to_owned(),
                     title: "Review".to_owned(),
                     rank: Some("mV".to_owned()),
                     items: vec![CollectionProjectionItem {
                         object: serde_json::json!({
-                            "id": "cx:flow:01task00000000000000000000",
+                            "id": "cx:flow:01d2b330-0000-7000-8000-000000000000",
                             "type": "flow",
                             "title": "Legal review",
                             "summary": "ensure GDPR sign-off",
@@ -1166,12 +1166,12 @@ mod tests {
 
         let cols = collection_projection_to_columns(&projection);
         assert_eq!(cols.len(), 2, "two groups → two columns");
-        assert_eq!(cols[0].id, "cx:space:01rev1ew000000000000000000");
+        assert_eq!(cols[0].id, "cx:space:01c3b617-7000-7000-8000-000000000000");
         assert_eq!(cols[0].title, "Review");
         assert_eq!(cols[0].rank, "mV");
         assert_eq!(cols[0].cards.len(), 1);
         let card = &cols[0].cards[0];
-        assert_eq!(card.id, "cx:flow:01task00000000000000000000");
+        assert_eq!(card.id, "cx:flow:01d2b330-0000-7000-8000-000000000000");
         assert_eq!(card.title, "Legal review");
         assert_eq!(card.description, "ensure GDPR sign-off");
         // Locked discussion + lazy_link should populate locked_flow

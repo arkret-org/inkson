@@ -30,7 +30,7 @@ test("right panel shows space hierarchy without implicit cascade", async ({ page
   await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("encryption");
 
   await expect(page.getByTestId("space-hierarchy-children")).toContainText("Design Child");
-  await expect(page.getByTestId("space-hierarchy-children")).toContainText("cx:space:01js0childprivate000000000");
+  await expect(page.getByTestId("space-hierarchy-children")).toContainText("cx:space:011670d8-2f64-776f-98d9-ec2d724df847");
   await expect(page.getByTestId("space-hierarchy-children")).toContainText("lazy link");
   await expect(page.getByTestId("space-hierarchy-edges")).toContainText("unconfirmed_link");
 
@@ -265,7 +265,7 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
-  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0sp0000000000000000000");
+  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
 
   await page.getByTestId("tab-objects").click();
   await page.getByTestId("directory-search-input").fill("launch");
@@ -297,7 +297,7 @@ test("notifications are derived from index projections and respect per-space mut
 
   await page.getByTestId("settings-nav-button").click();
   await page.getByTestId("section-push").click();
-  await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:01js0sp0000000000000000000");
+  await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
   await page.getByTestId("settings-unmute-space").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
@@ -529,7 +529,7 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   await page.getByTestId("mark-read-button").first().click();
   const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
 
-  expect(receiptBody.space_id).toBe("cx:space:01js0sp0000000000000000000");
+  expect(receiptBody.space_id).toBe("cx:space:0196419b-0000-7000-8000-000000000000");
   expect(receiptBody.receipt_type).toBe("cx.receipt.read");
   expect(receiptBody.event_id).toContain("summary-cx:space");
   await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
@@ -589,7 +589,7 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
-  await page.goto("/space/cx:space:01js0sp0000000000000000000/admin", { waitUntil: "domcontentloaded" });
+  await page.goto("/space/cx:space:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("space-admin-panel")).toBeVisible();
   await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
   await page.getByTestId("queue-discussion-admission").click();

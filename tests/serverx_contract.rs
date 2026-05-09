@@ -105,7 +105,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     let sync = parse_sync(json!({
         "next_batch": "sx:1760000000000",
         "spaces": {
-            "cx:space:01js0sp0000000000000000000": {
+            "cx:space:0196419b-0000-7000-8000-000000000000": {
                 "summary": {
                     "title": "Contrix Demo Space",
                     "summary": "Shared demo Space served by serverx",
@@ -125,7 +125,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     .unwrap();
     assert!(
         sync.spaces
-            .contains_key("cx:space:01js0sp0000000000000000000")
+            .contains_key("cx:space:0196419b-0000-7000-8000-000000000000")
     );
 
     let directory = parse_directory_describe(json!({
@@ -139,7 +139,7 @@ fn yougen_accepts_serverx_contract_payloads() {
 
     let resolved = parse_resolve_space(json!({
         "space_preview": {
-            "space_id": "cx:space:01js0sp0000000000000000000",
+            "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
             "name": "Contrix Demo Space",
             "description": "Shared demo Space served by serverx",
             "tags": ["demo"],
@@ -170,7 +170,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     let index: yougen::models::IndexQueryResponse = serde_json::from_value(json!({
         "results": [{
             "kind": "space_preview",
-            "space_id": "cx:space:01js0sp0000000000000000000",
+            "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
             "title": "Contrix Demo Space",
             "summary": "Shared demo Space served by serverx",
             "entity_types": []
@@ -219,17 +219,17 @@ fn yougen_accepts_serverx_contract_payloads() {
 
     let submit: yougen::models::SubmitCommitResponse = serde_json::from_value(json!({
         "status": "accepted",
-        "commit_id": "cx:commit:01js0cm0000000000000000000",
-        "head_commit": "cx:commit:01js0cm0000000000000000000",
+        "commit_id": "cx:commit:019640ca-0000-7000-8000-000000000000",
+        "head_commit": "cx:commit:019640ca-0000-7000-8000-000000000000",
         "sync_token": "sx:1760000000000"
     }))
     .unwrap();
     assert_eq!(submit.status, "accepted");
 
     let snapshot: yougen::models::SnapshotHeadResponse = serde_json::from_value(json!({
-        "snapshot_ref": "cx:snapshot:cx:space:01js0sp0000000000000000000:head",
+        "snapshot_ref": "cx:snapshot:cx:space:0196419b-0000-7000-8000-000000000000:head",
         "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "frontier": {"space_id": "cx:space:01js0sp0000000000000000000"},
+        "frontier": {"space_id": "cx:space:0196419b-0000-7000-8000-000000000000"},
         "signature": {"kid": "did:web:serverx.local#dev", "alg": "none", "sig": ""}
     }))
     .unwrap();
@@ -409,7 +409,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let bob_keys = bob.key_package_record().unwrap();
 
     alice
-        .create_group(b"cx:space:01js0sp0000000000000000000")
+        .create_group(b"cx:space:0196419b-0000-7000-8000-000000000000")
         .unwrap();
     let add_result = alice.add_member(&bob_keys).unwrap();
     bob.join_from_welcome(&add_result.welcome).unwrap();

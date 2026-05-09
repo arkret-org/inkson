@@ -2449,7 +2449,7 @@ mod tests {
 
         let sync = parse_sync(json!({
             "next_batch": "sx:1",
-            "spaces": {"cx:space:01js0sp0000000000000000000": {"summary": {}}},
+            "spaces": {"cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}},
             "to_device": [],
             "account_data": [],
             "device_lists": {"changed": [], "left": []}

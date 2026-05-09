@@ -269,7 +269,7 @@ mod tests {
         let encrypted = compose_local_encrypted_message(
             "did:web:alice.example",
             "dev_alice_1",
-            "cx:space:01js0sp0000000000000000000",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
             "cx:message:local-2",
             "encrypted hello",
         )

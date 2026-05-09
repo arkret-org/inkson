@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 
-const DEMO_SPACE = "cx:space:01js0sp0000000000000000000";
+const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
 const PRODUCT_SPACE = "cx:space:01js0productflow000000000000";
 
 export async function mockContrixApi(page: Page) {
@@ -678,7 +678,7 @@ export async function mockContrixApi(page: Page) {
         root_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
         children: [
           {
-            space_id: "cx:space:01js0childdesign0000000000",
+            space_id: "cx:space:31460e83-d271-7544-9ea2-762fc44a329c",
             edge_state: "confirmed",
             accessible: true,
             lazy_link: false,
@@ -688,7 +688,7 @@ export async function mockContrixApi(page: Page) {
             },
           },
           {
-            space_id: "cx:space:01js0childprivate000000000",
+            space_id: "cx:space:011670d8-2f64-776f-98d9-ec2d724df847",
             edge_state: "unconfirmed_link",
             accessible: false,
             lazy_link: true,
@@ -697,13 +697,13 @@ export async function mockContrixApi(page: Page) {
         edges: [
           {
             parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
-            child_space_id: "cx:space:01js0childdesign0000000000",
+            child_space_id: "cx:space:31460e83-d271-7544-9ea2-762fc44a329c",
             edge_state: "confirmed",
             lazy_link: false,
           },
           {
             parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
-            child_space_id: "cx:space:01js0childprivate000000000",
+            child_space_id: "cx:space:011670d8-2f64-776f-98d9-ec2d724df847",
             edge_state: "unconfirmed_link",
             lazy_link: true,
           },
@@ -758,7 +758,7 @@ export async function mockContrixApi(page: Page) {
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.send"],
-            resource_selectors: ["space:cx:space:01js0sp0000000000000000000/**"],
+            resource_selectors: ["space:cx:space:0196419b-0000-7000-8000-000000000000/**"],
             constraints: [
               { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
               {

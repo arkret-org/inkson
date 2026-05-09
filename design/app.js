@@ -260,7 +260,7 @@ function shell(current, content) {
       <section class="main">
         <header class="topbar">
           <button class="btn mobile-menu" data-route="dashboard">Menu</button>
-          <div class="crumb"><strong>${titleFor(current)}</strong><span>Contrix Demo Space · cx:space:01js0sp0000000000000000000</span></div>
+          <div class="crumb"><strong>${titleFor(current)}</strong><span>Contrix Demo Space · cx:space:0196419b-0000-7000-8000-000000000000</span></div>
           <label class="search"><i data-lucide="search"></i><input placeholder="Search cards, rooms, messages, actors"></label>
           <div class="top-actions">
             <div class="avatar-stack"><span class="mini-avatar">AC</span><span class="mini-avatar" style="background:#7c3aed">B</span><span class="mini-avatar" style="background:#0f766e">M</span></div>

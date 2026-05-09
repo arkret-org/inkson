@@ -53,7 +53,7 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
     let mut resolved_target = use_signal(|| Option::<String>::None);
     let mut capability_actor = use_signal(|| "did:web:alice.example".to_owned());
     let mut capability_action = use_signal(|| "space.read".to_owned());
-    let mut capability_resource = use_signal(|| "cx:space:01js0sp0000000000000000000".to_owned());
+    let mut capability_resource = use_signal(|| "cx:space:0196419b-0000-7000-8000-000000000000".to_owned());
     let mut capability_grants = use_signal(Vec::<Value>::new);
     let mut capability_state_hash = use_signal(|| Option::<String>::None);
     let mut capability_decision = use_signal(|| String::new());

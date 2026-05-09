@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn base64url_transport_is_url_safe() {
         let cursor = Cursor::new().with_space(
-            "cx:space:01js0sp0000000000000000000",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
             SpacePosition::new("0018ef01234a-00000001-aaaaaaaa"),
         );
         let encoded = cursor.encode().unwrap();

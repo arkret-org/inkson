@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-const DEMO_SPACE: &str = "cx:space:01js0sp0000000000000000000";
+const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 
 const STYLE: &str = r#"
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #f4f6f8; color: #18212f; }
