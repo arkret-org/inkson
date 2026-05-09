@@ -5,8 +5,10 @@ use serde_json::{Value, json};
 
 use crate::{
     device_revoke::{DeviceRevokePlan, DeviceRevokeStep},
-    local_state::LocalStateStore,
+    hlc::Hlc,
+    local_state::{LocalStateStore, MoveSubmissionState},
     models::*,
+    move_builder::{build_mls_commit_move, did_key_verification_method, sign_unsigned_move},
     views::helpers::authed_api,
 };
 
@@ -563,10 +565,151 @@ pub fn DevicesPanel(
                                                     ));
                                                 }
                                                 DeviceRevokeStep::MlsCommit { group_id } => {
-                                                    log.push(format!(
-                                                        "cx.mls.commit ({}) — epoch advance pending",
-                                                        group_id
-                                                    ));
+                                                    // Round 25 (R4): enqueue the real MLS
+                                                    // commit Move + epoch-advance Move pair
+                                                    // chained off the device revocation. The
+                                                    // chain tracker on the space-admin page
+                                                    // surfaces both Moves' lifecycle.
+                                                    let identity_opt =
+                                                        state_store.write().ensure_local_identity().ok();
+                                                    let Some(identity) = identity_opt else {
+                                                        log.push(format!(
+                                                            "cx.mls.commit ({group_id}) ✗ identity unavailable"
+                                                        ));
+                                                        continue;
+                                                    };
+                                                    let did = identity.device_did.clone();
+                                                    let view = state_store
+                                                        .read()
+                                                        .anchor_view_for(group_id);
+                                                    let anchor_ref: String = view
+                                                        .frontier
+                                                        .first()
+                                                        .cloned()
+                                                        .unwrap_or_else(|| {
+                                                            "sha256:empty".to_owned()
+                                                        });
+                                                    let covered_frontier: String = view
+                                                        .state_root
+                                                        .clone()
+                                                        .unwrap_or_else(|| {
+                                                            "sha256:empty".to_owned()
+                                                        });
+                                                    let post_revoke_epoch =
+                                                        chrono::Utc::now().timestamp() as u64;
+                                                    let hlc = Hlc::now(&did).to_string();
+                                                    let vm = did_key_verification_method(
+                                                        &identity.signing_key.verifying_key(),
+                                                    );
+
+                                                    // 1) MLS commit Move: bumps epoch +
+                                                    //    records covered_frontier on the
+                                                    //    cx.component.mls.epoch.v1 cell.
+                                                    let commit_unsigned = match build_mls_commit_move(
+                                                        &did,
+                                                        group_id,
+                                                        group_id,
+                                                        post_revoke_epoch,
+                                                        &covered_frontier,
+                                                        &anchor_ref,
+                                                        &hlc,
+                                                    ) {
+                                                        Ok(u) => u,
+                                                        Err(error) => {
+                                                            log.push(format!(
+                                                                "cx.mls.commit ({group_id}) build ✗ {error}"
+                                                            ));
+                                                            continue;
+                                                        }
+                                                    };
+                                                    let commit_signed = sign_unsigned_move(
+                                                        commit_unsigned,
+                                                        &identity.signing_key,
+                                                        &vm,
+                                                    );
+                                                    match api.submit_move(&commit_signed).await {
+                                                        Ok(resp) => {
+                                                            let state = MoveSubmissionState::from_submit_state(
+                                                                resp.state.as_str(),
+                                                                resp.reason.as_deref(),
+                                                            );
+                                                            state_store.write().record_move_submission(
+                                                                resp.move_id.clone(),
+                                                                group_id.clone(),
+                                                                "mls_commit".to_owned(),
+                                                                state,
+                                                                resp.reason.clone(),
+                                                                Some(anchor_ref.clone()),
+                                                            );
+                                                            log.push(format!(
+                                                                "cx.mls.commit ({group_id}) ✓ {} state={:?}",
+                                                                resp.move_id, state
+                                                            ));
+                                                        }
+                                                        Err(error) => {
+                                                            log.push(format!(
+                                                                "cx.mls.commit ({group_id}) submit ✗ {error}"
+                                                            ));
+                                                            continue;
+                                                        }
+                                                    }
+
+                                                    // 2) Epoch-advance Move: separate Move
+                                                    //    to advance the governance
+                                                    //    covered_frontier so subsequent
+                                                    //    message Moves bind. Reuses the
+                                                    //    build_mls_commit_move builder with
+                                                    //    a +1 epoch number — soland's
+                                                    //    reducer treats it as a no-op-on
+                                                    //    -membership commit but still rolls
+                                                    //    the cas-register forward.
+                                                    let advance_unsigned = match build_mls_commit_move(
+                                                        &did,
+                                                        group_id,
+                                                        group_id,
+                                                        post_revoke_epoch + 1,
+                                                        &covered_frontier,
+                                                        &anchor_ref,
+                                                        &hlc,
+                                                    ) {
+                                                        Ok(u) => u,
+                                                        Err(error) => {
+                                                            log.push(format!(
+                                                                "mls_epoch_advance ({group_id}) build ✗ {error}"
+                                                            ));
+                                                            continue;
+                                                        }
+                                                    };
+                                                    let advance_signed = sign_unsigned_move(
+                                                        advance_unsigned,
+                                                        &identity.signing_key,
+                                                        &vm,
+                                                    );
+                                                    match api.submit_move(&advance_signed).await {
+                                                        Ok(resp) => {
+                                                            let state = MoveSubmissionState::from_submit_state(
+                                                                resp.state.as_str(),
+                                                                resp.reason.as_deref(),
+                                                            );
+                                                            state_store.write().record_move_submission(
+                                                                resp.move_id.clone(),
+                                                                group_id.clone(),
+                                                                "mls_epoch_advance".to_owned(),
+                                                                state,
+                                                                resp.reason.clone(),
+                                                                Some(anchor_ref.clone()),
+                                                            );
+                                                            log.push(format!(
+                                                                "mls_epoch_advance ({group_id}) ✓ {} state={:?}",
+                                                                resp.move_id, state
+                                                            ));
+                                                        }
+                                                        Err(error) => {
+                                                            log.push(format!(
+                                                                "mls_epoch_advance ({group_id}) submit ✗ {error}"
+                                                            ));
+                                                        }
+                                                    }
                                                 }
                                                 DeviceRevokeStep::MlsWelcome {
                                                     group_id,

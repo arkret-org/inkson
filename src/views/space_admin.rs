@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
+    device_revoke::{ChainMoveState, MlsRevokeMoveChain},
     hlc::Hlc,
     local_state::{LocalIdentity, LocalStateStore, MoveSubmissionState},
     models::SubmitMoveResponse,
@@ -2188,6 +2189,124 @@ pub fn SpaceAdminPanel(
                             }
                         },
                         "Tombstone / Delete"
+                    }
+                }
+            }
+
+            // Round 25 (R4): chained MLS Remove + epoch-advance Move
+            // tracker. Reads the local move_submissions store, filters
+            // for `mls_commit` + `mls_epoch_advance` kinds in the
+            // current Space, pairs them by submission timestamp, and
+            // surfaces each pair as a chain entry. Operators monitor
+            // here when a device-revocation chain has stalled (e.g.
+            // anchorer paused before the epoch-advance landed).
+            div { class: "event", "data-testid": "mls-revoke-chain-tracker",
+                div { class: "event-head",
+                    span { "MLS revoke Move chains" }
+                    span { "round 25 R4" }
+                }
+                div { class: "muted",
+                    "Each row shows one chain of MLS Remove (commit) + epoch-advance Moves triggered by a device revocation. Both Moves must reach Effective before the device is fully unspooled from the group; failures are surfaced inline so operators can take corrective action."
+                }
+                {
+                    let submissions = state_store
+                        .read()
+                        .move_submissions_for_space(&selected_space);
+                    let commits: Vec<_> = submissions
+                        .iter()
+                        .filter(|r| r.kind == "mls_commit")
+                        .cloned()
+                        .collect();
+                    let epoch_advances: Vec<_> = submissions
+                        .iter()
+                        .filter(|r| r.kind == "mls_epoch_advance")
+                        .cloned()
+                        .collect();
+                    let chains: Vec<MlsRevokeMoveChain> = commits
+                        .iter()
+                        .enumerate()
+                        .map(|(i, commit)| {
+                            let epoch = epoch_advances.get(i);
+                            let commit_state = match commit.state {
+                                MoveSubmissionState::Effective => ChainMoveState::Effective,
+                                MoveSubmissionState::PendingAnchor
+                                | MoveSubmissionState::PendingMlsBinding => ChainMoveState::Pending,
+                                _ => ChainMoveState::Failed {
+                                    reason: commit
+                                        .reason
+                                        .clone()
+                                        .unwrap_or_else(|| commit.state.label_zh().to_owned()),
+                                },
+                            };
+                            let epoch_state = match epoch.map(|e| e.state) {
+                                None => ChainMoveState::NotSubmitted,
+                                Some(MoveSubmissionState::Effective) => ChainMoveState::Effective,
+                                Some(MoveSubmissionState::PendingAnchor)
+                                | Some(MoveSubmissionState::PendingMlsBinding) => {
+                                    ChainMoveState::Pending
+                                }
+                                Some(_) => ChainMoveState::Failed {
+                                    reason: epoch
+                                        .and_then(|e| e.reason.clone())
+                                        .unwrap_or_else(|| "epoch advance failed".to_owned()),
+                                },
+                            };
+                            MlsRevokeMoveChain {
+                                group_id: selected_space.clone(),
+                                commit_move_id: Some(commit.move_id.clone()),
+                                epoch_advance_move_id: epoch.map(|e| e.move_id.clone()),
+                                commit_state,
+                                epoch_advance_state: epoch_state,
+                                pre_revoke_epoch: None,
+                            }
+                        })
+                        .collect();
+                    rsx! {
+                        if chains.is_empty() {
+                            div { class: "muted", "data-testid": "mls-revoke-chain-empty",
+                                "No MLS revoke Move chains tracked for this Space yet. They appear here when a device-revoke handler enqueues an MLS commit + epoch-advance pair."
+                            }
+                        }
+                        for chain in chains {
+                            div { class: "event", "data-testid": "mls-revoke-chain-row",
+                                div { class: "event-head",
+                                    span { "{chain.group_id}" }
+                                    span { class: "badge", "{chain.status_summary()}" }
+                                }
+                                div { class: "metric-grid",
+                                    div { class: "metric",
+                                        strong { "MLS commit" }
+                                        span {
+                                            class: "{chain.commit_state.badge_class()}",
+                                            "{chain.commit_state.label()}"
+                                        }
+                                        if let Some(ref id) = chain.commit_move_id {
+                                            div { class: "muted", "{id}" }
+                                        }
+                                        if let ChainMoveState::Failed { reason } =
+                                            &chain.commit_state
+                                        {
+                                            div { class: "muted", "reason: {reason}" }
+                                        }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Epoch advance" }
+                                        span {
+                                            class: "{chain.epoch_advance_state.badge_class()}",
+                                            "{chain.epoch_advance_state.label()}"
+                                        }
+                                        if let Some(ref id) = chain.epoch_advance_move_id {
+                                            div { class: "muted", "{id}" }
+                                        }
+                                        if let ChainMoveState::Failed { reason } =
+                                            &chain.epoch_advance_state
+                                        {
+                                            div { class: "muted", "reason: {reason}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

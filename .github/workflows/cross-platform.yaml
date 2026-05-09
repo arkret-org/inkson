@@ -1,0 +1,159 @@
+# Round 28: cross-platform Playwright matrix CI wiring.
+#
+# Drives the round-27 `tests/cross_platform/` 33-test suite against
+# Chromium, Firefox, and WebKit on a single ubuntu-latest runner via
+# Playwright's bundled engines. The matrix runs on push / pull_request
+# but only when something under `src/**` or `tests/cross_platform/**`
+# changes — engine setup costs ~3 minutes per browser so we don't
+# want to pay it for unrelated edits.
+#
+# Self-skip rules (mirroring Playwright's existing skip surface):
+#
+# - **Forks can't access secrets.** GitHub doesn't expose secrets to
+#   PRs from forks; the matrix doesn't actually need any secrets, but
+#   the e2e harness in `playwright.config.ts` does for CLIENTX_E2E_*,
+#   and the round-27 helpers all skip cleanly when env vars are
+#   missing. To stay aligned, this workflow also self-skips when the
+#   PR's head repo is not the upstream repo (`pull_request.head.repo.full_name`
+#   != `github.repository`). The `if:` on each step honors that.
+#
+# - **Browser executable missing locally.** Playwright's `setup`
+#   action installs each engine; if a particular engine fails to
+#   install (rare but happens during stack churn), the per-test
+#   `gotoOrSkip` helper translates the `Executable doesn't exist`
+#   error into `test.skip` so one missing engine doesn't fail the
+#   whole matrix.
+#
+# - **HTML report only on failure.** Successful runs are noisy enough
+#   in the workflow log; we only attach the HTML report artifact when
+#   the matrix actually fails so downstream investigation has the
+#   trace files + screenshots.
+
+name: Cross-platform Playwright
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "tests/cross_platform/**"
+      - ".github/workflows/cross-platform.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/cross_platform/**"
+      - ".github/workflows/cross-platform.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  DIOXUS_CLI_VERSION: "0.7.5"
+
+jobs:
+  cross-platform:
+    name: ${{ matrix.browser }} (33-test suite)
+    runs-on: ubuntu-latest
+    # Round 27 self-skip rule: PRs from forks can't access secrets,
+    # mirroring Playwright's existing self-skip logic in the e2e
+    # config. The matrix doesn't strictly need secrets (no auth
+    # surfaces), but keeping the gate aligned with the rest of the CI
+    # surface avoids surprise drift if a future test adds a
+    # secret-dependent step.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      # One browser failure shouldn't cancel the other two — we want
+      # the full divergence surface in a single run.
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - name: Checkout yougen
+        uses: actions/checkout@v6
+        with:
+          path: yougen
+
+      - name: Checkout contrix-rust-sdk
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/contrix-rust-sdk
+          path: contrix-rust-sdk
+
+      - name: Checkout chime
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: chime
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: yougen
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: yougen/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: yougen
+        run: npm ci
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
+
+      - name: Install Playwright browsers (${{ matrix.browser }})
+        working-directory: yougen
+        # `--with-deps` pulls the OS-level shared libraries each engine
+        # needs (chromium pulls libnss3, firefox pulls libxt6, webkit
+        # pulls libwoff1 etc.). This is the upstream Playwright recipe
+        # for headless engines on ubuntu-latest.
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run cross-platform suite (${{ matrix.browser }})
+        working-directory: yougen
+        env:
+          # Pin the project list to the matrix browser so unrelated
+          # engines don't even get queued (the playwright.config.ts
+          # already filters by this env var).
+          YOUGEN_CROSS_PLATFORM: ${{ matrix.browser }}
+          # CI flag — playwright.config.ts uses it to decide whether
+          # to reuse an existing dev server.
+          CI: "1"
+        run: npx playwright test --config tests/cross_platform/playwright.config.ts
+
+      - name: Upload Playwright HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: |
+            yougen/playwright-report/
+            yougen/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

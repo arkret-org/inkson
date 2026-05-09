@@ -290,6 +290,32 @@ impl fmt::Display for ContrixApiError {
 
 impl std::error::Error for ContrixApiError {}
 
+/// Round 28: typed error class for the `post_audit_user_action`
+/// path. Distinguishes "endpoint isn't wired yet" (404 — caller
+/// should re-buffer the entry) from "server said no" (every other
+/// error — drop and move on). Pulled out so callers can branch
+/// without parsing `anyhow::Error` strings.
+#[derive(Debug)]
+pub enum AuditPostError {
+    /// Server responded 404 — the audit ingest endpoint is not yet
+    /// wired. Callers re-buffer the entry for a later flush attempt.
+    NotWired,
+    /// Any other failure (network drop, 5xx, 4xx). Caller drops the
+    /// entry — telemetry is best-effort.
+    Other(String),
+}
+
+impl fmt::Display for AuditPostError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuditPostError::NotWired => f.write_str("audit endpoint not wired (404)"),
+            AuditPostError::Other(msg) => write!(f, "audit post failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for AuditPostError {}
+
 #[derive(Debug, Deserialize)]
 struct ApiErrorBody {
     error: ErrorEnvelope,
@@ -1437,6 +1463,39 @@ impl ContrixApi {
             }),
         )
         .await
+    }
+
+    /// Round 28: ship a single client-side telemetry entry to
+    /// soland's audit ingest endpoint (or, if soland routes the path
+    /// through coauth, the coauth audit feed — soland's reverse
+    /// proxy makes the choice transparent to the client).
+    ///
+    /// The endpoint shape mirrors sodmin's audit feed: a plain JSON
+    /// body keyed by actor/action/outcome/note/recorded_at. The
+    /// 404-tolerant return type lets the caller distinguish "not
+    /// wired" (re-buffer) from "rejected" (drop) without parsing
+    /// error strings.
+    pub async fn post_audit_user_action(&self, payload: Value) -> Result<(), AuditPostError> {
+        let request = self
+            .http
+            .post(
+                self.endpoint("api/v1/audit/user-action")
+                    .map_err(|err| AuditPostError::Other(err.to_string()))?,
+            )
+            .json(&payload);
+        let response = self
+            .prepare_request(request)
+            .send()
+            .await
+            .map_err(|err| AuditPostError::Other(err.to_string()))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        if status == StatusCode::NOT_FOUND {
+            return Err(AuditPostError::NotWired);
+        }
+        Err(AuditPostError::Other(format!("HTTP {status}")))
     }
 
     // ── Authentication ──────────────────────────────────────────────

@@ -40,4 +40,27 @@ contrix-sdk = { package = "contrix", version = "0.5.0", path = "../contrix-rust-
 dioxus = { version = "=0.7.5", features = ["web"] }
 reqwest = { version = "0.12.24", features = ["json"], default-features = false }
 tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }
-web-sys = { version = "0.3.82", features = ["Storage", "Window"] }
+# Round 26 (A3): web-sys feature flags expanded so the WebPushTokenProvider
+# can drive `navigator.serviceWorker.register` + `pushManager.subscribe(...)`
+# end-to-end. The Crypto/SubtleCrypto features back the R5 WebCryptoBoundary
+# so the WASM build can encrypt/decrypt against the browser's WebCrypto
+# implementation while signing material stays in Rust (the SDK's
+# MoveSigner / ed25519-dalek path is process-local and never leaves the
+# wasm linear memory boundary).
+web-sys = { version = "0.3.82", features = [
+    "Storage",
+    "Window",
+    "Navigator",
+    "ServiceWorker",
+    "ServiceWorkerContainer",
+    "ServiceWorkerRegistration",
+    "PushManager",
+    "PushSubscription",
+    "PushSubscriptionOptionsInit",
+    "Crypto",
+    "SubtleCrypto",
+    "CryptoKey",
+] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"

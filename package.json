@@ -5,6 +5,7 @@
   "scripts": {
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
+    "test:cross-platform": "playwright test --config tests/cross_platform/playwright.config.ts",
     "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1"
   },
   "devDependencies": {

@@ -50,6 +50,10 @@ pub mod chat;
 /// pipeline landed in 十六轮.
 pub mod consent_demo;
 pub mod dashboard;
+/// Round 25 (R3): KeyVerificationFlow 10-state FSM driven from a
+/// dedicated device-verification page. Two devices compare emoji +
+/// numeric SAS codes; SDK FSM enforces transitions.
+pub mod device_verification;
 pub mod devices;
 pub mod directory;
 pub mod document;

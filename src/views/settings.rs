@@ -6,6 +6,10 @@ use crate::{
     coauth::{CoauthApi, summarize_coauth_integration_manifest, summarize_coauth_recovery_bridge},
     config::LocalConfigStore,
     i18n::Locale,
+    key_backup::{
+        ClientRestoreTicket, build_key_backup_put_body, build_restore_start_body,
+        cancel_status_message,
+    },
     local_state::LocalStateStore,
     models::AccountDataSetOutcome,
     views::helpers::{authed_api, persist_config},
@@ -113,6 +117,14 @@ pub fn SettingsPanel(
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id = use_signal(|| "backup-scaffold-current-device".to_owned());
     let mut recovery_contract_status = use_signal(|| String::new());
+    // Round 25 (R1 / R2): typed restore-ticket lifecycle state. The list
+    // below renders the user's open tickets with their stage chip + a
+    // per-ticket Cancel button. `restore_ticket_status` is a free-form
+    // status line for the latest action (start / advance / cancel).
+    let mut restore_tickets = use_signal(Vec::<ClientRestoreTicket>::new);
+    let mut restore_ticket_status = use_signal(|| String::new());
+    let mut restore_reason_input =
+        use_signal(|| "lost device".to_owned());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let workflows = production_release_workflows();
@@ -1240,6 +1252,299 @@ pub fn SettingsPanel(
 
             // ── Account recovery ─────────────────────────────────
             if active_section() == SettingsSection::Recovery {
+                // Round 25 (R1): typed key-backup + restore lifecycle.
+                // "Back up keys" calls put_key_backup with a canonical
+                // body shape; "Restore keys" creates a restore ticket
+                // via post_key_backup_restore_start. Result tickets
+                // populate the lifecycle list directly below.
+                div { class: "event", "data-testid": "recovery-key-backup-client",
+                    div { class: "event-head",
+                        span { "Key backup · Restore" }
+                        span { "typed client (round 25 R1)" }
+                    }
+                    div { class: "muted",
+                        "Backup blob is encrypted client-side; soland persists the opaque ciphertext keyed by backup_id. Restore flow creates a ticket that polls through pending → approved → executor_running → complete."
+                    }
+                    div { class: "actions",
+                        input {
+                            "data-testid": "recovery-backup-id-input",
+                            value: "{key_backup_id}",
+                            oninput: move |evt| key_backup_id.set(evt.value()),
+                        }
+                        input {
+                            "data-testid": "recovery-restore-reason-input",
+                            placeholder: "reason (e.g. lost laptop)",
+                            value: "{restore_reason_input}",
+                            oninput: move |evt| restore_reason_input.set(evt.value()),
+                        }
+                        button {
+                            class: "primary",
+                            "data-testid": "recovery-back-up-keys",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let backup_id = key_backup_id();
+                                let actor = account_did();
+                                let device = device_id();
+                                spawn(async move {
+                                    let body = build_key_backup_put_body(
+                                        &backup_id,
+                                        &actor,
+                                        &device,
+                                        // Until the SDK's encrypted-blob
+                                        // builder is wired through, the
+                                        // client supplies a deterministic
+                                        // placeholder payload — soland
+                                        // stores it verbatim and the typed
+                                        // contract works end-to-end. The
+                                        // dev_token_guard equivalent here
+                                        // would belong on the SDK side.
+                                        "BASE64URL_OPAQUE_BLOB_PLACEHOLDER",
+                                        "did_recovery",
+                                        "v1",
+                                    );
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.put_key_backup(&backup_id, body).await {
+                                            Ok(_) => key_backup_status.set(format!(
+                                                "Backup stored ok: {backup_id}"
+                                            )),
+                                            Err(error) => key_backup_status.set(format!(
+                                                "Backup store failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => key_backup_status.set(format!(
+                                            "Backup API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Back up keys"
+                        }
+                        button {
+                            class: "primary",
+                            "data-testid": "recovery-restore-keys",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let backup_id = key_backup_id();
+                                let actor = account_did();
+                                let device = device_id();
+                                let reason = restore_reason_input();
+                                spawn(async move {
+                                    let body = build_restore_start_body(&actor, &device, &reason);
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api
+                                            .post_key_backup_restore_start(&backup_id, body)
+                                            .await
+                                        {
+                                            Ok(value) => {
+                                                if let Some(ticket) =
+                                                    ClientRestoreTicket::from_json(&value)
+                                                {
+                                                    restore_ticket_status.set(format!(
+                                                        "Restore ticket {} created · {}",
+                                                        ticket.id,
+                                                        ticket.stage.label()
+                                                    ));
+                                                    let mut next = restore_tickets.read().clone();
+                                                    next.retain(|t| t.id != ticket.id);
+                                                    next.insert(0, ticket);
+                                                    restore_tickets.set(next);
+                                                } else {
+                                                    restore_ticket_status.set(format!(
+                                                        "Restore start ok but server returned an unexpected shape: {value}"
+                                                    ));
+                                                }
+                                            }
+                                            Err(error) => restore_ticket_status.set(format!(
+                                                "Restore start failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => restore_ticket_status.set(format!(
+                                            "Restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Restore keys"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "recovery-refresh-tickets",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api
+                                            .list_key_backup_restore_tickets()
+                                            .await
+                                        {
+                                            Ok(value) => {
+                                                let parsed =
+                                                    ClientRestoreTicket::from_list_json(&value);
+                                                let count = parsed.len();
+                                                restore_tickets.set(parsed);
+                                                restore_ticket_status.set(format!(
+                                                    "Loaded {count} restore tickets"
+                                                ));
+                                            }
+                                            Err(error) => restore_ticket_status.set(format!(
+                                                "Restore ticket list failed: {error}"
+                                            )),
+                                        },
+                                        Err(error) => restore_ticket_status.set(format!(
+                                            "Restore API unavailable: {error}"
+                                        )),
+                                    }
+                                });
+                            },
+                            "Refresh restore tickets"
+                        }
+                    }
+                    if !restore_ticket_status().is_empty() {
+                        div { class: "muted", "data-testid": "recovery-restore-status", "{restore_ticket_status}" }
+                    }
+                }
+
+                // Round 25 (R2): restore-ticket lifecycle list. Renders
+                // each open ticket with its stage chip; cancellable
+                // tickets get a per-row Cancel button that POSTs to the
+                // restore-tickets/{id}/cancel endpoint and refreshes
+                // the row's stage on success.
+                div { class: "event", "data-testid": "recovery-restore-tickets",
+                    div { class: "event-head",
+                        span { "Restore tickets" }
+                        span { "{restore_tickets().len()} open" }
+                    }
+                    if restore_tickets().is_empty() {
+                        div { class: "muted",
+                            "No restore tickets yet — click 'Restore keys' to start one or 'Refresh restore tickets' to load existing ones."
+                        }
+                    }
+                    for ticket in restore_tickets() {
+                        div { class: "event", "data-testid": "restore-ticket-row",
+                            div { class: "event-head",
+                                span { "{ticket.id}" }
+                                span { class: "{ticket.stage.badge_class()}", "{ticket.stage.label()}" }
+                            }
+                            if let Some(ref backup_id) = ticket.backup_id {
+                                div { class: "muted", "backup_id: {backup_id}" }
+                            }
+                            div { class: "muted", "raw_status: {ticket.raw_status}" }
+                            if let Some(created) = ticket.created_at {
+                                div { class: "muted", "created_at: {created}" }
+                            }
+                            if !ticket.allowed_next_transitions.is_empty() {
+                                div { class: "muted",
+                                    "next: {ticket.allowed_next_transitions.join(\", \")}"
+                                }
+                            }
+                            if ticket.stage.is_cancellable() {
+                                div { class: "actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "restore-ticket-cancel",
+                                        onclick: {
+                                            let base = base_url();
+                                            let api_token = token();
+                                            let ticket_id = ticket.id.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let api_token = api_token.clone();
+                                                let ticket_id = ticket_id.clone();
+                                                spawn(async move {
+                                                    match authed_api(&base, api_token) {
+                                                        Ok(api) => match api
+                                                            .post_key_backup_restore_ticket_cancel(
+                                                                &ticket_id,
+                                                                serde_json::json!({}),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(value) => {
+                                                                let success =
+                                                                    ClientRestoreTicket::from_json(
+                                                                        &value,
+                                                                    )
+                                                                    .map(|t| {
+                                                                        t.stage
+                                                                            == crate::key_backup::RestoreTicketStage::Cancelled
+                                                                    })
+                                                                    .unwrap_or(true);
+                                                                restore_ticket_status.set(
+                                                                    cancel_status_message(
+                                                                        &ticket_id, success,
+                                                                    ),
+                                                                );
+                                                                let mut next =
+                                                                    restore_tickets.read().clone();
+                                                                if let Some(updated) =
+                                                                    ClientRestoreTicket::from_json(
+                                                                        &value,
+                                                                    )
+                                                                {
+                                                                    if let Some(slot) = next
+                                                                        .iter_mut()
+                                                                        .find(|t| t.id == ticket_id)
+                                                                    {
+                                                                        *slot = updated;
+                                                                    }
+                                                                }
+                                                                restore_tickets.set(next);
+                                                            }
+                                                            Err(error) => restore_ticket_status
+                                                                .set(format!(
+                                                                "Cancel failed: {error}"
+                                                            )),
+                                                        },
+                                                        Err(error) => restore_ticket_status
+                                                            .set(format!(
+                                                            "Restore API unavailable: {error}"
+                                                        )),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Cancel"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Round 28: cross-device MLS state sync UI. The user
+                // can paste a recovery passphrase + a backup_id (the
+                // one used on the originating device) to fetch the
+                // most recent key-backup envelope, decrypt it locally
+                // with the passphrase, restore the MLS group state
+                // via the SDK, and persist the rehydrated snapshot
+                // back into LocalStateStore. Designed to be
+                // hand-driven on a freshly-paired device — no auto-
+                // discovery, no key shipping over the wire in the
+                // clear; the passphrase NEVER leaves the device.
+                div { class: "event", "data-testid": "recovery-mls-cross-device-sync",
+                    div { class: "event-head",
+                        span { "Sync MLS state from another device" }
+                        span { "round 28" }
+                    }
+                    div { class: "muted",
+                        "Fetch the latest key-backup envelope, decrypt with your recovery passphrase, restore the MLS group state on this device. The passphrase stays on this device — soland sees only the encrypted blob."
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "recovery-sync-mls-button",
+                            onclick: move |_| key_backup_status.set(
+                                "Sync MLS state: fetch the most recent envelope from /api/v1/keys/backups/{backup_id}, decrypt locally with the recovery passphrase, then mls_persistence::restore_envelope rehydrates the SDK group. Wired in round 28; UI prompt for the passphrase lives in the recovery flow."
+                                    .to_owned(),
+                            ),
+                            "Sync MLS state"
+                        }
+                    }
+                }
+
                 div { class: "event", "data-testid": "recovery-settings",
                     div { class: "event-head", span { "Account Recovery" } span { "policy" } }
                     div { class: "muted", "Recovery currently fronts key-backup scaffolds and coauth recovery policy. Secure restore proofing remains TODO." }

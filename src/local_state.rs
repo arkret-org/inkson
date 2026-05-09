@@ -640,6 +640,56 @@ pub struct ClientLocalState {
     /// short-lived bearer + the longer-lived refresh handle.
     #[serde(default)]
     pub oidc_tokens: Option<OidcTokenBundle>,
+    /// Round 27: client-side telemetry log buffer. Mirrors sodmin's
+    /// `utils/audit.rs` shape — each entry is a structured "user
+    /// action" record (actor / action / outcome / timestamp). Written
+    /// by [`crate::telemetry::emit_user_action_log`] when offline; the
+    /// flush path reads + clears via [`LocalStateStore::drain_telemetry`]
+    /// once a network channel is available.
+    ///
+    /// The buffer is bounded at [`TELEMETRY_BUFFER_CAP`] (oldest
+    /// entries dropped first) so a long offline session can't grow
+    /// `state.json` without bound.
+    #[serde(default)]
+    pub telemetry_log: Vec<UserActionLogEntry>,
+    /// Round 28: persisted MLS group state snapshots, keyed by
+    /// `space_id`. Each entry is the encrypted envelope produced by
+    /// [`crate::mls_persistence::encrypt_state`]; the boot path
+    /// rehydrates each space's `LocalMlsDevice` from the latest
+    /// envelope rather than rejoining via Welcome from scratch.
+    #[serde(default)]
+    pub mls_snapshots: BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope>,
+}
+
+/// Hard cap on the number of buffered telemetry entries kept in
+/// `ClientLocalState::telemetry_log`. When the cap is reached the
+/// oldest entry is dropped to make room for the new one. 256 is
+/// roughly two minutes of aggressive interaction at 2 actions/sec —
+/// enough to survive a network blip, well below the size at which
+/// `state.json` becomes painful to round-trip.
+pub const TELEMETRY_BUFFER_CAP: usize = 256;
+
+/// Round 27: structured client-side telemetry record produced by
+/// [`crate::telemetry::emit_user_action_log`]. Mirrors sodmin's
+/// `utils/audit.rs` line shape but keeps the fields typed so the
+/// flush path can serialise straight to JSON.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserActionLogEntry {
+    /// Who took the action. For yougen this is typically the local
+    /// device DID (or `did:anon` when the user hasn't logged in yet).
+    pub actor: String,
+    /// Verb-style action name (e.g. `space.message.send`,
+    /// `oidc.refresh`, `device.revoke.confirm`).
+    pub action: String,
+    /// Result of the action; mirrors sodmin's `AdminAuditOutcome`.
+    pub outcome: String,
+    /// Optional free-form context (operator note, error short text).
+    /// Stripped of newlines + clamped to 120 chars before persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// RFC 3339 timestamp at which the action was recorded. Set by
+    /// the helper, not by the caller.
+    pub recorded_at: DateTime<Utc>,
 }
 
 /// Round 24 (A1): persisted OIDC token bundle. Stored next to the
@@ -693,6 +743,8 @@ impl Default for ClientLocalState {
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
             oidc_tokens: None,
+            telemetry_log: Vec::new(),
+            mls_snapshots: BTreeMap::new(),
         }
     }
 }
@@ -1318,6 +1370,156 @@ impl LocalStateStore {
             Some(expires) => Utc::now().timestamp() + 30 < expires,
             None => true,
         }
+    }
+
+    /// Round 27 telemetry: append a structured user-action log entry
+    /// to the buffered log. Bounded by [`TELEMETRY_BUFFER_CAP`] —
+    /// excess entries are dropped from the front (oldest-first).
+    pub fn append_telemetry(&mut self, entry: UserActionLogEntry) {
+        self.ensure_cached_loaded();
+        self.cached.telemetry_log.push(entry);
+        let overflow = self
+            .cached
+            .telemetry_log
+            .len()
+            .saturating_sub(TELEMETRY_BUFFER_CAP);
+        if overflow > 0 {
+            self.cached.telemetry_log.drain(0..overflow);
+        }
+        let _ = self.flush();
+    }
+
+    /// Read-only snapshot of the buffered telemetry entries.
+    pub fn telemetry_log(&self) -> Vec<UserActionLogEntry> {
+        self.load().telemetry_log
+    }
+
+    /// Drain the buffered telemetry entries — returns the existing
+    /// entries and clears the on-disk buffer atomically. Called by the
+    /// flush path once a network channel is available.
+    pub fn drain_telemetry(&mut self) -> Vec<UserActionLogEntry> {
+        self.ensure_cached_loaded();
+        let drained = std::mem::take(&mut self.cached.telemetry_log);
+        let _ = self.flush();
+        drained
+    }
+
+    // ── MLS group state persistence (Round 28) ──────────────────────
+
+    /// Persist (or replace) the MLS snapshot envelope for a space.
+    /// Idempotent: a re-snapshot at the same epoch overwrites the
+    /// previous record. The on-disk envelope is opaque to soland —
+    /// passphrase-derived encryption keeps the server zero-knowledge
+    /// of the underlying group keys.
+    pub fn save_mls_snapshot(
+        &mut self,
+        space_id: impl Into<String>,
+        envelope: crate::mls_persistence::MlsSnapshotEnvelope,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached.mls_snapshots.insert(space_id.into(), envelope);
+        let _ = self.flush();
+    }
+
+    /// Look up the latest MLS snapshot envelope for a space, if any.
+    /// Returns `None` when the space has not yet been snapshotted (a
+    /// fresh group on this device, or a group that has not committed
+    /// yet so there is no state to persist).
+    pub fn mls_snapshot_for(
+        &self,
+        space_id: &str,
+    ) -> Option<crate::mls_persistence::MlsSnapshotEnvelope> {
+        self.load().mls_snapshots.get(space_id).cloned()
+    }
+
+    /// Snapshot of every persisted MLS envelope. Used by the boot
+    /// path to rehydrate every known space's group in one pass and by
+    /// the cross-device sync UI to enumerate what's available before
+    /// asking the user for a passphrase.
+    pub fn mls_snapshots(
+        &self,
+    ) -> BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope> {
+        self.load().mls_snapshots
+    }
+
+    /// Drop the MLS snapshot for a space — used after a successful
+    /// "rotate group" / "leave group" Move so the next boot doesn't
+    /// try to rehydrate a stale leaf.
+    pub fn drop_mls_snapshot(&mut self, space_id: &str) {
+        self.ensure_cached_loaded();
+        if self.cached.mls_snapshots.remove(space_id).is_some() {
+            let _ = self.flush();
+        }
+    }
+
+    /// Round 28 (Round 27 follow-up): drain the buffered telemetry
+    /// log and POST each entry to soland's audit feed. The endpoint
+    /// is 404-tolerant: until soland wires
+    /// `cx.audit.user_action.ingest`, the server returns 404 and we
+    /// simply restore the buffer (so the entries survive for the next
+    /// flush attempt). Any other error class drops the affected entry
+    /// — they're best-effort telemetry, not durable audit.
+    ///
+    /// The endpoint shape mirrors sodmin's audit feed: `actor`,
+    /// `action`, `outcome`, optional `note`, `recorded_at`. soland's
+    /// telemetry sink can ingest yougen + sodmin streams without a
+    /// translation layer because both lines share the same wire
+    /// shape.
+    ///
+    /// Returns the number of successfully POSTed entries; the buffer
+    /// is fully drained on success and partially restored on 404.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn flush_telemetry_to_server(
+        &mut self,
+        api: &crate::api::ContrixApi,
+    ) -> usize {
+        let entries = self.drain_telemetry();
+        if entries.is_empty() {
+            return 0;
+        }
+        let mut sent = 0usize;
+        let mut deferred: Vec<UserActionLogEntry> = Vec::new();
+        for entry in entries {
+            let payload = json!({
+                "actor": entry.actor,
+                "action": entry.action,
+                "outcome": entry.outcome,
+                "note": entry.note,
+                "recorded_at": entry.recorded_at,
+            });
+            match api.post_audit_user_action(payload).await {
+                Ok(()) => sent += 1,
+                Err(crate::api::AuditPostError::NotWired) => {
+                    deferred.push(entry);
+                }
+                Err(crate::api::AuditPostError::Other(_)) => {
+                    // Best-effort — drop the entry rather than
+                    // ballooning the buffer when the server is
+                    // misbehaving.
+                }
+            }
+        }
+        // 404-tolerant: re-insert the deferred entries so a later
+        // flush attempt picks them up once the endpoint is wired.
+        if !deferred.is_empty() {
+            self.ensure_cached_loaded();
+            for entry in deferred.into_iter().rev() {
+                self.cached.telemetry_log.insert(0, entry);
+            }
+            // Respect the bounded cap — if the server has been 404
+            // for a long time the cap kicks in and the oldest
+            // entries get dropped.
+            let overflow = self
+                .cached
+                .telemetry_log
+                .len()
+                .saturating_sub(TELEMETRY_BUFFER_CAP);
+            if overflow > 0 {
+                self.cached.telemetry_log.drain(0..overflow);
+            }
+            let _ = self.flush();
+        }
+        sent
     }
 
     pub fn push_registration(&self) -> Option<PushRegistrationState> {
@@ -2219,5 +2421,115 @@ mod tests {
         let snap = reader.read_receipt_policy_for_space("cx:space:demo").unwrap();
         assert_eq!(snap.disclosure, "required");
         assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));
+    }
+
+    #[test]
+    fn mls_snapshot_persists_and_round_trips_through_store() {
+        // Round 28: MLS snapshot envelope is durable across store
+        // instances and the boot path can rehydrate every space's
+        // group from the persisted record.
+        use crate::mls_persistence::encrypt_state;
+        let path = temp_state_path("mls-snapshot-persist");
+        let space = "cx:space:round28-mls";
+        let envelope = encrypt_state(
+            space,
+            "deadbeef",
+            5,
+            b"placeholder-state-bytes",
+            "round28-pass",
+            b"deterministic-salt",
+        );
+        {
+            let mut writer = LocalStateStore::with_path(path.clone());
+            assert!(writer.mls_snapshot_for(space).is_none());
+            writer.save_mls_snapshot(space, envelope.clone());
+        }
+        let reader = LocalStateStore::with_path(path);
+        let restored = reader.mls_snapshot_for(space).expect("envelope persists");
+        assert_eq!(restored.space_id, envelope.space_id);
+        assert_eq!(restored.epoch, 5);
+        assert_eq!(restored.ciphertext_hex, envelope.ciphertext_hex);
+        assert_eq!(reader.mls_snapshots().len(), 1);
+    }
+
+    #[test]
+    fn mls_snapshot_drop_clears_persisted_record() {
+        use crate::mls_persistence::encrypt_state;
+        let path = temp_state_path("mls-snapshot-drop");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:space:drop-me";
+        store.save_mls_snapshot(
+            space,
+            encrypt_state(space, "abcd", 1, b"x", "p", b"salt"),
+        );
+        assert!(store.mls_snapshot_for(space).is_some());
+        store.drop_mls_snapshot(space);
+        assert!(store.mls_snapshot_for(space).is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn flush_telemetry_404_re_buffers_entries() {
+        // Round 28 (Round 27 follow-up): when the audit endpoint
+        // isn't wired (404), the flush re-buffers each entry so a
+        // later flush attempt picks it up. We simulate the 404 by
+        // pointing the API at a localhost port that nothing's
+        // listening on — reqwest emits a connection error which
+        // maps to `AuditPostError::Other`. To exercise the 404
+        // path specifically we spawn a minimal hyper-free TCP
+        // listener that blanket-replies with 404.
+        use crate::telemetry::{UserActionOutcome, build_user_action_entry};
+        use std::net::SocketAddr;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            // Reply 404 to a single request — enough for one
+            // telemetry entry.
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 8192];
+                // Drain the request body opportunistically so the
+                // client sees the response.
+                let _ = socket.read(&mut buf).await;
+                let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = socket.write_all(resp).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        let mut store = LocalStateStore::with_path(temp_state_path("flush-404"));
+        store.append_telemetry(build_user_action_entry(
+            "did:key:zAlice",
+            "settings.theme.set",
+            UserActionOutcome::Success,
+            None,
+        ));
+        assert_eq!(store.telemetry_log().len(), 1);
+
+        let base = format!("http://{}/", addr);
+        let api = crate::api::ContrixApi::new(&base).unwrap();
+        let sent = store.flush_telemetry_to_server(&api).await;
+        assert_eq!(sent, 0, "404 must not count as sent");
+        // 404-tolerant: entry survives for next attempt.
+        assert_eq!(
+            store.telemetry_log().len(),
+            1,
+            "404 must re-buffer the entry"
+        );
+        server.abort();
+    }
+
+    #[test]
+    fn audit_post_error_display_and_classification() {
+        // Round 28: the typed error variants are how callers branch
+        // between "re-buffer" and "drop" — the strings here drive
+        // operator-facing copy and are part of the contract.
+        let not_wired = crate::api::AuditPostError::NotWired;
+        assert!(not_wired.to_string().contains("404"));
+        let other = crate::api::AuditPostError::Other("conn refused".to_owned());
+        assert!(other.to_string().contains("conn refused"));
     }
 }
