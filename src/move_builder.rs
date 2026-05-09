@@ -76,6 +76,30 @@ pub fn build_consent_grant_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Construct a `cx.consent.revoke` Move that removes a tag from the
+/// consent OrSet cell. The cell subject is the same `consent_id` used by
+/// [`build_consent_grant_move`]; soland's OrSet semantics enforce causal
+/// remove (only tags previously added by an observed grant can be
+/// removed). `reason` is optional but recommended — it surfaces in the
+/// audit trail and can drive UI confirmation copy.
+pub fn build_consent_revoke_move(
+    issuer: &str,
+    space_id: &str,
+    consent_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
+    let mut op = serde_json::json!({ "type": "remove", "tag": tag });
+    if let Some(reason) = reason {
+        op["reason"] = serde_json::Value::String(reason.to_owned());
+    }
+    let effect = serde_json::json!({ "cell": cell_id, "op": op });
+    build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
+}
+
 /// Construct a `cx.member.state` Move that transitions an actor's
 /// membership FSM. The cell subject is the `actor_id` (per-actor cell
 /// across the whole protocol; soland's CellStore is space-scoped so
@@ -282,6 +306,48 @@ mod tests {
             .starts_with("cx:cell:cx.component.consent.grant.v1:"));
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
+    }
+
+    #[test]
+    fn consent_revoke_builder_produces_or_set_remove_with_reason() {
+        let unsigned = build_consent_revoke_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cnt.01abc",
+            "scope:contacts",
+            Some("user revoked from settings UI"),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert!(effect
+            .cell
+            .as_str()
+            .starts_with("cx:cell:cx.component.consent.grant.v1:"));
+        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
+        assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
+        assert_eq!(
+            effect.op.reason.as_deref(),
+            Some("user revoked from settings UI")
+        );
+    }
+
+    #[test]
+    fn consent_revoke_builder_omits_reason_when_none() {
+        let unsigned = build_consent_revoke_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cnt.01abc",
+            "scope:contacts",
+            None,
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
+        assert_eq!(effect.op.reason, None);
     }
 
     #[test]

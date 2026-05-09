@@ -749,52 +749,94 @@ pub fn SettingsPanel(
                         }
                     } else {
                         for (space_id, send) in read_receipt_space_overrides() {
-                            div { class: "actions", "data-testid": "read-receipt-override-row",
-                                span { "{space_id}" }
-                                span { class: "badge",
-                                    {if send { "sending" } else { "skipping" }}
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "read-receipt-override-toggle",
-                                    onclick: {
-                                        let space_id = space_id.clone();
-                                        move |_| {
-                                            let next = !send;
-                                            state_store.write().set_read_receipt_space_override(
-                                                space_id.clone(),
-                                                Some(next),
-                                            );
-                                            read_receipt_space_overrides.set(
-                                                state_store.read().read_receipt_space_overrides(),
-                                            );
-                                            status.set(format!(
-                                                "Read receipts for {space_id}: {}",
-                                                if next { "send" } else { "skip" }
-                                            ));
+                            // Policy lock — when soland publishes a
+                            // cx.space.read_receipt_policy with disclosure=
+                            // required|disabled, the toggle is disabled and
+                            // we show a lock badge with the reason. Until
+                            // sync (P0 M3) wires the snapshot, this returns
+                            // `None` for every space and the row stays
+                            // editable.
+                            {
+                                let policy = state_store
+                                    .read()
+                                    .read_receipt_policy_for_space(&space_id);
+                                let locked = policy
+                                    .as_ref()
+                                    .is_some_and(|p| p.locks_user_choice());
+                                let lock_reason = policy
+                                    .as_ref()
+                                    .map(|p| p.lock_reason())
+                                    .unwrap_or_default();
+                                rsx! {
+                                    div { class: "actions", "data-testid": "read-receipt-override-row",
+                                        span { "{space_id}" }
+                                        span { class: "badge",
+                                            {if send { "sending" } else { "skipping" }}
                                         }
-                                    },
-                                    {if send { "Switch to skip" } else { "Switch to send" }}
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "read-receipt-override-clear",
-                                    onclick: {
-                                        let space_id = space_id.clone();
-                                        move |_| {
-                                            state_store.write().set_read_receipt_space_override(
-                                                space_id.clone(),
-                                                None,
-                                            );
-                                            read_receipt_space_overrides.set(
-                                                state_store.read().read_receipt_space_overrides(),
-                                            );
-                                            status.set(format!(
-                                                "Read receipts for {space_id}: inherit default"
-                                            ));
+                                        if locked {
+                                            span {
+                                                class: "badge red",
+                                                "data-testid": "read-receipt-override-locked",
+                                                "locked by Space policy"
+                                            }
                                         }
-                                    },
-                                    "Inherit default"
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "read-receipt-override-toggle",
+                                            disabled: locked,
+                                            onclick: {
+                                                let space_id = space_id.clone();
+                                                move |_| {
+                                                    if locked {
+                                                        return;
+                                                    }
+                                                    let next = !send;
+                                                    state_store.write().set_read_receipt_space_override(
+                                                        space_id.clone(),
+                                                        Some(next),
+                                                    );
+                                                    read_receipt_space_overrides.set(
+                                                        state_store.read().read_receipt_space_overrides(),
+                                                    );
+                                                    status.set(format!(
+                                                        "Read receipts for {space_id}: {}",
+                                                        if next { "send" } else { "skip" }
+                                                    ));
+                                                }
+                                            },
+                                            {if send { "Switch to skip" } else { "Switch to send" }}
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "read-receipt-override-clear",
+                                            disabled: locked,
+                                            onclick: {
+                                                let space_id = space_id.clone();
+                                                move |_| {
+                                                    if locked {
+                                                        return;
+                                                    }
+                                                    state_store.write().set_read_receipt_space_override(
+                                                        space_id.clone(),
+                                                        None,
+                                                    );
+                                                    read_receipt_space_overrides.set(
+                                                        state_store.read().read_receipt_space_overrides(),
+                                                    );
+                                                    status.set(format!(
+                                                        "Read receipts for {space_id}: inherit default"
+                                                    ));
+                                                }
+                                            },
+                                            "Inherit default"
+                                        }
+                                    }
+                                    if locked {
+                                        div { class: "muted",
+                                            "data-testid": "read-receipt-override-lock-reason",
+                                            "{lock_reason}"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -850,9 +892,13 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "muted",
-                        "Server-declared policy lock UI is pending — when the server publishes "
-                        "cx.space.read_receipt_policy with disclosure=required or disabled this "
-                        "panel will display a locked state for the affected Spaces."
+                        "data-testid": "read-receipt-policy-lock-note",
+                        "Server-declared policy lock is now wired. When soland's Anchor view (P0 "
+                        "M3) surfaces a cx.space.read_receipt_policy with disclosure=required or "
+                        "disabled, the matching per-Space toggle above shows a `locked by Space "
+                        "policy` badge and the controls become disabled. User-level overrides "
+                        "yield to the server policy in those cases — see "
+                        "LocalStateStore::read_receipt_should_send."
                     }
                 }
 

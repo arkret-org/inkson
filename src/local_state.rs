@@ -57,6 +57,47 @@ impl ReadMarkerRecord {
     }
 }
 
+/// Server-declared `cx.space.read_receipt_policy` snapshot for a Space, as
+/// surfaced to clients via the Anchor view (P0 M3) once sync.rs lands.
+/// Locks the per-scope toggle in the settings UI when `disclosure` is
+/// `required` (server forces send) or `disabled` (server forbids send).
+///
+/// Until the sync wires the policy from soland's `cx.component.space.read_receipt_policy.v1`
+/// cas-register cell, this is populated by tests / dev tooling only.
+/// See `_todos.md` C10.D "Policy lock UI".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadReceiptPolicySnapshot {
+    /// Disclosure mode — `optional` (default), `required`, or `disabled`.
+    /// `required` and `disabled` lock the user's per-Space override.
+    pub disclosure: String,
+    /// Visibility scope — `public`, `private`, `track_scoped`. Surfaced
+    /// in the lock-reason text so the user knows why the toggle is locked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+}
+
+impl ReadReceiptPolicySnapshot {
+    /// True when `disclosure` is one of the spec's lock-mandating values.
+    pub fn locks_user_choice(&self) -> bool {
+        matches!(self.disclosure.as_str(), "required" | "disabled")
+    }
+
+    /// Human-readable reason for showing the lock UI; empty when not locked.
+    pub fn lock_reason(&self) -> String {
+        match self.disclosure.as_str() {
+            "required" => format!(
+                "Space policy: read receipts are REQUIRED ({}). User-level skip is disabled.",
+                self.visibility.as_deref().unwrap_or("public")
+            ),
+            "disabled" => format!(
+                "Space policy: read receipts are DISABLED ({}). User-level send is disabled.",
+                self.visibility.as_deref().unwrap_or("public")
+            ),
+            _ => String::new(),
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -92,6 +133,14 @@ pub struct ClientLocalState {
     pub read_receipt_space_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub read_receipt_flow_overrides: BTreeMap<String, bool>,
+    /// Server-declared `cx.space.read_receipt_policy` snapshots, keyed by
+    /// space id. Populated when sync (P0 M3) lands — surfaces the
+    /// disclosure / visibility values from the
+    /// `cx.component.space.read_receipt_policy.v1` cas-register cell so
+    /// the settings UI can lock per-Space toggles when the server's
+    /// policy is `required` or `disabled`.
+    #[serde(default)]
+    pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -118,6 +167,7 @@ impl Default for ClientLocalState {
             read_receipt_default_send: true,
             read_receipt_space_overrides: BTreeMap::new(),
             read_receipt_flow_overrides: BTreeMap::new(),
+            read_receipt_policy_snapshots: BTreeMap::new(),
             push_registration: None,
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
@@ -413,14 +463,75 @@ impl LocalStateStore {
         self.load().read_receipt_flow_overrides
     }
 
-    /// Resolve effective send preference per spec (flow → space → default).
-    /// Mirror of `contrix_sdk::ReadReceiptPreferences::effective_send`.
+    /// Get the server-declared read-receipt policy for a Space (when known).
+    /// `None` means the client hasn't synced a policy snapshot yet and the
+    /// user's override is still authoritative.
+    pub fn read_receipt_policy_for_space(
+        &self,
+        space_id: &str,
+    ) -> Option<ReadReceiptPolicySnapshot> {
+        self.load()
+            .read_receipt_policy_snapshots
+            .get(space_id)
+            .cloned()
+    }
+
+    /// Replace the server-declared policy snapshot for a Space. Called from
+    /// the sync path once the Anchor view (P0 M3) surfaces
+    /// `cx.component.space.read_receipt_policy.v1` cell value; tests use
+    /// this to seed lock-state UI behavior.
+    pub fn set_read_receipt_policy_snapshot(
+        &mut self,
+        space_id: impl Into<String>,
+        snapshot: Option<ReadReceiptPolicySnapshot>,
+    ) {
+        self.ensure_cached_loaded();
+        let space_id = space_id.into();
+        match snapshot {
+            Some(value) => {
+                self.cached
+                    .read_receipt_policy_snapshots
+                    .insert(space_id, value);
+            }
+            None => {
+                self.cached
+                    .read_receipt_policy_snapshots
+                    .remove(&space_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    /// All known server-declared read-receipt policy snapshots.
+    pub fn read_receipt_policy_snapshots(
+        &self,
+    ) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
+        self.load().read_receipt_policy_snapshots
+    }
+
+    /// Resolve effective send preference per spec (server policy → flow →
+    /// space → default). Mirror of
+    /// `contrix_sdk::ReadReceiptPreferences::effective_send` extended with
+    /// server-declared policy lock: when the Space publishes a
+    /// `cx.space.read_receipt_policy` with `disclosure="required"` the
+    /// answer is forced `true`; with `disclosure="disabled"` it's forced
+    /// `false`. User-level overrides are ignored in those cases (matching
+    /// the lock UI in settings).
     pub fn read_receipt_should_send(
         &self,
         flow_id: Option<&str>,
         space_id: Option<&str>,
     ) -> bool {
         let snapshot = self.load();
+        if let Some(sid) = space_id
+            && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(sid)
+        {
+            match policy.disclosure.as_str() {
+                "required" => return true,
+                "disabled" => return false,
+                _ => {}
+            }
+        }
         if let Some(fid) = flow_id
             && let Some(value) = snapshot.read_receipt_flow_overrides.get(fid)
         {
@@ -898,5 +1009,80 @@ mod tests {
         store.set_read_receipt_space_override("cx:space:demo", None);
         assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
         assert!(store.read_receipt_space_override("cx:space:demo").is_none());
+    }
+
+    #[test]
+    fn server_policy_required_locks_user_choice_to_send() {
+        let path = temp_state_path("read-receipt-policy-required");
+        let mut store = LocalStateStore::with_path(path);
+        // User opted out of the Space.
+        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        // But server publishes disclosure=required → must override to true.
+        store.set_read_receipt_policy_snapshot(
+            "cx:space:demo",
+            Some(ReadReceiptPolicySnapshot {
+                disclosure: "required".to_owned(),
+                visibility: Some("public".to_owned()),
+            }),
+        );
+        assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
+        let snap = store.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        assert!(snap.locks_user_choice());
+        assert!(!snap.lock_reason().is_empty());
+    }
+
+    #[test]
+    fn server_policy_disabled_locks_user_choice_to_skip() {
+        let path = temp_state_path("read-receipt-policy-disabled");
+        let mut store = LocalStateStore::with_path(path);
+        // User opts in.
+        store.set_read_receipt_default_send(true);
+        // Server publishes disclosure=disabled → must override to false.
+        store.set_read_receipt_policy_snapshot(
+            "cx:space:demo",
+            Some(ReadReceiptPolicySnapshot {
+                disclosure: "disabled".to_owned(),
+                visibility: Some("private".to_owned()),
+            }),
+        );
+        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+    }
+
+    #[test]
+    fn server_policy_optional_does_not_lock() {
+        let path = temp_state_path("read-receipt-policy-optional");
+        let mut store = LocalStateStore::with_path(path);
+        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        store.set_read_receipt_policy_snapshot(
+            "cx:space:demo",
+            Some(ReadReceiptPolicySnapshot {
+                disclosure: "optional".to_owned(),
+                visibility: None,
+            }),
+        );
+        // optional → user override wins.
+        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+        let snap = store.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        assert!(!snap.locks_user_choice());
+        assert_eq!(snap.lock_reason(), "");
+    }
+
+    #[test]
+    fn read_receipt_policy_snapshot_persists_across_store_instances() {
+        let path = temp_state_path("read-receipt-policy-persists");
+        {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store.set_read_receipt_policy_snapshot(
+                "cx:space:demo",
+                Some(ReadReceiptPolicySnapshot {
+                    disclosure: "required".to_owned(),
+                    visibility: Some("track_scoped".to_owned()),
+                }),
+            );
+        }
+        let reader = LocalStateStore::with_path(path);
+        let snap = reader.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        assert_eq!(snap.disclosure, "required");
+        assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));
     }
 }

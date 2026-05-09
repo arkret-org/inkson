@@ -2,10 +2,68 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use crate::{
+    hlc::Hlc,
     local_state::LocalStateStore,
+    move_builder::{
+        UnsignedMove, build_member_state_transition_move, build_space_organization_update_move,
+        did_key_from_verifying_key, did_key_verification_method, sign_unsigned_move,
+    },
     operation::{CommitBuilder, cx_ops},
-    views::helpers::{active_sync_token, authed_api, authed_api_with_sync},
+    views::{
+        consent_demo::{demo_signing_key, format_submit_response},
+        helpers::{active_sync_token, authed_api, authed_api_with_sync},
+    },
 };
+
+/// Placeholder anchor frontier used until sync.rs (P0 M3) surfaces the
+/// effective Anchor head. Mirrors `consent_demo::PLACEHOLDER_ANCHOR_REF`.
+const PLACEHOLDER_ANCHOR_REF: &str =
+    "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/// Pure helper: build + sign a `cx.space.update` Move that writes the
+/// space organization cas-register cell. Mirrors the consent-grant signing
+/// flow so the Dioxus closure stays small. Until we have proper key
+/// management, the issuer DID is derived from the demo signing key —
+/// this is gated by the same `TODO(real-key-management)` as the consent
+/// PoC.
+pub(crate) fn build_signed_space_organization_update(
+    space_id: &str,
+    value: serde_json::Value,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let signing = demo_signing_key();
+    let did = did_key_from_verifying_key(&signing.verifying_key());
+    let vm = did_key_verification_method(&signing.verifying_key());
+    let unsigned: UnsignedMove =
+        build_space_organization_update_move(&did, space_id, value, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+}
+
+/// Pure helper: build + sign a `cx.member.state` FSM transition Move.
+/// Used by Kick / Ban / Unban Move-flow buttons in the member table.
+pub(crate) fn build_signed_member_state_transition(
+    space_id: &str,
+    actor_id: &str,
+    from_state: &str,
+    to_state: &str,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let signing = demo_signing_key();
+    let did = did_key_from_verifying_key(&signing.verifying_key());
+    let vm = did_key_verification_method(&signing.verifying_key());
+    let unsigned: UnsignedMove = build_member_state_transition_move(
+        &did,
+        space_id,
+        actor_id,
+        from_state,
+        to_state,
+        anchor_ref,
+        hlc,
+    )?;
+    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct InviteRecord {
@@ -94,6 +152,58 @@ pub fn SpaceAdminPanel(
                                 }
                             },
                             "Save Metadata"
+                        }
+                        // Alternate Move-flow path: build a cx.space.update
+                        // Move targeting cx.component.space.organization.v1
+                        // (cas-register) and POST /api/v1/moves. Soland's
+                        // LatticeRegistry routes this into the cell; the
+                        // direct-event button above stays available until
+                        // every deployment is on the new pipeline.
+                        button {
+                            class: "secondary",
+                            "data-testid": "update-metadata-via-move-button",
+                            onclick: {
+                                let base = base_url.clone();
+                                let space = selected_space.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let space = space.clone();
+                                    let api_token = token();
+                                    let name = space_name();
+                                    let topic = space_topic();
+                                    let desc = space_description();
+                                    let value = json!({
+                                        "title": name,
+                                        "topic": topic,
+                                        "description": desc,
+                                    });
+                                    let hlc = Hlc::now("yougen").to_string();
+                                    let signed = match build_signed_space_organization_update(
+                                        &space,
+                                        value,
+                                        PLACEHOLDER_ANCHOR_REF,
+                                        &hlc,
+                                    ) {
+                                        Ok(m) => m,
+                                        Err(e) => {
+                                            status_msg.set(format!("build move failed: {e}"));
+                                            return;
+                                        }
+                                    };
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            match api.submit_move(&signed).await {
+                                                Ok(resp) => status_msg
+                                                    .set(format_submit_response(&resp)),
+                                                Err(e) => status_msg.set(format!(
+                                                    "submit_move failed: {e}"
+                                                )),
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                            "Save Metadata (Move)"
                         }
                     }
                 }
@@ -428,6 +538,98 @@ pub fn SpaceAdminPanel(
                                     }
                                 },
                                 "Ban"
+                            }
+                            // Move-flow alternates: build cx.member.state
+                            // FSM transitions on cx.component.member.state.v1
+                            // and POST /api/v1/moves. Kick = join→leave;
+                            // Ban = join→ban. The direct-event buttons
+                            // above remain wired until every deployment is
+                            // on the new pipeline.
+                            button {
+                                class: "secondary",
+                                "data-testid": "kick-member-via-move-button",
+                                onclick: {
+                                    let space = selected_space.clone();
+                                    let m = member.clone();
+                                    let base = base_url.clone();
+                                    move |_| {
+                                        let api_token = token();
+                                        let hlc = Hlc::now("yougen").to_string();
+                                        let signed = match build_signed_member_state_transition(
+                                            &space,
+                                            &m,
+                                            "join",
+                                            "leave",
+                                            PLACEHOLDER_ANCHOR_REF,
+                                            &hlc,
+                                        ) {
+                                            Ok(m) => m,
+                                            Err(e) => {
+                                                status_msg.set(format!("build move failed: {e}"));
+                                                return;
+                                            }
+                                        };
+                                        let actor_label = m.clone();
+                                        let base = base.clone();
+                                        spawn(async move {
+                                            if let Ok(api) = authed_api(&base, api_token) {
+                                                match api.submit_move(&signed).await {
+                                                    Ok(resp) => status_msg.set(format!(
+                                                        "kick(Move) {actor_label}: {}",
+                                                        format_submit_response(&resp)
+                                                    )),
+                                                    Err(e) => status_msg.set(format!(
+                                                        "kick(Move) failed: {e}"
+                                                    )),
+                                                }
+                                            }
+                                        });
+                                    }
+                                },
+                                "Kick (Move)"
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "ban-member-via-move-button",
+                                onclick: {
+                                    let space = selected_space.clone();
+                                    let m = member.clone();
+                                    let base = base_url.clone();
+                                    move |_| {
+                                        let api_token = token();
+                                        let hlc = Hlc::now("yougen").to_string();
+                                        let signed = match build_signed_member_state_transition(
+                                            &space,
+                                            &m,
+                                            "join",
+                                            "ban",
+                                            PLACEHOLDER_ANCHOR_REF,
+                                            &hlc,
+                                        ) {
+                                            Ok(m) => m,
+                                            Err(e) => {
+                                                status_msg.set(format!("build move failed: {e}"));
+                                                return;
+                                            }
+                                        };
+                                        let actor_label = m.clone();
+                                        let base = base.clone();
+                                        spawn(async move {
+                                            if let Ok(api) = authed_api(&base, api_token) {
+                                                match api.submit_move(&signed).await {
+                                                    Ok(resp) => status_msg.set(format!(
+                                                        "ban(Move) {actor_label}: {}",
+                                                        format_submit_response(&resp)
+                                                    )),
+                                                    Err(e) => status_msg.set(format!(
+                                                        "ban(Move) failed: {e}"
+                                                    )),
+                                                }
+                                            }
+                                        });
+                                    }
+                                },
+                                "Ban (Move)"
                             }
                         }
                     }
@@ -1050,4 +1252,129 @@ pub fn SpaceAdminPanel(
 
 fn expected_head(repo_state: String) -> Option<String> {
     repo_state.starts_with("cx:commit:").then_some(repo_state)
+}
+
+#[cfg(test)]
+mod move_flow_tests {
+    use super::*;
+    use contrix_sdk::LatticeOpType;
+
+    fn fixed_anchor_ref() -> &'static str {
+        PLACEHOLDER_ANCHOR_REF
+    }
+
+    fn fixed_hlc() -> &'static str {
+        "0189c4d2af00-00000000-aabbccdd"
+    }
+
+    /// "Save Metadata (Move)" wiring: produces a cx.space.update Move
+    /// targeting the cx.component.space.organization.v1 cas-register cell
+    /// with the form values folded into the cell's value object.
+    #[test]
+    fn build_signed_space_organization_update_targets_organization_cell() {
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let signed = build_signed_space_organization_update(
+            space,
+            json!({"title": "Renamed", "topic": "new"}),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_eq!(signed.space_id.as_str(), space);
+        assert_eq!(signed.effects.len(), 1);
+        let effect = &signed.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.space.organization.v1:"),
+            "space organization update must target the organization cell family"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Set);
+        let value = effect.op.value.as_ref().expect("set op carries value");
+        assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("Renamed"));
+        assert_eq!(value.get("topic").and_then(|v| v.as_str()), Some("new"));
+        // Detached JWS attached so soland's verifier can validate.
+        assert!(!signed.sig.jws.is_empty());
+        let parts: Vec<&str> = signed.sig.jws.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    /// "Kick (Move)" wiring: produces an FSM transition from join → leave
+    /// on cx.component.member.state.v1 keyed by the actor id.
+    #[test]
+    fn build_signed_member_state_transition_kick_produces_join_leave_fsm() {
+        let signed = build_signed_member_state_transition(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            "join",
+            "leave",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &signed.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.member.state.v1:"),
+            "member state transition must target the member.state cell family"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Transition);
+        assert_eq!(
+            effect.op.from.as_ref().and_then(|v| v.as_str()),
+            Some("join")
+        );
+        assert_eq!(
+            effect.op.to.as_ref().and_then(|v| v.as_str()),
+            Some("leave")
+        );
+    }
+
+    /// "Ban (Move)" wiring: produces an FSM transition from join → ban
+    /// on the same cell family (different terminal state).
+    #[test]
+    fn build_signed_member_state_transition_ban_produces_join_ban_fsm() {
+        let signed = build_signed_member_state_transition(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            "join",
+            "ban",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &signed.effects[0];
+        assert_eq!(effect.op.op_type, LatticeOpType::Transition);
+        assert_eq!(effect.op.to.as_ref().and_then(|v| v.as_str()), Some("ban"));
+    }
+
+    /// Different from-state values produce different content-addressed
+    /// move ids — ensures soland can distinguish kick from ban even if
+    /// every other input is identical (form, hlc, anchor_ref).
+    #[test]
+    fn member_state_kick_and_ban_have_distinct_content_addresses() {
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let actor = "did:web:alice.example";
+        let kick = build_signed_member_state_transition(
+            space,
+            actor,
+            "join",
+            "leave",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let ban = build_signed_member_state_transition(
+            space,
+            actor,
+            "join",
+            "ban",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_ne!(kick.id.as_str(), ban.id.as_str());
+    }
 }

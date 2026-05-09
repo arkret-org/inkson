@@ -29,8 +29,8 @@ use crate::{
     hlc::Hlc,
     models::SubmitMoveResponse,
     move_builder::{
-        UnsignedMove, build_consent_grant_move, did_key_from_verifying_key,
-        did_key_verification_method, sign_unsigned_move,
+        UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
+        did_key_from_verifying_key, did_key_verification_method, sign_unsigned_move,
     },
     views::helpers::authed_api,
 };
@@ -72,6 +72,25 @@ pub(crate) fn build_signed_consent_grant(
     let vm = did_key_verification_method(&signing.verifying_key());
     let unsigned: UnsignedMove =
         build_consent_grant_move(&did, space_id, consent_id, tag, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &signing, &vm))
+}
+
+/// Pure helper: build + sign a `cx.consent.revoke` Move (OrSet remove).
+/// Mirror of [`build_signed_consent_grant`] for the revoke path. Splitting
+/// it out keeps the Dioxus closure tiny and unit-testable.
+pub(crate) fn build_signed_consent_revoke(
+    space_id: &str,
+    consent_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let signing = demo_signing_key();
+    let did = did_key_from_verifying_key(&signing.verifying_key());
+    let vm = did_key_verification_method(&signing.verifying_key());
+    let unsigned: UnsignedMove =
+        build_consent_revoke_move(&did, space_id, consent_id, tag, reason, anchor_ref, hlc)?;
     Ok(sign_unsigned_move(unsigned, &signing, &vm))
 }
 
@@ -176,6 +195,58 @@ pub fn ConsentGrantDemoCard(base_url: Signal<String>, token: Signal<String>) -> 
                         });
                     },
                     "Grant consent (build + sign + POST)"
+                }
+                button {
+                    class: "secondary",
+                    "data-testid": "consent-revoke-submit",
+                    onclick: move |_| {
+                        let base = base_url();
+                        let api_token = token();
+                        let space_val = space_id().trim().to_owned();
+                        let consent_val = consent_id().trim().to_owned();
+                        let tag_val = tag().trim().to_owned();
+                        if space_val.is_empty() || consent_val.is_empty() || tag_val.is_empty() {
+                            status.set(
+                                "Fill space_id / consent_id / tag before submitting".to_owned(),
+                            );
+                            return;
+                        }
+                        let hlc = Hlc::now("yougen").to_string();
+                        let signed = match build_signed_consent_revoke(
+                            &space_val,
+                            &consent_val,
+                            &tag_val,
+                            Some("user revoked from settings UI"),
+                            PLACEHOLDER_ANCHOR_REF,
+                            &hlc,
+                        ) {
+                            Ok(m) => m,
+                            Err(error) => {
+                                status.set(format!("Build revoke move failed: {error}"));
+                                return;
+                            }
+                        };
+                        let move_id = signed.id.as_str().to_owned();
+                        last_move_id.set(move_id.clone());
+                        spawn(async move {
+                            let api: ContrixApi = match authed_api(&base, api_token) {
+                                Ok(api) => api,
+                                Err(error) => {
+                                    status.set(format!("API client unavailable: {error}"));
+                                    return;
+                                }
+                            };
+                            match api.submit_move(&signed).await {
+                                Ok(response) => status.set(format_submit_response(&response)),
+                                Err(error) => {
+                                    status.set(format!(
+                                        "submit_move (revoke) {move_id} failed: {error}"
+                                    ))
+                                }
+                            }
+                        });
+                    },
+                    "Revoke consent (OrSet remove)"
                 }
             }
             if !last_move_id().is_empty() {
@@ -303,6 +374,73 @@ mod tests {
             format_submit_response(&rejected_blank),
             "Move cx:move:sha256:ghi: state=rejected"
         );
+    }
+
+    /// Revoke helper builds a `cx.consent.revoke`-shaped Move on the
+    /// SAME OrSet cell as the grant, with op_type=Remove and the given
+    /// reason. This is the second user-facing button on the Move/Anchor
+    /// pipeline — a counterpart to the grant button so users can drop a
+    /// consent without touching server admin UIs.
+    #[test]
+    fn build_signed_consent_revoke_produces_consent_or_set_remove() {
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let signed = build_signed_consent_revoke(
+            space,
+            "cnt.demo-01",
+            "scope:contacts",
+            Some("user revoked from settings UI"),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_eq!(signed.space_id.as_str(), space);
+        assert_eq!(signed.effects.len(), 1);
+        let effect = &signed.effects[0];
+        // Same cell family / subject as the grant — OrSet causal remove
+        // requires it.
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.consent.grant.v1:"),
+            "consent revoke targets the same OrSet cell as the grant"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
+        assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
+        assert_eq!(
+            effect.op.reason.as_deref(),
+            Some("user revoked from settings UI")
+        );
+        // Issuer is still the demo did:key (TODO real-key-management).
+        let signing = demo_signing_key();
+        let expected_did = did_key_from_verifying_key(&signing.verifying_key());
+        assert_eq!(signed.issuer.as_str(), expected_did);
+    }
+
+    /// Grant + revoke on the same form values produce DIFFERENT move ids
+    /// (the canonical effect op_type differs). This is the property soland
+    /// uses to distinguish OrSet add from OrSet remove on the same tag.
+    #[test]
+    fn grant_and_revoke_have_distinct_content_addresses() {
+        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let granted = build_signed_consent_grant(
+            space,
+            "cnt.demo-01",
+            "scope:contacts",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let revoked = build_signed_consent_revoke(
+            space,
+            "cnt.demo-01",
+            "scope:contacts",
+            None,
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_ne!(granted.id.as_str(), revoked.id.as_str());
     }
 
     /// Move id is content-addressed: building twice with the same form
