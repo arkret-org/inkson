@@ -61,6 +61,10 @@ pub mod memory_review;
 pub mod notifications;
 pub mod onboarding;
 pub mod product;
+/// Round 23 (M6): invite-quarantine list + admin approve/reject buttons.
+/// (claude-design no dedicated page yet; lives at `/quarantine` and is
+/// linked from the Settings sidebar for admins.)
+pub mod quarantine;
 pub mod readiness;
 pub mod recovery;
 pub mod register;
@@ -107,6 +111,11 @@ pub enum View {
     /// 与 Register 互补：register 是详细向导，onboarding 是轻量步进入口。
     /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
     Onboarding,
+    /// Round 23 (M6): invite-quarantine list. Admins see all entries
+    /// from coauth's `GET /admin/v1/invite-quarantine`; non-admins
+    /// see their own quarantined invites. Approve / reject buttons
+    /// POST `/admin/v1/invite-quarantine/{id}/resolve`.
+    Quarantine,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

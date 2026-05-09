@@ -491,6 +491,45 @@ impl CoauthApi {
         self.get_json("api/v1/auth/recovery/principal-cache/failures").await
     }
 
+    /// Round 23 (M6): list invite-quarantine entries from coauth's
+    /// admin endpoint. Admins receive every quarantined invite in the
+    /// deployment; non-admin tokens 403 — the caller surfaces an
+    /// inline "limited to your own invites" hint and falls back to
+    /// [`Self::invite_quarantine_self`].
+    pub async fn invite_quarantine_list(&self) -> anyhow::Result<Value> {
+        self.get_json("api/admin/v1/invite-quarantine").await
+    }
+
+    /// Round 23 (M6): per-user view of the caller's quarantined
+    /// invites — surfaced for non-admin members so they can see
+    /// what's gated on review without admin access. Backed by the
+    /// same coauth admin endpoint via a self-scope query string.
+    pub async fn invite_quarantine_self(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/invite-quarantine/self").await
+    }
+
+    /// Round 23 (M6): admin decision on a quarantined invite.
+    /// `decision` is `"approve"` or `"reject"`; `reason` is required
+    /// for reject and recommended for approve so the audit trail
+    /// captures why the invite was unblocked. Returns soland's
+    /// updated quarantine record.
+    pub async fn invite_quarantine_resolve(
+        &self,
+        invite_id: &str,
+        decision: &str,
+        reason: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let mut body = serde_json::json!({"decision": decision});
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::Value::String(reason.to_owned());
+        }
+        self.post_json(
+            &format!("api/admin/v1/invite-quarantine/{invite_id}/resolve"),
+            body,
+        )
+        .await
+    }
+
     pub async fn principal_recovery_cache_upstream(&self) -> anyhow::Result<Value> {
         self.get_json("api/v1/auth/recovery/principal-cache/upstream").await
     }

@@ -3,12 +3,13 @@ use serde_json::json;
 
 use crate::{
     hlc::Hlc,
-    local_state::{LocalIdentity, LocalStateStore},
+    local_state::{LocalIdentity, LocalStateStore, MoveSubmissionState},
+    models::SubmitMoveResponse,
     move_builder::{
         CapabilityConstraintInput, UnsignedMove,
         build_capability_grant_move_with_constraints, build_capability_revoke_move,
-        build_member_state_transition_move, build_space_organization_update_move,
-        did_key_verification_method, sign_unsigned_move,
+        build_conflict_repair_move, build_member_state_transition_move,
+        build_space_organization_update_move, did_key_verification_method, sign_unsigned_move,
     },
     operation::{CommitBuilder, cx_ops},
     views::{
@@ -128,6 +129,63 @@ pub(crate) fn build_signed_capability_revoke(
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
+/// Round 23 (M8): pure helper — build + sign a conflict-repair Move
+/// targeting a `bottom=expose` cell. Wraps
+/// [`crate::move_builder::build_conflict_repair_move`] with the
+/// per-device identity / DID URL fields the UI shouldn't have to
+/// recompute. Admin / moderator only — soland's authz reducer rejects
+/// unsigned-by-recovery-capability submissions.
+pub(crate) fn build_signed_conflict_repair(
+    identity: &LocalIdentity,
+    space_id: &str,
+    cell_id: &str,
+    conflict_heads: &[String],
+    recovery_capability_ref: &str,
+    winner_value: serde_json::Value,
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
+    let unsigned: UnsignedMove = build_conflict_repair_move(
+        did,
+        space_id,
+        cell_id,
+        conflict_heads,
+        recovery_capability_ref,
+        winner_value,
+        anchor_ref,
+        hlc,
+    )?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
+}
+
+/// Pure helper: format a `SubmitMoveResponse` AND record the outcome
+/// in the local state's [`crate::local_state::MoveSubmissionState`]
+/// tracker. Returns the formatted status string the caller can show
+/// inline. Round 23 (M4).
+pub(crate) fn record_submit_outcome(
+    state_store: &mut LocalStateStore,
+    space_id: &str,
+    kind: &str,
+    anchor_ref: Option<String>,
+    response: &SubmitMoveResponse,
+) -> String {
+    let state = MoveSubmissionState::from_submit_state(
+        response.state.as_str(),
+        response.reason.as_deref(),
+    );
+    state_store.record_move_submission(
+        response.move_id.clone(),
+        space_id.to_owned(),
+        kind.to_owned(),
+        state,
+        response.reason.clone(),
+        anchor_ref,
+    );
+    format_submit_response(response)
+}
+
 /// Pure helper: build + sign a `cx.member.state` FSM transition Move.
 /// Used by Kick / Ban / Unban Move-flow buttons in the member table.
 pub(crate) fn build_signed_member_state_transition(
@@ -206,6 +264,20 @@ pub fn SpaceAdminPanel(
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
     let mut anchorer_cell_value = use_signal(String::new);
+    // Round 23 (M4): selected Move for the failure detail inline panel.
+    // Clicking a row that's in a failed state stores its move_id here;
+    // the detail block below renders the reason / anchor_ref.
+    let mut move_detail_open = use_signal(|| Option::<String>::None);
+    // Round 23 (M8): conflict-repair dialog state. Surfaces when the
+    // local projection has bottom=expose cells; the operator picks
+    // two of the conflicting heads + a recovery capability ref and
+    // submits a head_in repair Move.
+    let mut repair_target_cell = use_signal(String::new);
+    let mut repair_head_a = use_signal(String::new);
+    let mut repair_head_b = use_signal(String::new);
+    let mut repair_capability_ref =
+        use_signal(|| "cap.recovery-01".to_owned());
+    let mut repair_winner_json = use_signal(String::new);
 
     // Read the local anchor view for this space once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
@@ -250,9 +322,116 @@ pub fn SpaceAdminPanel(
     let covered_frontier_lag_label = covered_frontier_lag_value
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
+    // Round 23 (M4): per-Space Move submission tracker. Drives the
+    // state-pill list + the Space-wide anchorer_paused banner.
+    let move_submissions = state_store
+        .read()
+        .move_submissions_for_space(&selected_space);
+    let space_paused = state_store.read().space_has_paused_anchorer(&selected_space);
+    let space_pending_mls_binding =
+        state_store.read().space_has_pending_mls_binding(&selected_space);
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
+            // Round 23 (M4): Space-wide anchorer-paused banner. Fires
+            // whenever any tracked Move for this Space has surfaced
+            // `AnchorerPaused`. The Space cannot advance until ops
+            // rotate the recovery anchorer.
+            if space_paused {
+                div {
+                    class: "event error-banner",
+                    "data-testid": "anchorer-paused-banner",
+                    div { class: "event-head",
+                        span { "Space 暂停推进，等待 recovery anchorer" }
+                        span { class: "badge red", "anchorer_paused" }
+                    }
+                    div { class: "muted",
+                        "soland's anchorer signing pipeline is offline for this Space — Moves remain in MoveStore but no Anchor batch will close until ops rotate the recovery anchorer (sodmin H'8). All write attempts surface state=anchorer_paused."
+                    }
+                }
+            }
+            // Round 23 (M7): pending_mls_binding toast — when a recent
+            // E2EE message Move asserts a covered_frontier the local
+            // MLS view has not yet acknowledged. Stays up until the
+            // user clears the underlying Move record.
+            if space_pending_mls_binding {
+                div {
+                    class: "event",
+                    "data-testid": "pending-mls-binding-toast",
+                    div { class: "event-head",
+                        span { "covered_frontier 暂未覆盖所需 governance frontier" }
+                        span { class: "badge amber", "pending_mls_binding" }
+                    }
+                    div { class: "muted",
+                        "The MLS commit Move that should bind your last encrypted message has not yet been acknowledged by the governance frontier. Outgoing messages stay encrypted but won't deliver until the binding lands."
+                    }
+                }
+            }
+            // Round 23 (M4): Move submission tracker — pill list of
+            // recent local writes with state badges. Clicking a failed
+            // row reveals the reason inline.
+            if !move_submissions.is_empty() {
+                div { class: "event", "data-testid": "move-submission-tracker",
+                    div { class: "event-head",
+                        span { "Recent Move submissions" }
+                        span { "{move_submissions.len()} tracked" }
+                    }
+                    div { class: "muted",
+                        "Local Move/Anchor pipeline state for writes you've submitted from this device. Pending → Effective once anchored; failures expand inline."
+                    }
+                    for record in move_submissions.clone() {
+                        div { class: "event", "data-testid": "move-submission-row",
+                            div { class: "event-head",
+                                span { "{record.kind}" }
+                                span {
+                                    class: "{record.state.badge_class()}",
+                                    "data-testid": "move-state-badge",
+                                    "data-state-slug": "{record.state.slug()}",
+                                    "{record.state.label_zh()}"
+                                }
+                            }
+                            div { class: "muted", "data-testid": "move-submission-id",
+                                "move {record.move_id}"
+                            }
+                            if record.state.is_failed() {
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "move-failure-detail-toggle",
+                                    onclick: {
+                                        let mid = record.move_id.clone();
+                                        move |_| {
+                                            let current = move_detail_open();
+                                            move_detail_open.set(if current.as_deref()
+                                                == Some(mid.as_str())
+                                            {
+                                                None
+                                            } else {
+                                                Some(mid.clone())
+                                            });
+                                        }
+                                    },
+                                    "Failure detail"
+                                }
+                                if move_detail_open().as_deref() == Some(record.move_id.as_str()) {
+                                    div {
+                                        class: "muted",
+                                        "data-testid": "move-failure-detail",
+                                        if let Some(reason) = &record.reason {
+                                            div { "reason: {reason}" }
+                                        } else {
+                                            div { "reason: (none reported)" }
+                                        }
+                                        if let Some(anchor) = &record.anchor_ref {
+                                            div { "bound anchor: {anchor}" }
+                                        }
+                                        div { "submitted_at: {record.submitted_at}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Bottom=expose conflict banner — only rendered when at least
             // one cell in the projection has unresolved concurrent
             // candidates. P0 M5.
@@ -268,6 +447,152 @@ pub fn SpaceAdminPanel(
                     for (cell_ref, status) in &bottom_cells {
                         div { class: "muted", "data-testid": "bottom-cell-row",
                             "{cell_ref} · status={status}"
+                        }
+                    }
+                }
+                // Round 23 (M8): conflict-repair Move dialog — only
+                // rendered when bottom_cells is non-empty (i.e. there
+                // is something to repair). Admin / moderator only;
+                // soland's authz reducer rejects unsigned-by-recovery
+                // capability submissions.
+                div { class: "event", "data-testid": "conflict-repair-dialog",
+                    div { class: "event-head",
+                        span { "Conflict repair (head_in Move)" }
+                        span { class: "badge amber", "admin / moderator" }
+                    }
+                    div { class: "muted",
+                        "Build a `head_in [conflict_head_A, conflict_head_B]` repair Move + recovery_capability ref to merge the two concurrent histories. Soland's authz reducer requires the repair Move be signed by a holder of the named recovery capability."
+                    }
+                    label { "Target cell (id of bottom=expose cell)" }
+                    input {
+                        "data-testid": "repair-target-cell-input",
+                        value: "{repair_target_cell}",
+                        placeholder: "cx:cell:cx.component.space.organization.v1:...",
+                        oninput: move |evt| repair_target_cell.set(evt.value()),
+                    }
+                    label { "conflict_head_A" }
+                    input {
+                        "data-testid": "repair-head-a-input",
+                        value: "{repair_head_a}",
+                        placeholder: "cx:anchor:sha256:headA...",
+                        oninput: move |evt| repair_head_a.set(evt.value()),
+                    }
+                    label { "conflict_head_B" }
+                    input {
+                        "data-testid": "repair-head-b-input",
+                        value: "{repair_head_b}",
+                        placeholder: "cx:anchor:sha256:headB...",
+                        oninput: move |evt| repair_head_b.set(evt.value()),
+                    }
+                    label { "recovery_capability ref" }
+                    input {
+                        "data-testid": "repair-capability-input",
+                        value: "{repair_capability_ref}",
+                        placeholder: "cap.recovery-01",
+                        oninput: move |evt| repair_capability_ref.set(evt.value()),
+                    }
+                    label { "Winner value (JSON)" }
+                    textarea {
+                        "data-testid": "repair-winner-json-input",
+                        value: "{repair_winner_json}",
+                        placeholder: "{{\"title\": \"merged\"}}",
+                        oninput: move |evt| repair_winner_json.set(evt.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "repair-submit-button",
+                            onclick: {
+                                let base = base_url.clone();
+                                let space = selected_space.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let space = space.clone();
+                                    let api_token = token();
+                                    let cell = repair_target_cell().trim().to_owned();
+                                    let head_a = repair_head_a().trim().to_owned();
+                                    let head_b = repair_head_b().trim().to_owned();
+                                    let cap = repair_capability_ref().trim().to_owned();
+                                    let winner_str = repair_winner_json();
+                                    if cell.is_empty() || head_a.is_empty() || head_b.is_empty()
+                                        || cap.is_empty()
+                                    {
+                                        status_msg.set(
+                                            "fill cell + both heads + recovery capability before submitting repair"
+                                                .to_owned(),
+                                        );
+                                        return;
+                                    }
+                                    let winner_value: serde_json::Value =
+                                        match serde_json::from_str(&winner_str) {
+                                            Ok(v) => v,
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "winner value is not valid JSON: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                    let hlc = Hlc::now("yougen").to_string();
+                                    let anchor_ref =
+                                        state_store.read().anchor_ref_for_move(&space);
+                                    let identity = match state_store
+                                        .write()
+                                        .ensure_local_identity()
+                                    {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "identity unavailable: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let heads = vec![head_a, head_b];
+                                    let signed = match build_signed_conflict_repair(
+                                        &identity,
+                                        &space,
+                                        &cell,
+                                        &heads,
+                                        &cap,
+                                        winner_value,
+                                        &anchor_ref,
+                                        &hlc,
+                                    ) {
+                                        Ok(m) => m,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "build repair Move failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let space_for_record = space.clone();
+                                    let anchor_for_record = anchor_ref.clone();
+                                    spawn(async move {
+                                        if let Ok(api) = authed_api(&base, api_token) {
+                                            match api.submit_move(&signed).await {
+                                                Ok(resp) => {
+                                                    let line = record_submit_outcome(
+                                                        &mut state_store.write(),
+                                                        &space_for_record,
+                                                        "conflict.repair",
+                                                        Some(anchor_for_record),
+                                                        &resp,
+                                                    );
+                                                    status_msg.set(format!(
+                                                        "repair Move: {line}"
+                                                    ));
+                                                }
+                                                Err(err) => status_msg.set(format!(
+                                                    "repair submit failed: {err}"
+                                                )),
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                            "Submit repair Move"
                         }
                     }
                 }
@@ -521,11 +846,21 @@ pub fn SpaceAdminPanel(
                                             return;
                                         }
                                     };
+                                    let space_for_record = space.clone();
+                                    let anchor_for_record = anchor_ref.clone();
                                     spawn(async move {
                                         if let Ok(api) = authed_api(&base, api_token) {
                                             match api.submit_move(&signed).await {
-                                                Ok(resp) => status_msg
-                                                    .set(format_submit_response(&resp)),
+                                                Ok(resp) => {
+                                                    let line = record_submit_outcome(
+                                                        &mut state_store.write(),
+                                                        &space_for_record,
+                                                        "cx.space.update",
+                                                        Some(anchor_for_record),
+                                                        &resp,
+                                                    );
+                                                    status_msg.set(line);
+                                                }
                                                 Err(e) => status_msg.set(format!(
                                                     "submit_move failed: {e}"
                                                 )),

@@ -93,6 +93,9 @@ pub enum Route {
 
     #[route("/onboarding", crate::app::RouterView)]
     Onboarding,
+
+    #[route("/quarantine", crate::app::RouterView)]
+    Quarantine,
 }
 
 #[component]
@@ -158,6 +161,7 @@ impl Route {
             Route::Recovery => View::Recovery,
             Route::Applets => View::Applets,
             Route::Onboarding => View::Onboarding,
+            Route::Quarantine => View::Quarantine,
         }
     }
 
@@ -211,6 +215,7 @@ impl From<View> for Route {
             View::Recovery => Route::Recovery,
             View::Applets => Route::Applets,
             View::Onboarding => Route::Onboarding,
+            View::Quarantine => Route::Quarantine,
         }
     }
 }
@@ -244,6 +249,7 @@ mod tests {
             Route::Recovery,
             Route::Applets,
             Route::Onboarding,
+            Route::Quarantine,
         ];
 
         for route in routes {

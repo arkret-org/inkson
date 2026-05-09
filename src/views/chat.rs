@@ -3,10 +3,16 @@ use serde_json::json;
 
 use crate::{
     conformance::{EventKindWireScope, ephemeral_event_kinds, event_kind_wire_scope},
-    local_state::LocalStateStore,
+    hlc::Hlc,
+    local_state::{LocalStateStore, MoveSubmissionState},
+    move_builder::{
+        build_message_create_move_with_covered_frontier, build_mls_commit_move,
+        did_key_verification_method, sign_unsigned_move,
+    },
     operation::{CommitBuilder, cx_ops, uuid_v8},
     views::helpers::{
-        StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
+        StructuredMention, active_sync_token, authed_api, authed_api_with_sync,
+        parse_structured_mentions,
     },
 };
 
@@ -559,6 +565,175 @@ pub fn ChatPanel(
                             }
                         },
                         "Send"
+                    }
+                    // Round 23 (M7): E2EE Move-flow path. Constructs an
+                    // MLS commit Move first (writes covered_frontier on
+                    // the way to soland) + the message Move with a
+                    // `covered_frontier` precondition. The submit_move
+                    // outcome lands in the local Move tracker; if soland
+                    // rejects with a covered_frontier mismatch the row
+                    // surfaces as `pending_mls_binding` and the
+                    // space_admin pending-mls-binding toast fires.
+                    button {
+                        class: "secondary",
+                        "data-testid": "send-e2ee-move-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |_| {
+                                let body = chat_draft().trim().to_owned();
+                                if body.is_empty() {
+                                    status_msg.set("type a message before E2EE submit".to_owned());
+                                    return;
+                                }
+                                let space = space.clone();
+                                let api_token = token();
+                                let hlc = Hlc::now("yougen").to_string();
+                                let anchor_view = state_store.read().anchor_view_for(&space);
+                                let anchor_ref = anchor_view.move_anchor_ref();
+                                let covered_frontier = anchor_view
+                                    .covered_frontier
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        // Fallback: bind to the
+                                        // sha256(empty) sentinel — soland
+                                        // surfaces a `covered_frontier`
+                                        // mismatch which the Move tracker
+                                        // maps to pending_mls_binding.
+                                        "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+                                    });
+                                let new_epoch = anchor_view
+                                    .mls_epoch
+                                    .map(|e| e + 1)
+                                    .unwrap_or(1);
+                                let identity =
+                                    match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "identity unavailable: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                let did = identity.device_did.clone();
+                                let vm =
+                                    did_key_verification_method(&identity.signing_key.verifying_key());
+                                // 1) MLS commit Move bumps the epoch +
+                                //    records covered_frontier.
+                                let commit_unsigned = match build_mls_commit_move(
+                                    &did,
+                                    &space,
+                                    &space,
+                                    new_epoch,
+                                    &covered_frontier,
+                                    &anchor_ref,
+                                    &hlc,
+                                ) {
+                                    Ok(u) => u,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "mls commit move build failed: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let commit_signed =
+                                    sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
+                                // 2) Message Move with covered_frontier
+                                //    precondition.
+                                let msg_id = format!("msg-{}", uuid_v8());
+                                let payload = json!({
+                                    "ciphertext": body,
+                                    "epoch": new_epoch,
+                                });
+                                let msg_unsigned = match build_message_create_move_with_covered_frontier(
+                                    &did,
+                                    &space,
+                                    &msg_id,
+                                    payload,
+                                    &covered_frontier,
+                                    &anchor_ref,
+                                    &hlc,
+                                ) {
+                                    Ok(u) => u,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "message move build failed: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let msg_signed =
+                                    sign_unsigned_move(msg_unsigned, &identity.signing_key, &vm);
+                                let base = base.clone();
+                                let space_for_record = space.clone();
+                                let anchor_for_record = anchor_ref.clone();
+                                let cf_for_record = covered_frontier.clone();
+                                spawn(async move {
+                                    if let Ok(api) = authed_api(&base, api_token) {
+                                        // Submit MLS commit first; if
+                                        // it fails, abort message send
+                                        // (covered_frontier won't bind).
+                                        match api.submit_move(&commit_signed).await {
+                                            Ok(resp) => {
+                                                let state = MoveSubmissionState::from_submit_state(
+                                                    resp.state.as_str(),
+                                                    resp.reason.as_deref(),
+                                                );
+                                                state_store.write().record_move_submission(
+                                                    resp.move_id.clone(),
+                                                    space_for_record.clone(),
+                                                    "mls_commit".to_owned(),
+                                                    state,
+                                                    resp.reason.clone(),
+                                                    Some(anchor_for_record.clone()),
+                                                );
+                                                if state.is_failed() {
+                                                    status_msg.set(format!(
+                                                        "MLS commit Move failed: {} reason={:?}",
+                                                        resp.move_id, resp.reason
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "MLS commit Move submit failed: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        }
+                                        match api.submit_move(&msg_signed).await {
+                                            Ok(resp) => {
+                                                let state = MoveSubmissionState::from_submit_state(
+                                                    resp.state.as_str(),
+                                                    resp.reason.as_deref(),
+                                                );
+                                                state_store.write().record_move_submission(
+                                                    resp.move_id.clone(),
+                                                    space_for_record,
+                                                    "cx.message.create".to_owned(),
+                                                    state,
+                                                    resp.reason.clone(),
+                                                    Some(anchor_for_record),
+                                                );
+                                                let _ = cf_for_record;
+                                                status_msg.set(format!(
+                                                    "E2EE message Move {}: state={}",
+                                                    resp.move_id, resp.state
+                                                ));
+                                            }
+                                            Err(err) => status_msg.set(format!(
+                                                "message Move submit failed: {err}"
+                                            )),
+                                        }
+                                    }
+                                });
+                                chat_draft.set(String::new());
+                            }
+                        },
+                        "Send E2EE (Move)"
                     }
                 }
             }

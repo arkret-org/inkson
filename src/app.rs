@@ -1072,6 +1072,22 @@ pub fn RouterView() -> Element {
                             token,
                         }
                     },
+                    Route::Quarantine => rsx! {
+                        crate::views::quarantine::QuarantinePanel {
+                            // Round 23 (M6): coauth and soland may share a
+                            // host in single-server dev deployments — fall
+                            // back to `base_url` until the topology probe
+                            // surfaces a separate coauth URL.
+                            coauth_url: base_url(),
+                            // Admin scope is currently inferred from the
+                            // login profile; until profile claims surface
+                            // here we treat any signed-in user as admin so
+                            // they can exercise the approve / reject path
+                            // in dev. Production will gate this on the
+                            // `coauth.admin` scope from the session grant.
+                            is_admin: true,
+                        }
+                    },
                 }
             }
 

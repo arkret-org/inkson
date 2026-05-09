@@ -222,6 +222,152 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
     format!("did:key:z{}", bs58::encode(bytes).into_string())
 }
 
+/// Round 23: lifecycle state of a locally-submitted Move. Mirrors the
+/// states soland's Move/Anchor pipeline can report via the
+/// `SubmitMoveResponse.state` field plus the post-anchor effects the
+/// next `/sync` cycle exposes:
+///
+/// - `PendingAnchor` — server accepted the Move into MoveStore, waiting
+///   for the next anchorer batch to seal it. Initial state for any
+///   successful submit.
+/// - `Effective` — anchorer included the Move in a signed Anchor; the
+///   reducer ran and the resulting cell state is now visible.
+/// - `FailedPrecondition` — soland rejected the Move at submit time
+///   because a precondition (`if_state` / `if_cell` / `parent_anchor`)
+///   no longer matches the server's view.
+/// - `FailedBottom` — the reducer accepted the Move but produced a
+///   bottom (concurrent-candidate) cell; downstream queries are
+///   undefined until an admin resolves the conflict via a `head_in`
+///   repair Move (M8).
+/// - `RejectedAnchor` — the anchorer batch that swept the Move was
+///   rejected (signature / signer-set policy / anchorer-cell
+///   mismatch); the Move never landed.
+/// - `AnchorerPaused` — the Space's anchorer is paused (recovery
+///   anchorer not yet rotated, or quorum unmet); the Space cannot
+///   advance until ops bring it back online.
+/// - `PendingMlsBinding` — Round 23 (M7): the Move targets an E2EE
+///   message but its `covered_frontier` precondition references a
+///   governance frontier the local MLS group has not yet acknowledged.
+///   Held client-side until the binding is observed; the user sees a
+///   toast.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveSubmissionState {
+    PendingAnchor,
+    Effective,
+    FailedPrecondition,
+    FailedBottom,
+    RejectedAnchor,
+    AnchorerPaused,
+    PendingMlsBinding,
+}
+
+impl MoveSubmissionState {
+    /// Map a soland `SubmitMoveResponse.state` string into the typed
+    /// enum. Unknown strings fall back to `PendingAnchor` (the safe
+    /// "we accepted it, server will tell us more later" default) so
+    /// new server-side states surface as in-flight rather than as
+    /// failures.
+    pub fn from_submit_state(state: &str, reason: Option<&str>) -> Self {
+        match state {
+            "pending" | "pending_anchor" => Self::PendingAnchor,
+            "effective" | "anchored" => Self::Effective,
+            "rejected" => match reason.unwrap_or("") {
+                r if r.contains("anchorer_paused") => Self::AnchorerPaused,
+                r if r.contains("rejected_anchor") || r.contains("anchor_signature") => {
+                    Self::RejectedAnchor
+                }
+                r if r.contains("bottom") => Self::FailedBottom,
+                r if r.contains("covered_frontier") || r.contains("mls_binding") => {
+                    Self::PendingMlsBinding
+                }
+                _ => Self::FailedPrecondition,
+            },
+            "failed_precondition" => Self::FailedPrecondition,
+            "failed_bottom" => Self::FailedBottom,
+            "rejected_anchor" => Self::RejectedAnchor,
+            "anchorer_paused" => Self::AnchorerPaused,
+            "pending_mls_binding" => Self::PendingMlsBinding,
+            _ => Self::PendingAnchor,
+        }
+    }
+
+    /// Short tag used by the UI for state-specific styling (badge color
+    /// / icon class). Mirrors the on-disk `serde(rename_all = "snake_case")`
+    /// repr so log lines + CSS classes stay aligned.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::PendingAnchor => "pending_anchor",
+            Self::Effective => "effective",
+            Self::FailedPrecondition => "failed_precondition",
+            Self::FailedBottom => "failed_bottom",
+            Self::RejectedAnchor => "rejected_anchor",
+            Self::AnchorerPaused => "anchorer_paused",
+            Self::PendingMlsBinding => "pending_mls_binding",
+        }
+    }
+
+    /// Human-readable label (Chinese where the spec / sodmin already
+    /// uses Chinese copy). Surfaces in the timeline pill / banner.
+    pub fn label_zh(self) -> &'static str {
+        match self {
+            Self::PendingAnchor => "待 Anchor",
+            Self::Effective => "已生效",
+            Self::FailedPrecondition => "前置条件失败",
+            Self::FailedBottom => "Bottom 冲突",
+            Self::RejectedAnchor => "Anchor 拒绝",
+            Self::AnchorerPaused => "Anchorer 暂停",
+            Self::PendingMlsBinding => "MLS 绑定待覆盖",
+        }
+    }
+
+    /// CSS-friendly badge class.
+    pub fn badge_class(self) -> &'static str {
+        match self {
+            Self::PendingAnchor => "badge amber",
+            Self::Effective => "badge green",
+            Self::FailedPrecondition => "badge red",
+            Self::FailedBottom => "badge red",
+            Self::RejectedAnchor => "badge red",
+            Self::AnchorerPaused => "badge red",
+            Self::PendingMlsBinding => "badge amber",
+        }
+    }
+
+    /// True when the state represents a terminal failure — the UI
+    /// allows the user to click for a detail dialog.
+    pub fn is_failed(self) -> bool {
+        matches!(
+            self,
+            Self::FailedPrecondition
+                | Self::FailedBottom
+                | Self::RejectedAnchor
+                | Self::AnchorerPaused
+        )
+    }
+}
+
+/// Round 23: per-Move tracking record persisted in the local state
+/// store. `move_id` is content-addressed (`cx:move:sha256:...`); the
+/// reducer round-trips `space_id` so client UIs can scope filtering.
+/// `kind` is a free-form classifier the UI uses for icons (e.g.
+/// `cx.consent.grant`, `cx.message.create`, `mls_commit`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveSubmissionRecord {
+    pub move_id: String,
+    pub space_id: String,
+    pub kind: String,
+    pub state: MoveSubmissionState,
+    pub submitted_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Optional last-known anchor frontier head the Move was bound to.
+    /// Surfaces in the failure detail so an operator can correlate the
+    /// rejected Move to the predecessor that conflicted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_ref: Option<String>,
+}
+
 /// Snapshot of the latest Anchor view observed for a Space. Surfaced from
 /// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
@@ -472,6 +618,13 @@ pub struct ClientLocalState {
     /// builders read this in place of the historical `[42; 32]` demo seed.
     #[serde(default)]
     pub local_identity: Option<LocalIdentityRecord>,
+    /// Round 23: locally-submitted Move state tracker. Keyed by
+    /// `move_id`; entries arrive when `submit_move` succeeds and get
+    /// updated when the next sync surfaces an Anchor that includes the
+    /// id (or a rejection). M4 — drives the timeline / space_admin
+    /// state pill UI.
+    #[serde(default)]
+    pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
     /// Encrypted private account data (preferences, tags, custom emojis).
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
@@ -500,6 +653,7 @@ impl Default for ClientLocalState {
             anchor_views: BTreeMap::new(),
             push_registration: None,
             local_identity: None,
+            move_submissions: BTreeMap::new(),
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
         }
@@ -934,6 +1088,110 @@ impl LocalStateStore {
         self.load().muted_notification_kinds
     }
 
+    // ── Move submission tracking (Round 23 / M4) ─────────────────────────
+
+    /// Record a freshly-submitted Move and its initial state. The
+    /// caller has just received soland's `SubmitMoveResponse`; the
+    /// state is mapped in via [`MoveSubmissionState::from_submit_state`].
+    /// `kind` is a free-form classifier (e.g. `cx.consent.grant`,
+    /// `cx.message.create`, `mls_commit`) the UI uses to decorate
+    /// pills + icons.
+    pub fn record_move_submission(
+        &mut self,
+        move_id: impl Into<String>,
+        space_id: impl Into<String>,
+        kind: impl Into<String>,
+        state: MoveSubmissionState,
+        reason: Option<String>,
+        anchor_ref: Option<String>,
+    ) -> MoveSubmissionRecord {
+        self.ensure_cached_loaded();
+        let move_id = move_id.into();
+        let record = MoveSubmissionRecord {
+            move_id: move_id.clone(),
+            space_id: space_id.into(),
+            kind: kind.into(),
+            state,
+            submitted_at: Utc::now(),
+            reason,
+            anchor_ref,
+        };
+        self.cached
+            .move_submissions
+            .insert(move_id, record.clone());
+        let _ = self.flush();
+        record
+    }
+
+    /// Update the lifecycle state of a tracked Move. Called when the
+    /// next `/sync` cycle surfaces an Anchor inclusion / rejection.
+    /// Returns `false` when the move id isn't tracked (no-op).
+    pub fn update_move_submission_state(
+        &mut self,
+        move_id: &str,
+        state: MoveSubmissionState,
+        reason: Option<String>,
+    ) -> bool {
+        self.ensure_cached_loaded();
+        let Some(record) = self.cached.move_submissions.get_mut(move_id) else {
+            return false;
+        };
+        record.state = state;
+        if reason.is_some() {
+            record.reason = reason;
+        }
+        let _ = self.flush();
+        true
+    }
+
+    /// Read all tracked Moves for a specific Space, sorted by submit
+    /// time (newest first). Used by the timeline / space_admin pills.
+    pub fn move_submissions_for_space(&self, space_id: &str) -> Vec<MoveSubmissionRecord> {
+        let mut out: Vec<MoveSubmissionRecord> = self
+            .load()
+            .move_submissions
+            .into_values()
+            .filter(|record| record.space_id == space_id)
+            .collect();
+        out.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+        out
+    }
+
+    /// Read all tracked Moves regardless of Space — used by the
+    /// dashboard "everything failing" banner and the recovery flow.
+    pub fn all_move_submissions(&self) -> Vec<MoveSubmissionRecord> {
+        let mut out: Vec<MoveSubmissionRecord> =
+            self.load().move_submissions.into_values().collect();
+        out.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+        out
+    }
+
+    /// True when at least one tracked Move in `space_id` is in
+    /// `AnchorerPaused`. Drives the Space-wide "等待 recovery anchorer"
+    /// banner described in the M4 ticket.
+    pub fn space_has_paused_anchorer(&self, space_id: &str) -> bool {
+        self.move_submissions_for_space(space_id)
+            .iter()
+            .any(|record| record.state == MoveSubmissionState::AnchorerPaused)
+    }
+
+    /// True when at least one tracked Move targeting `space_id` is
+    /// stuck on `PendingMlsBinding`. Drives the M7 toast.
+    pub fn space_has_pending_mls_binding(&self, space_id: &str) -> bool {
+        self.move_submissions_for_space(space_id)
+            .iter()
+            .any(|record| record.state == MoveSubmissionState::PendingMlsBinding)
+    }
+
+    /// Drop a tracked Move (after it terminates and the user
+    /// dismisses the row). Idempotent.
+    pub fn drop_move_submission(&mut self, move_id: &str) {
+        self.ensure_cached_loaded();
+        if self.cached.move_submissions.remove(move_id).is_some() {
+            let _ = self.flush();
+        }
+    }
+
     /// Look up the persisted device identity record without generating
     /// a fresh one. Returns `None` when the device hasn't been initialised
     /// yet (e.g. fresh install before `ensure_local_identity` has been
@@ -1166,6 +1424,146 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn move_submission_state_maps_pending_anchor_and_effective() {
+        assert_eq!(
+            MoveSubmissionState::from_submit_state("pending", None),
+            MoveSubmissionState::PendingAnchor
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state("pending_anchor", None),
+            MoveSubmissionState::PendingAnchor
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state("effective", None),
+            MoveSubmissionState::Effective
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state("anchored", None),
+            MoveSubmissionState::Effective
+        );
+    }
+
+    #[test]
+    fn move_submission_state_maps_failure_reasons() {
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(
+                "rejected",
+                Some("anchorer_paused: recovery anchorer not signed")
+            ),
+            MoveSubmissionState::AnchorerPaused
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(
+                "rejected",
+                Some("anchor_signature_invalid for batch")
+            ),
+            MoveSubmissionState::RejectedAnchor
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(
+                "rejected",
+                Some("bottom: cell has concurrent candidates")
+            ),
+            MoveSubmissionState::FailedBottom
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(
+                "rejected",
+                Some("covered_frontier mismatch")
+            ),
+            MoveSubmissionState::PendingMlsBinding
+        );
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(
+                "rejected",
+                Some("if_state did not match")
+            ),
+            MoveSubmissionState::FailedPrecondition
+        );
+    }
+
+    #[test]
+    fn move_submission_record_round_trips_through_store() {
+        let path = temp_state_path("move-submission");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let mid = "cx:move:sha256:111";
+        store.record_move_submission(
+            mid,
+            space,
+            "cx.consent.grant",
+            MoveSubmissionState::PendingAnchor,
+            None,
+            Some("cx:anchor:sha256:abc".to_owned()),
+        );
+        let listed = store.move_submissions_for_space(space);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].move_id, mid);
+        assert_eq!(listed[0].state, MoveSubmissionState::PendingAnchor);
+        assert!(!store.space_has_paused_anchorer(space));
+
+        // Update to AnchorerPaused — Space should now flag the banner.
+        assert!(store.update_move_submission_state(
+            mid,
+            MoveSubmissionState::AnchorerPaused,
+            Some("recovery anchorer not signed".to_owned()),
+        ));
+        assert!(store.space_has_paused_anchorer(space));
+        let listed = store.move_submissions_for_space(space);
+        assert_eq!(listed[0].state, MoveSubmissionState::AnchorerPaused);
+        assert_eq!(
+            listed[0].reason.as_deref(),
+            Some("recovery anchorer not signed")
+        );
+
+        // Persistence: a fresh reader sees the same state.
+        let reader = LocalStateStore::with_path(path);
+        assert!(reader.space_has_paused_anchorer(space));
+
+        // Drop it and the banner clears.
+        let mut store = LocalStateStore::with_path(reader.path.clone());
+        store.drop_move_submission(mid);
+        assert!(!store.space_has_paused_anchorer(space));
+    }
+
+    #[test]
+    fn move_submission_pending_mls_binding_drives_toast() {
+        let path = temp_state_path("move-mls-binding");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:space:0196419b-0000-7000-8000-000000000002";
+        store.record_move_submission(
+            "cx:move:sha256:222",
+            space,
+            "cx.message.create",
+            MoveSubmissionState::PendingMlsBinding,
+            Some("covered_frontier missing".to_owned()),
+            None,
+        );
+        assert!(store.space_has_pending_mls_binding(space));
+        assert!(!store.space_has_paused_anchorer(space));
+    }
+
+    #[test]
+    fn move_submission_state_label_and_badge_class_distinct_per_state() {
+        for state in [
+            MoveSubmissionState::PendingAnchor,
+            MoveSubmissionState::Effective,
+            MoveSubmissionState::FailedPrecondition,
+            MoveSubmissionState::FailedBottom,
+            MoveSubmissionState::RejectedAnchor,
+            MoveSubmissionState::AnchorerPaused,
+            MoveSubmissionState::PendingMlsBinding,
+        ] {
+            assert!(!state.slug().is_empty());
+            assert!(!state.label_zh().is_empty());
+            assert!(state.badge_class().starts_with("badge"));
+        }
+        assert!(MoveSubmissionState::AnchorerPaused.is_failed());
+        assert!(!MoveSubmissionState::PendingAnchor.is_failed());
+        assert!(!MoveSubmissionState::Effective.is_failed());
+    }
 
     #[test]
     fn local_state_store_tracks_cursor_operations_projections_and_drafts() {

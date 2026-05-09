@@ -315,6 +315,219 @@ pub fn build_space_organization_update_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Round 23 (M7): construct an MLS commit Move that updates the
+/// `cx.component.mls.epoch.v1` cas-register cell to `new_epoch` and
+/// records the local actor's understanding of `covered_frontier`. The
+/// matching message Move ([`build_message_create_move_with_covered_frontier`])
+/// references the same `covered_frontier` value as a precondition;
+/// soland's reducer rejects message Moves whose covered_frontier does
+/// not match the live governance frontier, surfacing as a
+/// `pending_mls_binding` UI signal.
+///
+/// `epoch_cell_subject` is the cell subject — typically the Space id —
+/// so the cas-register stays per-Space. `covered_frontier` is the
+/// governance frontier ref the new MLS epoch claims to cover; soland's
+/// projection compares this against
+/// `cx.component.governance.covered_frontier.v1` and only treats the
+/// epoch as binding once they match.
+pub fn build_mls_commit_move(
+    issuer: &str,
+    space_id: &str,
+    epoch_cell_subject: &str,
+    new_epoch: u64,
+    covered_frontier: &str,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.mls.epoch.v1:{epoch_cell_subject}");
+    let effect = serde_json::json!({
+        "cell": cell_id,
+        "op": {
+            "type": "set",
+            "value": {
+                "epoch": new_epoch,
+                "covered_frontier": covered_frontier,
+            }
+        }
+    });
+    build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
+}
+
+/// Round 23 (M7): build a `cx.message.create` Move that carries a
+/// `covered_frontier` precondition. Unlike the legacy direct-event
+/// path, this Move asserts the message MUST land on top of an MLS
+/// epoch whose `covered_frontier` matches the governance frontier the
+/// message author observed. soland rejects it with a
+/// `covered_frontier mismatch` reason if the assertion fails; the
+/// client surfaces that as a `pending_mls_binding` toast.
+///
+/// `message_cell_subject` is the cell subject — typically the message
+/// id (uuid v8) so each message lives in its own cell. `payload` is
+/// the encrypted body the message reducer stores verbatim.
+pub fn build_message_create_move_with_covered_frontier(
+    issuer: &str,
+    space_id: &str,
+    message_cell_subject: &str,
+    payload: serde_json::Value,
+    covered_frontier: &str,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = format!("cx:cell:cx.component.message.v1:{message_cell_subject}");
+    let effect = serde_json::json!({
+        "cell": cell_id,
+        "op": { "type": "set", "value": payload }
+    });
+    // Build the body manually so we can attach a `covered_frontier`
+    // precondition — the generic `build_move_inner` always emits an
+    // empty preconditions array. Soland's authz reducer reads the
+    // precondition and surfaces `covered_frontier mismatch` rejection
+    // when the live governance frontier disagrees.
+    let body = serde_json::json!({
+        "issuer": issuer,
+        "space_id": space_id,
+        "preconditions": [
+            {
+                "kind": "covered_frontier",
+                "value": covered_frontier,
+            }
+        ],
+        "effects": [effect.clone()],
+        "anchor_ref": anchor_ref,
+        "refs": [],
+        "hlc": hlc,
+    });
+    let canonical_bytes =
+        canonical::canonical_json_bytes(&body).context("canonicalize message move body")?;
+    let payload_hash_str = canonical::sha256_digest(&canonical_bytes);
+    let id_hex: String = Sha256::digest(&canonical_bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let move_id = MoveId::new(format!("cx:move:sha256:{id_hex}"))
+        .map_err(|e| anyhow::anyhow!("derive move id: {e}"))?;
+    let move_obj = Move {
+        id: move_id,
+        issuer: Did::new(issuer.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
+        space_id: SpaceId::new(space_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
+        // Preconditions live in the canonical body — the typed SDK Move
+        // doesn't expose a precondition field today, so the wire shape
+        // round-trips through `canonical_bytes` and soland's wire-side
+        // reducer reads it directly. Once the SDK exposes a typed
+        // precondition struct, swap this in.
+        preconditions: vec![],
+        effects: parse_effects(std::slice::from_ref(&effect))?,
+        anchor_ref: AnchorId::new(anchor_ref.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid anchor_ref: {e}"))?,
+        refs: vec![],
+        hlc: Hlc::new(hlc.to_owned()).map_err(|e| anyhow::anyhow!("invalid hlc: {e}"))?,
+        sig: MoveSignature {
+            alg: "EdDSA".to_owned(),
+            verification_method: format!("{issuer}#unsigned"),
+            payload_hash: Hash::new(payload_hash_str)
+                .map_err(|e| anyhow::anyhow!("payload hash: {e}"))?,
+            created_at: chrono::Utc::now(),
+            jws: String::new(),
+        },
+    };
+    Ok(UnsignedMove { move_obj, canonical_bytes })
+}
+
+/// Round 23 (M8): construct a conflict-repair Move that points at two
+/// (or more) competing Anchor heads via `head_in` and references a
+/// `recovery_capability` so soland's authz reducer accepts the merge.
+/// This is the admin-only / moderator-only repair path for
+/// `bottom=expose` cells described in the M8 ticket.
+///
+/// `cell_id` is the cell that has gone bottom (e.g. the
+/// space.organization cell when two admins concurrently renamed a
+/// Space). `conflict_heads` lists the competing Anchor ids — `head_in`
+/// is set to that vector verbatim. `recovery_capability_ref` is the
+/// id of the `cx.capability.grant` cell that authorises the repair.
+/// `winner_value` is the merge result the operator chooses.
+pub fn build_conflict_repair_move(
+    issuer: &str,
+    space_id: &str,
+    cell_id: &str,
+    conflict_heads: &[String],
+    recovery_capability_ref: &str,
+    winner_value: serde_json::Value,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    if conflict_heads.len() < 2 {
+        return Err(anyhow::anyhow!(
+            "conflict repair requires at least 2 competing heads, got {}",
+            conflict_heads.len()
+        ));
+    }
+    let effect = serde_json::json!({
+        "cell": cell_id,
+        "op": {
+            "type": "set",
+            "value": winner_value,
+        }
+    });
+    // Conflict repair body needs custom shape (head_in array +
+    // recovery_capability ref) — go through a manual canonical body.
+    let body = serde_json::json!({
+        "issuer": issuer,
+        "space_id": space_id,
+        "preconditions": [
+            {
+                "kind": "head_in",
+                "values": conflict_heads,
+            },
+            {
+                "kind": "recovery_capability",
+                "ref": recovery_capability_ref,
+            }
+        ],
+        "effects": [effect.clone()],
+        "anchor_ref": anchor_ref,
+        "refs": conflict_heads,
+        "hlc": hlc,
+    });
+    let canonical_bytes =
+        canonical::canonical_json_bytes(&body).context("canonicalize repair move body")?;
+    let payload_hash_str = canonical::sha256_digest(&canonical_bytes);
+    let id_hex: String = Sha256::digest(&canonical_bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let move_id = MoveId::new(format!("cx:move:sha256:{id_hex}"))
+        .map_err(|e| anyhow::anyhow!("derive move id: {e}"))?;
+    // Build typed `refs` from conflict_heads — the SDK's `Move.refs`
+    // is `Vec<MoveRef>` (or similar). For now we leave the typed list
+    // empty and rely on the canonical body to carry the head_in
+    // precondition; soland's wire-side reducer reads the body
+    // directly. Once the SDK has a typed precondition struct, swap.
+    let move_obj = Move {
+        id: move_id,
+        issuer: Did::new(issuer.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
+        space_id: SpaceId::new(space_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
+        preconditions: vec![],
+        effects: parse_effects(std::slice::from_ref(&effect))?,
+        anchor_ref: AnchorId::new(anchor_ref.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid anchor_ref: {e}"))?,
+        refs: vec![],
+        hlc: Hlc::new(hlc.to_owned()).map_err(|e| anyhow::anyhow!("invalid hlc: {e}"))?,
+        sig: MoveSignature {
+            alg: "EdDSA".to_owned(),
+            verification_method: format!("{issuer}#unsigned"),
+            payload_hash: Hash::new(payload_hash_str)
+                .map_err(|e| anyhow::anyhow!("payload hash: {e}"))?,
+            created_at: chrono::Utc::now(),
+            jws: String::new(),
+        },
+    };
+    Ok(UnsignedMove { move_obj, canonical_bytes })
+}
+
 /// Common Move-construction tail: take the typed pieces, build the
 /// canonical body JSON, derive the Move id from `sha256(canonical_bytes)`,
 /// stub the `sig` field with placeholder values, and return the unsigned
@@ -807,6 +1020,147 @@ mod tests {
         verifying
             .verify(signing_input.as_bytes(), &signature)
             .expect("signature should verify under matching pubkey");
+    }
+
+    #[test]
+    fn mls_commit_move_targets_epoch_cell_and_carries_covered_frontier() {
+        let unsigned = build_mls_commit_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            42,
+            "cx:state:sha256:cffrontier01",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.mls.epoch.v1:"),
+            "MLS commit must target mls.epoch.v1 cell"
+        );
+        assert_eq!(effect.op.op_type, LatticeOpType::Set);
+        let value = effect.op.value.as_ref().expect("set carries value");
+        assert_eq!(value.get("epoch").and_then(|v| v.as_u64()), Some(42));
+        assert_eq!(
+            value.get("covered_frontier").and_then(|v| v.as_str()),
+            Some("cx:state:sha256:cffrontier01")
+        );
+    }
+
+    #[test]
+    fn message_create_move_with_covered_frontier_emits_precondition() {
+        let unsigned = build_message_create_move_with_covered_frontier(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "msg-01",
+            serde_json::json!({"ciphertext": "deadbeef"}),
+            "cx:state:sha256:cfgov01",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        // Inspect canonical bytes: the precondition lives there.
+        let body: serde_json::Value =
+            serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let preconditions = body
+            .get("preconditions")
+            .and_then(|v| v.as_array())
+            .expect("preconditions array present");
+        assert_eq!(preconditions.len(), 1);
+        assert_eq!(
+            preconditions[0].get("kind").and_then(|v| v.as_str()),
+            Some("covered_frontier")
+        );
+        assert_eq!(
+            preconditions[0].get("value").and_then(|v| v.as_str()),
+            Some("cx:state:sha256:cfgov01")
+        );
+        // Effect targets the message cell family.
+        let effect = &unsigned.move_obj.effects[0];
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.message.v1:")
+        );
+    }
+
+    #[test]
+    fn conflict_repair_move_requires_at_least_two_heads() {
+        let result = build_conflict_repair_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:cell:cx.component.space.organization.v1:cx:space:0196419b-0000-7000-8000-000000000003",
+            &["cx:anchor:sha256:only-one".to_owned()],
+            "cap.recovery-01",
+            serde_json::json!({"title": "merged"}),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        );
+        match result {
+            Err(err) => assert!(err.to_string().contains("at least 2")),
+            Ok(_) => panic!("expected error for single-head repair Move"),
+        }
+    }
+
+    #[test]
+    fn conflict_repair_move_emits_head_in_and_recovery_preconditions() {
+        let heads = vec![
+            "cx:anchor:sha256:headA".to_owned(),
+            "cx:anchor:sha256:headB".to_owned(),
+        ];
+        let unsigned = build_conflict_repair_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:cell:cx.component.space.organization.v1:cx:space:0196419b-0000-7000-8000-000000000003",
+            &heads,
+            "cap.recovery-01",
+            serde_json::json!({"title": "merged"}),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let preconditions = body
+            .get("preconditions")
+            .and_then(|v| v.as_array())
+            .expect("preconditions array");
+        assert_eq!(preconditions.len(), 2);
+        let head_in = &preconditions[0];
+        assert_eq!(
+            head_in.get("kind").and_then(|v| v.as_str()),
+            Some("head_in")
+        );
+        let head_values = head_in
+            .get("values")
+            .and_then(|v| v.as_array())
+            .expect("head_in values array");
+        assert_eq!(head_values.len(), 2);
+        let recovery = &preconditions[1];
+        assert_eq!(
+            recovery.get("kind").and_then(|v| v.as_str()),
+            Some("recovery_capability")
+        );
+        assert_eq!(
+            recovery.get("ref").and_then(|v| v.as_str()),
+            Some("cap.recovery-01")
+        );
+        // refs should round-trip the conflict heads on the wire body.
+        let refs = body
+            .get("refs")
+            .and_then(|v| v.as_array())
+            .expect("refs array");
+        assert_eq!(refs.len(), 2);
+        // Effect carries the chosen merge value.
+        let effect = &unsigned.move_obj.effects[0];
+        assert_eq!(effect.op.op_type, LatticeOpType::Set);
+        let value = effect.op.value.as_ref().unwrap();
+        assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("merged"));
     }
 
     #[test]
