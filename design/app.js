@@ -380,6 +380,7 @@ function space() {
           <h2>Recent activity</h2>
           ${activity("cx.flow.move", "Legal review moved into Doing", "Reducer accepted active position edge.", "card/legal")}
           ${activity("cx.message.create", "New message in Review room", "Message references cx:flow:01legal.", "room/review")}
+          <!-- C18 (spec 2026-05-09): event deleted; track-scoped membership replaced by Flow.discussion_space_ref child Space -->
           ${activity("cx.flow.branch.member", "External counsel joined", "History visibility is joined.", "admin")}
         </div>
       </section>
@@ -474,7 +475,7 @@ function cardDetail(card) {
           <div class="panel pad">
             <h2>Activity and audit</h2>
             ${activity("cx.flow.move", "Move conflict handled", "Doing -> Review was rejected as stale; current card remains in Doing.", "audit")}
-            ${activity("discussion branch enablement", "Review room linked", "purpose=review; link does not grant Room access.", "audit")}
+            ${activity("discussion track enablement", "Review room linked", "purpose=review; link does not grant Room access.", "audit")}
           </div>
         </aside>
       </section>

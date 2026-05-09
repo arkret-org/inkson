@@ -75,7 +75,7 @@ Card 卡片：
 | Header | title、status、priority、archive、copy link | `cx.flow.update` / `cx.flow.archive` |
 | Fields | body、acceptance criteria、labels、due_at、assignees | `cx.flow.update` / `assigned_to` relation |
 | Work graph | depends_on、blocks、references | relation events |
-| Rooms | primary Room、linked Rooms、create/link/unlink/set primary | `discussion branch enablement` / `discussion branch disablement` / `primary discussion branch state` |
+| Rooms | primary Room、linked Rooms、create/link/unlink/set primary | `discussion track enablement` / `discussion track disablement` / `primary discussion track state` |
 | Chat | 当前 Room message timeline、composer、reply、reaction、redact | `cx.message.create` / `cx.message.revise` / `cx.message.redact` / `cx.reaction.*` |
 | Activity | Card update events、move/reorder history、visible Room summaries | derived timeline projection |
 | Audit | Event IDs、frontier、authz decision、conflict records | read-only |
@@ -141,8 +141,8 @@ Room 类型视觉规则：
 
 1. 用户打开 Card 抽屉，点击 `Create discussion room`。
 2. 客户端提交 `cx.flow.create`，默认 `room_kind=discussion`，私密/E2EE 场景默认 `history_visibility=joined`。
-3. 客户端提交 `discussion branch enablement`，`purpose=implementation`。
-4. 若设为默认讨论入口，再提交 `primary discussion branch state` 或 `discussion branch enablement` 中 `primary=true`。
+3. 客户端提交 `discussion track enablement`，`purpose=implementation`。
+4. 若设为默认讨论入口，再提交 `primary discussion track state` 或 `discussion track enablement` 中 `primary=true`。
 5. Chat tab 展示 Room timeline，用户发送消息。
 6. 消息写入 `cx.message.create`，mention 从结构化正文或 relation 派生 notification。
 
@@ -153,7 +153,7 @@ Room 类型视觉规则：
 1. 用户在 Card 抽屉点击 `Link existing room`。
 2. 搜索结果只展示当前 actor 可发现的 Room；不可读但可发现的结果用 locked lazy link。
 3. 用户选择 Room 并设置 purpose：design / implementation / review / external_partner / private。
-4. 客户端提交 `discussion branch enablement`。
+4. 客户端提交 `discussion track enablement`。
 5. Card room badge 更新 linked count。
 6. 其他成员打开 Card 时分别按 Room policy 裁剪。
 
@@ -211,10 +211,11 @@ Room 类型视觉规则：
 | 新建 / 更新 / 归档 / 恢复 Card | `cx.flow.create` / `cx.flow.update` / `cx.flow.archive` / `cx.flow.restore` |
 | Card 跨 List 移动 | `cx.flow.move` |
 | Card 同 List 排序 | `cx.flow.reorder` |
-| 为 Card 关联 Room | `discussion branch enablement` |
-| 移除 Card Room 关联 | `discussion branch disablement` |
-| 设置默认讨论 Room | `primary discussion branch state` |
+| 为 Card 关联 Room | `discussion track enablement` |
+| 移除 Card Room 关联 | `discussion track disablement` |
+| 设置默认讨论 Room | `primary discussion track state` |
 | 新建 / 更新 / 归档 Room | `cx.flow.create` / `cx.flow.update` / `cx.flow.archive` |
+<!-- C18 (spec 2026-05-09): event deleted; track-scoped membership replaced by Flow.discussion_space_ref child Space -->
 | Room 成员变化 | `cx.flow.branch.member` |
 | 发送 / 编辑 / 撤回消息 | `cx.message.create` / `cx.message.revise` / `cx.message.redact` |
 | Reaction | `cx.reaction.add` / `cx.reaction.remove` |

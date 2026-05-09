@@ -58,16 +58,16 @@
             <span>· assigned <div class="avatar xs">M</div> Mei + <div class="avatar xs">A</div> Alice</span>
           </div>
 
-          <div class="branch-tabs">
+          <div class="track-tabs">
             <div class="tab active">Synthesis</div>
             <a class="tab" href="discussion.html">Discussion <span class="pill accent" style="font-size:9px;">12</span></a>
             <div class="tab dim">Activity</div>
             <div class="tab dim">Audit</div>
             <span class="grow"></span>
             <div class="row gap-4" style="padding:8px 4px;">
-              <span class="dim" style="font-size:11px;">primary branch:</span>
+              <span class="dim" style="font-size:11px;">primary track:</span>
               <span class="pill accent">synthesis</span>
-              <button class="btn sm ghost" title="cx.flow.branch.set_primary">切换</button>
+              <button class="btn sm ghost" title="cx.flow.track.set_primary">切换</button>
             </div>
           </div>
 
@@ -78,10 +78,10 @@
             <div class="label">Assignees</div><div class="value"><div class="avatar xs">M</div> Mei <div class="avatar xs">A</div> Alice <button class="btn sm ghost">＋</button></div>
             <div class="label">Labels</div><div class="value"><span class="lbl legal" style="padding:2px 6px;border-radius:4px;font-size:11px;">legal</span> <span class="lbl compliance" style="padding:2px 6px;border-radius:4px;font-size:11px;">compliance</span></div>
             <div class="label">Position</div><div class="value">Release Board / Review · rank=mV <span class="dim">· cx.flow.move</span></div>
-            <div class="label">Branches</div><div class="value">
+            <div class="label">Tracks</div><div class="value">
               <span class="pill accent">synthesis · primary</span>
-              <span class="pill success">discussion · branch-scoped E2EE</span>
-              <button class="btn sm ghost">＋ enable branch</button>
+              <span class="pill success">discussion · track-scoped E2EE</span>
+              <button class="btn sm ghost">＋ enable track</button>
             </div>
           </div>
 
@@ -121,8 +121,8 @@
                 改字段 → <code>cx.flow.update</code> ·
                 改 list → <code>cx.flow.move</code> ·
                 同 list 排序 → <code>cx.flow.reorder</code> ·
-                启用讨论 → <code>cx.flow.branch.enable</code> ·
-                切换 primary → <code>cx.flow.branch.set_primary</code>
+                启用讨论 → <code>cx.flow.track.enable</code> ·
+                切换 primary → <code>cx.flow.track.set_primary</code>
               </div>
             </div>
           </div>
@@ -135,8 +135,8 @@
       <div class="right-panel-section">
         <h5>Discussion 入口</h5>
         <a class="surface pad" href="discussion.html" style="display:flex;flex-direction:column;gap:6px;">
-          <div class="row gap-8"><strong>Branch · discussion</strong><span class="pill success" style="margin-left:auto;">E2EE</span></div>
-          <div class="muted" style="font-size:12px;">branch-scoped membership · 4 人 · MLS epoch 12</div>
+          <div class="row gap-8"><strong>Track · discussion</strong><span class="pill success" style="margin-left:auto;">E2EE</span></div>
+          <div class="muted" style="font-size:12px;">track-scoped membership · 4 人 · MLS epoch 12</div>
           <div class="muted" style="font-size:12px;">"Mei 让 Alice 复核 trust bundle…" <span class="dim">14:11</span></div>
         </a>
       </div>

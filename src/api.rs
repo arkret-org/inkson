@@ -755,6 +755,55 @@ impl ContrixApi {
             .await
     }
 
+    /// C17 (spec 2026-05-08): subscribe to the live event stream for one or
+    /// more Spaces via `cx.events.subscribe` (`GET /api/v1/events/subscribe`).
+    /// Renamed wire-break of legacy `cx.sync.subscribe`. The frame envelope's
+    /// top field is `kind` (replacing `type`); response includes seven new
+    /// control kinds (`catchup_complete` / `heartbeat` / `dropped` /
+    /// `epoch_rotation` / `unauthorized` / `resync_required` / `frontier`).
+    /// Use [`Self::events_subscribe_typed`] to parse the response into
+    /// [`contrix_sdk::EventsSubscribeFrame`] enum values directly.
+    pub async fn events_subscribe(
+        &self,
+        space_id: &str,
+        from: Option<&str>,
+        include_history: Option<bool>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut url = format!("api/v1/events/subscribe?spaces={space_id}");
+        if let Some(from) = from {
+            url.push_str(&format!("&from={from}"));
+        }
+        if let Some(inc) = include_history {
+            url.push_str(&format!("&include_history={inc}"));
+        }
+        self.get_json(&url).await
+    }
+
+    /// Typed wrapper around [`Self::events_subscribe`]: parse the unary
+    /// response's `frames[]` array into a vector of typed
+    /// [`contrix_sdk::EventsSubscribeFrame`] values. Unknown frame kinds are
+    /// surfaced as `EventsSubscribeFrame::Unknown` so the caller can log +
+    /// continue rather than break the stream on every spec addition.
+    pub async fn events_subscribe_typed(
+        &self,
+        space_id: &str,
+        from: Option<&str>,
+        include_history: Option<bool>,
+    ) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrame>> {
+        let response = self.events_subscribe(space_id, from, include_history).await?;
+        let mut frames = Vec::new();
+        if let Some(frames_array) = response.get("frames").and_then(|f| f.as_array()) {
+            for frame in frames_array {
+                let typed: contrix_sdk::EventsSubscribeFrame = serde_json::from_value(frame.clone())
+                    .map_err(|err| {
+                        anyhow::anyhow!("failed to parse subscribe frame: {err}")
+                    })?;
+                frames.push(typed);
+            }
+        }
+        Ok(frames)
+    }
+
     pub async fn snapshot_head(&self, space_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
         self.get_json(&format!("api/v1/sync/snapshot-head?space_id={space_id}"))
             .await

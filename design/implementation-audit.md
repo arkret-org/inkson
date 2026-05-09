@@ -14,7 +14,7 @@ This audit compares the refreshed full application design pages with the current
 | `space.html` | `/timeline/:space_id` and right panel | Current Space view is timeline-first. | Add Space overview projection for Boards, Rooms, activity and lazy links. |
 | `board-room-workbench.html` | `/kanban` | Current `src/views/kanban.rs` is local demo state. | Implement AppView board projection from `board/list/card/contains relation`; use `cx.flow.move` / `cx.flow.reorder`. |
 | `card-detail.html` | Not yet first-class | Current Kanban modal is minimal. | Build Card drawer with fields, linked Rooms, primary Room chat, activity and audit. |
-| `room.html` | `/chat`, `/forum`, `/timeline` | Current chat page still uses `cx:flow` and `cx.flow.create`. | Migrate to standard `flow(kind="room")` / `message` objects and `cx.flow.branch.*` / `cx.message.*`. |
+| `room.html` | `/chat`, `/forum`, `/timeline` | Current chat page still uses `cx:flow` and `cx.flow.create`. | Migrate to standard `flow(kind="room")` / `message` objects and `cx.flow.track.*` / `cx.message.*`. |
 | `notifications.html` | `/notifications` | Existing notification panel supports projection and mute rules. | Add Card/Room permission re-check and conflict notifications. |
 | `directory.html` | `/directory` | Existing directory handles spaces/orgs/actors and generic facets. | Add Card/Room search result shapes and locked lazy link behavior. |
 | `contacts.html` | Removed from current nav | Actor relationship is partly represented through directory and admin flows. | Decide whether contact relationships remain product scope or fold into Directory/Profiles. |
