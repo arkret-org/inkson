@@ -100,6 +100,97 @@ pub fn build_consent_revoke_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Round 22: structured constraint payloads attached to a capability
+/// grant. Mirrors `contrix_sdk::authz::ProtocolGrantConstraint` but kept
+/// JSON-shaped because soland's reducer round-trips constraints as
+/// opaque values today — typing them up here would force every UI
+/// surface to re-typing the SDK enum and slow forward compatibility.
+///
+/// Use [`Self::temporal`] for the most common flavour (`not_before` /
+/// `not_after` window). The wire shape lands in the OrSet `add` op as a
+/// `constraints` array; soland's authz engine reads that into the typed
+/// representation when evaluating future Moves.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CapabilityConstraintInput {
+    /// `temporal.window` constraint with optional `not_before` /
+    /// `not_after` RFC 3339 timestamps. The UI's MVP form binds to this
+    /// variant; quota / scope_limitation / etc. are scaffolded as
+    /// [`Self::Other`] until matching form widgets land.
+    Temporal {
+        not_before: Option<String>,
+        not_after: Option<String>,
+    },
+    /// Free-form constraint payload — the UI hands a JSON object to the
+    /// builder and the wire shape forwards it as-is. Use for constraint
+    /// kinds (quota, scope_limitation, claim_based) that don't have a
+    /// dedicated builder yet.
+    Other(serde_json::Value),
+}
+
+impl CapabilityConstraintInput {
+    /// Convenience constructor for a temporal-window constraint.
+    pub fn temporal(
+        not_before: Option<String>,
+        not_after: Option<String>,
+    ) -> Self {
+        Self::Temporal { not_before, not_after }
+    }
+
+    /// Returns `true` when both bounds are missing — the UI uses this to
+    /// avoid attaching an empty constraint.
+    pub fn is_effective(&self) -> bool {
+        match self {
+            Self::Temporal { not_before, not_after } => {
+                not_before.as_deref().is_some_and(|s| !s.trim().is_empty())
+                    || not_after.as_deref().is_some_and(|s| !s.trim().is_empty())
+            }
+            Self::Other(value) => !value.is_null()
+                && (!value.is_object()
+                    || value.as_object().is_some_and(|map| !map.is_empty())),
+        }
+    }
+
+    /// Render to the canonical JSON shape soland accepts inside a
+    /// capability OrSet `add` op's `constraints` array.
+    pub fn to_constraint_value(&self) -> serde_json::Value {
+        match self {
+            Self::Temporal { not_before, not_after } => {
+                let mut obj = serde_json::Map::new();
+                obj.insert(
+                    "constraint_type".to_owned(),
+                    serde_json::Value::String("temporal".to_owned()),
+                );
+                obj.insert(
+                    "subtype".to_owned(),
+                    serde_json::Value::String("temporal.window".to_owned()),
+                );
+                if let Some(value) = not_before
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    obj.insert(
+                        "not_before".to_owned(),
+                        serde_json::Value::String(value.to_owned()),
+                    );
+                }
+                if let Some(value) = not_after
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    obj.insert(
+                        "not_after".to_owned(),
+                        serde_json::Value::String(value.to_owned()),
+                    );
+                }
+                serde_json::Value::Object(obj)
+            }
+            Self::Other(value) => value.clone(),
+        }
+    }
+}
+
 /// Construct a `cx.capability.grant` Move that adds a capability tag to
 /// the capability OrSet cell. Mirrors [`build_consent_grant_move`] —
 /// the cell family (`cx.component.capability.grant.v1`) is OrSet too,
@@ -114,11 +205,50 @@ pub fn build_capability_grant_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
+    build_capability_grant_move_with_constraints(
+        issuer,
+        space_id,
+        grant_id,
+        tag,
+        &[],
+        anchor_ref,
+        hlc,
+    )
+}
+
+/// Round 22: same as [`build_capability_grant_move`] but allows attaching
+/// structured grant constraints (temporal / quota / scope_limitation / …)
+/// to the OrSet `add` op. Empty `constraints` slice yields exactly the
+/// pre-Round-22 wire shape, so this function is a strict superset.
+pub fn build_capability_grant_move_with_constraints(
+    issuer: &str,
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    constraints: &[CapabilityConstraintInput],
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
-    let effect = serde_json::json!({
-        "cell": cell_id,
-        "op": { "type": "add", "tag": tag }
-    });
+    let mut op = serde_json::json!({ "type": "add", "tag": tag });
+    let constraint_values: Vec<serde_json::Value> = constraints
+        .iter()
+        .filter(|c| c.is_effective())
+        .map(|c| c.to_constraint_value())
+        .collect();
+    // Constraints land inside the OrSet add op's `value` field (typed
+    // SDK shape: `LatticeOp { value: Option<Value> }`). Soland's
+    // capability reducer reads `value.constraints` when deciding whether
+    // a downstream Move's authz context satisfies the grant; the typed
+    // field round-trips because it lives on `value`, not as a sibling
+    // of `tag` (which the SDK's `LatticeOp` struct does not declare and
+    // would silently drop on typed re-parse).
+    if !constraint_values.is_empty() {
+        op["value"] = serde_json::json!({
+            "constraints": constraint_values,
+        });
+    }
+    let effect = serde_json::json!({ "cell": cell_id, "op": op });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
@@ -437,6 +567,107 @@ mod tests {
             effect.op.reason.as_deref(),
             Some("rotation policy quarterly")
         );
+    }
+
+    #[test]
+    fn capability_constraint_input_temporal_renders_canonical_shape() {
+        let c = CapabilityConstraintInput::temporal(
+            Some("2026-05-09T00:00:00Z".to_owned()),
+            Some("2026-08-09T00:00:00Z".to_owned()),
+        );
+        let v = c.to_constraint_value();
+        assert_eq!(
+            v.get("constraint_type").and_then(|x| x.as_str()),
+            Some("temporal")
+        );
+        assert_eq!(
+            v.get("subtype").and_then(|x| x.as_str()),
+            Some("temporal.window")
+        );
+        assert_eq!(
+            v.get("not_before").and_then(|x| x.as_str()),
+            Some("2026-05-09T00:00:00Z")
+        );
+        assert_eq!(
+            v.get("not_after").and_then(|x| x.as_str()),
+            Some("2026-08-09T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn capability_constraint_input_temporal_skips_blank_bounds() {
+        let c = CapabilityConstraintInput::temporal(
+            None,
+            Some("   ".to_owned()),
+        );
+        assert!(!c.is_effective());
+        let v = c.to_constraint_value();
+        assert!(v.get("not_before").is_none());
+        assert!(v.get("not_after").is_none());
+    }
+
+    #[test]
+    fn capability_grant_with_temporal_constraint_attaches_value_constraints() {
+        let constraint = CapabilityConstraintInput::temporal(
+            Some("2026-05-09T00:00:00Z".to_owned()),
+            None,
+        );
+        let unsigned = build_capability_grant_move_with_constraints(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.01abc",
+            "discussion.message.create",
+            std::slice::from_ref(&constraint),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        assert_eq!(effect.op.op_type, LatticeOpType::Add);
+        assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
+        let value = effect.op.value.as_ref().expect("constraints embedded in value");
+        let constraints = value
+            .get("constraints")
+            .and_then(|c| c.as_array())
+            .expect("constraints array");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(
+            constraints[0].get("constraint_type").and_then(|v| v.as_str()),
+            Some("temporal")
+        );
+        assert_eq!(
+            constraints[0].get("not_before").and_then(|v| v.as_str()),
+            Some("2026-05-09T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn capability_grant_without_constraints_matches_legacy_shape() {
+        // Round 22 added the constraint plumbing but didn't change the
+        // wire shape when constraints are empty — guard that or every
+        // existing capability grant would suddenly carry an empty
+        // `value: { constraints: [] }` blob.
+        let with_empty = build_capability_grant_move_with_constraints(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.01abc",
+            "discussion.message.create",
+            &[],
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let legacy = build_capability_grant_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.01abc",
+            "discussion.message.create",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_eq!(with_empty.move_obj.id.as_str(), legacy.move_obj.id.as_str());
+        assert_eq!(with_empty.canonical_bytes, legacy.canonical_bytes);
     }
 
     #[test]

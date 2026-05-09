@@ -13,6 +13,7 @@ pub mod discovery;
 pub mod entity;
 pub mod hlc;
 pub mod i18n;
+pub mod key_store;
 pub mod local_state;
 pub mod media;
 pub mod models;

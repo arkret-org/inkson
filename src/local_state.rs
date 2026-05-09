@@ -275,6 +275,15 @@ pub struct LocalAnchorView {
     /// been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier: Option<String>,
+    /// Round 22: the per-Space MLS `covered_frontier_lag` count — how
+    /// many governance Moves the MLS group has yet to acknowledge. Soland
+    /// publishes this as `anchor_view.covered_frontier_lag` (a bare
+    /// integer) when it knows the lag; clients combine it with a
+    /// configurable warn threshold (default 5) to render an alert banner
+    /// in `space_admin`. `None` means soland hasn't surfaced a lag value
+    /// — UI treats that as "no alert".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered_frontier_lag: Option<u64>,
 }
 
 impl LocalAnchorView {
@@ -300,6 +309,15 @@ impl LocalAnchorView {
     /// status — the UI should surface a banner.
     pub fn has_bottom_cells(&self) -> bool {
         !self.bottom_cells.is_empty()
+    }
+
+    /// Round 22: true when soland has surfaced a covered_frontier_lag
+    /// strictly greater than `threshold`. Used by the space_admin
+    /// covered_frontier alert banner to decide whether to render. Returns
+    /// `false` when no lag has been published yet (the field is `None`)
+    /// — the UI treats that as "no signal, no alert".
+    pub fn covered_frontier_lag_above(&self, threshold: u64) -> bool {
+        self.covered_frontier_lag.is_some_and(|lag| lag > threshold)
     }
 
     /// Best-effort extraction of an Anchor view from a per-Space `/sync`
@@ -344,6 +362,12 @@ impl LocalAnchorView {
         }
         if let Some(s) = anchor.get("state_root").and_then(|v| v.as_str()) {
             view.state_root = Some(s.to_owned());
+        }
+        // Round 22: top-level `covered_frontier_lag` — soland publishes
+        // this directly on the anchor view (sibling of `frontier` /
+        // `leaves`) so clients don't have to compute it from cell maps.
+        if let Some(lag) = anchor.get("covered_frontier_lag").and_then(|v| v.as_u64()) {
+            view.covered_frontier_lag = Some(lag);
         }
         if let Some(cells) = anchor.get("cells").and_then(|v| v.as_object()) {
             for (cell_ref, status) in cells {
@@ -916,6 +940,18 @@ impl LocalStateStore {
     /// called).
     pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
         self.load().local_identity
+    }
+
+    /// Replace (or clear) the persisted device identity record. Used by
+    /// the [`crate::key_store::KeyStore`] trait's `save_identity` impl so
+    /// a future Keychain / Secret-Service backend can hand a different
+    /// record back to the in-memory cache without going through
+    /// `ensure_local_identity` (which would generate a fresh seed if the
+    /// record was missing).
+    pub fn set_local_identity_record(&mut self, record: Option<LocalIdentityRecord>) {
+        self.ensure_cached_loaded();
+        self.cached.local_identity = record;
+        let _ = self.flush();
     }
 
     /// Read the in-memory device identity. Returns `None` when no record
@@ -1492,6 +1528,7 @@ mod tests {
                     bottom_cells: BTreeMap::new(),
                     mls_epoch: None,
                     covered_frontier: None,
+                    covered_frontier_lag: None,
                 },
             );
         }
@@ -1584,6 +1621,30 @@ mod tests {
         });
         let view = LocalAnchorView::from_sync_body(&body);
         assert_eq!(view.mls_epoch, Some(42));
+    }
+
+    #[test]
+    fn anchor_view_from_sync_body_extracts_covered_frontier_lag() {
+        let body = serde_json::json!({
+            "anchor_view": {
+                "frontier": ["cx:anchor:sha256:aaa"],
+                "leaves": [],
+                "covered_frontier_lag": 12,
+                "cells": {}
+            }
+        });
+        let view = LocalAnchorView::from_sync_body(&body);
+        assert_eq!(view.covered_frontier_lag, Some(12));
+        // default threshold is 5 -> 12 > 5
+        assert!(view.covered_frontier_lag_above(5));
+        assert!(!view.covered_frontier_lag_above(20));
+    }
+
+    #[test]
+    fn anchor_view_lag_above_returns_false_when_lag_unknown() {
+        let view = LocalAnchorView::default();
+        assert!(!view.covered_frontier_lag_above(5));
+        assert!(!view.covered_frontier_lag_above(0));
     }
 
     #[test]

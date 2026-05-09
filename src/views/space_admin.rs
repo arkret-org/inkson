@@ -5,7 +5,8 @@ use crate::{
     hlc::Hlc,
     local_state::{LocalIdentity, LocalStateStore},
     move_builder::{
-        UnsignedMove, build_capability_grant_move, build_capability_revoke_move,
+        CapabilityConstraintInput, UnsignedMove,
+        build_capability_grant_move_with_constraints, build_capability_revoke_move,
         build_member_state_transition_move, build_space_organization_update_move,
         did_key_verification_method, sign_unsigned_move,
     },
@@ -15,6 +16,18 @@ use crate::{
         helpers::{active_sync_token, authed_api, authed_api_with_sync},
     },
 };
+// `build_capability_grant_move` is only used by the test-only
+// `build_signed_capability_grant` helper that pins the legacy
+// wire shape — gate the import to avoid a warning in non-test builds.
+#[cfg(test)]
+use crate::move_builder::build_capability_grant_move;
+
+/// Default `covered_frontier_lag` warning threshold used by the
+/// space_admin alert banner. Mirrors sodmin's
+/// `DEFAULT_LAG_WARN_THRESHOLD` so a member moving between the two
+/// surfaces sees the same alert ceiling. Round 22 — read from the user
+/// preference signal in [`SpaceAdminPanel`].
+pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
 /// Placeholder anchor frontier used until sync.rs (P0 M3) surfaces the
 /// effective Anchor head. Mirrors `consent_demo::PLACEHOLDER_ANCHOR_REF`.
@@ -45,9 +58,12 @@ pub(crate) fn build_signed_space_organization_update(
 
 /// Pure helper: build + sign a `cx.capability.grant` Move (OrSet add)
 /// targeting `cx.component.capability.grant.v1`. Mirrors the consent
-/// helpers — same signing path, just a different cell family. Admins
-/// use this from the Capability Grants section to extend a capability
-/// to a principal.
+/// helpers — same signing path, just a different cell family. Round 22
+/// retired the production caller (the UI now goes through
+/// [`build_signed_capability_grant_with_constraints`] so a temporal
+/// constraint can flow through); this remains for tests so the
+/// no-constraint wire shape stays pinned to a stable test vector.
+#[cfg(test)]
 pub(crate) fn build_signed_capability_grant(
     identity: &LocalIdentity,
     space_id: &str,
@@ -60,6 +76,35 @@ pub(crate) fn build_signed_capability_grant(
     let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
         build_capability_grant_move(did, space_id, grant_id, tag, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
+}
+
+/// Round 22 — capability grant with structured constraints. Mirrors
+/// [`build_signed_capability_grant`] but threads a constraint slice
+/// through to the move_builder. The wire shape only differs when the
+/// slice is non-empty (constraints land in the OrSet add op's `value`
+/// field); empty slice yields the legacy wire bytes byte-for-byte (so
+/// the constraint plumbing is opt-in).
+pub(crate) fn build_signed_capability_grant_with_constraints(
+    identity: &LocalIdentity,
+    space_id: &str,
+    grant_id: &str,
+    tag: &str,
+    constraints: &[CapabilityConstraintInput],
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
+    let unsigned: UnsignedMove = build_capability_grant_move_with_constraints(
+        did,
+        space_id,
+        grant_id,
+        tag,
+        constraints,
+        anchor_ref,
+        hlc,
+    )?;
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
@@ -143,6 +188,20 @@ pub fn SpaceAdminPanel(
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
     let mut cap_revoke_reason =
         use_signal(|| "rotation policy".to_owned());
+    // Round 22: structured constraint inputs for the capability grant.
+    // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
+    // `scope_limitation` / `none`); the temporal MVP exposes
+    // `not_before` / `not_after` RFC 3339 timestamps. Quota /
+    // scope_limitation are surfaced in the dropdown but show a
+    // "coming soon" hint until matching widgets land.
+    let mut cap_constraint_kind = use_signal(|| "none".to_owned());
+    let mut cap_temporal_not_before = use_signal(String::new);
+    let mut cap_temporal_not_after = use_signal(String::new);
+    // Round 22: covered_frontier alert threshold. Default 5 (mirrors
+    // sodmin's `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the
+    // numeric input next to the banner.
+    let mut covered_frontier_threshold =
+        use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
     // Read-only anchorer cell value fetched from /api/admin/v1/spaces/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
@@ -180,6 +239,17 @@ pub fn SpaceAdminPanel(
         .covered_frontier
         .clone()
         .unwrap_or_else(|| "(no governance covered_frontier published)".to_owned());
+    // Round 22: covered_frontier_lag value + threshold check for the
+    // alert banner. We render only when a lag value has actually been
+    // surfaced AND it exceeds the (user-configurable) warning threshold
+    // — matches the sodmin admin page UX.
+    let covered_frontier_lag_value = anchor_view.covered_frontier_lag;
+    let covered_frontier_lag_threshold = covered_frontier_threshold();
+    let covered_frontier_alert = anchor_view
+        .covered_frontier_lag_above(covered_frontier_lag_threshold);
+    let covered_frontier_lag_label = covered_frontier_lag_value
+        .map(|lag| lag.to_string())
+        .unwrap_or_else(|| "-".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
@@ -199,6 +269,49 @@ pub fn SpaceAdminPanel(
                         div { class: "muted", "data-testid": "bottom-cell-row",
                             "{cell_ref} · status={status}"
                         }
+                    }
+                }
+            }
+            // Round 22: covered_frontier_lag alert banner. Mirrors
+            // sodmin's admin page banner but stays client-side — it
+            // reads the lag from the LocalAnchorView populated on
+            // /sync, compares to a user-configurable threshold (default
+            // 5, see DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only
+            // renders when soland has surfaced a lag AND it exceeds
+            // threshold. Operators see the same urgency cue here that
+            // sodmin shows on the dedicated covered_frontier page.
+            div { class: "event", "data-testid": "covered-frontier-threshold-row",
+                div { class: "event-head",
+                    span { "covered_frontier alert threshold" }
+                    span { "Round 22 (client-side)" }
+                }
+                div { class: "muted",
+                    "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
+                }
+                label { "Threshold (Moves)" }
+                input {
+                    "data-testid": "covered-frontier-threshold-input",
+                    r#type: "number",
+                    min: "0",
+                    value: "{covered_frontier_lag_threshold}",
+                    oninput: move |evt| {
+                        if let Ok(parsed) = evt.value().parse::<u64>() {
+                            covered_frontier_threshold.set(parsed);
+                        }
+                    },
+                }
+                div { class: "muted", "data-testid": "covered-frontier-lag-value",
+                    "current covered_frontier_lag: {covered_frontier_lag_label}"
+                }
+            }
+            if covered_frontier_alert {
+                div { class: "event", "data-testid": "covered-frontier-alert-banner",
+                    div { class: "event-head",
+                        span { "covered_frontier lag alert" }
+                        span { class: "badge red", "above threshold" }
+                    }
+                    div { class: "muted", "data-testid": "covered-frontier-alert-message",
+                        "Lag of {covered_frontier_lag_label} Moves is above the warn threshold {covered_frontier_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_frontier page."
                     }
                 }
             }
@@ -1314,6 +1427,59 @@ pub fn SpaceAdminPanel(
                     value: "{cap_revoke_reason}",
                     oninput: move |evt| cap_revoke_reason.set(evt.value()),
                 }
+                // Round 22: capability constraint editor. Choose a
+                // family from the dropdown (`temporal` / `quota` /
+                // `scope_limitation` / `none`) and fill in the form
+                // for that family. Today only `temporal` is fully
+                // wired — the other options surface their hint copy
+                // but no inputs (matching the move_builder constraint
+                // surface, which only provides a `temporal` builder
+                // helper).
+                div { class: "event-head", "data-testid": "cap-constraint-editor",
+                    span { "Constraint (Round 22)" }
+                    span { "temporal MVP · quota / scope_limitation soon" }
+                }
+                label { "Constraint family" }
+                select {
+                    "data-testid": "cap-constraint-kind-select",
+                    value: "{cap_constraint_kind}",
+                    onchange: move |evt| cap_constraint_kind.set(evt.value()),
+                    option { value: "none", "none" }
+                    option { value: "temporal", "temporal (not_before / not_after)" }
+                    option { value: "quota", "quota (coming soon)" }
+                    option { value: "scope_limitation", "scope_limitation (coming soon)" }
+                }
+                if cap_constraint_kind() == "temporal" {
+                    div { "data-testid": "cap-constraint-temporal-fields",
+                        label { "not_before (RFC 3339, optional)" }
+                        input {
+                            "data-testid": "cap-constraint-not-before-input",
+                            r#type: "datetime-local",
+                            value: "{cap_temporal_not_before}",
+                            oninput: move |evt| {
+                                cap_temporal_not_before.set(evt.value());
+                            },
+                        }
+                        label { "not_after (RFC 3339, optional)" }
+                        input {
+                            "data-testid": "cap-constraint-not-after-input",
+                            r#type: "datetime-local",
+                            value: "{cap_temporal_not_after}",
+                            oninput: move |evt| {
+                                cap_temporal_not_after.set(evt.value());
+                            },
+                        }
+                    }
+                } else if cap_constraint_kind() == "quota"
+                    || cap_constraint_kind() == "scope_limitation"
+                {
+                    div {
+                        class: "muted",
+                        "data-testid": "cap-constraint-coming-soon",
+                        "{cap_constraint_kind()} editor not yet implemented; the wire shape "
+                        "passes through `move_builder::CapabilityConstraintInput::Other` once a UI lands."
+                    }
+                }
                 div { class: "actions",
                     button {
                         class: "primary",
@@ -1346,22 +1512,55 @@ pub fn SpaceAdminPanel(
                                             return;
                                         }
                                     };
-                                let signed = match build_signed_capability_grant(
-                                    &identity,
-                                    &space,
-                                    &grant_val,
-                                    &tag_val,
-                                    &anchor_ref,
-                                    &hlc,
-                                ) {
-                                    Ok(m) => m,
-                                    Err(e) => {
-                                        status_msg.set(format!(
-                                            "build capability grant failed: {e}"
-                                        ));
-                                        return;
-                                    }
-                                };
+                                // Round 22: pull the active constraint
+                                // from the editor signals and thread it
+                                // through the builder. Empty input
+                                // yields no constraint (and the legacy
+                                // wire shape).
+                                let kind = cap_constraint_kind();
+                                let constraints: Vec<CapabilityConstraintInput> =
+                                    if kind == "temporal" {
+                                        let nb = cap_temporal_not_before();
+                                        let na = cap_temporal_not_after();
+                                        let constraint =
+                                            CapabilityConstraintInput::temporal(
+                                                if nb.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(nb)
+                                                },
+                                                if na.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(na)
+                                                },
+                                            );
+                                        if constraint.is_effective() {
+                                            vec![constraint]
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    };
+                                let signed =
+                                    match build_signed_capability_grant_with_constraints(
+                                        &identity,
+                                        &space,
+                                        &grant_val,
+                                        &tag_val,
+                                        &constraints,
+                                        &anchor_ref,
+                                        &hlc,
+                                    ) {
+                                        Ok(m) => m,
+                                        Err(e) => {
+                                            status_msg.set(format!(
+                                                "build capability grant failed: {e}"
+                                            ));
+                                            return;
+                                        }
+                                    };
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
                                         match api.submit_move(&signed).await {
@@ -1839,6 +2038,73 @@ mod move_flow_tests {
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.reason.as_deref(), Some("rotation policy"));
+    }
+
+    /// Round 22: capability grant with a temporal constraint folds the
+    /// `not_before` / `not_after` window into the OrSet add op's `value`
+    /// field; revokes still hit the same cell family so soland's
+    /// causal-remove semantics keep working.
+    #[test]
+    fn build_signed_capability_grant_with_temporal_constraint_attaches_window() {
+        let identity = fixed_identity();
+        let constraint = CapabilityConstraintInput::temporal(
+            Some("2026-05-09T00:00:00Z".to_owned()),
+            Some("2026-08-09T00:00:00Z".to_owned()),
+        );
+        let signed = build_signed_capability_grant_with_constraints(
+            &identity,
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.demo-01",
+            "discussion.message.create",
+            std::slice::from_ref(&constraint),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &signed.effects[0];
+        let value = effect.op.value.as_ref().expect("value present");
+        let constraints = value
+            .get("constraints")
+            .and_then(|v| v.as_array())
+            .expect("constraints array");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(
+            constraints[0].get("not_before").and_then(|v| v.as_str()),
+            Some("2026-05-09T00:00:00Z")
+        );
+        assert_eq!(
+            constraints[0].get("not_after").and_then(|v| v.as_str()),
+            Some("2026-08-09T00:00:00Z")
+        );
+    }
+
+    /// Round 22: when no constraints are passed, the wire shape (and
+    /// content-addressed move id) match the legacy capability grant
+    /// builder — so adding the constraint plumbing is a no-op for
+    /// existing users.
+    #[test]
+    fn build_signed_capability_grant_empty_constraints_matches_legacy_id() {
+        let identity = fixed_identity();
+        let with_empty = build_signed_capability_grant_with_constraints(
+            &identity,
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.demo-01",
+            "discussion.message.create",
+            &[],
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let legacy = build_signed_capability_grant(
+            &identity,
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cap.demo-01",
+            "discussion.message.create",
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        assert_eq!(with_empty.id.as_str(), legacy.id.as_str());
     }
 
     /// Different from-state values produce different content-addressed
