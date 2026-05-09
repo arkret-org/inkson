@@ -535,11 +535,11 @@ pub mod cx_ops {
         discussion_id: &str,
         primary: bool,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.flow.branch.member")
+        OperationBuilder::new(space_id, actor, "cx.flow.track.member")
             .target_ref(flow_id)
             .body(json!({
                 "flow_id": flow_id,
-                "branch": "discussion",
+                "track": "discussion",
                 "member_id": discussion_id,
                 "primary": primary,
             }))
@@ -577,8 +577,8 @@ pub mod cx_ops {
 
     /// T21 — Build a `cx.flow.create` operation whose payload is the
     /// canonical typed [`contrix_sdk::Flow::discussion`] shape:
-    /// `flow_kind = "discussion"`, `primary_branch = "discussion"`, and
-    /// the `branches` array containing both `synthesis` and
+    /// `flow_kind = "discussion"`, `primary_track = "discussion"`, and
+    /// the `tracks` array containing both `synthesis` and
     /// `discussion(primary, profile=discussion)` per
     /// `models/object-model-standard.md` §5.
     ///
@@ -588,7 +588,7 @@ pub mod cx_ops {
     /// loose-string [`discussion_create`].
     ///
     /// Use this when you want the full canonical Flow payload (including
-    /// the branches array). Use [`discussion_create`] when you only need
+    /// the tracks array). Use [`discussion_create`] when you only need
     /// the legacy minimal payload that older soland reducers accept.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn discussion_flow_create(
@@ -701,55 +701,55 @@ pub mod cx_ops {
         discussion_id: &str,
         primary: bool,
     ) -> EventEnvelopeBuilder {
-        flow_branch_member_event(space_id, actor, flow_id, "discussion", discussion_id, primary)
+        flow_track_member_event(space_id, actor, flow_id, "discussion", discussion_id, primary)
     }
 
-    pub fn flow_branch_member_event(
+    pub fn flow_track_member_event(
         space_id: &str,
         actor: &str,
         flow_id: &str,
-        branch: &str,
+        track: &str,
         member_id: &str,
         primary: bool,
     ) -> EventEnvelopeBuilder {
-        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.member")
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.track.member")
             .object_id(flow_id)
             .payload(json!({
                 "flow_id": flow_id,
-                "branch": branch,
+                "track": track,
                 "member_id": member_id,
                 "primary": primary,
             }))
     }
 
-    pub fn flow_branch_history_visibility_event(
+    pub fn flow_track_history_visibility_event(
         space_id: &str,
         actor: &str,
         flow_id: &str,
-        branch: &str,
+        track: &str,
         history_visibility: &str,
     ) -> EventEnvelopeBuilder {
-        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.history_visibility")
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.track.history_visibility")
             .object_id(flow_id)
             .payload(json!({
                 "flow_id": flow_id,
-                "branch": branch,
+                "track": track,
                 "history_visibility": history_visibility,
             }))
     }
 
-    pub fn flow_branch_policy_components_event(
+    pub fn flow_track_policy_components_event(
         space_id: &str,
         actor: &str,
         flow_id: &str,
-        branch: &str,
+        track: &str,
         policy_components: Vec<&str>,
     ) -> EventEnvelopeBuilder {
-        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.branch.policy_components")
+        EventEnvelopeBuilder::new(space_id, actor, "cx.flow.track.policy_components")
             .object_id(flow_id)
             .payload(json!({
                 "flow_id": flow_id,
-                "branch": branch,
+                "track": track,
                 "policy_components": policy_components,
             }))
     }

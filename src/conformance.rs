@@ -248,19 +248,16 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.identity.disclosure_receipt",
         "cx.identity.presentation_request",
         "cx.identity.presentation_response",
-        // Flow / branch (current-model §3-§4)
+        // Flow / track (current-model §3-§4)
         "cx.flow.archive",
-        "cx.flow.branch.disable",
-        "cx.flow.branch.enable",
-        "cx.flow.branch.history_visibility",
-        "cx.flow.branch.member",
-        "cx.flow.branch.policy_components",
-        "cx.flow.branch.set_primary",
-        "cx.flow.branch.update",
         "cx.flow.create",
         "cx.flow.move",
         "cx.flow.reorder",
         "cx.flow.restore",
+        "cx.flow.track.disable",
+        "cx.flow.track.enable",
+        "cx.flow.track.set_primary",
+        "cx.flow.track.update",
         "cx.flow.update",
         // Invite (sync/third-party-invites + identity/invites)
         "cx.invite.accept",
@@ -482,8 +479,8 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         PROFILE_MINIMAL_CLIENT => {
             require_feature_or_operation(
                 server,
-                "sync.client_sync",
-                "cx.sync.client_sync",
+                "sync.account",
+                "cx.sync.account",
                 &mut missing,
             );
             require_feature_or_operation(
@@ -496,8 +493,8 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         PROFILE_CHAT_ONLY_CLIENT => {
             require_feature_or_operation(
                 server,
-                "sync.client_sync",
-                "cx.sync.client_sync",
+                "sync.account",
+                "cx.sync.account",
                 &mut missing,
             );
             require_feature_or_operation(server, "message.send", "cx.messages.send", &mut missing);
@@ -513,7 +510,7 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         }
         PROFILE_FULL_CLIENT => {
             for (feature, operation) in [
-                ("sync.client_sync", "cx.sync.client_sync"),
+                ("sync.account", "cx.sync.account"),
                 ("directory.search_spaces", "cx.directory.search_spaces"),
                 ("index.query", "cx.index.query"),
                 ("repo.submit_commit", "cx.repo.submit_commit"),
@@ -742,8 +739,8 @@ mod tests {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
-            "supported_features": ["sync.client_sync", "directory.search_spaces"],
-            "supported_operations": ["cx.sync.client_sync", "cx.directory.search_spaces"]
+            "supported_features": ["sync.account", "directory.search_spaces"],
+            "supported_operations": ["cx.sync.account", "cx.directory.search_spaces"]
         }))
         .unwrap();
 
@@ -848,18 +845,24 @@ mod tests {
 
     #[test]
     fn known_event_kinds_matches_registry_count() {
-        // Registry pinned to 110 active wire event kinds. Bumping the count
-        // here in lockstep with the spec is intentional — it is a tripwire
-        // when the registry drifts under us.
-        assert_eq!(known_event_kinds().len(), 110);
+        // C18 wire-break (spec 2026-05-08): cx.flow.branch.* (7 kinds) renamed
+        // and pruned to cx.flow.track.{enable,disable,update,set_primary}
+        // (4 kinds; spec dropped member/history_visibility/policy_components
+        // because tracks no longer carry independent membership/visibility/
+        // policy — see Flow.discussion_space_ref). Net -3 from prior 110.
+        // Spec `artifacts/registry/event-kind-registry.json` itself declares
+        // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
+        // surface remains a subset (107 here). Bump this number when yougen
+        // adds typed support for more kinds.
+        assert_eq!(known_event_kinds().len(), 107);
     }
 
     #[test]
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
-        // current-model §3 — branch lifecycle events
-        assert!(kinds.contains(&"cx.flow.branch.enable"));
-        assert!(kinds.contains(&"cx.flow.branch.set_primary"));
+        // current-model §3 — track lifecycle events
+        assert!(kinds.contains(&"cx.flow.track.enable"));
+        assert!(kinds.contains(&"cx.flow.track.set_primary"));
         // current-model §4 — board / list workflow container
         assert!(kinds.contains(&"cx.flow.move"));
         assert!(kinds.contains(&"cx.flow.reorder"));
@@ -903,20 +906,18 @@ mod tests {
 
     /// Lock-down: registry counts at the time of last alignment.
     ///
-    /// Spec `artifacts/registry/event-kind-registry.json` declares 110 active
-    /// event kinds. Bumping yougen above this floor is fine; dropping below
-    /// means we silently lost alignment with a spec upgrade (an upstream
-    /// rename or addition that yougen forgot to land).
-    ///
-    /// When the spec adds new kinds, raise this lower bound. When yougen
-    /// intentionally retires legacy kinds (after a deprecation window), keep
-    /// the bound monotonic — never below 110 without an explicit decision.
+    /// C18 wire-break (spec 2026-05-08) deliberately retired
+    /// `cx.flow.branch.{member,history_visibility,policy_components}` — three
+    /// events that had no track-namespace successor — so the prior floor of
+    /// 110 is no longer meaningful. We pin to 107 to track the post-rename
+    /// post-prune count. The spec itself declares 134 active kinds at HEAD;
+    /// yougen surfaces the typed subset relevant to its UI flows.
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
         assert!(
-            kinds.len() >= 110,
-            "yougen surfaces {} event kinds; spec registry declares 110 active. Drop below this floor only after deliberately retiring a legacy kind.",
+            kinds.len() >= 107,
+            "yougen surfaces {} event kinds; floor 107 set after C18 retired the three branch-only events that had no track equivalent.",
             kinds.len()
         );
     }

@@ -178,32 +178,30 @@ pub fn ChatPanel(
             }
 
             // Spec vocabulary banner — current-model.md §3, object-model-standard §5
-            // 这里的 "Discussion" UI 实际投影的是 Flow 的 discussion branch（即 spec 称之为
+            // 这里的 "Discussion" UI 实际投影的是 Flow 的 discussion track（即 spec 称之为
             // `flow(kind="room")` 形态时的入口）。底层 canonical 对象仍是 Flow + Message；
-            // discussion branch 启用 / 关闭 / 元数据更新分别由下列 event 维护：
-            //   cx.flow.branch.enable             — 启用 discussion branch
-            //   cx.flow.branch.disable            — 关闭 discussion branch（保留历史）
-            //   cx.flow.branch.update             — 改 branch 元数据（topic / mute rules / etc.）
-            //   cx.flow.branch.history_visibility — 改 history visibility 范围
-            //   cx.flow.branch.policy_components  — 调整 branch-scoped policy
-            //   cx.flow.branch.member             — branch-scoped membership 变化
-            //   cx.flow.branch.set_primary        — 切换 primary branch（synthesis ↔ discussion）
-            div { class: "event", "data-testid": "discussion-branch-vocab-banner",
+            // discussion track 启用 / 关闭 / 元数据更新分别由下列 event 维护
+            // （C18 spec 2026-05-08 wire-break：原 `cx.flow.branch.*` 已统一改名 `cx.flow.track.*`，
+            // 且 spec 删除了 `member` / `history_visibility` / `policy_components` 三个 event —
+            // track 不再承载独立 membership / visibility / policy；改走 `Flow.discussion_space_ref`
+            // 子 Space）：
+            //   cx.flow.track.enable      — 启用 discussion track
+            //   cx.flow.track.disable     — 关闭 discussion track（保留历史）
+            //   cx.flow.track.update      — 改 track 元数据（topic / mute rules / etc.）
+            //   cx.flow.track.set_primary — 切换 primary track（synthesis ↔ discussion）
+            div { class: "event", "data-testid": "discussion-track-vocab-banner",
                 div { class: "event-head",
-                    span { "Discussion = flow(kind=room) discussion branch" }
+                    span { "Discussion = flow(kind=room) discussion track" }
                     span { "object-model-standard §5" }
                 }
                 div { class: "muted",
-                    "本面板 \"Discussion\" / \"channel\" 是 UI 用语；底层 canonical 对象仍是 Flow + Message。Flow 的 discussion branch 提供与 Matrix Room 等价的能力，但不是独立对象类型。Branch 生命周期由 cx.flow.branch.* 七个 event 维护。"
+                    "本面板 \"Discussion\" / \"channel\" 是 UI 用语；底层 canonical 对象仍是 Flow + Message。Flow 的 discussion track 提供与 Matrix Room 等价的能力，但不是独立对象类型。Track 生命周期由 cx.flow.track.* 四个 event 维护。"
                 }
                 div { class: "actions",
-                    span { class: "badge blue", "cx.flow.branch.enable" }
-                    span { class: "badge", "cx.flow.branch.disable" }
-                    span { class: "badge", "cx.flow.branch.update" }
-                    span { class: "badge", "cx.flow.branch.history_visibility" }
-                    span { class: "badge", "cx.flow.branch.policy_components" }
-                    span { class: "badge", "cx.flow.branch.member" }
-                    span { class: "badge accent", "cx.flow.branch.set_primary" }
+                    span { class: "badge blue", "cx.flow.track.enable" }
+                    span { class: "badge", "cx.flow.track.disable" }
+                    span { class: "badge", "cx.flow.track.update" }
+                    span { class: "badge accent", "cx.flow.track.set_primary" }
                 }
             }
 
@@ -629,7 +627,7 @@ fn seed_discussion_timeline_facts() -> Vec<DiscussionTimelineFact> {
             detail: "reaction is scoped to the message event, not to the linked Discussion",
         },
         DiscussionTimelineFact {
-            kind: "cx.flow.branch.member",
+            kind: "cx.flow.track.member",
             subject: "Linked discussion access",
             state: "independent",
             detail: "discussion readable, flow projection readable separately; locked discussions fail closed",

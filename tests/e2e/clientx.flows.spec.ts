@@ -323,7 +323,9 @@ test("product account space lifecycle and canonical message flow works", async (
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
   await page.getByTestId("persist-message-button").click();
   await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted cx:operation:e2e-product");
-  const backfill = page.waitForRequest("**/api/v1/sync/backfill?space_id=*");
+  // C17 (spec 2026-05-08): cx.events.query replaces cx.sync.backfill at /api/v1/events
+  // with direction=backward.
+  const backfill = page.waitForRequest("**/api/v1/events?**direction=backward*");
   await page.getByTestId("backfill-button").click();
   expect((await backfill).headers()["x-contrix-wait-for"]).toBe("sx:e2e:product");
   await page.getByRole("link", { name: "Timeline" }).click();

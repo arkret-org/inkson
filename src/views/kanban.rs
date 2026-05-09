@@ -865,30 +865,30 @@ pub fn KanbanPanel(
                             "data-testid": "queue-link-discussion-event",
                             onclick: {
                                 let flow_id = card.id.clone();
-                                let branch_id = card.primary_flow_id.clone();
+                                let track_id = card.primary_flow_id.clone();
                                 let space = selected_space.clone();
                                 let actor = account_did.clone();
                                 move |_| {
-                                    let event = cx_ops::flow_branch_member_event(
+                                    let event = cx_ops::flow_track_member_event(
                                         &space,
                                         &actor,
                                         &flow_id,
                                         "discussion",
-                                        &branch_id,
+                                        &track_id,
                                         true,
                                     )
-                                    .auth_ref("cx:capability:flow.branch.member")
+                                    .auth_ref("cx:capability:flow.track.member")
                                     .build("yougen");
                                     persist_board_event(state_store, &space, &event, CardState::Queued);
                                     write_records.write().push(BoardWriteRecord {
                                         state: CardState::Queued,
                                         event,
-                                        note: "flow branch member queued; branch ACL remains independent".to_owned(),
+                                        note: "flow track member queued; track ACL remains independent".to_owned(),
                                     });
-                                    board_status.set("queued cx.flow.branch.member event".to_owned());
+                                    board_status.set("queued cx.flow.track.member event".to_owned());
                                 }
                             },
-                            "Queue flow branch member"
+                            "Queue flow track member"
                         }
                         button {
                             class: "secondary",
@@ -1036,7 +1036,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
                 activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
-                audit_hint: "Audit records cx.flow.branch.member and cx.message.create without granting discussion access.".to_owned(),
+                audit_hint: "Audit records cx.flow.track.member and cx.message.create without granting discussion access.".to_owned(),
                 state: CardState::Synced,
             }],
         },

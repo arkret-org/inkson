@@ -746,8 +746,12 @@ impl ContrixApi {
             .await
     }
 
+    /// C17 (spec 2026-05-08): renamed from `backfill` (`/api/v1/sync/backfill`)
+    /// to `events_query` (`/api/v1/events`). Folds the legacy `cx.events.list`
+    /// (forward) and `cx.sync.backfill` (backward) into a single op gated by
+    /// `direction`. Soland tolerates `space_id` singular during transition.
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResponse> {
-        self.get_json(&format!("api/v1/sync/backfill?space_id={space_id}"))
+        self.get_json(&format!("api/v1/events?spaces={space_id}&direction=backward"))
             .await
     }
 
@@ -2387,8 +2391,8 @@ mod tests {
             "service_did": "did:web:serverx.local",
             "service_type": "principal_server",
             "protocol_version": "1.0",
-            "supported_features": ["sync.client_sync"],
-            "supported_operations": ["cx.sync.client_sync"],
+            "supported_features": ["sync.account"],
+            "supported_operations": ["cx.sync.account"],
             "limits": {"storage": "memory"}
         }))
         .unwrap();

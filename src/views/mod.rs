@@ -12,8 +12,8 @@
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
 // | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
-// | chat / forum       | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.branch.{enable,disable,set_primary}, cx.message.*          |
-// | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis branch                                 |
+// | chat / forum       | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
+// | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
 // | devices            | desktop/devices.html, mobile      | crypto-media/device-lifecycle                          | cx.device.{authorized,revoked}, cx.device.list_update              |

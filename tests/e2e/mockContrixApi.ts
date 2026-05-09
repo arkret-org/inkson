@@ -58,8 +58,9 @@ export async function mockContrixApi(page: Page) {
           "events.submit",
         ],
         supported_operations: [
-          "cx.sync.client_sync",
-          "cx.sync.backfill",
+          "cx.sync.account",
+          "cx.events.query",
+          "cx.events.subscribe",
           "cx.directory.search_spaces",
           "cx.directory.resolve_space",
           "cx.index.query",
@@ -93,7 +94,7 @@ export async function mockContrixApi(page: Page) {
         supported_event_types: [
           "cx.flow.create",
           "cx.flow.move",
-          "cx.flow.branch.member",
+          "cx.flow.track.enable",
           "cx.message.create",
         ],
         frontier: ["cx:commit:e2e"],
@@ -589,8 +590,12 @@ export async function mockContrixApi(page: Page) {
       return json(route, { operations: [], next_cursor: "sx:e2e:2", has_more: false });
     }
 
-    if (url.pathname === "/api/v1/sync/backfill") {
-      return json(route, { events: [], prev_cursor: null, next_cursor: null, limited: false });
+    // C17 (spec 2026-05-08): cx.events.query at GET /api/v1/events folds the
+    // legacy cx.events.list + cx.sync.backfill via direction parameter.
+    // Soland tolerates `space_id` singular for transition; this mock matches
+    // the new path.
+    if (url.pathname === "/api/v1/events") {
+      return json(route, { events: [], next_cursor: null, frontier: {} });
     }
 
     if (url.pathname === "/api/v1/sync/snapshot-head") {

@@ -18,7 +18,7 @@ fn yougen_accepts_serverx_contract_payloads() {
         "supported_features": [
             "repo.submit_commit",
             "repo.read",
-            "sync.client_sync",
+            "sync.account",
             "sync.backfill",
             "directory.search_spaces",
             "directory.resolve_space",
@@ -34,8 +34,9 @@ fn yougen_accepts_serverx_contract_payloads() {
             "cx.repo.get_operations",
             "cx.repo.sync",
             "cx.repo.submit_commit",
-            "cx.sync.client_sync",
-            "cx.sync.backfill",
+            "cx.sync.account",
+            "cx.events.query",
+            "cx.events.subscribe",
             "cx.sync.get_snapshot_head",
             "cx.directory.describe",
             "cx.directory.search_spaces",
@@ -349,9 +350,9 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_operations": [
             "cx.events.describe",
             "cx.events.submit",
-            "cx.sync.client_sync"
+            "cx.sync.account"
         ],
-        "supported_features": ["events.submit", "sync.client_sync"]
+        "supported_features": ["events.submit", "sync.account"]
     }))
     .unwrap();
     assert!(events_ready.supports_event_envelope_write_plane());
@@ -369,9 +370,9 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_operations": [
             "cx.repo.describe",
             "cx.repo.submit_commit",
-            "cx.sync.client_sync"
+            "cx.sync.account"
         ],
-        "supported_features": ["repo.submit_commit", "sync.client_sync"]
+        "supported_features": ["repo.submit_commit", "sync.account"]
     }))
     .unwrap();
     assert!(!repo_only.supports_event_envelope_write_plane());
