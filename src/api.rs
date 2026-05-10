@@ -1103,12 +1103,14 @@ impl ContrixApi {
         .await
     }
 
-    /// PUT a typed `cx.schema.device_message.v1` envelope to soland's
-    /// `/api/v1/device_messages/{txn_id}` endpoint. Used by device
+    /// POST a typed `cx.schema.device_message.v1` envelope to soland's
+    /// `/api/v1/device_messages` endpoint. Used by device
     /// verification flows (R3) and any other flow that needs to deliver a
     /// message to a specific (actor, device_id) pair without going through
     /// Space history. The body shape is the canonical
-    /// `messages -> actor -> device_id -> {type, content}` map.
+    /// `messages -> actor -> device_id -> {type, content}` map. Idempotency
+    /// is conveyed via the `Idempotency-Key` request header (previously the
+    /// trailing `{txn_id}` path segment).
     pub async fn send_device_message_envelope(
         &self,
         txn_id: &str,
@@ -1117,14 +1119,20 @@ impl ContrixApi {
         message_type: &str,
         content: serde_json::Value,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
-        let path = format!("api/v1/device_messages/{txn_id}");
+        let path = "api/v1/device_messages";
         let payload = build_device_message_envelope(
             target_actor,
             target_device_id,
             message_type,
             content,
         );
-        self.put_json(&path, payload).await
+        let request = self
+            .http
+            .post(self.endpoint(path)?)
+            .header("Idempotency-Key", txn_id)
+            .json(&payload);
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
     }
 
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResponse> {

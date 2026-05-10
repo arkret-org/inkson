@@ -580,12 +580,18 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
   await page.getByRole("link", { name: "Timeline" }).click();
   const report = page.waitForRequest("**/api/v1/moderation/report");
-  const deviceMessage = page.waitForRequest("**/api/v1/device_messages/yougen-txn-1");
+  const deviceMessage = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/v1/device_messages") &&
+      request.method() === "POST",
+  );
 
   await page.getByTestId("report-queue-button").click();
 
   expect((await report).method()).toBe("POST");
-  expect((await deviceMessage).method()).toBe("PUT");
+  const deviceMessageRequest = await deviceMessage;
+  expect(deviceMessageRequest.method()).toBe("POST");
+  expect(deviceMessageRequest.headers()["idempotency-key"]).toBe("yougen-txn-1");
 });
 
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {

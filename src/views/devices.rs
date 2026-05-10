@@ -118,8 +118,9 @@ pub fn DevicesPanel(
                         onclick: {
                             // R3 — `cx.key.verification.request` is the first device
                             // message in a SAS / QR verification chain. We optimistically
-                            // insert into the local inbox and then PUT
-                            // `/api/v1/device_messages/{txn}` so soland routes the
+                            // insert into the local inbox and then POST
+                            // `/api/v1/device_messages` (with the transaction id passed
+                            // via the `Idempotency-Key` header) so soland routes the
                             // event to the recipient device.
                             let base = base_url_c.clone();
                             let dev_id = device_id_request.clone();

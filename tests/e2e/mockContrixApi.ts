@@ -798,7 +798,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, { events: [], next_batch: "sx:devmsg:1", limited: false });
     }
 
-    if (url.pathname.startsWith("/api/v1/device_messages/")) {
+    if (url.pathname === "/api/v1/device_messages" && route.request().method() === "POST") {
       return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
     }
 
