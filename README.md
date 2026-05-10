@@ -90,4 +90,4 @@ The first screen is the client shell, not a landing page. It includes:
 - Space list and exact directory resolve.
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
 - Sync status, device queue count, Event Envelope/repo-compatibility audit status, directory browser, settings, devices, push registration, and moderation report controls.
-- Development login bootstrap using `POST /api/v1/auth/dev-login`; production identity and recovery flows remain tracked in `_todos.md`.
+- Development login bootstrap using `POST /api/v1/auth/dev-login`; production identity and recovery flows remain tracked in the cross-project `../_todos.md`.

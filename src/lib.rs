@@ -22,6 +22,7 @@ pub mod mls_persistence;
 pub mod models;
 pub mod move_builder;
 pub mod offline;
+pub mod oidc_callback;
 pub mod oidc_lifecycle;
 pub mod operation;
 pub mod push;
