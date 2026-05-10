@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "contrix"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "chacha20poly1305",
@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-appservice-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-client"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "reqwest",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-client-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "chrono",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-crypto"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-events"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-federation-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-ffi"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-html"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-identifiers"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-identity-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-lattice"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-operations"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-push-gateway-api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-schema"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "contrix-core",
  "serde",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-signatures"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-state-res"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-store"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-testing"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-api",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "contrix-ui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "contrix-core",
@@ -1730,7 +1730,7 @@ dependencies = [
  "generational-box",
  "http",
  "inventory",
- "parking_lot",
+ "parking_lot 0.12.5",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1907,7 +1907,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "generational-box",
- "parking_lot",
+ "parking_lot 0.12.5",
  "rustc-hash 2.1.2",
  "tracing",
  "warnings",
@@ -1988,7 +1988,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2202,7 +2202,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2291,6 +2291,21 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "fluvio-wasm-timer"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b768c170dc045fa587a8f948c91f9bcfb87f774930477c6215addf54317f137f"
+dependencies = [
+ "futures",
+ "js-sys",
+ "parking_lot 0.11.2",
+ "pin-utils",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2554,7 +2569,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c68d74be1fbe3bba37604bdfd61403f26af9f6324cf325053abd89d60c22e799"
 dependencies = [
- "parking_lot",
+ "parking_lot 0.12.5",
  "tracing",
 ]
 
@@ -3201,7 +3216,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -3396,6 +3411,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "instant"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
+dependencies = [
+ "cfg-if",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -4561,6 +4588,8 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcb512bfe6a55777518853ea535c6241f069cb0e8984678c117151d2a1e7e903"
 dependencies = [
+ "fluvio-wasm-timer",
+ "getrandom 0.3.4",
  "log",
  "openmls_traits",
  "rayon",
@@ -4732,12 +4761,37 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
+dependencies = [
+ "instant",
+ "lock_api",
+ "parking_lot_core 0.8.6",
+]
+
+[[package]]
+name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
  "lock_api",
- "parking_lot_core",
+ "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60a2cfe6f0ad2bfc16aefa463b497d5c7a5ecd44a23efa72aa342d90177356dc"
+dependencies = [
+ "cfg-if",
+ "instant",
+ "libc",
+ "redox_syscall 0.2.16",
+ "smallvec",
+ "winapi",
 ]
 
 [[package]]
@@ -4748,7 +4802,7 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.5.18",
  "smallvec",
  "windows-link 0.2.1",
 ]
@@ -4949,6 +5003,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pin-utils"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkcs8"
@@ -5280,7 +5340,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5524,6 +5584,15 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
+name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
@@ -5701,7 +5770,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6212,7 +6281,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf776ba3fa74f83bf4b63c3dcbbf82173db2632ed8452cb2d891d33f459de70f"
 dependencies = [
  "new_debug_unreachable",
- "parking_lot",
+ "parking_lot 0.12.5",
  "phf_shared 0.11.3",
  "precomputed-hash",
  "serde",
@@ -6346,14 +6415,14 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "once_cell",
- "parking_lot",
+ "parking_lot 0.12.5",
  "raw-window-handle 0.5.2",
  "raw-window-handle 0.6.2",
  "tao-macros",
  "unicode-segmentation",
  "url",
  "windows",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-version",
  "x11-dl",
 ]
@@ -6385,7 +6454,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7229,7 +7298,7 @@ dependencies = [
  "webview2-com-macros",
  "webview2-com-sys",
  "windows",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-implement",
  "windows-interface",
 ]
@@ -7253,7 +7322,7 @@ checksum = "381336cfffd772377d291702245447a5251a2ffa5bad679c99e61bc48bacbf9c"
 dependencies = [
  "thiserror 2.0.18",
  "windows",
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -7284,7 +7353,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7300,7 +7369,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -7312,7 +7381,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -7324,21 +7393,8 @@ dependencies = [
  "windows-implement",
  "windows-interface",
  "windows-link 0.1.3",
- "windows-result 0.3.4",
- "windows-strings 0.4.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]
@@ -7347,7 +7403,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -7392,7 +7448,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
 ]
 
@@ -7406,30 +7462,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-result"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
-dependencies = [
- "windows-link 0.2.1",
-]
-
-[[package]]
 name = "windows-strings"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
-dependencies = [
- "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -7847,7 +7885,7 @@ dependencies = [
  "webkit2gtk-sys",
  "webview2-com",
  "windows",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-version",
 ]
 

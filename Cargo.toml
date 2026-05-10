@@ -30,7 +30,7 @@ tracing = "0.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Round 21: SDK bumped 0.4.0 → 0.5.0 by the parallel SDK agent. Pinned the
 # version explicitly so a published-crates resolver picks the right minor.
-contrix-sdk = { package = "contrix", version = "0.6.0", path = "../contrix-rust-sdk/crates/sdk", features = ["full-surface"] }
+contrix-sdk = { package = "contrix", version = "0.7.0", path = "../contrix-rust-sdk/crates/sdk", features = ["full-surface"] }
 dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
 # C33.2: OS-keychain handoff for `secure_key_store::KeyringSecureKeyStore`.
 # Routes to macOS Keychain Services / freedesktop Secret Service / Windows
@@ -47,7 +47,13 @@ reqwest = { version = "0.12.24", features = ["json", "rustls-tls"], default-feat
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-contrix-sdk = { package = "contrix", version = "0.6.0", path = "../contrix-rust-sdk/crates/sdk", default-features = false }
+# C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
+# code references `KeyVerification*` (device-runtime), `EventsSubscribeFrame`
+# (sync-runtime), `EncryptedPayloadKeyRef` (mls), etc. The previous
+# `default-features = false` stripped these and produced E0432/E0425.
+# The C36.0 parallel agent is closing the wasm32 SDK so `full-surface` builds
+# cleanly under `--target wasm32-unknown-unknown`.
+contrix-sdk = { package = "contrix", version = "0.7.0", path = "../contrix-rust-sdk/crates/sdk", features = ["full-surface"] }
 dioxus = { version = "=0.7.5", features = ["web"] }
 reqwest = { version = "0.12.24", features = ["json"], default-features = false }
 tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }

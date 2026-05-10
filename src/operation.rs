@@ -590,7 +590,13 @@ pub mod cx_ops {
     /// Use this when you want the full canonical Flow payload (including
     /// the tracks array). Use [`discussion_create`] when you only need
     /// the legacy minimal payload that older soland reducers accept.
-    #[cfg(not(target_arch = "wasm32"))]
+    ///
+    /// C36.1: previously gated `#[cfg(not(target_arch = "wasm32"))]` because
+    /// `Did`/`Flow`/`SpaceId` were behind the SDK `full-surface` feature
+    /// which the wasm32 build had stripped via `default-features = false`.
+    /// Yougen wasm32 now enables `full-surface` (matching native) so the
+    /// helper is available on all targets and `views/chat.rs` can call it
+    /// without a target gate.
     pub fn discussion_flow_create(
         space_id: &str,
         actor: &str,

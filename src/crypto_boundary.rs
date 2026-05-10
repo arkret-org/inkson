@@ -402,6 +402,7 @@ async fn web_subtle_aes_gcm(
     aad: Option<&[u8]>,
 ) -> Result<Vec<u8>, CryptoBoundaryError> {
     use js_sys::{Array, Object, Reflect, Uint8Array};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
 
