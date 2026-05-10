@@ -1342,26 +1342,46 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 if let Ok(blob) = authed.upload_blob(b"yougen encrypted bytes").await {
                     let _ = authed.get_blob_bytes(&blob.blob_ref).await;
                 }
-                match crate::push::build_register_request(&device) {
-                    Ok(request) => match authed.register_push_device_with_request(&request).await {
-                        Ok(push) => {
-                            let mut local_push = chime::RegisterDeviceResponse::default();
-                            local_push.ok = push.ok;
-                            local_push.registration_id = push.registration_id.clone();
-                            local_push.expires_at = push.expires_at.clone();
-                            state_store.write().save_push_registration(
-                                crate::push::registration_state_from_response(
-                                    &request,
-                                    &local_push,
-                                ),
-                            );
-                            push_state.set(
-                                push.registration_id
-                                    .unwrap_or_else(|| "registered".to_owned()),
-                            );
-                        }
-                        Err(error) => push_state.set(format!("push failed: {error}")),
+                // C33.2: chime-driven push registration.
+                //
+                // Goes through `push_registration::register_via_chime` which:
+                //   1. resolves a real OS / Web Push token via the active
+                //      `PushTokenProvider` (no placeholder fallback);
+                //   2. POSTs the chime register-device request to the
+                //      principal server;
+                //   3. persists the resulting `PushRegistrationState` to
+                //      `LocalStateStore`.
+                //
+                // When no provider is installed (or the provider declines
+                // — permission denied / not yet ready) the orchestrator
+                // returns `NoRealToken`; we surface that as a non-fatal
+                // status so the UI keeps booting without push.
+                let mut store_for_push = state_store.write().clone();
+                let push_outcome = crate::push_registration::register_via_chime(
+                    crate::push_registration::RegisterContext {
+                        principal_server_url: base.clone(),
+                        floria_gateway_url: String::new(),
+                        device_id: device.clone(),
+                        principal_did: Some(actor.clone()),
+                        bearer_token: Some(token()),
+                        session_grant: None,
                     },
+                    &mut store_for_push,
+                )
+                .await;
+                match push_outcome {
+                    Ok(outcome) => {
+                        // Mirror the orchestrator-side persisted state into
+                        // the live signal-backed store so the rest of the UI
+                        // sees it immediately.
+                        state_store.write().save_push_registration(outcome.state.clone());
+                        push_state.set(
+                            outcome
+                                .response
+                                .registration_id
+                                .unwrap_or_else(|| "registered".to_owned()),
+                        );
+                    }
                     Err(error) => push_state.set(format!("push unavailable: {error}")),
                 }
             }

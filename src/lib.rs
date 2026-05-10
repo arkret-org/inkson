@@ -26,7 +26,9 @@ pub mod oidc_callback;
 pub mod oidc_lifecycle;
 pub mod operation;
 pub mod push;
+pub mod push_registration;
 pub mod routes;
+pub mod secure_key_store;
 pub mod telemetry;
 #[cfg(feature = "protocol-test-vectors")]
 pub mod test_vectors;

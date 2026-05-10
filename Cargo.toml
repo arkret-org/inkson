@@ -32,6 +32,17 @@ tracing = "0.1"
 # version explicitly so a published-crates resolver picks the right minor.
 contrix-sdk = { package = "contrix", version = "0.6.0", path = "../contrix-rust-sdk/crates/sdk", features = ["full-surface"] }
 dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
+# C33.2: OS-keychain handoff for `secure_key_store::KeyringSecureKeyStore`.
+# Routes to macOS Keychain Services / freedesktop Secret Service / Windows
+# Credential Manager via the platform-feature flags on stable native
+# targets. The wasm32 + mobile builds fall back to MemorySecureKeyStore
+# (mobile FFI lands next round).
+#
+# Pinned to 3.6.x because the 4.x line moved its public API to
+# `keyring-core` (the 4.x `keyring` crate itself is now a CLI / sample
+# wrapper without the classic `Entry` type). 3.6 stays the supported
+# library surface for direct programmatic access.
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
 reqwest = { version = "0.12.24", features = ["json", "rustls-tls"], default-features = false }
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 

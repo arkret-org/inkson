@@ -13,6 +13,14 @@ const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
 const DEFAULT_PUSH_GATEWAY: &str = "https://push.example/api/v1/push/notify";
 
+/// C33.2: canonical floria gateway notify URL the chime-driven
+/// orchestrator stamps into a register-device request when no operator
+/// override is supplied. Floria advertises `/api/v1/push/notify` via
+/// `bridge/describe.notify.notify_path` — this constant is the runtime
+/// default until a deploy-time env var (`CHASK_PUSH_GATEWAY`) overrides
+/// it. See `crate::push_registration::register_via_chime`.
+pub const DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY: &str = DEFAULT_PUSH_GATEWAY;
+
 /// Markers embedded in development push tokens. Any push key containing one of
 /// these substrings is a build-time placeholder that must NEVER reach a
 /// production push gateway — see `tests/dev_token_guard.rs` for the regression
