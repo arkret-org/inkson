@@ -7,7 +7,7 @@ export async function mockContrixApi(page: Page) {
   let productSpaceDeleted = false;
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
-  let commitCounter = 0;
+  let submitCounter = 0;
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -40,12 +40,11 @@ export async function mockContrixApi(page: Page) {
           "directory.search_spaces",
           "directory.resolve_space",
           "index.query",
-          "repo.submit_commit",
           "authz.check",
           "space.create",
           "space.manage_members",
-          "message.send",
-          "message.edit",
+          "message.create",
+          "message.revise",
           "message.redact",
           "reaction.add",
           "keys.upload",
@@ -56,6 +55,7 @@ export async function mockContrixApi(page: Page) {
           "push.register_device",
           "mimi_provider_facade",
           "events.submit",
+          "moves.submit",
         ],
         supported_operations: [
           "cx.sync.account",
@@ -64,12 +64,13 @@ export async function mockContrixApi(page: Page) {
           "cx.directory.search_spaces",
           "cx.directory.resolve_space",
           "cx.index.query",
-          "cx.repo.submit_commit",
           "cx.authz.check",
           "cx.spaces.create",
-          "cx.messages.send",
-          "cx.messages.edit",
-          "cx.messages.redact",
+          "cx.events.submit",
+          "cx.message.create",
+          "cx.message.revise",
+          "cx.message.redact",
+          "cx.reaction.add",
           "cx.keys.upload",
           "cx.keys.query",
           "cx.keys.claim",
@@ -79,6 +80,7 @@ export async function mockContrixApi(page: Page) {
           "cx.mimi.provider_directory",
           "cx.events.describe",
           "cx.events.submit",
+          "cx.moves.submit",
         ],
         supported_schema_profiles: ["cx.schema.core.v1"],
         supported_reducer_profiles: ["cx.reducer.v1"],
@@ -97,23 +99,49 @@ export async function mockContrixApi(page: Page) {
           "cx.flow.track.enable",
           "cx.message.create",
         ],
-        frontier: ["cx:commit:e2e"],
+        frontier: ["cx:event:e2e"],
       });
     }
 
-    if (url.pathname === "/api/v1/events/submit") {
+    if (url.pathname === "/api/v1/events" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
+      if (!route.request().headers()["x-contrix-request-id"]) {
+        return json(route, {
+          ok: false,
+          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
+        }, 428);
+      }
+      let syncToken = "sx:e2e:event";
+      if (body.kind === "cx.message.create") {
+        if (body.payload?.body === "persisted product flow message") {
+          syncToken = "sx:e2e:product";
+        } else {
+          messageCounter += 1;
+          syncToken = `sx:e2e:message-${messageCounter}`;
+        }
+      }
       return json(route, {
-        event_id: body.event.event_id,
+        event_id: body.event_id,
         status: "accepted",
-        accepted_frontier: [`cx:frontier:${body.event.event_id}`],
-        reducer_receipt: {
-          reducer_profile: body.event.reducer_profile,
-          state_hash: "sha256:e2e-board-state",
-          projection_source: body.event.event_id,
+        canonical_digest: "sha256:e2e-event",
+        sync_token: syncToken,
+        received_at: "2026-04-28T12:00:00Z",
+        receipt: {
+          idempotent: false,
+          reducer_profile: "cx.reducer.v1",
+          projection_source: body.event_id,
         },
-        sync_token: "sx:e2e:event",
-      }, 201);
+      });
+    }
+
+    if (url.pathname === "/api/v1/moves" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      submitCounter += 1;
+      return json(route, {
+        move_id: body.id ?? `cx:move:sha256:e2e-${submitCounter}`,
+        state: "pending",
+        reason: null,
+      });
     }
 
     if (url.pathname === "/api/v1/mimi/provider-directory") {
@@ -389,64 +417,6 @@ export async function mockContrixApi(page: Page) {
       return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
     }
 
-    if (url.pathname === "/api/v1/messages/send") {
-      if (!route.request().headers()["x-contrix-request-id"]) {
-        return json(route, {
-          ok: false,
-          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
-        }, 428);
-      }
-
-      const body = await route.request().postDataJSON();
-      if (body.content?.body === "persisted product flow message") {
-        return json(route, {
-          event_id: "cx:event:e2e-product",
-          operation_id: "cx:operation:e2e-product",
-          commit_id: "cx:commit:e2e-product",
-          head_commit: "cx:commit:e2e-product",
-          sync_token: "sx:e2e:product",
-        }, 201);
-      }
-
-      messageCounter += 1;
-      return json(route, {
-        event_id: `cx:event:e2e-message-${messageCounter}`,
-        operation_id: `cx:operation:e2e-message-${messageCounter}`,
-        commit_id: `cx:commit:e2e-message-${messageCounter}`,
-        head_commit: `cx:commit:e2e-message-${messageCounter}`,
-        sync_token: `sx:e2e:message-${messageCounter}`,
-      }, 201);
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/messages\/[^/]+$/) && route.request().method() === "PATCH") {
-      if (!route.request().headers()["x-contrix-request-id"]) {
-        return json(route, {
-          ok: false,
-          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
-        }, 428);
-      }
-      const messageId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        event_id: messageId,
-        operation_id: `cx:operation:e2e-edit:${messageId}`,
-        commit_id: `cx:commit:e2e-edit:${messageId}`,
-      });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/messages\/[^/]+\/redact$/) && route.request().method() === "POST") {
-      if (!route.request().headers()["x-contrix-request-id"]) {
-        return json(route, {
-          ok: false,
-          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
-        }, 428);
-      }
-      const messageId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        event_id: messageId,
-        redaction_id: `cx:redaction:e2e:${messageId}`,
-      });
-    }
-
     if (url.pathname === "/api/v1/sync") {
       return json(route, {
         next_batch: "sx:e2e:2",
@@ -463,7 +433,30 @@ export async function mockContrixApi(page: Page) {
           },
         },
         to_device: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }],
-        account_data: [],
+        account_data: [
+          {
+            kind: "cx.notification",
+            notification_id: "notif-msg-1",
+            title: "New message",
+            body: "Alice sent a message in Demo Space",
+            space_id: DEMO_SPACE,
+            notification_kind: "message",
+            type: "message",
+            timestamp: "2026-04-28T12:01:00Z",
+            read: false,
+          },
+          {
+            kind: "cx.notification",
+            notification_id: "notif-invite-1",
+            title: "New invite",
+            body: "You were invited to review Demo Space",
+            space_id: DEMO_SPACE,
+            notification_kind: "invite",
+            type: "invite",
+            timestamp: "2026-04-28T12:02:00Z",
+            read: false,
+          },
+        ],
         device_lists: { changed: [], left: [] },
       });
     }
@@ -537,63 +530,6 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/repo/describe") {
-      return json(route, {
-        repo_did: "did:web:serverx.local",
-        head_commit: "cx:commit:e2e",
-        supported_signatures: ["detached_jws"],
-        limits: { max_commits: 100 },
-      });
-    }
-
-    if (url.pathname === "/api/v1/repo/commits") {
-      return json(route, {
-        commits: [
-          {
-            commit_id: "cx:commit:e2e",
-            signatures: [{ alg: "none", signer: "did:web:serverx.local" }],
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-      });
-    }
-
-    if (url.pathname === "/api/v1/repo/submit-commit") {
-      const body = await route.request().postDataJSON();
-      commitCounter += 1;
-      return json(route, {
-        status: "accepted",
-        commit_id: body.commit?.commit_id ?? `cx:commit:e2e-submit-${commitCounter}`,
-        head_commit: body.commit?.commit_id ?? `cx:commit:e2e-submit-${commitCounter}`,
-        sync_token: `sx:e2e:commit-${commitCounter}`,
-      }, 202);
-    }
-
-    if (url.pathname === "/api/v1/repo/operations") {
-      return json(route, {
-        operations: [
-          {
-            operation_id: "cx:op:audit",
-            kind: "cx.message.send",
-            actor: "did:web:alice.example",
-            timestamp: "2026-04-28T12:00:00Z",
-            preview: "audit operation preview",
-          },
-        ],
-        missing: [],
-        unauthorized: [],
-      });
-    }
-
-    if (url.pathname === "/api/v1/repo/sync") {
-      return json(route, { operations: [], next_cursor: "sx:e2e:2", has_more: false });
-    }
-
-    // C17 (spec 2026-05-08): cx.events.query at GET /api/v1/events folds the
-    // legacy cx.events.list + cx.sync.backfill via direction parameter.
-    // Soland tolerates `space_id` singular for transition; this mock matches
-    // the new path.
     if (url.pathname === "/api/v1/events") {
       return json(route, { events: [], next_cursor: null, frontier: {} });
     }
@@ -645,102 +581,6 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/index/describe") {
-      return json(route, {
-        service_did: "did:web:serverx.local",
-        reducer_profiles: ["cx.reducer.v1"],
-        schema_profiles: ["cx.schema.core.v1"],
-        query_features: ["space_preview"],
-        frontier: {},
-      });
-    }
-
-    if (url.pathname === "/api/v1/index/query") {
-      return json(route, {
-        results: [
-          {
-            kind: "space_preview",
-            space_id: DEMO_SPACE,
-            title: "Contrix Demo Space",
-            entity_type: "space",
-            facets: ["renderable", "com.example.preview"],
-            renderer: "card",
-            item_facets: ["stateful", "rankable"],
-          },
-        ],
-        next_cursor: null,
-        frontier: {},
-      });
-    }
-
-    if (url.pathname === "/api/v1/index/space-hierarchy") {
-      return json(route, {
-        root_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
-        children: [
-          {
-            space_id: "cx:space:31460e83-d271-7544-9ea2-762fc44a329c",
-            edge_state: "confirmed",
-            accessible: true,
-            lazy_link: false,
-            summary: {
-              name: "Design Child",
-              description: "Confirmed child Space with independent membership and encryption.",
-            },
-          },
-          {
-            space_id: "cx:space:011670d8-2f64-776f-98d9-ec2d724df847",
-            edge_state: "unconfirmed_link",
-            accessible: false,
-            lazy_link: true,
-          },
-        ],
-        edges: [
-          {
-            parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
-            child_space_id: "cx:space:31460e83-d271-7544-9ea2-762fc44a329c",
-            edge_state: "confirmed",
-            lazy_link: false,
-          },
-          {
-            parent_space_id: url.searchParams.get("space_id") ?? DEMO_SPACE,
-            child_space_id: "cx:space:011670d8-2f64-776f-98d9-ec2d724df847",
-            edge_state: "unconfirmed_link",
-            lazy_link: true,
-          },
-        ],
-        next_cursor: null,
-        frontier: { state_hash: "cx:statehash:hierarchy-e2e" },
-        cycle_detected: false,
-      });
-    }
-
-    if (url.pathname === "/api/v1/index/notifications") {
-      return json(route, {
-        notifications: [
-          {
-            notification_id: "notif-msg-1",
-            title: "New message",
-            body: "Alice sent a message in Demo Space",
-            space_id: DEMO_SPACE,
-            kind: "message",
-            timestamp: "2026-04-28T12:01:00Z",
-            read: false,
-          },
-          {
-            notification_id: "notif-invite-1",
-            title: "New invite",
-            body: "You were invited to review Demo Space",
-            space_id: DEMO_SPACE,
-            kind: "invite",
-            timestamp: "2026-04-28T12:02:00Z",
-            read: false,
-          },
-        ],
-        next_cursor: null,
-        unread_count: 2,
-      });
-    }
-
     if (url.pathname === "/api/v1/authz/check") {
       return json(route, {
         allowed: true,
@@ -757,13 +597,13 @@ export async function mockContrixApi(page: Page) {
             grant_id: "cx:grant:e2e",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
-            actions: ["space.read", "message.send"],
+            actions: ["space.read", "message.create"],
             resource_selectors: ["space:cx:space:0196419b-0000-7000-8000-000000000000/**"],
             constraints: [
               { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
               {
                 type: "type_restriction",
-                params: { allowed_types: ["space"], allowed_entity_facets: ["renderable", "stateful"] },
+                params: { object_type_allow: ["space"], facet_allow: ["renderable", "stateful"] },
               },
             ],
             delegation_chain: ["cx:grant:root", "cx:grant:e2e"],

@@ -168,9 +168,7 @@ pub async fn register_via_chime(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn resolve_real_token(
-    _ctx: &RegisterContext,
-) -> Result<String, PushRegistrationError> {
+async fn resolve_real_token(_ctx: &RegisterContext) -> Result<String, PushRegistrationError> {
     use crate::push::{push_token_provider, resolve_provider_push_token};
 
     let Some(provider) = push_token_provider() else {
@@ -195,9 +193,7 @@ async fn resolve_real_token(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn resolve_real_token(
-    ctx: &RegisterContext,
-) -> Result<String, PushRegistrationError> {
+async fn resolve_real_token(ctx: &RegisterContext) -> Result<String, PushRegistrationError> {
     use crate::push::{
         fetch_vapid_application_server_key, push_token_provider, resolve_provider_push_token,
     };
@@ -259,9 +255,7 @@ fn build_request(
         proof: None,
     };
     build_register_device_request(&config, &prefs).map_err(|err| {
-        PushRegistrationError::BuildRequest(anyhow::anyhow!(
-            "build register-device request: {err}"
-        ))
+        PushRegistrationError::BuildRequest(anyhow::anyhow!("build register-device request: {err}"))
     })
 }
 
@@ -297,10 +291,7 @@ mod tests {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        fn subscribe(
-            &self,
-            _vapid: Option<&str>,
-        ) -> anyhow::Result<Option<String>> {
+        fn subscribe(&self, _vapid: Option<&str>) -> anyhow::Result<Option<String>> {
             Ok(Some(self.token.clone()))
         }
 

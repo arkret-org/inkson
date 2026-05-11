@@ -8,9 +8,9 @@ use crate::hlc::Hlc;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionGroup {
     Common,
-    Board,
+    PlaceFlow,
     Conversation,
-    RunMemory,
+    Morph,
     Administrative,
 }
 
@@ -21,11 +21,15 @@ impl ActionGroup {
             Self::Common => &[
                 "space.read",
                 "space.update",
-                "entity.create",
-                "entity.read",
-                "entity.update",
-                "entity.delete",
-                "entity.restore",
+                "place.create",
+                "place.update",
+                "place.archive",
+                "place.tombstone",
+                "flow.create",
+                "flow.read",
+                "flow.update",
+                "flow.archive",
+                "flow.restore",
                 "relation.create",
                 "relation.read",
                 "relation.delete",
@@ -36,14 +40,13 @@ impl ActionGroup {
                 "invite.accept",
                 "invite.cancel",
             ],
-            Self::Board => &[
-                "board.create",
-                "board.read",
-                "board.update",
-                "board.delete",
-                "collection.create",
-                "collection.update",
-                "collection.move",
+            Self::PlaceFlow => &[
+                "flow.move",
+                "flow.reorder",
+                "flow.track.enable",
+                "flow.track.disable",
+                "flow.track.update",
+                "flow.track.set_primary",
             ],
             Self::Conversation => &[
                 "message.create",
@@ -57,16 +60,12 @@ impl ActionGroup {
                 "comment.update",
                 "comment.redact",
             ],
-            Self::RunMemory => &[
-                "run.create",
-                "run.update",
-                "run.complete",
-                "run.fail",
-                "memory.create",
-                "memory.update",
-                "memory.confirm",
-                "memory.invalidate",
-                "memory.supersede",
+            Self::Morph => &[
+                "morph.create",
+                "morph.read",
+                "morph.update",
+                "morph.archive",
+                "morph.tombstone",
             ],
             Self::Administrative => &[
                 "capability.grant",
@@ -102,16 +101,16 @@ pub enum Constraint {
         allowed_fields: Vec<String>,
         denied_fields: Vec<String>,
     },
-    /// Restrict to specific entity types or facets. Facets are the protocol capability path.
+    /// Restrict to specific object types or facets.
     TypeRestriction {
-        allowed_types: Vec<String>,
+        object_type_allow: Vec<String>,
         #[serde(default)]
-        allowed_entity_facets: Vec<String>,
+        facet_allow: Vec<String>,
     },
-    /// Limit scope to specific spaces or collections.
+    /// Limit scope to specific spaces or Places.
     ScopeLimitation {
         space_ids: Vec<String>,
-        collection_ids: Vec<String>,
+        place_ids: Vec<String>,
     },
     /// Control delegation depth and re-authorization.
     DelegationControl {
@@ -182,21 +181,21 @@ impl Constraint {
                 ConstraintResult::Allow
             }
             Self::TypeRestriction {
-                allowed_types,
-                allowed_entity_facets,
+                object_type_allow,
+                facet_allow,
             } => {
-                if let Some(ref entity_type) = ctx.entity_type {
-                    if !allowed_types.contains(entity_type) {
+                if let Some(ref object_type) = ctx.object_type {
+                    if !object_type_allow.contains(object_type) {
                         return ConstraintResult::Deny(format!(
-                            "entity type {entity_type} not allowed"
+                            "object type {object_type} not allowed"
                         ));
                     }
                 }
-                if !allowed_entity_facets.is_empty() {
-                    for facet in allowed_entity_facets {
-                        if !ctx.entity_facets.contains(facet) {
+                if !facet_allow.is_empty() {
+                    for facet in facet_allow {
+                        if !ctx.facets.contains(facet) {
                             return ConstraintResult::Deny(format!(
-                                "entity facet {facet} not allowed or unavailable"
+                                "facet {facet} not allowed or unavailable"
                             ));
                         }
                     }
@@ -205,18 +204,16 @@ impl Constraint {
             }
             Self::ScopeLimitation {
                 space_ids,
-                collection_ids,
+                place_ids,
             } => {
                 if let Some(ref space) = ctx.space_id {
                     if !space_ids.is_empty() && !space_ids.contains(space) {
                         return ConstraintResult::Deny(format!("space {space} not in scope"));
                     }
                 }
-                if let Some(ref collection) = ctx.collection_id {
-                    if !collection_ids.is_empty() && !collection_ids.contains(collection) {
-                        return ConstraintResult::Deny(format!(
-                            "collection {collection} not in scope"
-                        ));
+                if let Some(ref place) = ctx.place_id {
+                    if !place_ids.is_empty() && !place_ids.contains(place) {
+                        return ConstraintResult::Deny(format!("place {place} not in scope"));
                     }
                 }
                 ConstraintResult::Allow
@@ -322,10 +319,10 @@ pub enum ConstraintResult {
 pub struct EvalContext {
     pub current_time: String,
     pub requested_fields: Option<Vec<String>>,
-    pub entity_type: Option<String>,
-    pub entity_facets: Vec<String>,
+    pub object_type: Option<String>,
+    pub facets: Vec<String>,
     pub space_id: Option<String>,
-    pub collection_id: Option<String>,
+    pub place_id: Option<String>,
     pub action: Option<String>,
     pub delegation_depth: u32,
     pub operation_counts: HashMap<String, u32>,
@@ -343,10 +340,10 @@ pub struct EvalContext {
 pub enum ResourceSelector {
     /// Match a specific space.
     Space(String),
-    /// Match a specific entity.
-    Entity(String),
-    /// Match entities of a specific type.
-    EntityType(String),
+    /// Match a specific canonical object.
+    Object(String),
+    /// Match canonical objects of a specific type.
+    ObjectType(String),
     /// Match a specific relation.
     Relation(String),
     /// Match a specific view.
@@ -366,8 +363,8 @@ impl ResourceSelector {
     pub fn matches(&self, resource: &ResourceRef) -> bool {
         match self {
             Self::Space(id) => resource.space_id.as_ref() == Some(id),
-            Self::Entity(id) => resource.entity_id.as_ref() == Some(id),
-            Self::EntityType(t) => resource.entity_type.as_ref() == Some(t),
+            Self::Object(id) => resource.object_ref.as_ref() == Some(id),
+            Self::ObjectType(t) => resource.object_type.as_ref() == Some(t),
             Self::Relation(id) => resource.relation_id.as_ref() == Some(id),
             Self::View(id) => resource.view_id.as_ref() == Some(id),
             Self::Wildcard => true,
@@ -384,9 +381,9 @@ impl ResourceSelector {
 #[derive(Clone, Debug, Default)]
 pub struct ResourceRef {
     pub space_id: Option<String>,
-    pub entity_id: Option<String>,
-    pub entity_type: Option<String>,
-    pub entity_facets: Vec<String>,
+    pub object_ref: Option<String>,
+    pub object_type: Option<String>,
+    pub facets: Vec<String>,
     pub relation_id: Option<String>,
     pub view_id: Option<String>,
 }
@@ -810,8 +807,8 @@ mod tests {
 
     fn test_grant() -> CapabilityGrant {
         GrantBuilder::new("did:web:alice", "did:web:bob")
-            .with_action("entity.read")
-            .with_action("entity.update")
+            .with_action("flow.read")
+            .with_action("flow.update")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_constraint(Constraint::Temporal {
                 not_before: None,
@@ -834,7 +831,7 @@ mod tests {
     #[test]
     fn test_action_groups() {
         assert!(ActionGroup::Common.contains("space.read"));
-        assert!(ActionGroup::Common.contains("entity.create"));
+        assert!(ActionGroup::Common.contains("flow.create"));
         assert!(ActionGroup::Conversation.contains("message.create"));
         assert!(ActionGroup::Administrative.contains("capability.grant"));
         assert!(!ActionGroup::Common.contains("message.create"));
@@ -906,7 +903,7 @@ mod tests {
 
         let resource = ResourceRef {
             space_id: Some("cx:space:test".to_owned()),
-            entity_id: Some("entity-1".to_owned()),
+            object_ref: Some("cx:flow:0196419b-0000-7000-8000-000000000001".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext {
@@ -914,7 +911,7 @@ mod tests {
             ..Default::default()
         };
 
-        let decision = engine.check("did:web:bob", "entity.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
         assert_eq!(decision, AuthzDecision::Allow);
     }
 
@@ -924,7 +921,7 @@ mod tests {
         let resource = ResourceRef::default();
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "entity.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -939,7 +936,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "entity.delete", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "flow.archive", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -954,7 +951,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "entity.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -979,7 +976,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "entity.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -991,7 +988,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("entity.read")
+            .with_action("flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
@@ -1013,7 +1010,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("entity.read")
+            .with_action("flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
@@ -1032,7 +1029,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("entity.read")
+            .with_action("flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
@@ -1116,20 +1113,20 @@ mod tests {
     #[test]
     fn test_constraint_type_restriction_checks_facets() {
         let constraint = Constraint::TypeRestriction {
-            allowed_types: vec!["task".to_owned()],
-            allowed_entity_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
+            object_type_allow: vec!["flow".to_owned()],
+            facet_allow: vec!["stateful".to_owned(), "rankable".to_owned()],
         };
 
         let ctx_allowed = EvalContext {
-            entity_type: Some("task".to_owned()),
-            entity_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
+            object_type: Some("flow".to_owned()),
+            facets: vec!["stateful".to_owned(), "rankable".to_owned()],
             ..Default::default()
         };
         assert_eq!(constraint.evaluate(&ctx_allowed), ConstraintResult::Allow);
 
         let ctx_denied = EvalContext {
-            entity_type: Some("task".to_owned()),
-            entity_facets: vec!["stateful".to_owned()],
+            object_type: Some("flow".to_owned()),
+            facets: vec!["stateful".to_owned()],
             ..Default::default()
         };
         assert!(matches!(

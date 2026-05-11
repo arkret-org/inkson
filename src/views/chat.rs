@@ -5,20 +5,16 @@ use crate::{
     conformance::{EventKindWireScope, ephemeral_event_kinds, event_kind_wire_scope},
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
-    move_builder::{
-        build_message_create_move_with_covered_frontier, build_mls_commit_move,
-        did_key_verification_method, sign_unsigned_move,
-    },
-    operation::{CommitBuilder, cx_ops, uuid_v8},
+    move_builder::{build_mls_commit_move, did_key_verification_method, sign_unsigned_move},
+    operation::{OperationBuilder, cx_ops, uuid_v8},
     views::helpers::{
-        StructuredMention, active_sync_token, authed_api, authed_api_with_sync,
-        parse_structured_mentions,
+        StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
     },
 };
 
 #[derive(Clone, Debug, PartialEq)]
 struct ChannelEntity {
-    entity_id: String,
+    flow_id: String,
     name: String,
     /// Canonical Flow.kind on the wire — always "discussion" per
     /// `models/object-model-standard.md` (the chat-style "room" form is
@@ -32,7 +28,7 @@ struct ChannelEntity {
     topic: Option<String>,
     unread: usize,
     operation_id: Option<String>,
-    commit_id: Option<String>,
+    event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,7 +40,7 @@ struct ChatMessage {
     flow_id: String,
     mentions: Vec<StructuredMention>,
     operation_id: Option<String>,
-    commit_id: Option<String>,
+    event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,44 +64,44 @@ pub fn ChatPanel(
     let mut channels = use_signal(|| {
         vec![
             ChannelEntity {
-                entity_id: "cx:flow:general".to_owned(),
+                flow_id: "cx:flow:general".to_owned(),
                 name: "Launch board discussion".to_owned(),
                 kind: "discussion".to_owned(),
                 category: "general".to_owned(),
                 topic: Some("Default long-lived discussion for board coordination".to_owned()),
                 unread: 0,
                 operation_id: None,
-                commit_id: None,
+                event_id: None,
             },
             ChannelEntity {
-                entity_id: "cx:flow:announce".to_owned(),
+                flow_id: "cx:flow:announce".to_owned(),
                 name: "Announcements discussion".to_owned(),
                 kind: "discussion".to_owned(),
                 category: "announce".to_owned(),
                 topic: Some("Discussion-scoped release notes and broadcast updates".to_owned()),
                 unread: 2,
                 operation_id: None,
-                commit_id: None,
+                event_id: None,
             },
             ChannelEntity {
-                entity_id: "cx:flow:support".to_owned(),
+                flow_id: "cx:flow:support".to_owned(),
                 name: "Support desk discussion".to_owned(),
                 kind: "discussion".to_owned(),
                 category: "support".to_owned(),
                 topic: Some("Issue triage discussion for operator escalations".to_owned()),
                 unread: 0,
                 operation_id: None,
-                commit_id: None,
+                event_id: None,
             },
             ChannelEntity {
-                entity_id: "cx:flow:activity".to_owned(),
+                flow_id: "cx:flow:activity".to_owned(),
                 name: "Activity audit discussion".to_owned(),
                 kind: "discussion".to_owned(),
                 category: "activity".to_owned(),
                 topic: Some("Machine and workflow messages with audit references".to_owned()),
                 unread: 0,
                 operation_id: None,
-                commit_id: None,
+                event_id: None,
             },
         ]
     });
@@ -218,14 +214,14 @@ pub fn ChatPanel(
                 }
                 for channel in channels() {
                     div {
-                        class: if channel.entity_id == selected_channel() { "space-button active" } else { "space-button" },
+                        class: if channel.flow_id == selected_channel() { "space-button active" } else { "space-button" },
                         "data-testid": "channel-item",
                         onclick: {
-                            let id = channel.entity_id.clone();
+                            let id = channel.flow_id.clone();
                             move |_| selected_channel.set(id.clone())
                         },
                         div { class: "space-title", "{channel.name}" }
-                        div { class: "space-meta", "kind={channel.kind} · category={channel.category} · id={channel.entity_id}" }
+                        div { class: "space-meta", "kind={channel.kind} · category={channel.category} · id={channel.flow_id}" }
                         if let Some(topic) = &channel.topic {
                             div { class: "muted", "{topic}" }
                         }
@@ -240,7 +236,7 @@ pub fn ChatPanel(
             }
 
             div { class: "event", "data-testid": "channel-creation",
-                div { class: "event-head", span { "Create Discussion Entity" } span { "discussion / announce / support / activity" } }
+                div { class: "event-head", span { "Create Discussion Flow" } span { "discussion / announce / support / activity" } }
                 div { class: "muted", "Submits via cx.flow.create operation with discussion branch and rank." }
                 div { class: "workflow-form",
                     input {
@@ -308,8 +304,7 @@ pub fn ChatPanel(
                                 // (including the synthesis + discussion branches
                                 // array). This produces a canonical wire shape that
                                 // soland reducers aware of the typed Flow can
-                                // ingest directly; the legacy `kind: "discussion"`
-                                // top-level field stays for backward compat.
+                                // ingest directly.
                                 let category = new_channel_kind();
                                 let topic = new_channel_topic().trim().to_owned();
                                 let flow_id = format!("cx:flow:{}", uuid_v8());
@@ -328,53 +323,31 @@ pub fn ChatPanel(
                                         return;
                                     }
                                 };
-                                    let commit = CommitBuilder::new(actor.clone())
-                                        .add_operation(op.clone())
-                                        .build();
-                                    let commit_value = match serde_json::to_value(&commit) {
-                                        Ok(value) => value,
-                                        Err(error) => {
-                                            status_msg.set(format!("serialize failed: {error}"));
-                                            return;
-                                        }
-                                    };
                                 let api_token = token();
                                 let wait_for = active_sync_token(&sync_cursor());
-                                let expected_head = expected_head(repo_state());
                                 let channel_topic = if topic.is_empty() { None } else { Some(topic) };
                                 let base = base.clone();
-                                let actor = actor.clone();
                                 let space = space.clone();
                                 status_msg.set("submitting flow.create operation".to_owned());
                                 spawn(async move {
                                     match authed_api_with_sync(&base, api_token, wait_for) {
                                         Ok(api) => match api
-                                                .submit_commit(
-                                                    &actor,
-                                                    commit_value,
-                                                    expected_head.as_deref(),
-                                                    Some(&op.operation_id),
-                                                )
+                                                .submit_operation_event(&op)
                                                 .await
                                             {
                                                 Ok(submitted) => {
                                                     channels.write().push(ChannelEntity {
-                                                        entity_id: flow_id.clone(),
+                                                        flow_id: flow_id.clone(),
                                                         name: name.clone(),
                                                         kind: "discussion".to_owned(),
                                                         category: category.clone(),
                                                         topic: channel_topic.clone(),
                                                         unread: 0,
                                                         operation_id: Some(op.operation_id.clone()),
-                                                        commit_id: Some(submitted.commit_id.clone()),
+                                                        event_id: Some(submitted.event_id.clone()),
                                                     });
                                                     selected_channel.set(flow_id.clone());
-                                                    repo_state.set(
-                                                        submitted
-                                                            .head_commit
-                                                            .clone()
-                                                            .unwrap_or(submitted.commit_id.clone()),
-                                                    );
+                                                    repo_state.set(submitted.event_id.clone());
                                                     sync_cursor.set(submitted.sync_token.clone());
                                                     {
                                                         let mut store = state_store.write();
@@ -385,7 +358,7 @@ pub fn ChatPanel(
                                                             json!({
                                                                 "flow_id": flow_id,
                                                                 "kind": "cx.flow.create",
-                                                                "commit_id": submitted.commit_id,
+                                                                "event_id": submitted.event_id,
                                                             }),
                                                         );
                                                     }
@@ -463,20 +436,14 @@ pub fn ChatPanel(
                     oninput: move |evt| chat_draft.set(evt.value()),
                 }
                 div { class: "actions",
-                    // Round 24 (F2): canonical Move cutover. The "Send"
-                    // button now constructs a message-create Move with a
-                    // covered_frontier precondition and submits it via
-                    // `api.submit_move(...)` — same wire path as the E2EE
-                    // button below, sans the MLS commit since the
-                    // plaintext path doesn't bump the MLS epoch. Legacy
-                    // `api.send_message(...)` direct-event call removed
-                    // entirely (Contrix v1 unreleased — no compat shim).
+                    // Messages submit as durable Event Envelopes via `/api/v1/events`.
                     button {
                         class: "primary",
                         "data-testid": "send-chat-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
+                            let actor = account_did.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -486,7 +453,7 @@ pub fn ChatPanel(
                                 let local_id = format!("chat-msg-{}", uuid_v8());
                                 let channel = channels()
                                     .iter()
-                                    .find(|candidate| candidate.entity_id == selected_channel())
+                                    .find(|candidate| candidate.flow_id == selected_channel())
                                     .cloned();
                                 let Some(channel) = channel else {
                                     status_msg.set("select a discussion first".to_owned());
@@ -497,110 +464,62 @@ pub fn ChatPanel(
                                     sender: "yougen".to_owned(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    flow_id: channel.entity_id.clone(),
+                                    flow_id: channel.flow_id.clone(),
                                     mentions: mentions.clone(),
                                     operation_id: None,
-                                    commit_id: None,
+                                    event_id: None,
                                 });
 
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
+                                let actor = actor.clone();
                                 let mention_values = mentions_to_json(&mentions);
                                 let mention_values_for_store = mention_values.clone();
                                 let mention_relations = mention_relation_json(&local_id, &mentions);
-                                let flow_id = channel.entity_id.clone();
+                                let flow_id = channel.flow_id.clone();
                                 let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
-                                let hlc = Hlc::now("yougen").to_string();
-                                let anchor_view =
-                                    state_store.read().anchor_view_for(&space);
-                                let anchor_ref = anchor_view.move_anchor_ref();
-                                let covered_frontier = anchor_view
-                                    .covered_frontier
-                                    .clone()
-                                    .unwrap_or_else(|| {
-                                        // Fallback: bind to the
-                                        // sha256(empty) sentinel when no
-                                        // governance frontier has been
-                                        // observed yet — soland surfaces
-                                        // a `covered_frontier` mismatch
-                                        // mapped to pending_mls_binding.
-                                        "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-                                    });
-                                let identity =
-                                    match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id,
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "identity unavailable: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                let did = identity.device_did.clone();
-                                let vm = did_key_verification_method(
-                                    &identity.signing_key.verifying_key(),
-                                );
                                 let payload = json!({
-                                    "message_id": message_id,
-                                    "msgtype": "m.text",
-                                    "body": body,
-                                    "flow_id": flow_id.clone(),
+                                    "body": body.clone(),
                                     "branch": "discussion",
-                                    "flow_kind": channel_kind,
+                                    "content": {
+                                        "blocks": [{"kind": "text", "text": body.clone()}],
+                                        "body": body.clone(),
+                                        "mentions": mention_values.clone(),
+                                    },
+                                    "flow_id": flow_id.clone(),
+                                    "kind": channel_kind,
+                                    "message_id": message_id,
                                     "mentions": mention_values,
                                     "mention_relations": mention_relations,
                                 });
-                                let unsigned = match build_message_create_move_with_covered_frontier(
-                                    &did,
+                                let op = OperationBuilder::new(
                                     &space,
-                                    &message_id,
-                                    payload,
-                                    &covered_frontier,
-                                    &anchor_ref,
-                                    &hlc,
-                                ) {
-                                    Ok(u) => u,
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "message move build failed: {err}"
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let signed =
-                                    sign_unsigned_move(unsigned, &identity.signing_key, &vm);
+                                    &actor,
+                                    "cx.message.create",
+                                )
+                                .target_ref(&flow_id)
+                                .body(payload)
+                                .build("yougen");
                                 let space_for_record = space.clone();
-                                let anchor_for_record = anchor_ref.clone();
+                                let wait_for = active_sync_token(&sync_cursor());
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.submit_move(&signed).await {
+                                    match authed_api_with_sync(&base, api_token, wait_for) {
+                                        Ok(api) => match api.submit_operation_event(&op).await {
                                             Ok(resp) => {
-                                                let state =
-                                                    MoveSubmissionState::from_submit_state(
-                                                        resp.state.as_str(),
-                                                        resp.reason.as_deref(),
-                                                    );
                                                 {
                                                     let mut store = state_store.write();
-                                                    store.record_move_submission(
-                                                        resp.move_id.clone(),
-                                                        space_for_record.clone(),
-                                                        "cx.message.create".to_owned(),
-                                                        state,
-                                                        resp.reason.clone(),
-                                                        Some(anchor_for_record),
-                                                    );
+                                                    store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
-                                                        resp.move_id.clone(),
+                                                        op.operation_id.clone(),
                                                         Some(space_for_record),
                                                         json!({
-                                                            "move_id": resp.move_id,
+                                                            "event_id": resp.event_id.clone(),
                                                             "kind": "cx.message.create",
                                                             "flow_id": flow_id,
                                                             "mentions": mention_values_for_store,
-                                                            "submission_state": resp.state,
+                                                            "status": resp.status.clone(),
                                                         }),
                                                     );
                                                 }
@@ -609,16 +528,19 @@ pub fn ChatPanel(
                                                     .iter_mut()
                                                     .find(|candidate| candidate.id == local_id)
                                                 {
-                                                    found.operation_id = Some(resp.move_id.clone());
-                                                    found.commit_id = Some(resp.move_id.clone());
+                                                    found.id = resp.event_id.clone();
+                                                    found.operation_id = Some(op.operation_id.clone());
+                                                    found.event_id = Some(resp.event_id.clone());
                                                 }
+                                                sync_cursor.set(resp.sync_token.clone());
+                                                repo_state.set(resp.event_id.clone());
                                                 status_msg.set(format!(
-                                                    "message Move {}: state={}",
-                                                    resp.move_id, resp.state
+                                                    "message event accepted {}",
+                                                    op.operation_id
                                                 ));
                                             }
                                             Err(error) => status_msg.set(format!(
-                                                "message Move submit failed: {error}"
+                                                "message event submit failed: {error}"
                                             )),
                                         },
                                         Err(error) => status_msg.set(format!(
@@ -631,20 +553,15 @@ pub fn ChatPanel(
                         },
                         "Send"
                     }
-                    // Round 23 (M7): E2EE Move-flow path. Constructs an
-                    // MLS commit Move first (writes covered_frontier on
-                    // the way to soland) + the message Move with a
-                    // `covered_frontier` precondition. The submit_move
-                    // outcome lands in the local Move tracker; if soland
-                    // rejects with a covered_frontier mismatch the row
-                    // surfaces as `pending_mls_binding` and the
-                    // space_admin pending-mls-binding toast fires.
+                    // E2EE demo path: MLS epoch changes remain cell Moves;
+                    // the message itself is a durable Event Envelope.
                     button {
                         class: "secondary",
                         "data-testid": "send-e2ee-move-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
+                            let actor = account_did.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -652,7 +569,9 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 let space = space.clone();
+                                let actor = actor.clone();
                                 let api_token = token();
+                                let wait_for = active_sync_token(&sync_cursor());
                                 let hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
@@ -705,38 +624,32 @@ pub fn ChatPanel(
                                 };
                                 let commit_signed =
                                     sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
-                                // 2) Message Move with covered_frontier
-                                //    precondition.
-                                let msg_id = format!("msg-{}", uuid_v8());
-                                let payload = json!({
-                                    "ciphertext": body,
-                                    "epoch": new_epoch,
-                                });
-                                let msg_unsigned = match build_message_create_move_with_covered_frontier(
-                                    &did,
+                                let msg_op = OperationBuilder::new(
                                     &space,
-                                    &msg_id,
-                                    payload,
-                                    &covered_frontier,
-                                    &anchor_ref,
-                                    &hlc,
-                                ) {
-                                    Ok(u) => u,
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "message move build failed: {err}"
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let msg_signed =
-                                    sign_unsigned_move(msg_unsigned, &identity.signing_key, &vm);
+                                    &actor,
+                                    "cx.message.create",
+                                )
+                                .body(json!({
+                                    "body": format!("[encrypted epoch {new_epoch}]"),
+                                    "content": {
+                                        "blocks": [{
+                                            "kind": "text",
+                                            "text": format!("[encrypted epoch {new_epoch}]"),
+                                        }],
+                                        "body": format!("[encrypted epoch {new_epoch}]"),
+                                    },
+                                    "covered_frontier": covered_frontier.clone(),
+                                    "encrypted_payload": {
+                                        "ciphertext": body,
+                                        "epoch": new_epoch,
+                                    },
+                                }))
+                                .build("yougen");
                                 let base = base.clone();
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
-                                let cf_for_record = covered_frontier.clone();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
+                                    if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit first; if
                                         // it fails, abort message send
                                         // (covered_frontier won't bind).
@@ -769,28 +682,30 @@ pub fn ChatPanel(
                                                 return;
                                             }
                                         }
-                                        match api.submit_move(&msg_signed).await {
+                                        match api.submit_operation_event(&msg_op).await {
                                             Ok(resp) => {
-                                                let state = MoveSubmissionState::from_submit_state(
-                                                    resp.state.as_str(),
-                                                    resp.reason.as_deref(),
-                                                );
-                                                state_store.write().record_move_submission(
-                                                    resp.move_id.clone(),
-                                                    space_for_record,
-                                                    "cx.message.create".to_owned(),
-                                                    state,
-                                                    resp.reason.clone(),
-                                                    Some(anchor_for_record),
-                                                );
-                                                let _ = cf_for_record;
+                                                {
+                                                    let mut store = state_store.write();
+                                                    store.save_sync_cursor(resp.sync_token.clone());
+                                                    store.append_raw_operation(
+                                                        msg_op.operation_id.clone(),
+                                                        Some(space_for_record),
+                                                        json!({
+                                                            "event_id": resp.event_id.clone(),
+                                                            "kind": "cx.message.create",
+                                                            "status": resp.status.clone(),
+                                                        }),
+                                                    );
+                                                }
+                                                sync_cursor.set(resp.sync_token.clone());
+                                                repo_state.set(resp.event_id.clone());
                                                 status_msg.set(format!(
-                                                    "E2EE message Move {}: state={}",
-                                                    resp.move_id, resp.state
+                                                    "E2EE message event accepted {}",
+                                                    msg_op.operation_id
                                                 ));
                                             }
                                             Err(err) => status_msg.set(format!(
-                                                "message Move submit failed: {err}"
+                                                "message event submit failed: {err}"
                                             )),
                                         }
                                     }
@@ -798,7 +713,7 @@ pub fn ChatPanel(
                                 chat_draft.set(String::new());
                             }
                         },
-                        "Send E2EE (Move)"
+                        "Send E2EE (Event)"
                     }
                 }
             }
@@ -808,10 +723,6 @@ pub fn ChatPanel(
             }
         }
     }
-}
-
-fn expected_head(repo_state: String) -> Option<String> {
-    repo_state.starts_with("cx:commit:").then_some(repo_state)
 }
 
 fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {

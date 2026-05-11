@@ -79,10 +79,8 @@ pub trait KeyStore: Send + Sync {
     /// Read the persisted identity record for `device_did`. `None` means
     /// "no record yet" — callers typically follow up with
     /// [`Self::save_identity`] after generating a fresh seed.
-    fn load_identity(
-        &self,
-        device_did: &str,
-    ) -> Result<Option<LocalIdentityRecord>, KeyStoreError>;
+    fn load_identity(&self, device_did: &str)
+    -> Result<Option<LocalIdentityRecord>, KeyStoreError>;
 
     /// Persist (or overwrite) the identity record for the device. The
     /// `device_did` argument is redundant with `record.did_key` but lets
@@ -218,7 +216,9 @@ pub struct MacOsKeychainKeyStore {
 
 impl MacOsKeychainKeyStore {
     pub fn new(service_name: impl Into<String>) -> Self {
-        Self { service_name: service_name.into() }
+        Self {
+            service_name: service_name.into(),
+        }
     }
 }
 
@@ -283,7 +283,9 @@ pub struct WindowsCredentialKeyStore {
 
 impl WindowsCredentialKeyStore {
     pub fn new(target_name: impl Into<String>) -> Self {
-        Self { target_name: target_name.into() }
+        Self {
+            target_name: target_name.into(),
+        }
     }
 }
 
@@ -347,7 +349,10 @@ mod tests {
             .unwrap()
             .expect("identity loads");
         assert_eq!(loaded.device_did, identity.device_did);
-        assert_eq!(loaded.signing_key.to_bytes(), identity.signing_key.to_bytes());
+        assert_eq!(
+            loaded.signing_key.to_bytes(),
+            identity.signing_key.to_bytes()
+        );
     }
 
     #[test]
@@ -395,7 +400,11 @@ mod tests {
     #[test]
     fn windows_credential_stub_reports_unsupported() {
         let store = WindowsCredentialKeyStore::new("yougen/test");
-        let err = store.save_identity("did:key:zX", &LocalIdentity::generate().unwrap().to_record())
+        let err = store
+            .save_identity(
+                "did:key:zX",
+                &LocalIdentity::generate().unwrap().to_record(),
+            )
             .unwrap_err();
         assert!(matches!(
             err,

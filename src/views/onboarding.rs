@@ -286,7 +286,11 @@ mod tests {
             OnboardingStep::Recovery,
         ];
         let indices: Vec<usize> = steps.iter().copied().map(OnboardingStep::index).collect();
-        assert_eq!(indices, vec![1, 2, 3, 4], "indices must be 1..=4 in declared order");
+        assert_eq!(
+            indices,
+            vec![1, 2, 3, 4],
+            "indices must be 1..=4 in declared order"
+        );
     }
 
     #[test]

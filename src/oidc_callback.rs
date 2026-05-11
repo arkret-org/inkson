@@ -35,9 +35,9 @@ use crate::{
     api::{ContrixApi, SessionGrantIntrospectionProof},
     coauth::{
         CoauthApi, OidcTokenResponse, PersistedOidcScaffold,
-        build_session_grant_introspection_proof_bundle,
-        extract_authorization_code_from_callback, extract_error_description_from_callback,
-        extract_error_from_callback, extract_state_from_callback,
+        build_session_grant_introspection_proof_bundle, extract_authorization_code_from_callback,
+        extract_error_description_from_callback, extract_error_from_callback,
+        extract_state_from_callback,
     },
     local_state::{LocalStateStore, OidcTokenBundle},
     models::DevLoginResponse,
@@ -109,7 +109,10 @@ pub enum CallbackOutcome {
         observed: Option<String>,
     },
     /// Code exchange or audience-grant exchange failed downstream.
-    Failed { stage: &'static str, error: anyhow::Error },
+    Failed {
+        stage: &'static str,
+        error: anyhow::Error,
+    },
 }
 
 /// Pure CSRF-state validation. Returns `Ok` only when the callback
@@ -173,7 +176,9 @@ pub async fn process_callback(
         return CallbackOutcome::IdpError { error, description };
     }
     // 2. CSRF state check.
-    if let Err(observed) = validate_callback_state(request.callback_url, &request.scaffold.expected_state) {
+    if let Err(observed) =
+        validate_callback_state(request.callback_url, &request.scaffold.expected_state)
+    {
         return CallbackOutcome::StateMismatch {
             expected: request.scaffold.expected_state.clone(),
             observed,
@@ -322,7 +327,8 @@ mod tests {
 
     #[test]
     fn extract_callback_error_returns_idp_error_with_description() {
-        let url = "urn:yougen:oauth:callback?error=access_denied&error_description=user%20cancelled";
+        let url =
+            "urn:yougen:oauth:callback?error=access_denied&error_description=user%20cancelled";
         let (error, description) = extract_callback_error(url).expect("error present");
         assert_eq!(error, "access_denied");
         assert_eq!(description.as_deref(), Some("user cancelled"));

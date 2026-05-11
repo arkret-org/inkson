@@ -20,12 +20,10 @@
 //!    doesn't leak the openmls provider keys.
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`]
-//!    produces the exact request body shape the round-25 typed
-//!    `key_backup` wrapper expects (the same one the
-//!    `LocalStateStore` eventually surfaces through the SDK
-//!    `KeyBackupClient`). The blob is opaque to soland — passphrase-
-//!    derived encryption keeps the server zero-knowledge of group
-//!    keys.
+//!    produces the `cx.schema.key_backup.v1` request body used by
+//!    `PUT /api/v1/keys/backups/{backup_id}`. The blob is opaque to
+//!    soland — passphrase-derived encryption keeps the server
+//!    zero-knowledge of group keys.
 //!
 //! 3. **Restore on boot or pair-in.** [`restore_envelope`] decrypts
 //!    the envelope with a recovery passphrase and reconstructs the
@@ -74,6 +72,8 @@
 
 use std::fmt;
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::SecondsFormat;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -84,8 +84,7 @@ use contrix_sdk::MlsGroupStateRecord;
 
 /// Number of SHA-256 rounds applied during passphrase stretching. The
 /// trade-off is cost-on-restore vs cost-of-brute-force; 100k matches
-/// the soland recovery_bridge fixture's PBKDF2 floor (cotest round 27
-/// `key_backup_encryption` invariant — `KEY_BACKUP_PBKDF2_ITER_FLOOR`).
+/// the key-backup encryption invariant (`KEY_BACKUP_PBKDF2_ITER_FLOOR`).
 /// Tests use the exact same constant — we don't ship a "test mode"
 /// reduction because the test surface is fast enough already.
 pub const KDF_ITERATIONS: u32 = 100_000;
@@ -102,11 +101,11 @@ const MAC_INNER_PAD: u8 = 0x36;
 
 /// Round 28: typed envelope wrapping an encrypted MLS group state
 /// record. Persisted via `LocalStateStore` and (for cross-device
-/// restore) shipped as the `key_material_encrypted` body of a
-/// `PUT /api/v1/keys/backups/{id}` call. The fields here are the
-/// minimum required for tamper detection + outdated-snapshot
+/// restore) shipped as the `ciphertext` body of a
+/// `PUT /api/v1/keys/backups/{backup_id}` call. The fields here are
+/// the minimum required for tamper detection + outdated-snapshot
 /// detection; everything else (signing key set / openmls provider
-/// storage entries) lives inside `ciphertext`.
+/// storage entries) lives inside the key-backup `ciphertext`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MlsSnapshotEnvelope {
     /// Yougen's space id the envelope belongs to. Not encrypted —
@@ -170,9 +169,9 @@ pub enum EnvelopeError {
 impl fmt::Display for EnvelopeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EnvelopeError::PassphraseMismatch => f.write_str(
-                "passphrase mismatch (or envelope tampered)",
-            ),
+            EnvelopeError::PassphraseMismatch => {
+                f.write_str("passphrase mismatch (or envelope tampered)")
+            }
             EnvelopeError::OutdatedSnapshot {
                 envelope_epoch,
                 current_epoch,
@@ -262,39 +261,63 @@ pub fn decrypt_with_epoch_check(
 
 impl MlsSnapshotEnvelope {
     /// Build the typed key_backup PUT body for this envelope. The
-    /// `backup_id` is the operator-chosen handle (matches the round-25
-    /// `build_key_backup_put_body` shape); `actor_did` and `device_id`
-    /// identify the device that minted the snapshot.
-    pub fn to_key_backup_body(
-        &self,
-        backup_id: &str,
-        actor_did: &str,
-        device_id: &str,
-    ) -> Value {
-        json!({
+    /// `backup_id` is the protocol backup object id; `actor_did` and
+    /// `device_id` identify the device that minted the snapshot.
+    pub fn to_key_backup_body(&self, backup_id: &str, actor_did: &str, device_id: &str) -> Value {
+        let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
+        let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
+        let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&envelope_bytes));
+        let mut body = json!({
             "backup_id": backup_id,
             "actor_id": actor_did,
-            "device_id": device_id,
-            "scheme": "mls_group_snapshot_v1",
-            "version": "v1",
-            "key_material_encrypted": serde_json::to_string(self)
-                .unwrap_or_else(|_| "{}".to_owned()),
+            "backup_class": "mls_history",
+            "backup_version": "kb_mls_snapshot_v1",
+            "created_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+            "encryption": {
+                "recipient_method": "passphrase_kdf",
+                "recipient_key_ref": device_id,
+                "kdf": {
+                    "name": "pbkdf2",
+                    "salt": self.salt_hex,
+                    "params": {
+                        "iterations": KDF_ITERATIONS,
+                        "hash": "sha256"
+                    }
+                },
+                "aead": {
+                    "name": "xchacha20_poly1305",
+                    "nonce": "mls_snapshot_nonce_placeholder"
+                }
+            },
+            "contents": [{
+                "item_type": "mls_group_state",
+                "mls_group_id": self.group_id,
+                "epoch": self.epoch,
+                "secret_id": "yougen_mls_snapshot",
+                "space_ref": self.space_id
+            }],
+            "ciphertext": ciphertext,
+            "ciphertext_digest": ciphertext_digest,
             "envelope_meta": {
-                "space_id": self.space_id,
+                "space_ref": self.space_id,
                 "group_id": self.group_id,
                 "epoch": self.epoch,
-                "recorded_at": self.recorded_at,
+                "recorded_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
             }
-        })
+        });
+        if is_protocol_device_id(device_id)
+            && let Some(object) = body.as_object_mut()
+        {
+            object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
+        }
+        body
     }
 
     /// Round-trip the inner `MlsGroupStateRecord` (after
     /// `decrypt_envelope`) into the SDK's typed shape. Native-only —
     /// the wasm build's MLS surface is stubbed.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn restore_state_record(
-        bytes: &[u8],
-    ) -> Result<MlsGroupStateRecord, EnvelopeError> {
+    pub fn restore_state_record(bytes: &[u8]) -> Result<MlsGroupStateRecord, EnvelopeError> {
         serde_json::from_slice::<MlsGroupStateRecord>(bytes)
             .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
     }
@@ -393,6 +416,19 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     diff == 0
 }
 
+fn is_protocol_device_id(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("cx:device:") else {
+        return false;
+    };
+    rest.len() == 36
+        && rest.chars().enumerate().all(|(idx, ch)| match idx {
+            8 | 13 | 18 | 23 => ch == '-',
+            14 => ch == '7',
+            19 => matches!(ch, '8' | '9' | 'a' | 'b'),
+            _ => ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase(),
+        })
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -462,8 +498,14 @@ mod tests {
     #[test]
     fn passphrase_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
-        let envelope =
-            encrypt_state("cx:space:demo", "dead", 1, &bytes, "secret one", &fixed_salt());
+        let envelope = encrypt_state(
+            "cx:space:demo",
+            "dead",
+            1,
+            &bytes,
+            "secret one",
+            &fixed_salt(),
+        );
         let result = decrypt_envelope(&envelope, "secret two");
         assert!(matches!(result, Err(EnvelopeError::PassphraseMismatch)));
 
@@ -479,8 +521,7 @@ mod tests {
     #[test]
     fn outdated_snapshot_is_rejected_via_epoch_check() {
         let bytes = fake_state_record_bytes("beef", 3);
-        let envelope =
-            encrypt_state("cx:space:demo", "beef", 3, &bytes, "p1", &fixed_salt());
+        let envelope = encrypt_state("cx:space:demo", "beef", 3, &bytes, "p1", &fixed_salt());
 
         // current_epoch_floor == 3 → still acceptable (>=).
         let ok = decrypt_with_epoch_check(&envelope, "p1", 3);
@@ -507,14 +548,7 @@ mod tests {
 
     #[test]
     fn malformed_hex_surfaces_typed_error() {
-        let mut envelope = encrypt_state(
-            "cx:space:demo",
-            "feed",
-            1,
-            b"abc",
-            "p",
-            &fixed_salt(),
-        );
+        let mut envelope = encrypt_state("cx:space:demo", "feed", 1, b"abc", "p", &fixed_salt());
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
@@ -531,18 +565,29 @@ mod tests {
             &fixed_salt(),
         );
         let body = envelope.to_key_backup_body(
-            "bk_alice_recovery",
+            "cx:backup:01964137-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "cx:device:01alice_phone",
+            "cx:device:01964137-0000-7000-8000-000000000001",
         );
-        assert_eq!(body["backup_id"], "bk_alice_recovery");
-        assert_eq!(body["scheme"], "mls_group_snapshot_v1");
-        assert_eq!(body["envelope_meta"]["space_id"], "cx:space:demo");
+        assert_eq!(
+            body["backup_id"],
+            "cx:backup:01964137-0000-7000-8000-000000000000"
+        );
+        assert_eq!(
+            body["device_id"],
+            "cx:device:01964137-0000-7000-8000-000000000001"
+        );
+        assert_eq!(body["backup_class"], "mls_history");
+        assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
+        assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
+        assert_eq!(body["envelope_meta"]["space_ref"], "cx:space:demo");
         assert_eq!(body["envelope_meta"]["epoch"], 42);
-        // The encrypted blob is a JSON-serialised envelope — it
-        // round-trips back to the same struct.
-        let blob = body["key_material_encrypted"].as_str().unwrap();
-        let parsed: MlsSnapshotEnvelope = serde_json::from_str(blob).unwrap();
+        // The ciphertext is a base64url-encoded JSON envelope — it
+        // round-trips back to the same struct without exposing plaintext
+        // MLS provider state to soland.
+        let blob = body["ciphertext"].as_str().unwrap();
+        let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
+        let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.space_id, "cx:space:demo");
         assert_eq!(parsed.epoch, 42);
     }

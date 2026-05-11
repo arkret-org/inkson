@@ -30,7 +30,7 @@ pub struct Cursor {
 /// Position within a specific space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpacePosition {
-    /// The frontier commit IDs this position covers.
+    /// The event or anchor frontier IDs this position covers.
     #[serde(default)]
     pub frontier: Vec<String>,
     /// HLC timestamp at this position.
@@ -163,7 +163,7 @@ mod tests {
             .with_space(
                 "cx:space:test",
                 SpacePosition::new("0018ef01234a-00000005-deadbeef")
-                    .with_frontier(vec!["commit_1".into()])
+                    .with_frontier(vec!["cx:event:frontier-1".into()])
                     .with_state_hash("abc123"),
             )
             .with_device(

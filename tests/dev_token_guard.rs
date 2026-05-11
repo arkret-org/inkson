@@ -70,5 +70,7 @@ fn placeholder_predicate_is_case_insensitive() {
     assert!(is_placeholder_push_key("DESKTOP:YOUGEN-DEV-XYZ"));
     assert!(is_placeholder_push_key("webpush:Yougen-Dev-Token"));
     assert!(is_placeholder_push_key("Some-Placeholder-Marker"));
-    assert!(!is_placeholder_push_key("apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d"));
+    assert!(!is_placeholder_push_key(
+        "apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d"
+    ));
 }

@@ -267,10 +267,6 @@ mod operation_vectors {
         let types = vec![
             "cx.space.create",
             "cx.space.update",
-            "cx.entity.create",
-            "cx.entity.update",
-            "cx.entity.delete",
-            "cx.entity.restore",
             "cx.relation.create",
             "cx.relation.delete",
             "cx.message.create",
@@ -279,12 +275,8 @@ mod operation_vectors {
             "cx.reaction.add",
             "cx.reaction.remove",
             "cx.flow.create",
-            "cx.topic.create",
-            "cx.comment.create",
-            "cx.run.create",
-            "cx.memory.create",
             "cx.invite.create",
-            "cx.read_marker.update",
+            "cx.marker.read",
             "cx.capability.grant",
             "cx.capability.revoke",
         ];
@@ -314,7 +306,7 @@ mod grant_vectors {
             "issuer": "did:web:alice",
             "subject": "did:web:bob",
             "resource_selectors": [{"Space": "cx:space:test"}],
-            "actions": ["entity.read", "entity.update"],
+            "actions": ["flow.read", "flow.update"],
             "constraints": [
                 {
                     "type": "Temporal",
@@ -335,7 +327,7 @@ mod grant_vectors {
         assert_eq!(parsed.grant_id, "grant-001");
         assert_eq!(parsed.issuer, "did:web:alice");
         assert_eq!(parsed.subject, "did:web:bob");
-        assert_eq!(parsed.actions, vec!["entity.read", "entity.update"]);
+        assert_eq!(parsed.actions, vec!["flow.read", "flow.update"]);
         assert_eq!(parsed.max_delegation_depth, 2);
     }
 
@@ -404,119 +396,6 @@ mod grant_vectors {
             space_id: Some("cx:space:secret".to_owned()),
             ..Default::default()
         }));
-    }
-}
-
-#[cfg(test)]
-mod entity_vectors {
-    use crate::entity::{Entity, EntityType, Relation, RelationType, ViewKind, ViewProjection};
-
-    #[test]
-    fn test_entity_serialization() {
-        let entity = serde_json::json!({
-            "entity_id": "ent-001",
-            "entity_type": "message",
-            "space_id": "cx:space:test",
-            "creator": "did:web:alice",
-            "created_at": "0000018a2e3c-0000002a-deadbeef",
-            "content": {"text": "hello"},
-            "tags": ["important"],
-            "metadata": {}
-        });
-
-        let parsed: Entity = serde_json::from_value(entity).unwrap();
-        assert_eq!(parsed.entity_id, "ent-001");
-        assert_eq!(parsed.entity_type, EntityType::Message);
-    }
-
-    #[test]
-    fn test_entity_types() {
-        let types = vec![
-            ("message", EntityType::Message),
-            ("topic", EntityType::Topic),
-            ("channel", EntityType::Channel),
-            ("document", EntityType::Document),
-            ("file", EntityType::File),
-            ("memory", EntityType::Memory),
-            ("run", EntityType::Run),
-            ("poll", EntityType::Poll),
-            ("actor_profile", EntityType::ActorProfile),
-        ];
-
-        for (name, expected) in types {
-            let entity = serde_json::json!({
-                "entity_id": "ent-001",
-                "entity_type": name,
-                "space_id": "cx:space:test",
-                "creator": "did:web:alice",
-                "created_at": "0000018a2e3c-0000002a-deadbeef",
-                "content": {},
-                "tags": [],
-                "metadata": {}
-            });
-
-            let parsed: Entity = serde_json::from_value(entity).unwrap();
-            assert_eq!(parsed.entity_type, expected, "Failed for type: {name}");
-        }
-    }
-
-    #[test]
-    fn test_relation_serialization() {
-        let relation = serde_json::json!({
-            "relation_id": "rel-001",
-            "relation_type": "replies_to",
-            "source_id": "msg-002",
-            "target_id": "msg-001",
-            "created_at": "0000018a2e3c-0000002a-deadbeef",
-            "metadata": {}
-        });
-
-        let parsed: Relation = serde_json::from_value(relation).unwrap();
-        assert_eq!(parsed.relation_type, RelationType::RepliesTo);
-        assert_eq!(parsed.source_id, "msg-002");
-        assert_eq!(parsed.target_id, "msg-001");
-    }
-
-    #[test]
-    fn test_relation_types() {
-        let types = vec![
-            ("contains", RelationType::Contains),
-            ("depends_on", RelationType::DependsOn),
-            ("replies_to", RelationType::RepliesTo),
-            ("mentions", RelationType::Mentions),
-            ("assigned_to", RelationType::AssignedTo),
-        ];
-
-        for (name, expected) in types {
-            let relation = serde_json::json!({
-                "relation_id": "rel-001",
-                "relation_type": name,
-                "source_id": "src",
-                "target_id": "tgt",
-                "created_at": "0000018a2e3c-0000002a-deadbeef",
-                "metadata": {}
-            });
-
-            let parsed: Relation = serde_json::from_value(relation).unwrap();
-            assert_eq!(parsed.relation_type, expected, "Failed for type: {name}");
-        }
-    }
-
-    #[test]
-    fn test_view_projection_serialization() {
-        let view = serde_json::json!({
-            "view_id": "view-001",
-            "view_kind": "conversation",
-            "space_id": "cx:space:test",
-            "name": "Chat View",
-            "filters": {},
-            "visible_fields": ["message.text", "message.sender"],
-            "created_at": "0000018a2e3c-0000002a-deadbeef"
-        });
-
-        let parsed: ViewProjection = serde_json::from_value(view).unwrap();
-        assert_eq!(parsed.view_kind, ViewKind::Conversation);
-        assert_eq!(parsed.name, "Chat View");
     }
 }
 

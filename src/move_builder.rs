@@ -10,9 +10,8 @@
 //!   `cx.member.state`, `cx.space.{create,update,destroy,...}`,
 //!   `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
 //! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read.marker`,
-//!   `cx.entity.*`, `cx.relation.*`, `cx.redaction` — these stay on
-//!   their durable-event endpoints (`/api/v1/messages/send`, etc.)
-//!   per spec.
+//!   `cx.relation.*`, `cx.redaction` — these stay on the durable Event
+//!   Envelope endpoint (`/api/v1/events`) per spec.
 //!
 //! # Signing model
 //!
@@ -40,12 +39,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use contrix_sdk::LatticeOpType;
 use contrix_sdk::{
     AnchorId, CellRef, Did, Effect, Hash, Hlc, LatticeOp, Move, MoveId, MoveSignature, SpaceId,
     canonical,
 };
-#[cfg(test)]
-use contrix_sdk::LatticeOpType;
 
 /// Output of a builder: an unsigned [`Move`] body together with its
 /// canonical bytes (so the signer can sign exactly the bytes the server
@@ -129,24 +128,28 @@ pub enum CapabilityConstraintInput {
 
 impl CapabilityConstraintInput {
     /// Convenience constructor for a temporal-window constraint.
-    pub fn temporal(
-        not_before: Option<String>,
-        not_after: Option<String>,
-    ) -> Self {
-        Self::Temporal { not_before, not_after }
+    pub fn temporal(not_before: Option<String>, not_after: Option<String>) -> Self {
+        Self::Temporal {
+            not_before,
+            not_after,
+        }
     }
 
     /// Returns `true` when both bounds are missing — the UI uses this to
     /// avoid attaching an empty constraint.
     pub fn is_effective(&self) -> bool {
         match self {
-            Self::Temporal { not_before, not_after } => {
+            Self::Temporal {
+                not_before,
+                not_after,
+            } => {
                 not_before.as_deref().is_some_and(|s| !s.trim().is_empty())
                     || not_after.as_deref().is_some_and(|s| !s.trim().is_empty())
             }
-            Self::Other(value) => !value.is_null()
-                && (!value.is_object()
-                    || value.as_object().is_some_and(|map| !map.is_empty())),
+            Self::Other(value) => {
+                !value.is_null()
+                    && (!value.is_object() || value.as_object().is_some_and(|map| !map.is_empty()))
+            }
         }
     }
 
@@ -154,7 +157,10 @@ impl CapabilityConstraintInput {
     /// capability OrSet `add` op's `constraints` array.
     pub fn to_constraint_value(&self) -> serde_json::Value {
         match self {
-            Self::Temporal { not_before, not_after } => {
+            Self::Temporal {
+                not_before,
+                not_after,
+            } => {
                 let mut obj = serde_json::Map::new();
                 obj.insert(
                     "constraint_type".to_owned(),
@@ -318,11 +324,8 @@ pub fn build_space_organization_update_move(
 /// Round 23 (M7): construct an MLS commit Move that updates the
 /// `cx.component.mls.epoch.v1` cas-register cell to `new_epoch` and
 /// records the local actor's understanding of `covered_frontier`. The
-/// matching message Move ([`build_message_create_move_with_covered_frontier`])
-/// references the same `covered_frontier` value as a precondition;
-/// soland's reducer rejects message Moves whose covered_frontier does
-/// not match the live governance frontier, surfacing as a
-/// `pending_mls_binding` UI signal.
+/// message Events can reference the observed frontier in their payload or
+/// auth refs; messages themselves are not cell Moves in the active spec.
 ///
 /// `epoch_cell_subject` is the cell subject — typically the Space id —
 /// so the cas-register stays per-Space. `covered_frontier` is the
@@ -351,88 +354,6 @@ pub fn build_mls_commit_move(
         }
     });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
-}
-
-/// Round 23 (M7): build a `cx.message.create` Move that carries a
-/// `covered_frontier` precondition. Unlike the legacy direct-event
-/// path, this Move asserts the message MUST land on top of an MLS
-/// epoch whose `covered_frontier` matches the governance frontier the
-/// message author observed. soland rejects it with a
-/// `covered_frontier mismatch` reason if the assertion fails; the
-/// client surfaces that as a `pending_mls_binding` toast.
-///
-/// `message_cell_subject` is the cell subject — typically the message
-/// id (uuid v8) so each message lives in its own cell. `payload` is
-/// the encrypted body the message reducer stores verbatim.
-pub fn build_message_create_move_with_covered_frontier(
-    issuer: &str,
-    space_id: &str,
-    message_cell_subject: &str,
-    payload: serde_json::Value,
-    covered_frontier: &str,
-    anchor_ref: &str,
-    hlc: &str,
-) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.message.v1:{message_cell_subject}");
-    let effect = serde_json::json!({
-        "cell": cell_id,
-        "op": { "type": "set", "value": payload }
-    });
-    // Build the body manually so we can attach a `covered_frontier`
-    // precondition — the generic `build_move_inner` always emits an
-    // empty preconditions array. Soland's authz reducer reads the
-    // precondition and surfaces `covered_frontier mismatch` rejection
-    // when the live governance frontier disagrees.
-    let body = serde_json::json!({
-        "issuer": issuer,
-        "space_id": space_id,
-        "preconditions": [
-            {
-                "kind": "covered_frontier",
-                "value": covered_frontier,
-            }
-        ],
-        "effects": [effect.clone()],
-        "anchor_ref": anchor_ref,
-        "refs": [],
-        "hlc": hlc,
-    });
-    let canonical_bytes =
-        canonical::canonical_json_bytes(&body).context("canonicalize message move body")?;
-    let payload_hash_str = canonical::sha256_digest(&canonical_bytes);
-    let id_hex: String = Sha256::digest(&canonical_bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let move_id = MoveId::new(format!("cx:move:sha256:{id_hex}"))
-        .map_err(|e| anyhow::anyhow!("derive move id: {e}"))?;
-    let move_obj = Move {
-        id: move_id,
-        issuer: Did::new(issuer.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
-        space_id: SpaceId::new(space_id.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
-        // Preconditions live in the canonical body — the typed SDK Move
-        // doesn't expose a precondition field today, so the wire shape
-        // round-trips through `canonical_bytes` and soland's wire-side
-        // reducer reads it directly. Once the SDK exposes a typed
-        // precondition struct, swap this in.
-        preconditions: vec![],
-        effects: parse_effects(std::slice::from_ref(&effect))?,
-        anchor_ref: AnchorId::new(anchor_ref.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid anchor_ref: {e}"))?,
-        refs: vec![],
-        hlc: Hlc::new(hlc.to_owned()).map_err(|e| anyhow::anyhow!("invalid hlc: {e}"))?,
-        sig: MoveSignature {
-            alg: "EdDSA".to_owned(),
-            verification_method: format!("{issuer}#unsigned"),
-            payload_hash: Hash::new(payload_hash_str)
-                .map_err(|e| anyhow::anyhow!("payload hash: {e}"))?,
-            created_at: chrono::Utc::now(),
-            jws: String::new(),
-        },
-    };
-    Ok(UnsignedMove { move_obj, canonical_bytes })
 }
 
 /// Round 24 (F1): construct a `cx.component.flow.position.v1` Move that
@@ -554,7 +475,10 @@ pub fn build_conflict_repair_move(
             jws: String::new(),
         },
     };
-    Ok(UnsignedMove { move_obj, canonical_bytes })
+    Ok(UnsignedMove {
+        move_obj,
+        canonical_bytes,
+    })
 }
 
 /// Common Move-construction tail: take the typed pieces, build the
@@ -611,7 +535,10 @@ fn build_move_inner(
             jws: String::new(), // filled in by sign_unsigned_move
         },
     };
-    Ok(UnsignedMove { move_obj, canonical_bytes })
+    Ok(UnsignedMove {
+        move_obj,
+        canonical_bytes,
+    })
 }
 
 /// Re-parse the effects JSON array into typed `Effect` records. The
@@ -673,7 +600,10 @@ pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String 
 
 /// Compose a did:key DID URL from a verifying key (`did:key:z<...>`).
 pub fn did_key_from_verifying_key(verifying_key: &VerifyingKey) -> String {
-    format!("did:key:{}", encode_ed25519_did_key_multibase(verifying_key))
+    format!(
+        "did:key:{}",
+        encode_ed25519_did_key_multibase(verifying_key)
+    )
 }
 
 /// Compose the verification_method DID URL for a did:key keypair
@@ -716,10 +646,12 @@ mod tests {
         assert_eq!(unsigned.move_obj.space_id.as_str(), space);
         assert_eq!(unsigned.move_obj.effects.len(), 1);
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.consent.grant.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.consent.grant.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
     }
@@ -737,10 +669,12 @@ mod tests {
         )
         .unwrap();
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.consent.grant.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.consent.grant.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
         assert_eq!(
@@ -778,10 +712,12 @@ mod tests {
         )
         .unwrap();
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.capability.grant.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.capability.grant.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
     }
@@ -799,10 +735,12 @@ mod tests {
         )
         .unwrap();
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.capability.grant.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.capability.grant.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
         assert_eq!(
@@ -838,10 +776,7 @@ mod tests {
 
     #[test]
     fn capability_constraint_input_temporal_skips_blank_bounds() {
-        let c = CapabilityConstraintInput::temporal(
-            None,
-            Some("   ".to_owned()),
-        );
+        let c = CapabilityConstraintInput::temporal(None, Some("   ".to_owned()));
         assert!(!c.is_effective());
         let v = c.to_constraint_value();
         assert!(v.get("not_before").is_none());
@@ -850,10 +785,8 @@ mod tests {
 
     #[test]
     fn capability_grant_with_temporal_constraint_attaches_value_constraints() {
-        let constraint = CapabilityConstraintInput::temporal(
-            Some("2026-05-09T00:00:00Z".to_owned()),
-            None,
-        );
+        let constraint =
+            CapabilityConstraintInput::temporal(Some("2026-05-09T00:00:00Z".to_owned()), None);
         let unsigned = build_capability_grant_move_with_constraints(
             "did:web:admin.example",
             "cx:space:0196419b-0000-7000-8000-000000000000",
@@ -867,14 +800,20 @@ mod tests {
         let effect = &unsigned.move_obj.effects[0];
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
-        let value = effect.op.value.as_ref().expect("constraints embedded in value");
+        let value = effect
+            .op
+            .value
+            .as_ref()
+            .expect("constraints embedded in value");
         let constraints = value
             .get("constraints")
             .and_then(|c| c.as_array())
             .expect("constraints array");
         assert_eq!(constraints.len(), 1);
         assert_eq!(
-            constraints[0].get("constraint_type").and_then(|v| v.as_str()),
+            constraints[0]
+                .get("constraint_type")
+                .and_then(|v| v.as_str()),
             Some("temporal")
         );
         assert_eq!(
@@ -884,11 +823,8 @@ mod tests {
     }
 
     #[test]
-    fn capability_grant_without_constraints_matches_legacy_shape() {
-        // Round 22 added the constraint plumbing but didn't change the
-        // wire shape when constraints are empty — guard that or every
-        // existing capability grant would suddenly carry an empty
-        // `value: { constraints: [] }` blob.
+    fn capability_grant_without_constraints_omits_empty_constraint_blob() {
+        // Empty constraints are not serialized on the canonical wire.
         let with_empty = build_capability_grant_move_with_constraints(
             "did:web:admin.example",
             "cx:space:0196419b-0000-7000-8000-000000000000",
@@ -899,7 +835,7 @@ mod tests {
             fixed_hlc(),
         )
         .unwrap();
-        let legacy = build_capability_grant_move(
+        let direct = build_capability_grant_move(
             "did:web:admin.example",
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
@@ -908,8 +844,8 @@ mod tests {
             fixed_hlc(),
         )
         .unwrap();
-        assert_eq!(with_empty.move_obj.id.as_str(), legacy.move_obj.id.as_str());
-        assert_eq!(with_empty.canonical_bytes, legacy.canonical_bytes);
+        assert_eq!(with_empty.move_obj.id.as_str(), direct.move_obj.id.as_str());
+        assert_eq!(with_empty.canonical_bytes, direct.canonical_bytes);
     }
 
     #[test]
@@ -940,10 +876,7 @@ mod tests {
             revoked.move_obj.effects[0].cell.as_str()
         );
         // Different op_type → different content-addressed move id.
-        assert_ne!(
-            granted.move_obj.id.as_str(),
-            revoked.move_obj.id.as_str()
-        );
+        assert_ne!(granted.move_obj.id.as_str(), revoked.move_obj.id.as_str());
     }
 
     #[test]
@@ -959,19 +892,18 @@ mod tests {
         )
         .unwrap();
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.member.state.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.member.state.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Transition);
         assert_eq!(
             effect.op.from.as_ref().and_then(|v| v.as_str()),
             Some("invited")
         );
-        assert_eq!(
-            effect.op.to.as_ref().and_then(|v| v.as_str()),
-            Some("join")
-        );
+        assert_eq!(effect.op.to.as_ref().and_then(|v| v.as_str()), Some("join"));
     }
 
     #[test]
@@ -985,10 +917,12 @@ mod tests {
         )
         .unwrap();
         let effect = &unsigned.move_obj.effects[0];
-        assert!(effect
-            .cell
-            .as_str()
-            .starts_with("cx:cell:cx.component.space.organization.v1:"));
+        assert!(
+            effect
+                .cell
+                .as_str()
+                .starts_with("cx:cell:cx.component.space.organization.v1:")
+        );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set op carries a value");
         assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("Renamed"));
@@ -1081,44 +1015,6 @@ mod tests {
     }
 
     #[test]
-    fn message_create_move_with_covered_frontier_emits_precondition() {
-        let unsigned = build_message_create_move_with_covered_frontier(
-            "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
-            "msg-01",
-            serde_json::json!({"ciphertext": "deadbeef"}),
-            "cx:state:sha256:cfgov01",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        // Inspect canonical bytes: the precondition lives there.
-        let body: serde_json::Value =
-            serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
-        let preconditions = body
-            .get("preconditions")
-            .and_then(|v| v.as_array())
-            .expect("preconditions array present");
-        assert_eq!(preconditions.len(), 1);
-        assert_eq!(
-            preconditions[0].get("kind").and_then(|v| v.as_str()),
-            Some("covered_frontier")
-        );
-        assert_eq!(
-            preconditions[0].get("value").and_then(|v| v.as_str()),
-            Some("cx:state:sha256:cfgov01")
-        );
-        // Effect targets the message cell family.
-        let effect = &unsigned.move_obj.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.message.v1:")
-        );
-    }
-
-    #[test]
     fn conflict_repair_move_requires_at_least_two_heads() {
         let result = build_conflict_repair_move(
             "did:web:admin.example",
@@ -1153,8 +1049,7 @@ mod tests {
             fixed_hlc(),
         )
         .unwrap();
-        let body: serde_json::Value =
-            serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
         let preconditions = body
             .get("preconditions")
             .and_then(|v| v.as_array())
@@ -1218,10 +1113,7 @@ mod tests {
             value.get("list_id").and_then(|v| v.as_str()),
             Some("cx:list:01todo")
         );
-        assert_eq!(
-            value.get("rank").and_then(|v| v.as_str()),
-            Some("r042")
-        );
+        assert_eq!(value.get("rank").and_then(|v| v.as_str()), Some("r042"));
     }
 
     #[test]

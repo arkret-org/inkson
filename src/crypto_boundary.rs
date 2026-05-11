@@ -227,9 +227,8 @@ impl CryptoBoundary for RustSdkBoundary {
         let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes)
             .map_err(|err| CryptoBoundaryError::Backend(format!("invalid verifying key: {err}")))?;
         use ed25519_dalek::Verifier as _;
-        vk.verify(canonical_bytes, &sig).map_err(|err| {
-            CryptoBoundaryError::Backend(format!("ed25519 verify failed: {err}"))
-        })?;
+        vk.verify(canonical_bytes, &sig)
+            .map_err(|err| CryptoBoundaryError::Backend(format!("ed25519 verify failed: {err}")))?;
         Ok(())
     }
 
@@ -420,9 +419,9 @@ async fn web_subtle_aes_gcm(
 
     let window = web_sys::window()
         .ok_or_else(|| CryptoBoundaryError::Backend("no browser window".to_owned()))?;
-    let crypto = window
-        .crypto()
-        .map_err(|err| CryptoBoundaryError::Backend(format!("window.crypto unavailable: {err:?}")))?;
+    let crypto = window.crypto().map_err(|err| {
+        CryptoBoundaryError::Backend(format!("window.crypto unavailable: {err:?}"))
+    })?;
     let subtle: web_sys::SubtleCrypto = crypto.subtle();
 
     // Build CryptoKey from raw bytes via importKey. The web-sys binding
@@ -449,15 +448,19 @@ async fn web_subtle_aes_gcm(
     let crypto_key = JsFuture::from(import_key_promise)
         .await
         .map_err(|err| CryptoBoundaryError::Backend(format!("importKey awaited: {err:?}")))?;
-    let crypto_key: web_sys::CryptoKey = crypto_key
-        .dyn_into()
-        .map_err(|_| CryptoBoundaryError::Backend("importKey did not return CryptoKey".to_owned()))?;
+    let crypto_key: web_sys::CryptoKey = crypto_key.dyn_into().map_err(|_| {
+        CryptoBoundaryError::Backend("importKey did not return CryptoKey".to_owned())
+    })?;
 
     // Algorithm dictionary: { name: "AES-GCM", iv: <Uint8Array>,
     // additionalData?: <Uint8Array>, tagLength: 128 }.
     let algo = Object::new();
-    Reflect::set(&algo, &JsValue::from_str("name"), &JsValue::from_str("AES-GCM"))
-        .map_err(|err| CryptoBoundaryError::Backend(format!("algo.name set: {err:?}")))?;
+    Reflect::set(
+        &algo,
+        &JsValue::from_str("name"),
+        &JsValue::from_str("AES-GCM"),
+    )
+    .map_err(|err| CryptoBoundaryError::Backend(format!("algo.name set: {err:?}")))?;
     let iv = Uint8Array::new_with_length(nonce.len() as u32);
     iv.copy_from(nonce);
     Reflect::set(&algo, &JsValue::from_str("iv"), &iv)
@@ -468,8 +471,12 @@ async fn web_subtle_aes_gcm(
         Reflect::set(&algo, &JsValue::from_str("additionalData"), &aad_array)
             .map_err(|err| CryptoBoundaryError::Backend(format!("algo.aad set: {err:?}")))?;
     }
-    Reflect::set(&algo, &JsValue::from_str("tagLength"), &JsValue::from_f64(128.0))
-        .map_err(|err| CryptoBoundaryError::Backend(format!("algo.tagLength set: {err:?}")))?;
+    Reflect::set(
+        &algo,
+        &JsValue::from_str("tagLength"),
+        &JsValue::from_f64(128.0),
+    )
+    .map_err(|err| CryptoBoundaryError::Backend(format!("algo.tagLength set: {err:?}")))?;
 
     let body_array = Uint8Array::new_with_length(body.len() as u32);
     body_array.copy_from(body);

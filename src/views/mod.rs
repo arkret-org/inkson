@@ -12,7 +12,7 @@
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
 // | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
-// | chat / forum       | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
 // | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
@@ -23,8 +23,6 @@
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
 // | call               | desktop/call.html                 | crypto-media/webrtc-signaling                          | ephemeral signaling + cx.morph.create morph_type=call               |
 // | readiness          | (settings 内嵌)                   | overview/release-readiness, conformance/conformance-suite | (read-only)                                                      |
-// | agent_runs         | desktop/applets.html (Agent tab)  | extensions/agent-protocol-interop                      | applet/agent transactions + signed result events                   |
-// | memory_review      | (与 audit 联动)                   | conformance/state-resolution-conformance-vectors       | (本地 reducer 自检/调试)                                            |
 // | product            | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // 待新增 view（见 `_todos.md`）：
@@ -39,7 +37,6 @@
 // 4. push 路径默认脱敏（background_sync_needed），正文在本地解密。
 // 5. Auth Service 只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized。
 
-pub mod agent_runs;
 pub mod applets;
 pub mod audit;
 pub mod call;
@@ -57,11 +54,9 @@ pub mod device_verification;
 pub mod devices;
 pub mod directory;
 pub mod document;
-pub mod forum;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
-pub mod memory_review;
 pub mod notifications;
 pub mod onboarding;
 pub mod product;
@@ -93,9 +88,6 @@ pub enum View {
     Audit,
     Kanban,
     Chat,
-    Forum,
-    MemoryReview,
-    AgentRuns,
     /// Inbox / Notifications. Per `models/object-model-core.md` §1 (after Round 7),
     /// `notification` is a *derived* projection — NOT a canonical wire object.
     /// The only canonical events feeding this view are `cx.read.marker`,

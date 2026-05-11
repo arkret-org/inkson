@@ -1,6 +1,6 @@
-use contrix_sdk::{EncryptedPayload, EncryptedPayloadKeyRef};
+use contrix_sdk::EncryptedPayload;
 #[cfg(target_arch = "wasm32")]
-use contrix_sdk::{EncryptedPayloadScheme, Hash};
+use contrix_sdk::{EncryptedPayloadScheme, Hash, KeyRefObject};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientEncryptedMessage {
@@ -218,16 +218,7 @@ fn compose_local_encrypted_message_inner(
                 "device_id": device_id
             })),
             payload_digest,
-            // C36.1: `EncryptedPayload::key_ref` is now typed
-            // `Option<EncryptedPayloadKeyRef>`. Use the canonical
-            // `mls_rfc9420(group_id, epoch)` constructor instead of the
-            // legacy `"mls_epoch:0"` string form (which only the
-            // `Legacy` variant accepts and strict deployments reject —
-            // see `EncryptedPayload::assert_strict_key_ref`).
-            key_ref: Some(EncryptedPayloadKeyRef::mls_rfc9420(
-                space_id.replace(':', "_"),
-                0,
-            )),
+            key_ref: Some(KeyRefObject::mls_rfc9420(space_id.replace(':', "_"), 0)),
         },
     })
 }

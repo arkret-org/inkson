@@ -7,19 +7,19 @@ use crate::{
     local_state::{LocalIdentity, LocalStateStore, MoveSubmissionState},
     models::SubmitMoveResponse,
     move_builder::{
-        CapabilityConstraintInput, UnsignedMove,
-        build_capability_grant_move_with_constraints, build_capability_revoke_move,
-        build_conflict_repair_move, build_member_state_transition_move,
-        build_space_organization_update_move, did_key_verification_method, sign_unsigned_move,
+        CapabilityConstraintInput, UnsignedMove, build_capability_grant_move_with_constraints,
+        build_capability_revoke_move, build_conflict_repair_move,
+        build_member_state_transition_move, build_space_organization_update_move,
+        did_key_verification_method, sign_unsigned_move,
     },
-    operation::{CommitBuilder, cx_ops},
+    operation::cx_ops,
     views::{
         consent_demo::format_submit_response,
         helpers::{active_sync_token, authed_api, authed_api_with_sync},
     },
 };
 // `build_capability_grant_move` is only used by the test-only
-// `build_signed_capability_grant` helper that pins the legacy
+// `build_signed_capability_grant` helper that pins the empty-constraint
 // wire shape — gate the import to avoid a warning in non-test builds.
 #[cfg(test)]
 use crate::move_builder::build_capability_grant_move;
@@ -85,8 +85,7 @@ pub(crate) fn build_signed_capability_grant(
 /// [`build_signed_capability_grant`] but threads a constraint slice
 /// through to the move_builder. The wire shape only differs when the
 /// slice is non-empty (constraints land in the OrSet add op's `value`
-/// field); empty slice yields the legacy wire bytes byte-for-byte (so
-/// the constraint plumbing is opt-in).
+/// field).
 pub(crate) fn build_signed_capability_grant_with_constraints(
     identity: &LocalIdentity,
     space_id: &str,
@@ -124,9 +123,8 @@ pub(crate) fn build_signed_capability_revoke(
 ) -> anyhow::Result<contrix_sdk::Move> {
     let did = identity.device_did.as_str();
     let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = build_capability_revoke_move(
-        did, space_id, grant_id, tag, reason, anchor_ref, hlc,
-    )?;
+    let unsigned: UnsignedMove =
+        build_capability_revoke_move(did, space_id, grant_id, tag, reason, anchor_ref, hlc)?;
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
@@ -172,10 +170,8 @@ pub(crate) fn record_submit_outcome(
     anchor_ref: Option<String>,
     response: &SubmitMoveResponse,
 ) -> String {
-    let state = MoveSubmissionState::from_submit_state(
-        response.state.as_str(),
-        response.reason.as_deref(),
-    );
+    let state =
+        MoveSubmissionState::from_submit_state(response.state.as_str(), response.reason.as_deref());
     state_store.record_move_submission(
         response.move_id.clone(),
         space_id.to_owned(),
@@ -201,13 +197,7 @@ pub(crate) fn build_signed_member_state_transition(
     let did = identity.device_did.as_str();
     let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove = build_member_state_transition_move(
-        did,
-        space_id,
-        actor_id,
-        from_state,
-        to_state,
-        anchor_ref,
-        hlc,
+        did, space_id, actor_id, from_state, to_state, anchor_ref, hlc,
     )?;
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
@@ -219,7 +209,7 @@ struct InviteRecord {
     role: Option<String>,
     state: String,
     operation_id: Option<String>,
-    commit_id: Option<String>,
+    event_id: Option<String>,
 }
 
 #[component]
@@ -245,8 +235,7 @@ pub fn SpaceAdminPanel(
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
-    let mut cap_revoke_reason =
-        use_signal(|| "rotation policy".to_owned());
+    let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
     // Round 22: structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
     // `scope_limitation` / `none`); the temporal MVP exposes
@@ -259,8 +248,7 @@ pub fn SpaceAdminPanel(
     // Round 22: covered_frontier alert threshold. Default 5 (mirrors
     // sodmin's `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the
     // numeric input next to the banner.
-    let mut covered_frontier_threshold =
-        use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
+    let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
     // Read-only anchorer cell value fetched from /api/admin/v1/spaces/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
@@ -276,8 +264,7 @@ pub fn SpaceAdminPanel(
     let mut repair_target_cell = use_signal(String::new);
     let mut repair_head_a = use_signal(String::new);
     let mut repair_head_b = use_signal(String::new);
-    let mut repair_capability_ref =
-        use_signal(|| "cap.recovery-01".to_owned());
+    let mut repair_capability_ref = use_signal(|| "cap.recovery-01".to_owned());
     let mut repair_winner_json = use_signal(String::new);
 
     // Read the local anchor view for this space once per render. Surfaces:
@@ -318,8 +305,8 @@ pub fn SpaceAdminPanel(
     // — matches the sodmin admin page UX.
     let covered_frontier_lag_value = anchor_view.covered_frontier_lag;
     let covered_frontier_lag_threshold = covered_frontier_threshold();
-    let covered_frontier_alert = anchor_view
-        .covered_frontier_lag_above(covered_frontier_lag_threshold);
+    let covered_frontier_alert =
+        anchor_view.covered_frontier_lag_above(covered_frontier_lag_threshold);
     let covered_frontier_lag_label = covered_frontier_lag_value
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
@@ -328,9 +315,12 @@ pub fn SpaceAdminPanel(
     let move_submissions = state_store
         .read()
         .move_submissions_for_space(&selected_space);
-    let space_paused = state_store.read().space_has_paused_anchorer(&selected_space);
-    let space_pending_mls_binding =
-        state_store.read().space_has_pending_mls_binding(&selected_space);
+    let space_paused = state_store
+        .read()
+        .space_has_paused_anchorer(&selected_space);
+    let space_pending_mls_binding = state_store
+        .read()
+        .space_has_pending_mls_binding(&selected_space);
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
@@ -351,8 +341,8 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            // Round 23 (M7): pending_mls_binding toast — when a recent
-            // E2EE message Move asserts a covered_frontier the local
+            // Pending MLS binding toast — when a recent E2EE message Event
+            // asserts a covered_frontier the local
             // MLS view has not yet acknowledged. Stays up until the
             // user clears the underlying Move record.
             if space_pending_mls_binding {
@@ -1014,7 +1004,6 @@ pub fn SpaceAdminPanel(
                                         return;
                                     }
                                     let wait_for = active_sync_token(&sync_cursor());
-                                    let expected_head = expected_head(repo_state());
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                             Ok(api) => match api.invite_to_space(&space, &target, None).await {
@@ -1028,23 +1017,8 @@ pub fn SpaceAdminPanel(
                                                         &resp.state,
                                                     )
                                                     .build("yougen");
-                                                    let commit = CommitBuilder::new(actor.clone())
-                                                        .add_operation(op.clone())
-                                                        .build();
-                                                    let commit_value = match serde_json::to_value(&commit) {
-                                                        Ok(value) => value,
-                                                        Err(error) => {
-                                                            status_msg.set(format!("invite serialize failed: {error}"));
-                                                            return;
-                                                        }
-                                                    };
                                                     match api
-                                                        .submit_commit(
-                                                            &actor,
-                                                            commit_value,
-                                                            expected_head.as_deref(),
-                                                            Some(&op.operation_id),
-                                                        )
+                                                        .submit_operation_event(&op)
                                                         .await
                                                     {
                                                         Ok(submitted) => {
@@ -1054,14 +1028,9 @@ pub fn SpaceAdminPanel(
                                                                 role: None,
                                                                 state: resp.state.clone(),
                                                                 operation_id: Some(op.operation_id.clone()),
-                                                                commit_id: Some(submitted.commit_id.clone()),
+                                                                event_id: Some(submitted.event_id.clone()),
                                                             });
-                                                            repo_state.set(
-                                                                submitted
-                                                                    .head_commit
-                                                                    .clone()
-                                                                    .unwrap_or(submitted.commit_id.clone()),
-                                                            );
+                                                            repo_state.set(submitted.event_id.clone());
                                                             sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
@@ -1074,7 +1043,7 @@ pub fn SpaceAdminPanel(
                                                                         "invite_id": resp.invite_id,
                                                                         "target": resp.target,
                                                                         "state": resp.state,
-                                                                        "commit_id": submitted.commit_id,
+                                                                        "event_id": submitted.event_id,
                                                                     }),
                                                                 );
                                                             }
@@ -1374,8 +1343,8 @@ pub fn SpaceAdminPanel(
                         if let Some(operation_id) = &invite.operation_id {
                             div { class: "muted", "fact {operation_id}" }
                         }
-                        if let Some(commit_id) = &invite.commit_id {
-                            div { class: "muted", "commit {commit_id}" }
+                        if let Some(event_id) = &invite.event_id {
+                            div { class: "muted", "event {event_id}" }
                         }
                         div { class: "actions",
                             button {
@@ -1393,29 +1362,13 @@ pub fn SpaceAdminPanel(
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
                                         let wait_for = active_sync_token(&sync_cursor());
-                                        let expected_head = expected_head(repo_state());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => match api.accept_space_invite(&space, &invite_id).await {
                                                     Ok(resp) => {
                                                         let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
-                                                        let commit = CommitBuilder::new(actor.clone())
-                                                            .add_operation(op.clone())
-                                                            .build();
-                                                        let commit_value = match serde_json::to_value(&commit) {
-                                                            Ok(value) => value,
-                                                            Err(error) => {
-                                                                status_msg.set(format!("accept serialize failed: {error}"));
-                                                                return;
-                                                            }
-                                                        };
                                                         match api
-                                                            .submit_commit(
-                                                                &actor,
-                                                                commit_value,
-                                                                expected_head.as_deref(),
-                                                                Some(&op.operation_id),
-                                                            )
+                                                            .submit_operation_event(&op)
                                                             .await
                                                         {
                                                             Ok(submitted) => {
@@ -1423,15 +1376,10 @@ pub fn SpaceAdminPanel(
                                                                     if row.invite_id == invite_id {
                                                                         row.state = resp.state.clone();
                                                                         row.operation_id = Some(op.operation_id.clone());
-                                                                        row.commit_id = Some(submitted.commit_id.clone());
+                                                                        row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
-                                                                repo_state.set(
-                                                                    submitted
-                                                                        .head_commit
-                                                                        .clone()
-                                                                        .unwrap_or(submitted.commit_id.clone()),
-                                                                );
+                                                                repo_state.set(submitted.event_id.clone());
                                                                 sync_cursor.set(submitted.sync_token.clone());
                                                                 {
                                                                     let mut store = state_store.write();
@@ -1443,7 +1391,7 @@ pub fn SpaceAdminPanel(
                                                                             "kind": "cx.invite.accept",
                                                                             "invite_id": invite_id,
                                                                             "state": resp.state,
-                                                                            "commit_id": submitted.commit_id,
+                                                                            "event_id": submitted.event_id,
                                                                         }),
                                                                     );
                                                                 }
@@ -1476,7 +1424,6 @@ pub fn SpaceAdminPanel(
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
                                         let wait_for = active_sync_token(&sync_cursor());
-                                        let expected_head = expected_head(repo_state());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => match api.reject_space_invite(&space, &invite_id).await {
@@ -1488,23 +1435,8 @@ pub fn SpaceAdminPanel(
                                                             Some("declined"),
                                                         )
                                                         .build("yougen");
-                                                        let commit = CommitBuilder::new(actor.clone())
-                                                            .add_operation(op.clone())
-                                                            .build();
-                                                        let commit_value = match serde_json::to_value(&commit) {
-                                                            Ok(value) => value,
-                                                            Err(error) => {
-                                                                status_msg.set(format!("cancel serialize failed: {error}"));
-                                                                return;
-                                                            }
-                                                        };
                                                         match api
-                                                            .submit_commit(
-                                                                &actor,
-                                                                commit_value,
-                                                                expected_head.as_deref(),
-                                                                Some(&op.operation_id),
-                                                            )
+                                                            .submit_operation_event(&op)
                                                             .await
                                                         {
                                                             Ok(submitted) => {
@@ -1512,15 +1444,10 @@ pub fn SpaceAdminPanel(
                                                                     if row.invite_id == invite_id {
                                                                         row.state = resp.state.clone();
                                                                         row.operation_id = Some(op.operation_id.clone());
-                                                                        row.commit_id = Some(submitted.commit_id.clone());
+                                                                        row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
-                                                                repo_state.set(
-                                                                    submitted
-                                                                        .head_commit
-                                                                        .clone()
-                                                                        .unwrap_or(submitted.commit_id.clone()),
-                                                                );
+                                                                repo_state.set(submitted.event_id.clone());
                                                                 sync_cursor.set(submitted.sync_token.clone());
                                                                 {
                                                                     let mut store = state_store.write();
@@ -1532,7 +1459,7 @@ pub fn SpaceAdminPanel(
                                                                             "kind": "cx.invite.cancel",
                                                                             "invite_id": invite_id,
                                                                             "state": resp.state,
-                                                                            "commit_id": submitted.commit_id,
+                                                                            "event_id": submitted.event_id,
                                                                         }),
                                                                     );
                                                                 }
@@ -1689,8 +1616,7 @@ pub fn SpaceAdminPanel(
             //   claim_based (subtype: approval / accountability / ...)
             //   confidentiality (subtype: encryption / visibility / sensitive_handling)
             // The grant-explanation rows below treat constraint as a description hint;
-            // any future write UI MUST emit `(family, subtype)` pairs, not the legacy
-            // 14-type names. v0 → v1 mapping table is in constraint-schema.md §2.2.
+            // any future write UI MUST emit `(family, subtype)` pairs.
             div { class: "event", "data-testid": "grant-explanation",
                 div { class: "event-head",
                     span { "Capability Grants" }
@@ -1851,8 +1777,7 @@ pub fn SpaceAdminPanel(
                                 // Round 22: pull the active constraint
                                 // from the editor signals and thread it
                                 // through the builder. Empty input
-                                // yields no constraint (and the legacy
-                                // wire shape).
+                                // yields no constraint.
                                 let kind = cap_constraint_kind();
                                 let constraints: Vec<CapabilityConstraintInput> =
                                     if kind == "temporal" {
@@ -2318,10 +2243,6 @@ pub fn SpaceAdminPanel(
     }
 }
 
-fn expected_head(repo_state: String) -> Option<String> {
-    repo_state.starts_with("cx:commit:").then_some(repo_state)
-}
-
 #[cfg(test)]
 mod move_flow_tests {
     use super::*;
@@ -2342,7 +2263,10 @@ mod move_flow_tests {
         let signing_key = SigningKey::from_bytes(&[42u8; 32]);
         let device_did =
             crate::move_builder::did_key_from_verifying_key(&signing_key.verifying_key());
-        LocalIdentity { device_did, signing_key }
+        LocalIdentity {
+            device_did,
+            signing_key,
+        }
     }
 
     /// "Save Metadata (Move)" wiring: produces a cx.space.update Move
@@ -2458,10 +2382,7 @@ mod move_flow_tests {
             "capability grant must target the capability.grant.v1 cell family"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
-        assert_eq!(
-            effect.op.tag.as_deref(),
-            Some("discussion.message.create")
-        );
+        assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
         // Detached JWS attached so soland's verifier can validate.
         assert!(!signed.sig.jws.is_empty());
     }
@@ -2533,11 +2454,10 @@ mod move_flow_tests {
     }
 
     /// Round 22: when no constraints are passed, the wire shape (and
-    /// content-addressed move id) match the legacy capability grant
-    /// builder — so adding the constraint plumbing is a no-op for
-    /// existing users.
+    /// content-addressed move id) match the direct no-constraint grant
+    /// builder.
     #[test]
-    fn build_signed_capability_grant_empty_constraints_matches_legacy_id() {
+    fn build_signed_capability_grant_empty_constraints_matches_direct_id() {
         let identity = fixed_identity();
         let with_empty = build_signed_capability_grant_with_constraints(
             &identity,
@@ -2549,7 +2469,7 @@ mod move_flow_tests {
             fixed_hlc(),
         )
         .unwrap();
-        let legacy = build_signed_capability_grant(
+        let direct = build_signed_capability_grant(
             &identity,
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cap.demo-01",
@@ -2558,7 +2478,7 @@ mod move_flow_tests {
             fixed_hlc(),
         )
         .unwrap();
-        assert_eq!(with_empty.id.as_str(), legacy.id.as_str());
+        assert_eq!(with_empty.id.as_str(), direct.id.as_str());
     }
 
     /// Different from-state values produce different content-addressed

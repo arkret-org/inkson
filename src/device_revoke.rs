@@ -73,7 +73,9 @@ impl DeviceRevokeStep {
     /// 一句话解释当前步骤，UI 可直接渲染给用户预览。
     pub fn description(&self) -> String {
         match self {
-            Self::LocalRevoke => "标记本地 DeviceManager + E2eeManager 中的 revoked 状态".to_owned(),
+            Self::LocalRevoke => {
+                "标记本地 DeviceManager + E2eeManager 中的 revoked 状态".to_owned()
+            }
             Self::CxDeviceRevoked => "写入 cx.device.revoked 到 actor event chain".to_owned(),
             Self::MlsProposeRemove { group_id } => {
                 format!("发起 MLS Remove proposal · group={group_id}")
@@ -82,10 +84,12 @@ impl DeviceRevokeStep {
             Self::MlsWelcome {
                 group_id,
                 recipient_count,
-            } => format!(
-                "给 {recipient_count} 名仍在 group 中的成员发送 Welcome · group={group_id}"
-            ),
-            Self::InvalidateKeyPackages => "把被撤销设备未消费的 KeyPackages 从 OTK pool 作废".to_owned(),
+            } => {
+                format!("给 {recipient_count} 名仍在 group 中的成员发送 Welcome · group={group_id}")
+            }
+            Self::InvalidateKeyPackages => {
+                "把被撤销设备未消费的 KeyPackages 从 OTK pool 作废".to_owned()
+            }
             Self::UnregisterPushToken => "通知 push gateway 取消该设备的脱敏唤醒注册".to_owned(),
         }
     }
@@ -119,10 +123,7 @@ impl DeviceRevokePlan {
             steps.push(DeviceRevokeStep::MlsCommit {
                 group_id: group_id.clone(),
             });
-            let recipient_count = survivors_per_group
-                .get(group_id)
-                .copied()
-                .unwrap_or(0);
+            let recipient_count = survivors_per_group.get(group_id).copied().unwrap_or(0);
             steps.push(DeviceRevokeStep::MlsWelcome {
                 group_id: group_id.clone(),
                 recipient_count,
@@ -180,7 +181,7 @@ impl DeviceRevokePlan {
 // 1. an MLS commit Move that removes the device's leaf (`cx.mls.commit`
 //    via the `cx.component.mls.epoch.v1` cas-register), and
 // 2. an epoch-advance Move that bumps `covered_frontier` so subsequent
-//    message Moves can reference the post-revocation MLS state.
+//    message Events can reference the post-revocation MLS state.
 //
 // Each chain entry tracks the lifecycle of those Moves
 // individually — both must reach `Effective` before the device is
@@ -270,7 +271,10 @@ pub enum ChainMoveState {
 
 impl ChainMoveState {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Effective | Self::Failed { .. } | Self::Cancelled)
+        matches!(
+            self,
+            Self::Effective | Self::Failed { .. } | Self::Cancelled
+        )
     }
 
     pub fn is_failed(&self) -> bool {
@@ -403,10 +407,12 @@ mod chain_tests {
     #[test]
     fn chain_move_state_is_terminal_for_effective_failed_cancelled() {
         assert!(ChainMoveState::Effective.is_terminal());
-        assert!(ChainMoveState::Failed {
-            reason: "x".to_owned()
-        }
-        .is_terminal());
+        assert!(
+            ChainMoveState::Failed {
+                reason: "x".to_owned()
+            }
+            .is_terminal()
+        );
         assert!(ChainMoveState::Cancelled.is_terminal());
         assert!(!ChainMoveState::NotSubmitted.is_terminal());
         assert!(!ChainMoveState::Pending.is_terminal());
@@ -518,7 +524,9 @@ mod tests {
             .steps
             .iter()
             .find_map(|s| match s {
-                DeviceRevokeStep::MlsWelcome { recipient_count, .. } => Some(*recipient_count),
+                DeviceRevokeStep::MlsWelcome {
+                    recipient_count, ..
+                } => Some(*recipient_count),
                 _ => None,
             })
             .unwrap();

@@ -7,7 +7,7 @@ use crate::{
     models::SpacePreview,
     views::{
         helpers::{authed_api, authed_api_with_sync, handle_from_did},
-        timeline::TimelineEvent,
+        timeline::{TimelineEvent, message_create_operation},
     },
 };
 
@@ -267,48 +267,50 @@ pub fn ProductPanel(
                                     let wait_for = active_sync_token(sync_cursor());
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
-                                            Ok(api) => match api.send_message(
-                                                &space,
-                                                None,
-                                                json!({"msgtype": "m.text", "body": body}),
-                                                false,
-                                            ).await {
+                                            Ok(api) => {
+                                                let op = message_create_operation(
+                                                    &space,
+                                                    &actor,
+                                                    None,
+                                                    &body,
+                                                );
+                                                match api.submit_operation_event(&op).await {
                                                 Ok(sent) => {
                                                     sync_cursor.set(sent.sync_token.clone());
-                                                    repo_state.set(sent.head_commit.clone().unwrap_or(sent.commit_id.clone()));
+                                                    repo_state.set(sent.event_id.clone());
                                                     {
                                                         let mut store = state_store.write();
                                                         store.save_sync_cursor(sent.sync_token.clone());
                                                         store.append_raw_operation(
-                                                            sent.operation_id.clone(),
+                                                            op.operation_id.clone(),
                                                             Some(space.clone()),
                                                             json!({
                                                                 "event_id": sent.event_id.clone(),
-                                                                "commit_id": sent.commit_id.clone(),
-                                                                "head_commit": sent.head_commit.clone(),
                                                                 "kind": "cx.message.create",
+                                                                "status": sent.status,
                                                             }),
                                                         );
                                                     }
                                                     timeline.write().push(TimelineEvent {
                                                         id: sent.event_id.clone(),
-                                                        sender: actor,
+                                                        sender: actor.clone(),
                                                         sender_display: "product".to_owned(),
                                                         body: format!(
-                                                            "persisted event {} commit {}",
-                                                            sent.event_id, sent.commit_id
+                                                            "persisted event {}",
+                                                            sent.event_id
                                                         ),
                                                         timestamp: chrono::Utc::now()
                                                             .format("%Y-%m-%d %H:%M")
                                                             .to_string(),
-                                                        operation_id: Some(sent.operation_id.clone()),
-                                                        commit_id: Some(sent.commit_id.clone()),
+                                                        operation_id: Some(op.operation_id.clone()),
+                                                        event_id: Some(sent.event_id.clone()),
                                                         ..TimelineEvent::default()
                                                     });
-                                                    message_state.set(format!("persisted {} via {}", sent.operation_id, sent.commit_id));
+                                                    message_state.set(format!("persisted {} via {}", op.operation_id, sent.event_id));
                                                 }
                                                 Err(error) => message_state.set(format!("persist failed: {error}")),
-                                            },
+                                                }
+                                            }
                                             Err(error) => message_state.set(format!("invalid server URL: {error}")),
                                         }
                                     });

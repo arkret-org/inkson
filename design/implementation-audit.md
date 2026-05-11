@@ -10,7 +10,7 @@ This audit compares the refreshed full application design pages with the current
 | --- | --- | --- | --- |
 | `login.html` | `/login` | Existing login surface covers health, passkey challenge, OIDC redirect, dev login, token refresh. | Align visual layout with new auth design and keep production WebAuthn callback work separate. |
 | `register.html` | `/register` | Existing registration wizard covers DID method, handle, profile, proof placeholder, recovery selection, account creation. | Replace placeholder proof/recovery with production ceremony when backend is ready. |
-| `dashboard.html` | `/` dashboard | Existing dashboard and shell show spaces, sync, queue, repo and readiness state. | Add recent Board and Inbox sections from design. |
+| `dashboard.html` | `/` dashboard | Existing dashboard and shell show spaces, sync, queue and readiness state. | Add recent Board and Inbox sections from design. |
 | `space.html` | `/timeline/:space_id` and right panel | Current Space view is timeline-first. | Add Space overview projection for Boards, Rooms, activity and lazy links. |
 | `board-room-workbench.html` | `/kanban` | Current `src/views/kanban.rs` is local demo state. | Implement AppView board projection from `board/list/card/contains relation`; use `cx.flow.move` / `cx.flow.reorder`. |
 | `card-detail.html` | Not yet first-class | Current Kanban modal is minimal. | Build Card drawer with fields, linked Rooms, primary Room chat, activity and audit. |
@@ -21,7 +21,7 @@ This audit compares the refreshed full application design pages with the current
 | `space-admin.html` | `/space/:space_id/admin` | Existing admin covers metadata, invites, members, MLS rotation and archive. | Add Room-scoped external admission and grant explanation UI. |
 | `devices.html` | `/devices` | Existing devices page covers queues, push and crypto summaries. | Add richer key package, SAS and revocation impacts. |
 | `verify-device.html` | `/devices/verify` | Existing verify route exists. | Align QR/SAS ceremony and trust impact copy. |
-| `audit.html` | `/audit` | Existing audit page covers repo commits and operations. | Add projection origin, authz explanation and board position conflict detail. |
+| `audit.html` | `/audit` | Existing audit page covers signed events and operations. | Add projection origin, authz explanation and board position conflict detail. |
 | `settings.html` | `/settings` | Existing settings cover server, storage, encryption, MIMI, push, privacy, theme, release, recovery. | Separate actor-private view preferences from shared `cx.view.update`. |
 
 ## Main Gaps

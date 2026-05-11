@@ -1,59 +1,20 @@
-use std::collections::HashMap;
-
 use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::views::helpers::authed_api;
 
-#[derive(Clone, Debug, PartialEq)]
-struct ConflictGroup {
-    target_ref: String,
-    operations: Vec<Value>,
-}
-
-fn detect_conflicts(ops: &[Value]) -> Vec<ConflictGroup> {
-    let mut by_target: HashMap<String, Vec<Value>> = HashMap::new();
-    for op in ops {
-        if let Some(target) = op.get("target_ref").and_then(|v| v.as_str()) {
-            by_target
-                .entry(target.to_owned())
-                .or_default()
-                .push(op.clone());
-        }
-    }
-    by_target
-        .into_iter()
-        .filter(|(_, ops)| {
-            if ops.len() < 2 {
-                return false;
-            }
-            let actors: std::collections::HashSet<_> = ops
-                .iter()
-                .filter_map(|o| o.get("actor").and_then(|v| v.as_str()))
-                .collect();
-            actors.len() > 1
-        })
-        .map(|(target_ref, operations)| ConflictGroup {
-            target_ref,
-            operations,
-        })
-        .collect()
-}
+const DEMO_SPACE_ID: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 
 #[component]
 pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
     let mut next_batch = use_signal(|| String::new());
-    let mut batch_size = use_signal(|| 0usize);
-    let mut operations = use_signal(Vec::<Value>::new);
-    let mut conflicts = use_signal(Vec::<ConflictGroup>::new);
-    let snapshots = use_signal(Vec::<Value>::new);
-    let mut commits = use_signal(Vec::<Value>::new);
+    let mut event_count = use_signal(|| 0usize);
+    let mut frontier_ref = use_signal(|| String::new());
     let mut status_msg = use_signal(|| String::new());
-    let mut head_commit = use_signal(|| String::new());
-    let mut resolved_target = use_signal(|| Option::<String>::None);
     let mut capability_actor = use_signal(|| "did:web:alice.example".to_owned());
     let mut capability_action = use_signal(|| "space.read".to_owned());
-    let mut capability_resource = use_signal(|| "cx:space:0196419b-0000-7000-8000-000000000000".to_owned());
+    let mut capability_resource =
+        use_signal(|| "cx:space:0196419b-0000-7000-8000-000000000000".to_owned());
     let mut capability_grants = use_signal(Vec::<Value>::new);
     let mut capability_state_hash = use_signal(|| Option::<String>::None);
     let mut capability_decision = use_signal(|| String::new());
@@ -61,27 +22,23 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
 
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel",
-            // Projection origin banner — claude-design desktop/audit.html
-            // sync/operations-sync.md (Event Envelope is canonical; projections are derived)
             div { class: "event", "data-testid": "projection-origin-banner",
                 div { class: "event-head",
                     span { "Projection origin" }
                     span { "signed Event → reducer → projection" }
                 }
                 div { class: "muted",
-                    "本页所有视图都源于 signed Event Envelope；projection 缓存丢失后必须能从 prev_refs / auth_refs 重新计算。Principal Server 不可伪造 Event；Capability cache 命中必须绑定 causal frontier 与 policy version，否则 fail closed 重新执行 authz。"
+                    "本页所有视图都源于 signed Event Envelope；projection 缓存丢失后必须能从 prev_refs / refs 重新计算。Principal Server 不可伪造 Event；Capability cache 命中必须绑定 causal frontier 与 policy version，否则 fail closed 重新执行 authz。"
                 }
                 div { class: "actions",
                     span { class: "badge blue", "actor event chain" }
-                    span { class: "badge", "auth_refs" }
+                    span { class: "badge", "refs" }
                     span { class: "badge", "prev_refs" }
                     span { class: "badge green", "reducer profile" }
                     span { class: "badge amber", "fail-closed on cache miss" }
                 }
             }
 
-            // Conflict trail explainer — claude-design desktop/audit.html
-            // models/views.md §10 + state-resolution-conformance-vectors
             div { class: "event", "data-testid": "conflict-trail",
                 div { class: "event-head",
                     span { "Conflict trail" }
@@ -107,16 +64,8 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                         div { class: "muted", "(board_id, flow_id) active edge dedupe" }
                     }
                 }
-                div { class: "actions",
-                    button { class: "primary", "data-testid": "conflict-restore-button", "恢复 Alice 的写入（创建新 cx.flow.move）" }
-                    button { class: "secondary", "data-testid": "conflict-keep-button", "保留当前结果" }
-                }
             }
 
-            // Schema evolution — conformance/schema-registry.md
-            // cx.schema.{define,update} 是 Space schema 注册 / 演进的写入路径。
-            // 客户端遇到未知 morph_type / facet 时 SHOULD 保留数据但不允许它绕开
-            // schema / capability / encryption 约束。
             div { class: "event", "data-testid": "schema-evolution",
                 div { class: "event-head",
                     span { "Schema evolution" }
@@ -144,8 +93,6 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
-            // Authz explanation — claude-design desktop/audit.html
-            // authz/event-auth-state-resolution.md
             div { class: "event", "data-testid": "authz-decisions",
                 div { class: "event-head",
                     span { "Capability decisions" }
@@ -183,21 +130,20 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
             }
 
-            // Next batch display
             div { class: "event", "data-testid": "batch-display",
-                div { class: "event-head", span { "Sync Batch" } span { "cursor" } }
+                div { class: "event-head", span { "Event Audit" } span { "frontier" } }
                 div { class: "metric-grid",
                     div { class: "metric",
-                        strong { "Next Batch" }
-                        span { "{next_batch}" }
+                        strong { "Next Cursor" }
+                        span { if next_batch().is_empty() { "not loaded" } else { "{next_batch}" } }
                     }
                     div { class: "metric",
-                        strong { "Batch Size" }
-                        span { "{batch_size}" }
+                        strong { "Visible Events" }
+                        span { "{event_count}" }
                     }
                     div { class: "metric",
-                        strong { "Head Commit" }
-                        span { "{head_commit}" }
+                        strong { "Snapshot" }
+                        span { if frontier_ref().is_empty() { "not loaded" } else { "{frontier_ref}" } }
                     }
                 }
                 div { class: "actions",
@@ -211,25 +157,29 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                                 let api_token = token();
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
-                                        if let Ok(repo) = api.repo_describe().await {
-                                            head_commit.set(repo.head_commit.unwrap_or_else(|| "empty".to_owned()));
-                                        }
-                                        match api.list_commits(50).await {
+                                        match api.backfill(DEMO_SPACE_ID).await {
                                             Ok(resp) => {
-                                                batch_size.set(resp.commits.len());
-                                                next_batch.set(resp.next_cursor.clone().unwrap_or_else(|| "end".to_owned()));
-                                                commits.set(resp.commits);
+                                                event_count.set(resp.events.len());
+                                                next_batch.set(
+                                                    resp.next_cursor
+                                                        .or(resp.prev_cursor)
+                                                        .unwrap_or_else(|| "end".to_owned()),
+                                                );
                                             }
-                                            Err(e) => status_msg.set(format!("commits failed: {e}")),
-                                        }
-                                        match api.get_operations(&[]).await {
-                                            Ok(resp) => {
-                                                conflicts.set(detect_conflicts(&resp.operations));
-                                                operations.set(resp.operations);
+                                            Err(error) => {
+                                                status_msg.set(format!("events query failed: {error}"));
+                                                return;
                                             }
-                                            Err(e) => status_msg.set(format!("operations failed: {e}")),
                                         }
-                                        status_msg.set("Audit data loaded".to_owned());
+                                        match api.snapshot_head(DEMO_SPACE_ID).await {
+                                            Ok(snapshot) => {
+                                                frontier_ref.set(snapshot.snapshot_ref);
+                                                status_msg.set("Audit data loaded".to_owned());
+                                            }
+                                            Err(error) => {
+                                                status_msg.set(format!("snapshot failed: {error}"));
+                                            }
+                                        }
                                     }
                                 });
                             }
@@ -243,14 +193,14 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "event-head", span { "Event Envelope" } span { "write plane" } }
                 div { class: "metric-grid",
                     div { class: "metric", strong { "actor_seq" } span { "42" } div { class: "muted", "monotonic per actor" } }
-                    div { class: "metric", strong { "event_id" } span { "cx:event:preview" } div { class: "muted", "content-addressed after signing" } }
-                    div { class: "metric", strong { "frontier" } span { if head_commit().is_empty() { "not loaded" } else { "{head_commit}" } } div { class: "muted", "projection source" } }
-                    div { class: "metric", strong { "auth_refs" } span { "cx:capability:board.write" } div { class: "muted", "authorization proof references" } }
+                    div { class: "metric", strong { "event_id" } span { "cx:event:preview" } div { class: "muted", "UUIDv7 event identifier" } }
+                    div { class: "metric", strong { "frontier" } span { if frontier_ref().is_empty() { "not loaded" } else { "{frontier_ref}" } } div { class: "muted", "projection source" } }
+                    div { class: "metric", strong { "refs" } span { "role=authorized_by" } div { class: "muted", "authorization proof references" } }
                     div { class: "metric", strong { "schema" } span { "cx.schema.core.v1" } div { class: "muted", "validated before reducer" } }
                     div { class: "metric", strong { "reducer" } span { "cx.reducer.v1" } div { class: "muted", "state hash after projection" } }
                 }
                 div { class: "muted",
-                    "Audit links UI actions to submitted events, reducer receipts, projection hashes, authz explanation, and conflict records."
+                    "Audit links UI actions to submitted events, reducer receipts, projection hashes, authz explanation, and causal frontier metadata."
                 }
             }
 
@@ -347,12 +297,12 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                             "constraints {json_value(&grant, &[\"constraints\", \"obligations\"])}"
                         }
                         {
-                            let allowed_facets = capability_allowed_entity_facets(&grant);
+                            let allowed_facets = capability_facet_allow(&grant);
                             if !allowed_facets.is_empty() {
                                 let allowed_facets_label = allowed_facets.join(", ");
                                 rsx! {
                                     div { class: "muted", "data-testid": "capability-allowed-facets",
-                                        "allowed entity facets {allowed_facets_label}"
+                                        "facet_allow {allowed_facets_label}"
                                     }
                                 }
                             } else {
@@ -371,191 +321,6 @@ pub fn AuditPanel(base_url: String, token: Signal<String>) -> Element {
                 }
                 if capability_grants().is_empty() {
                     div { class: "muted", "No grants loaded. Click Load Capabilities." }
-                }
-            }
-
-            // Raw operations table
-            div { class: "event", "data-testid": "operations-table",
-                div { class: "event-head", span { "Operations" } span { "{operations().len()}" } }
-                for op in operations() {
-                    div { class: "event", "data-testid": "operation-row",
-                        div { class: "event-head",
-                            span { "{op.get(\"kind\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
-                            span { "{op.get(\"actor\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
-                        }
-                        div { class: "muted",
-                            "{op.get(\"operation_id\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
-                        }
-                        div { class: "muted",
-                            "{op.get(\"timestamp\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
-                        }
-                        {let preview = op.get("preview").and_then(|v| v.as_str()).unwrap_or("");
-                        rsx! { div { class: "muted", "{preview}" } }}
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "inspect-operation-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let op_id = op.get("operation_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let op_id = op_id.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.get_operations(&[op_id.clone()]).await {
-                                                    Ok(resp) => status_msg.set(format!("inspected: {} ops", resp.operations.len())),
-                                                    Err(e) => status_msg.set(format!("inspect failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Inspect"
-                            }
-                        }
-                    }
-                }
-                if operations().is_empty() {
-                    div { class: "muted", "No operations loaded. Click Refresh." }
-                }
-            }
-
-            // Conflicts display with resolution
-            div { class: "event", "data-testid": "conflicts-display",
-                div { class: "event-head", span { "Conflicts" } span { "{conflicts().len()}" } }
-                for conflict in conflicts() {
-                    div { class: "event", "data-testid": "conflict-row",
-                        div { class: "event-head",
-                            span { "target" }
-                            span { class: "muted", "{conflict.target_ref}" }
-                        }
-                        div { class: "muted",
-                            "{conflict.operations.len()} competing operations from different actors"
-                        }
-                        for op in &conflict.operations {
-                            div { class: "event", style: "margin-left: 16px; border-left: 2px solid var(--warning, #f59e0b); padding-left: 8px;",
-                                div { class: "event-head",
-                                    span { "{op.get(\"kind\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
-                                    span { class: "muted", "{op.get(\"actor\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
-                                }
-                                div { class: "muted",
-                                    "op: {op.get(\"operation_id\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
-                                }
-                                div { class: "muted",
-                                    "ts: {op.get(\"timestamp\").and_then(|v| v.as_str()).unwrap_or(\"\")}"
-                                }
-                            }
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "primary",
-                                "data-testid": "resolve-conflict-lww",
-                                onclick: {
-                                    let target = conflict.target_ref.clone();
-                                    move |_| {
-                                        resolved_target.set(Some(target.clone()));
-                                        status_msg.set(format!(
-                                            "Resolved {} via LWW (last-write-wins): accepting most recent operation",
-                                            target
-                                        ));
-                                    }
-                                },
-                                "Resolve LWW"
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "resolve-conflict-manual",
-                                onclick: {
-                                    let target = conflict.target_ref.clone();
-                                    move |_| {
-                                        resolved_target.set(Some(target.clone()));
-                                        status_msg.set(format!(
-                                            "Manual resolution selected for {target}. Review operations above and apply the correct state."
-                                        ));
-                                    }
-                                },
-                                "Manual Review"
-                            }
-                        }
-                        if resolved_target() == Some(conflict.target_ref.clone()) {
-                            div { class: "muted", style: "color: var(--success, #10b981);",
-                                "Conflict marked as resolved"
-                            }
-                        }
-                    }
-                }
-                if conflicts().is_empty() {
-                    div { class: "muted", "No conflicts detected. Click Refresh to scan operations." }
-                }
-            }
-
-            // Snapshots table
-            div { class: "event", "data-testid": "snapshots-table",
-                div { class: "event-head", span { "Snapshots" } span { "{snapshots().len()}" } }
-                for snapshot in snapshots() {
-                    div { class: "event", "data-testid": "snapshot-row",
-                        div { class: "event-head",
-                            span { "snapshot" }
-                            span { "{snapshot.get(\"ref\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
-                        }
-                        div { class: "muted", "{snapshot}" }
-                    }
-                }
-                if snapshots().is_empty() {
-                    div { class: "muted", "No snapshots loaded." }
-                }
-            }
-
-            // Commits table with signature status
-            div { class: "event", "data-testid": "commits-table",
-                div { class: "event-head", span { "Commits" } span { "{commits().len()}" } }
-                for commit in commits() {
-                    div { class: "event", "data-testid": "commit-row",
-                        div { class: "event-head",
-                            span { "commit" }
-                            span { "{commit.get(\"commit_id\").and_then(|v| v.as_str()).unwrap_or(commit.get(\"id\").and_then(|v| v.as_str()).unwrap_or(\"-\"))}" }
-                        }
-                        div { class: "muted",
-                            "Signatures: {commit.get(\"signatures\").map(|v| v.to_string()).unwrap_or_else(|| \"none\".to_owned())}"
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "verify-commit-button",
-                                onclick: move |_| {
-                                    status_msg.set("Signature verification pending".to_owned());
-                                },
-                                "Verify"
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "inspect-commit-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let cid = commit.get("commit_id").or_else(|| commit.get("id")).and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let cid = cid.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.get_commit(&cid).await {
-                                                    Ok(resp) => status_msg.set(format!("commit has {} operations", resp.operations.len())),
-                                                    Err(e) => status_msg.set(format!("inspect failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Inspect"
-                            }
-                        }
-                    }
-                }
-                if commits().is_empty() {
-                    div { class: "muted", "No commits loaded. Click Refresh." }
                 }
             }
 
@@ -581,17 +346,17 @@ fn json_value(value: &Value, keys: &[&str]) -> String {
         .unwrap_or_else(|| "[]".to_owned())
 }
 
-fn capability_allowed_entity_facets(grant: &Value) -> Vec<String> {
+fn capability_facet_allow(grant: &Value) -> Vec<String> {
     let mut facets = Vec::new();
-    collect_string_array(grant.get("allowed_entity_facets"), &mut facets);
+    collect_string_array(grant.get("facet_allow"), &mut facets);
 
     if let Some(constraints) = grant.get("constraints").and_then(|v| v.as_array()) {
         for constraint in constraints {
-            collect_string_array(constraint.get("allowed_entity_facets"), &mut facets);
+            collect_string_array(constraint.get("facet_allow"), &mut facets);
             collect_string_array(
                 constraint
                     .get("params")
-                    .and_then(|params| params.get("allowed_entity_facets")),
+                    .and_then(|params| params.get("facet_allow")),
                 &mut facets,
             );
         }
@@ -615,9 +380,9 @@ fn collect_string_array(value: Option<&Value>, target: &mut Vec<String>) {
 
 fn capability_denial_label(reason: &str) -> &'static str {
     let reason = reason.to_ascii_lowercase();
-    if reason.contains("entity type") || reason.contains("entity_type") {
-        "entity type label mismatch"
-    } else if reason.contains("entity facet") || reason.contains("allowed_entity_facets") {
+    if reason.contains("object type") || reason.contains("object_type") {
+        "object type label mismatch"
+    } else if reason.contains("facet") || reason.contains("facet_allow") {
         "facet capability missing"
     } else if reason.contains("stale") || reason.contains("frontier") {
         "stale frontier"
@@ -632,19 +397,6 @@ fn capability_denial_label(reason: &str) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn detects_multi_actor_conflicts_by_target_ref() {
-        let ops = vec![
-            json!({"operation_id": "op1", "target_ref": "cx:task:1", "actor": "did:web:alice"}),
-            json!({"operation_id": "op2", "target_ref": "cx:task:1", "actor": "did:web:bob"}),
-            json!({"operation_id": "op3", "target_ref": "cx:task:2", "actor": "did:web:alice"}),
-        ];
-
-        let conflicts = detect_conflicts(&ops);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].target_ref, "cx:task:1");
-    }
 
     #[test]
     fn capability_explanation_helpers_extract_fallback_fields() {
@@ -665,17 +417,17 @@ mod tests {
     }
 
     #[test]
-    fn capability_explanation_extracts_allowed_entity_facets() {
+    fn capability_explanation_extracts_facet_allow() {
         let grant = json!({
-            "allowed_entity_facets": ["renderable"],
+            "facet_allow": ["renderable"],
             "constraints": [
-                {"type": "type_restriction", "params": {"allowed_entity_facets": ["stateful", "rankable"]}},
-                {"type": "type_restriction", "allowed_entity_facets": ["renderable"]}
+                {"type": "type_restriction", "params": {"facet_allow": ["stateful", "rankable"]}},
+                {"type": "type_restriction", "facet_allow": ["renderable"]}
             ]
         });
 
         assert_eq!(
-            capability_allowed_entity_facets(&grant),
+            capability_facet_allow(&grant),
             vec![
                 "renderable".to_owned(),
                 "stateful".to_owned(),
@@ -687,11 +439,11 @@ mod tests {
     #[test]
     fn capability_denial_label_distinguishes_type_and_facet_denials() {
         assert_eq!(
-            capability_denial_label("entity type task not allowed"),
-            "entity type label mismatch"
+            capability_denial_label("object type flow not allowed"),
+            "object type label mismatch"
         );
         assert_eq!(
-            capability_denial_label("entity facet rankable not allowed or unavailable"),
+            capability_denial_label("facet rankable not allowed or unavailable"),
             "facet capability missing"
         );
     }

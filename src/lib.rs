@@ -1,8 +1,8 @@
 pub mod api;
 pub mod app;
 pub mod capability;
-pub mod components;
 pub mod coauth;
+pub mod components;
 pub mod config;
 pub mod conflict;
 pub mod conformance;
@@ -11,7 +11,6 @@ pub mod crypto_boundary;
 pub mod cursor;
 pub mod device_revoke;
 pub mod discovery;
-pub mod entity;
 pub mod hlc;
 pub mod i18n;
 pub mod key_backup;

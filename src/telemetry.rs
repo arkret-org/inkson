@@ -190,8 +190,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let path: PathBuf = std::env::temp_dir()
-            .join(format!("yougen-telemetry-{tag}-{stamp}.json"));
+        let path: PathBuf =
+            std::env::temp_dir().join(format!("yougen-telemetry-{tag}-{stamp}.json"));
         LocalStateStore::with_path(path)
     }
 

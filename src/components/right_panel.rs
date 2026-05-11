@@ -1,12 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use serde_json::Value;
 
-use crate::{
-    models::{SpaceHierarchyResponse, SpacePreview},
-    routes::Route,
-    views::helpers::authed_api,
-};
+use crate::{models::SpacePreview, routes::Route};
 
 use super::{Metric, StatusBadge};
 
@@ -30,6 +25,14 @@ struct HierarchyEdge {
     cycle_detected: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct HierarchySnapshot {
+    root_space_id: String,
+    children: Vec<HierarchyChild>,
+    edges: Vec<HierarchyEdge>,
+    cycle_detected: bool,
+}
+
 #[component]
 pub fn RightPanel(
     base_url: String,
@@ -44,7 +47,8 @@ pub fn RightPanel(
     device_id: String,
     crypto_state: String,
 ) -> Element {
-    let hierarchy = use_signal(|| Option::<SpaceHierarchyResponse>::None);
+    let _ = (&base_url, &token);
+    let hierarchy = use_signal(|| Option::<HierarchySnapshot>::None);
     let hierarchy_status = use_signal(|| "Hierarchy not loaded yet.".to_owned());
     let hierarchy_loading = use_signal(|| false);
     let mut requested_space = use_signal(String::new);
@@ -52,14 +56,7 @@ pub fn RightPanel(
     if requested_space() != selected_space {
         let sid = selected_space.clone();
         requested_space.set(sid.clone());
-        refresh_space_hierarchy(
-            base_url.clone(),
-            token(),
-            sid,
-            hierarchy,
-            hierarchy_status,
-            hierarchy_loading,
-        );
+        refresh_space_hierarchy(sid, hierarchy, hierarchy_status, hierarchy_loading);
     }
 
     let selected_name = selected_preview
@@ -103,7 +100,7 @@ pub fn RightPanel(
         .unwrap_or(false);
     let root_id = response
         .as_ref()
-        .and_then(response_root_id)
+        .map(response_root_id)
         .unwrap_or_else(|| selected_space.clone());
 
     rsx! {
@@ -180,12 +177,9 @@ pub fn RightPanel(
                         "data-testid": "right-panel-refresh-hierarchy",
                         disabled: hierarchy_loading(),
                         onclick: {
-                            let base = base_url.clone();
                             let sid = selected_space.clone();
                             move |_| {
                                 refresh_space_hierarchy(
-                                    base.clone(),
-                                    token(),
                                     sid.clone(),
                                     hierarchy,
                                     hierarchy_status,
@@ -197,7 +191,7 @@ pub fn RightPanel(
                     }
                 }
                 div { class: "muted", "data-testid": "hierarchy-query-shape",
-                    "GET /api/v1/index/space-hierarchy?space_id={selected_space}&depth=2&include_unconfirmed=true"
+                    "Derived locally from the selected Space; remote index hierarchy API is not part of the current protocol."
                 }
                 div { class: "muted", "data-testid": "hierarchy-status", role: "status", "aria-live": "polite",
                     "{hierarchy_status}"
@@ -310,164 +304,33 @@ pub fn RightPanel(
 }
 
 fn refresh_space_hierarchy(
-    base_url: String,
-    access_token: String,
     space_id: String,
-    mut hierarchy: Signal<Option<SpaceHierarchyResponse>>,
+    mut hierarchy: Signal<Option<HierarchySnapshot>>,
     mut hierarchy_status: Signal<String>,
     mut hierarchy_loading: Signal<bool>,
 ) {
     hierarchy_loading.set(true);
     hierarchy_status.set("Refreshing hierarchy...".to_owned());
-    spawn(async move {
-        match authed_api(&base_url, access_token) {
-            Ok(api) => match api
-                .index_space_hierarchy_with_options(&space_id, Some(2), Some(true))
-                .await
-            {
-                Ok(response) => {
-                    let child_count = hierarchy_children(&response).len();
-                    let edge_count = hierarchy_edges(&response).len();
-                    hierarchy.set(Some(response));
-                    hierarchy_status.set(format!(
-                        "Loaded {child_count} child Space(s) and {edge_count} edge(s)."
-                    ));
-                }
-                Err(error) => hierarchy_status.set(format!("Hierarchy refresh failed: {error}")),
-            },
-            Err(error) => hierarchy_status.set(format!("Invalid server URL: {error}")),
-        }
-        hierarchy_loading.set(false);
-    });
+    hierarchy.set(Some(HierarchySnapshot {
+        root_space_id: space_id,
+        children: Vec::new(),
+        edges: Vec::new(),
+        cycle_detected: false,
+    }));
+    hierarchy_status.set("Loaded selected Space boundary; child hierarchy is resolved from synced Space/Place events.".to_owned());
+    hierarchy_loading.set(false);
 }
 
-fn hierarchy_children(response: &SpaceHierarchyResponse) -> Vec<HierarchyChild> {
-    let root_id = response_root_id(response);
-    let source = if response.children.is_empty() {
-        &response.spaces
-    } else {
-        &response.children
-    };
-
-    source
-        .iter()
-        .filter(|value| {
-        let id = value_string(value, &["space_id", "id", "child_space_id"]);
-            id.as_ref() != root_id.as_ref()
-        })
-        .enumerate()
-        .map(|(index, value)| hierarchy_child_from_value(index, value))
-        .collect()
+fn hierarchy_children(response: &HierarchySnapshot) -> Vec<HierarchyChild> {
+    response.children.clone()
 }
 
-fn hierarchy_child_from_value(index: usize, value: &Value) -> HierarchyChild {
-    let summary = value.get("summary");
-    let space_id = value_string(value, &["space_id", "id", "child_space_id"])
-        .or_else(|| summary.and_then(|summary| value_string(summary, &["space_id", "id"])))
-        .unwrap_or_else(|| format!("child-{index}"));
-    let label = value_string(value, &["name", "title", "display_name"])
-        .or_else(|| summary.and_then(|summary| value_string(summary, &["name", "title"])))
-        .unwrap_or_else(|| space_id.clone());
-    let detail = value_string(value, &["description", "topic", "summary"])
-        .or_else(|| summary.and_then(|summary| value_string(summary, &["description", "topic"])));
-    let edge_state = value_string(value, &["edge_state", "state", "status"])
-        .unwrap_or_else(|| "confirmed".to_owned());
-    let lazy_link = value_bool(value, &["lazy_link", "lazy", "unexpanded"]).unwrap_or(false)
-        || edge_state == "unconfirmed_link";
-    let accessible = value_bool(value, &["accessible", "can_read"]).unwrap_or(!lazy_link);
-    let cycle_detected = value_bool(value, &["cycle_detected", "cycle"]).unwrap_or(false);
-
-    HierarchyChild {
-        space_id,
-        label,
-        detail,
-        edge_state,
-        accessible,
-        lazy_link,
-        cycle_detected,
-    }
+fn hierarchy_edges(response: &HierarchySnapshot) -> Vec<HierarchyEdge> {
+    response.edges.clone()
 }
 
-fn hierarchy_edges(response: &SpaceHierarchyResponse) -> Vec<HierarchyEdge> {
-    response
-        .edges
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            let from = value_string(
-                value,
-                &[
-                    "parent_space_id",
-                    "from_space_id",
-                    "source_space_id",
-                    "from",
-                    "source",
-                ],
-            )
-            .unwrap_or_else(|| {
-                response_root_id(response).unwrap_or_else(|| format!("edge-{index}-from"))
-            });
-            let to = value_string(
-                value,
-                &[
-                    "child_space_id",
-                    "to_space_id",
-                    "target_space_id",
-                    "to",
-                    "target",
-                ],
-            )
-            .unwrap_or_else(|| format!("edge-{index}-to"));
-            let state = value_string(value, &["edge_state", "state", "status"])
-                .unwrap_or_else(|| "confirmed".to_owned());
-            let lazy_link = value_bool(value, &["lazy_link", "lazy", "unexpanded"])
-                .unwrap_or(false)
-                || state == "unconfirmed_link";
-            let cycle_detected = value_bool(value, &["cycle_detected", "cycle"]).unwrap_or(false);
-
-            HierarchyEdge {
-                from,
-                to,
-                state,
-                lazy_link,
-                cycle_detected,
-            }
-        })
-        .collect()
-}
-
-fn response_root_id(response: &SpaceHierarchyResponse) -> Option<String> {
-    response.root_space_id.clone().or_else(|| {
-        if response.root.is_string() {
-            response.root.as_str().map(ToOwned::to_owned)
-        } else {
-            value_string(&response.root, &["space_id", "id", "root_space_id"])
-        }
-    })
-}
-
-fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        let found = value.get(*key)?;
-        match found {
-            Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
-            Value::Number(number) => Some(number.to_string()),
-            Value::Bool(flag) => Some(flag.to_string()),
-            _ => None,
-        }
-    })
-}
-
-fn value_bool(value: &Value, keys: &[&str]) -> Option<bool> {
-    keys.iter().find_map(|key| match value.get(*key)? {
-        Value::Bool(flag) => Some(*flag),
-        Value::String(text) => match text.as_str() {
-            "true" => Some(true),
-            "false" => Some(false),
-            _ => None,
-        },
-        _ => None,
-    })
+fn response_root_id(response: &HierarchySnapshot) -> String {
+    response.root_space_id.clone()
 }
 
 fn edge_badge_kind(state: &str) -> &'static str {

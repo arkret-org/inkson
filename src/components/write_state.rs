@@ -133,8 +133,8 @@ fn parse_write_state(s: &str) -> Option<WriteState> {
         "queued" => Some(WriteState::Queued),
         "submitted" => Some(WriteState::Submitted),
         "accepted" => Some(WriteState::Accepted),
-        "soft failed" | "soft_failed" => Some(WriteState::SoftFailed),
-        "CAS conflict" | "cas_conflict" => Some(WriteState::CasConflict),
+        "soft failed" => Some(WriteState::SoftFailed),
+        "CAS conflict" => Some(WriteState::CasConflict),
         "quarantined" => Some(WriteState::Quarantined),
         _ => None,
     }
@@ -149,7 +149,11 @@ mod tests {
         let mut labels: Vec<&str> = WriteState::all().iter().map(|s| s.label()).collect();
         labels.sort();
         labels.dedup();
-        assert_eq!(labels.len(), 8, "every WriteState variant must have a unique label");
+        assert_eq!(
+            labels.len(),
+            8,
+            "every WriteState variant must have a unique label"
+        );
     }
 
     #[test]
@@ -169,9 +173,15 @@ mod tests {
     }
 
     #[test]
-    fn write_state_parses_legacy_label_strings() {
-        assert_eq!(parse_write_state("CAS conflict"), Some(WriteState::CasConflict));
-        assert_eq!(parse_write_state("soft failed"), Some(WriteState::SoftFailed));
+    fn write_state_parses_display_label_strings() {
+        assert_eq!(
+            parse_write_state("CAS conflict"),
+            Some(WriteState::CasConflict)
+        );
+        assert_eq!(
+            parse_write_state("soft failed"),
+            Some(WriteState::SoftFailed)
+        );
         assert_eq!(parse_write_state("synced"), Some(WriteState::Synced));
         assert_eq!(parse_write_state("garbage"), None);
     }

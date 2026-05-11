@@ -105,7 +105,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_KANBAN_ONLY_CLIENT,
             label: "kanban_only_client",
-            description: "Kanban-only client: board/list/card projection and repo-backed entity operations.",
+            description: "Kanban-only client: board/list/card projection and canonical write-plane mutations.",
             local_supported: true,
             degradation_path: "Directory/index projections remain available without board mutation controls.",
             tier: ConformanceTier::V1Core,
@@ -311,9 +311,8 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Reaction
         "cx.reaction.add",
         "cx.reaction.remove",
-        // Read receipts / markers (discovery/read-receipts §6 — replaces
-        // legacy read-notification-schema; notification itself is a *derived*
-        // projection, not a canonical event).
+        // Read receipts / markers (discovery/read-receipts §6); notification
+        // itself is a derived projection, not a canonical event.
         "cx.read.marker",
         "cx.receipt.read",
         // Redaction (cross-object — separate from cx.message.redact)
@@ -477,12 +476,7 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
     let mut missing = Vec::new();
     match profile_id {
         PROFILE_MINIMAL_CLIENT => {
-            require_feature_or_operation(
-                server,
-                "sync.account",
-                "cx.sync.account",
-                &mut missing,
-            );
+            require_feature_or_operation(server, "sync.account", "cx.sync.account", &mut missing);
             require_feature_or_operation(
                 server,
                 "directory.search_spaces",
@@ -491,29 +485,19 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
             );
         }
         PROFILE_CHAT_ONLY_CLIENT => {
-            require_feature_or_operation(
-                server,
-                "sync.account",
-                "cx.sync.account",
-                &mut missing,
-            );
-            require_feature_or_operation(server, "message.send", "cx.messages.send", &mut missing);
+            require_feature_or_operation(server, "sync.account", "cx.sync.account", &mut missing);
+            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
         }
         PROFILE_KANBAN_ONLY_CLIENT => {
             require_feature_or_operation(server, "index.query", "cx.index.query", &mut missing);
-            require_feature_or_operation(
-                server,
-                "repo.submit_commit",
-                "cx.repo.submit_commit",
-                &mut missing,
-            );
+            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
         }
         PROFILE_FULL_CLIENT => {
             for (feature, operation) in [
                 ("sync.account", "cx.sync.account"),
                 ("directory.search_spaces", "cx.directory.search_spaces"),
                 ("index.query", "cx.index.query"),
-                ("repo.submit_commit", "cx.repo.submit_commit"),
+                ("events.submit", "cx.events.submit"),
                 ("authz.check", "cx.authz.check"),
                 ("space.create", "cx.spaces.create"),
             ] {
@@ -760,7 +744,7 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("message.send"))
+                .any(|missing| missing.contains("events.submit"))
         );
     }
 
@@ -870,8 +854,7 @@ mod tests {
         assert!(kinds.contains(&"cx.session.grant"));
         assert!(kinds.contains(&"cx.device.authorized"));
         assert!(kinds.contains(&"cx.device.revoked"));
-        // device-lifecycle §7-§9 (verification ceremony events; replaces
-        // legacy single `cx.device.cross_sign` placeholder).
+        // device-lifecycle §7-§9 verification ceremony events.
         assert!(kinds.contains(&"cx.key.verification.start"));
         assert!(kinds.contains(&"cx.key.verification.done"));
         // discovery/read-receipts §6 — read marker is a wire event,
@@ -897,10 +880,7 @@ mod tests {
                 kind.starts_with("cx."),
                 "event kind `{kind}` 必须使用 cx.* 命名空间"
             );
-            assert!(
-                !kind.contains(' '),
-                "event kind `{kind}` 不应包含空格"
-            );
+            assert!(!kind.contains(' '), "event kind `{kind}` 不应包含空格");
         }
     }
 
@@ -1001,10 +981,8 @@ mod tests {
             parse_snapshot_kinds(EVENT_KIND_REGISTRY_SNAPSHOT)
                 .into_iter()
                 .collect();
-        let yougen: std::collections::BTreeSet<String> = known_event_kinds()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        let yougen: std::collections::BTreeSet<String> =
+            known_event_kinds().into_iter().map(str::to_owned).collect();
 
         let missing: Vec<&String> = snapshot.difference(&yougen).collect();
         let extra: Vec<&String> = yougen.difference(&snapshot).collect();
@@ -1029,9 +1007,7 @@ mod tests {
     const EVENT_KIND_WIRE_SCOPE_SNAPSHOT: &str =
         include_str!("../tests/fixtures/event-kind-wire-scopes.snapshot.tsv");
 
-    fn parse_wire_scope_snapshot(
-        snapshot: &str,
-    ) -> Vec<(String, super::EventKindWireScope)> {
+    fn parse_wire_scope_snapshot(snapshot: &str) -> Vec<(String, super::EventKindWireScope)> {
         snapshot
             .lines()
             .map(str::trim)
@@ -1071,7 +1047,9 @@ mod tests {
             snapshot.iter().map(|(k, _)| k.clone()).collect();
         for kind in known_event_kinds() {
             if !snapshot_kinds.contains(kind) {
-                mismatches.push(format!("{kind}: in known_event_kinds but absent from snapshot"));
+                mismatches.push(format!(
+                    "{kind}: in known_event_kinds but absent from snapshot"
+                ));
             }
         }
 

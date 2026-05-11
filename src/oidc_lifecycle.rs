@@ -281,8 +281,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let path: PathBuf = std::env::temp_dir()
-            .join(format!("yougen-oidc-lifecycle-{tag}-{stamp}.json"));
+        let path: PathBuf =
+            std::env::temp_dir().join(format!("yougen-oidc-lifecycle-{tag}-{stamp}.json"));
         LocalStateStore::with_path(path)
     }
 
@@ -390,10 +390,7 @@ mod tests {
             RefreshDecision::NoBundle.as_event(),
             OidcLifecycleEvent::NoBundle
         );
-        assert_eq!(
-            RefreshDecision::Fresh.as_event(),
-            OidcLifecycleEvent::Fresh
-        );
+        assert_eq!(RefreshDecision::Fresh.as_event(), OidcLifecycleEvent::Fresh);
         assert_eq!(
             RefreshDecision::NoRefreshToken.as_event(),
             OidcLifecycleEvent::NoRefreshToken

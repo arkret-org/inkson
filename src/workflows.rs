@@ -83,7 +83,7 @@ pub fn production_release_workflows() -> Vec<ProductWorkflow> {
             server_dependency: "Needs leave/archive UX, tombstone policy, and history retention enforcement",
         },
         ProductWorkflow {
-            id: "message.send",
+            id: "message.create",
             name: "Plaintext and local encrypted compose",
             stage: WorkflowStage::ClientReady,
             client_surface: "Timeline composer + Product panel canonical send",
@@ -146,7 +146,7 @@ mod tests {
         assert!(
             workflows
                 .iter()
-                .any(|workflow| workflow.id == "message.send"
+                .any(|workflow| workflow.id == "message.create"
                     && workflow.stage == WorkflowStage::ClientReady)
         );
     }

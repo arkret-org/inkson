@@ -255,7 +255,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("directory.tab.spaces", "Spaces");
     dict.set("directory.tab.organizations", "Organizations");
     dict.set("directory.tab.actors", "Actors");
-    dict.set("directory.tab.index", "Index");
+    dict.set("directory.tab.objects", "Objects");
     dict.set("directory.tab.applets", "Applets");
     dict.set("directory.applet.ping", "Ping");
     dict.set("directory.applet.metadata", "Metadata");

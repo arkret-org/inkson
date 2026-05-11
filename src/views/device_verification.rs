@@ -624,7 +624,10 @@ mod tests {
     #[test]
     fn state_badge_class_marks_done_green_and_cancelled_red() {
         assert_eq!(state_badge_class(KeyVerificationState::Done), "badge green");
-        assert_eq!(state_badge_class(KeyVerificationState::Cancelled), "badge red");
+        assert_eq!(
+            state_badge_class(KeyVerificationState::Cancelled),
+            "badge red"
+        );
     }
 
     #[test]

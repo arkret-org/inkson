@@ -69,7 +69,10 @@ pub(crate) fn demo_signing_key() -> SigningKey {
 fn identity_from_signing_key(signing_key: SigningKey) -> LocalIdentity {
     let verifying = signing_key.verifying_key();
     let device_did = crate::move_builder::did_key_from_verifying_key(&verifying);
-    LocalIdentity { device_did, signing_key }
+    LocalIdentity {
+        device_did,
+        signing_key,
+    }
 }
 
 /// Pure helper: turn the form values into a signed `Move` ready for
@@ -150,7 +153,7 @@ pub fn ConsentGrantDemoCard(
                 span { "cx.consent.grant · cell-driven" }
             }
             div { class: "muted",
-                "Constructs a cx.consent.grant Move on the cx.component.consent.grant.v1 OrSet cell, signs it with a deterministic demo ed25519 key (TODO real-key-management), and POSTs /api/v1/moves. This is the first user-facing button on the new Move/Anchor pipeline; existing direct-event endpoints (messages/reactions/etc.) stay unchanged per spec."
+                "Constructs a cx.consent.grant Move on the cx.component.consent.grant.v1 OrSet cell, signs it with a deterministic demo ed25519 key (TODO real-key-management), and POSTs /api/v1/moves. Non-cell writes such as messages and reactions use /api/v1/events."
             }
             label { "Space ID" }
             input {
@@ -390,8 +393,7 @@ mod tests {
             parts[1].is_empty(),
             "middle (payload) segment must be empty for detached JWS"
         );
-        let expected_vm =
-            did_key_verification_method(&identity.signing_key.verifying_key());
+        let expected_vm = did_key_verification_method(&identity.signing_key.verifying_key());
         assert_eq!(signed.sig.verification_method, expected_vm);
         assert_eq!(signed.sig.alg, "EdDSA");
     }

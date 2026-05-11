@@ -49,7 +49,7 @@ tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
 # code references `KeyVerification*` (device-runtime), `EventsSubscribeFrame`
-# (sync-runtime), `EncryptedPayloadKeyRef` (mls), etc. The previous
+# (sync-runtime), `KeyRefObject` (mls), etc. The previous
 # `default-features = false` stripped these and produced E0432/E0425.
 # The C36.0 parallel agent is closing the wasm32 SDK so `full-surface` builds
 # cleanly under `--target wasm32-unknown-unknown`.

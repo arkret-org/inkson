@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::entity::CapabilityGrant;
 use crate::hlc::Hlc;
 
 /// Discoverability levels as defined by the spec.
@@ -322,11 +321,11 @@ pub struct PushE2EEMetadata {
 #[derive(Clone, Debug)]
 pub struct AuthorizationFilter {
     /// Grants that apply to the requesting actor.
-    pub grants: Vec<CapabilityGrant>,
+    pub grants: Vec<DirectoryGrant>,
 }
 
 impl AuthorizationFilter {
-    pub fn new(grants: Vec<CapabilityGrant>) -> Self {
+    pub fn new(grants: Vec<DirectoryGrant>) -> Self {
         Self { grants }
     }
 
@@ -351,6 +350,11 @@ impl AuthorizationFilter {
                 .any(|selector| selector == space_id || selector == "*")
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectoryGrant {
+    pub resource_selectors: Vec<String>,
 }
 
 /// Discovery manager for coordinating discovery features.
@@ -548,17 +552,8 @@ mod tests {
 
     #[test]
     fn test_authorization_filter() {
-        let grant = CapabilityGrant {
-            grant_id: "grant-test".to_owned(),
-            issuer: "did:web:server".to_owned(),
-            subject: "did:web:alice".to_owned(),
+        let grant = DirectoryGrant {
             resource_selectors: vec!["cx:space:public".to_owned()],
-            actions: vec!["space.read".to_owned()],
-            constraints: vec![],
-            proofs: vec![],
-            max_delegation_depth: Some(0),
-            created_at: "2026-04-29T00:00:00Z".to_owned(),
-            expires_at: None,
         };
 
         let filter = AuthorizationFilter::new(vec![grant]);

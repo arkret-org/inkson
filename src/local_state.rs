@@ -163,7 +163,10 @@ impl LocalIdentity {
         getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
         let signing_key = SigningKey::from_bytes(&seed);
         let device_did = encode_did_key(&signing_key);
-        Ok(Self { device_did, signing_key })
+        Ok(Self {
+            device_did,
+            signing_key,
+        })
     }
 
     /// Recover an identity from a persisted record. Returns `Err` if the
@@ -539,25 +542,17 @@ impl LocalAnchorView {
                 {
                     view.mls_epoch = value
                         .as_u64()
-                        .or_else(|| {
-                            value
-                                .get("epoch")
-                                .and_then(|v| v.as_u64())
-                        });
+                        .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref
-                    .starts_with("cx:cell:cx.component.governance.covered_frontier.v1")
+                if cell_ref.starts_with("cx:cell:cx.component.governance.covered_frontier.v1")
                     && let Some(value) = value_for(status)
                 {
-                    view.covered_frontier = value
-                        .as_str()
-                        .map(str::to_owned)
-                        .or_else(|| {
-                            value
-                                .get("frontier")
-                                .and_then(|v| v.as_str())
-                                .map(str::to_owned)
-                        });
+                    view.covered_frontier = value.as_str().map(str::to_owned).or_else(|| {
+                        value
+                            .get("frontier")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned)
+                    });
                 }
             }
         }
@@ -678,7 +673,7 @@ pub struct UserActionLogEntry {
     /// Who took the action. For yougen this is typically the local
     /// device DID (or `did:anon` when the user hasn't logged in yet).
     pub actor: String,
-    /// Verb-style action name (e.g. `space.message.send`,
+    /// Verb-style action name (e.g. `message.create`,
     /// `oidc.refresh`, `device.revoke.confirm`).
     pub action: String,
     /// Result of the action; mirrors sodmin's `AdminAuditOutcome`.
@@ -986,7 +981,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_space_override(&self, space_id: &str) -> Option<bool> {
-        self.load().read_receipt_space_overrides.get(space_id).copied()
+        self.load()
+            .read_receipt_space_overrides
+            .get(space_id)
+            .copied()
     }
 
     pub fn set_read_receipt_space_override(
@@ -998,7 +996,9 @@ impl LocalStateStore {
         let space_id = space_id.into();
         match send {
             Some(value) => {
-                self.cached.read_receipt_space_overrides.insert(space_id, value);
+                self.cached
+                    .read_receipt_space_overrides
+                    .insert(space_id, value);
             }
             None => {
                 self.cached.read_receipt_space_overrides.remove(&space_id);
@@ -1012,7 +1012,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_flow_override(&self, flow_id: &str) -> Option<bool> {
-        self.load().read_receipt_flow_overrides.get(flow_id).copied()
+        self.load()
+            .read_receipt_flow_overrides
+            .get(flow_id)
+            .copied()
     }
 
     pub fn set_read_receipt_flow_override(
@@ -1024,7 +1027,9 @@ impl LocalStateStore {
         let flow_id = flow_id.into();
         match send {
             Some(value) => {
-                self.cached.read_receipt_flow_overrides.insert(flow_id, value);
+                self.cached
+                    .read_receipt_flow_overrides
+                    .insert(flow_id, value);
             }
             None => {
                 self.cached.read_receipt_flow_overrides.remove(&flow_id);
@@ -1068,18 +1073,14 @@ impl LocalStateStore {
                     .insert(space_id, value);
             }
             None => {
-                self.cached
-                    .read_receipt_policy_snapshots
-                    .remove(&space_id);
+                self.cached.read_receipt_policy_snapshots.remove(&space_id);
             }
         }
         let _ = self.flush();
     }
 
     /// All known server-declared read-receipt policy snapshots.
-    pub fn read_receipt_policy_snapshots(
-        &self,
-    ) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
+    pub fn read_receipt_policy_snapshots(&self) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
         self.load().read_receipt_policy_snapshots
     }
 
@@ -1098,11 +1099,7 @@ impl LocalStateStore {
     /// Replace the Anchor view snapshot for a Space. Called from the sync
     /// path once the `/sync` response surfaces the projection's Anchor
     /// view. Tests use this to seed Move-frontier behavior.
-    pub fn set_anchor_view(
-        &mut self,
-        space_id: impl Into<String>,
-        view: LocalAnchorView,
-    ) {
+    pub fn set_anchor_view(&mut self, space_id: impl Into<String>, view: LocalAnchorView) {
         self.ensure_cached_loaded();
         self.cached.anchor_views.insert(space_id.into(), view);
         let _ = self.flush();
@@ -1129,11 +1126,7 @@ impl LocalStateStore {
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).
-    pub fn read_receipt_should_send(
-        &self,
-        flow_id: Option<&str>,
-        space_id: Option<&str>,
-    ) -> bool {
+    pub fn read_receipt_should_send(&self, flow_id: Option<&str>, space_id: Option<&str>) -> bool {
         let snapshot = self.load();
         if let Some(sid) = space_id
             && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(sid)
@@ -1205,9 +1198,7 @@ impl LocalStateStore {
             reason,
             anchor_ref,
         };
-        self.cached
-            .move_submissions
-            .insert(move_id, record.clone());
+        self.cached.move_submissions.insert(move_id, record.clone());
         let _ = self.flush();
         record
     }
@@ -1326,9 +1317,7 @@ impl LocalStateStore {
             match LocalIdentity::from_record(record) {
                 Ok(id) => return Ok(id),
                 Err(err) => {
-                    tracing::warn!(
-                        "local_identity record corrupted ({err}); regenerating"
-                    );
+                    tracing::warn!("local_identity record corrupted ({err}); regenerating");
                 }
             }
         }
@@ -1436,9 +1425,7 @@ impl LocalStateStore {
     /// path to rehydrate every known space's group in one pass and by
     /// the cross-device sync UI to enumerate what's available before
     /// asking the user for a passphrase.
-    pub fn mls_snapshots(
-        &self,
-    ) -> BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope> {
+    pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots
     }
 
@@ -1469,10 +1456,7 @@ impl LocalStateStore {
     /// Returns the number of successfully POSTed entries; the buffer
     /// is fully drained on success and partially restored on 404.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn flush_telemetry_to_server(
-        &mut self,
-        api: &crate::api::ContrixApi,
-    ) -> usize {
+    pub async fn flush_telemetry_to_server(&mut self, api: &crate::api::ContrixApi) -> usize {
         let entries = self.drain_telemetry();
         if entries.is_empty() {
             return 0;
@@ -1742,17 +1726,11 @@ mod tests {
             MoveSubmissionState::FailedBottom
         );
         assert_eq!(
-            MoveSubmissionState::from_submit_state(
-                "rejected",
-                Some("covered_frontier mismatch")
-            ),
+            MoveSubmissionState::from_submit_state("rejected", Some("covered_frontier mismatch")),
             MoveSubmissionState::PendingMlsBinding
         );
         assert_eq!(
-            MoveSubmissionState::from_submit_state(
-                "rejected",
-                Some("if_state did not match")
-            ),
+            MoveSubmissionState::from_submit_state("rejected", Some("if_state did not match")),
             MoveSubmissionState::FailedPrecondition
         );
     }
@@ -1846,7 +1824,7 @@ mod tests {
         store.append_raw_operation(
             "cx:operation:local-01",
             Some("cx:space:demo".to_owned()),
-            serde_json::json!({"type": "cx.message.send"}),
+            serde_json::json!({"type": "cx.message.create"}),
         );
         store.save_space_projection("cx:space:demo", serde_json::json!({"name": "Demo"}));
         store.save_draft("cx:space:demo", "hello");
@@ -2123,7 +2101,9 @@ mod tests {
             }),
         );
         assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
-        let snap = store.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        let snap = store
+            .read_receipt_policy_for_space("cx:space:demo")
+            .unwrap();
         assert!(snap.locks_user_choice());
         assert!(!snap.lock_reason().is_empty());
     }
@@ -2159,7 +2139,9 @@ mod tests {
         );
         // optional → user override wins.
         assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
-        let snap = store.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        let snap = store
+            .read_receipt_policy_for_space("cx:space:demo")
+            .unwrap();
         assert!(!snap.locks_user_choice());
         assert_eq!(snap.lock_reason(), "");
     }
@@ -2172,10 +2154,7 @@ mod tests {
         assert!(view.frontier.is_empty());
         assert!(view.leaves.is_empty());
         assert!(view.state_root.is_none());
-        assert_eq!(
-            view.move_anchor_ref(),
-            LocalAnchorView::EMPTY_ANCHOR_REF
-        );
+        assert_eq!(view.move_anchor_ref(), LocalAnchorView::EMPTY_ANCHOR_REF);
         assert_eq!(
             store.anchor_ref_for_move("cx:space:demo"),
             LocalAnchorView::EMPTY_ANCHOR_REF
@@ -2418,7 +2397,9 @@ mod tests {
             );
         }
         let reader = LocalStateStore::with_path(path);
-        let snap = reader.read_receipt_policy_for_space("cx:space:demo").unwrap();
+        let snap = reader
+            .read_receipt_policy_for_space("cx:space:demo")
+            .unwrap();
         assert_eq!(snap.disclosure, "required");
         assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));
     }
@@ -2458,10 +2439,7 @@ mod tests {
         let path = temp_state_path("mls-snapshot-drop");
         let mut store = LocalStateStore::with_path(path);
         let space = "cx:space:drop-me";
-        store.save_mls_snapshot(
-            space,
-            encrypt_state(space, "abcd", 1, b"x", "p", b"salt"),
-        );
+        store.save_mls_snapshot(space, encrypt_state(space, "abcd", 1, b"x", "p", b"salt"));
         assert!(store.mls_snapshot_for(space).is_some());
         store.drop_mls_snapshot(space);
         assert!(store.mls_snapshot_for(space).is_none());
@@ -2494,7 +2472,8 @@ mod tests {
                 // Drain the request body opportunistically so the
                 // client sees the response.
                 let _ = socket.read(&mut buf).await;
-                let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let resp =
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 let _ = socket.write_all(resp).await;
                 let _ = socket.shutdown().await;
             }

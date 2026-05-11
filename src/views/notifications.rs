@@ -127,7 +127,7 @@ pub fn NotificationsPanel(
                     span { "{unread_visible} visible unread / {server_unread()} server unread" }
                 }
                 div { class: "muted",
-                    "Derived from `POST /api/v1/index/notifications` and filtered by local mute rules."
+                    "Derived from client sync account data and filtered by local mute rules."
                 }
                 div { class: "actions",
                     button {
@@ -402,10 +402,14 @@ fn refresh_notifications(
 ) {
     spawn(async move {
         match authed_api(&base_url, access_token) {
-            Ok(api) => match api.index_notifications(Some(50), None).await {
+            Ok(api) => match api.sync(None).await {
                 Ok(response) => {
-                    let raw_notifications = response.notifications;
-                    server_unread.set(response.unread_count);
+                    let raw_notifications = response
+                        .account_data
+                        .into_iter()
+                        .filter(is_notification_account_data)
+                        .collect::<Vec<_>>();
+                    server_unread.set(raw_notifications.len());
                     let hydrated = {
                         let mut store = state_store.write();
                         store.save_notification_projection(raw_notifications.clone());
@@ -421,6 +425,19 @@ fn refresh_notifications(
             Err(error) => status_msg.set(format!("Invalid URL: {error}")),
         }
     });
+}
+
+fn is_notification_account_data(value: &Value) -> bool {
+    matches!(
+        value
+            .get("kind")
+            .or_else(|| value.get("type"))
+            .and_then(Value::as_str),
+        Some("cx.notification")
+            | Some("cx.notification.v1")
+            | Some("cx.account.notification")
+            | Some("notification")
+    )
 }
 
 fn hydrate_notifications(
@@ -446,7 +463,8 @@ fn notification_from_value(
         .get(&id)
         .cloned()
         .unwrap_or_default();
-    let kind = value_string(&value, &["kind", "type"]).unwrap_or_else(|| "message".to_owned());
+    let kind = value_string(&value, &["notification_kind", "type", "kind"])
+        .unwrap_or_else(|| "message".to_owned());
     let title =
         value_string(&value, &["title"]).unwrap_or_else(|| default_notification_title(&kind));
     let body = value_string(&value, &["body", "preview", "summary"])

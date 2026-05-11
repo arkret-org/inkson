@@ -2,8 +2,8 @@ use reqwest::StatusCode;
 use serde_json::json;
 use yougen::{
     api::{
-        decode_contrix_error, parse_directory_describe, parse_index_describe, parse_repo_describe,
-        parse_resolve_space, parse_server_description, parse_sync, parse_sync_describe,
+        decode_contrix_error, parse_directory_describe, parse_resolve_space,
+        parse_server_description, parse_sync, parse_sync_describe,
     },
     config::{ClientConfig, LocalConfigStore},
 };
@@ -16,8 +16,6 @@ fn yougen_accepts_serverx_contract_payloads() {
         "protocol_version": "1.0",
         "supported_profiles": ["cx.schema.core.v1"],
         "supported_features": [
-            "repo.submit_commit",
-            "repo.read",
             "sync.account",
             "sync.backfill",
             "directory.search_spaces",
@@ -29,11 +27,6 @@ fn yougen_accepts_serverx_contract_payloads() {
             "moderation.report"
         ],
         "supported_operations": [
-            "cx.repo.describe",
-            "cx.repo.list_commits",
-            "cx.repo.get_operations",
-            "cx.repo.sync",
-            "cx.repo.submit_commit",
             "cx.sync.account",
             "cx.events.query",
             "cx.events.subscribe",
@@ -153,75 +146,14 @@ fn yougen_accepts_serverx_contract_payloads() {
     .unwrap();
     assert_eq!(resolved.join_rule, "public");
 
-    let index_describe = parse_index_describe(json!({
-        "service_did": "did:web:serverx.local",
-        "reducer_profiles": ["cx.reducer.v1"],
-        "schema_profiles": ["cx.schema.core.v1"],
-        "query_features": ["space_preview", "entity_type_filter", "space_filter"],
-        "frontier": {"next_batch": "sx:1760000000000"}
-    }))
-    .unwrap();
-    assert!(
-        index_describe
-            .query_features
-            .contains(&"space_preview".to_owned())
-    );
-
-    let index: yougen::models::IndexQueryResponse = serde_json::from_value(json!({
-        "results": [{
-            "kind": "space_preview",
-            "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
-            "title": "Contrix Demo Space",
-            "summary": "Shared demo Space served by serverx",
-            "entity_types": []
-        }],
-        "next_cursor": null,
-        "frontier": {"next_batch": "sx:1760000000000"}
-    }))
-    .unwrap();
-    assert_eq!(index.results.len(), 1);
-
-    let repo = parse_repo_describe(json!({
-        "repo_did": "did:web:serverx.local",
-        "head_commit": null,
-        "supported_signatures": ["detached_jws", "http_message_signature"],
-        "limits": {"max_commits": 100, "max_operations": 500}
-    }))
-    .unwrap();
-    assert!(
-        repo.supported_signatures
-            .contains(&"detached_jws".to_owned())
-    );
-
-    let commits: yougen::models::ListCommitsResponse = serde_json::from_value(json!({
-        "commits": [],
-        "next_cursor": null,
-        "has_more": false
-    }))
-    .unwrap();
-    assert!(!commits.has_more);
-
-    let operations: yougen::models::GetOperationsResponse = serde_json::from_value(json!({
-        "operations": [],
-        "missing": [],
-        "unauthorized": []
-    }))
-    .unwrap();
-    assert!(operations.missing.is_empty());
-
-    let repo_sync: yougen::models::RepoSyncResponse = serde_json::from_value(json!({
-        "operations": [],
-        "next_cursor": "sx:1760000000000",
-        "has_more": false
-    }))
-    .unwrap();
-    assert_eq!(repo_sync.next_cursor.as_deref(), Some("sx:1760000000000"));
-
-    let submit: yougen::models::SubmitCommitResponse = serde_json::from_value(json!({
+    let submit: yougen::models::SubmitEventResponse = serde_json::from_value(json!({
         "status": "accepted",
-        "commit_id": "cx:commit:019640ca-0000-7000-8000-000000000000",
-        "head_commit": "cx:commit:019640ca-0000-7000-8000-000000000000",
-        "sync_token": "sx:1760000000000"
+        "event_id": "cx:event:019640ca-0000-7000-8000-000000000000",
+        "canonical_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "sync_token": "sx:1760000000000",
+        "receipt": {
+            "service_did": "did:web:serverx.local"
+        }
     }))
     .unwrap();
     assert_eq!(submit.status, "accepted");
@@ -362,22 +294,18 @@ fn server_description_gates_event_envelope_write_plane() {
             .is_empty()
     );
 
-    let repo_only = parse_server_description(json!({
-        "service_did": "did:web:legacy.local",
+    let events_missing = parse_server_description(json!({
+        "service_did": "did:web:minimal.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
-        "supported_profiles": ["cx.profile.principal_server_repo_api.v1"],
-        "supported_operations": [
-            "cx.repo.describe",
-            "cx.repo.submit_commit",
-            "cx.sync.account"
-        ],
-        "supported_features": ["repo.submit_commit", "sync.account"]
+        "supported_profiles": [],
+        "supported_operations": ["cx.sync.account"],
+        "supported_features": ["sync.account"]
     }))
     .unwrap();
-    assert!(!repo_only.supports_event_envelope_write_plane());
+    assert!(!events_missing.supports_event_envelope_write_plane());
     assert_eq!(
-        repo_only.missing_event_envelope_write_requirements(),
+        events_missing.missing_event_envelope_write_requirements(),
         vec![
             "cx.profile.core_event_store.v1",
             "cx.events.describe",

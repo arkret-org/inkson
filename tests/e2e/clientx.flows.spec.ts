@@ -18,7 +18,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
-  await expect(page.getByTestId("sync-metrics")).toContainText("cx:commit:e2e");
+  await expect(page.getByTestId("sync-metrics")).toContainText("cx:event:e2e");
   await expect(page.getByTestId("sync-metrics")).toContainText("cx:push:e2e");
   await expect(page.getByTestId("sync-metrics")).toContainText("1");
 });
@@ -28,17 +28,9 @@ test("right panel shows space hierarchy without implicit cascade", async ({ page
   await expect(page.getByTestId("right-panel-space-info")).toContainText("Contrix Demo Space");
   await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("membership");
   await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("encryption");
-
-  await expect(page.getByTestId("space-hierarchy-children")).toContainText("Design Child");
-  await expect(page.getByTestId("space-hierarchy-children")).toContainText("cx:space:011670d8-2f64-776f-98d9-ec2d724df847");
-  await expect(page.getByTestId("space-hierarchy-children")).toContainText("lazy link");
-  await expect(page.getByTestId("space-hierarchy-edges")).toContainText("unconfirmed_link");
-
-  const hierarchyRequest = page.waitForRequest("**/api/v1/index/space-hierarchy?*");
   await page.getByTestId("right-panel-refresh-hierarchy").click();
-  const requestUrl = new URL((await hierarchyRequest).url());
-  expect(requestUrl.searchParams.get("depth")).toBe("2");
-  expect(requestUrl.searchParams.get("include_unconfirmed")).toBe("true");
+  await expect(page.getByTestId("hierarchy-query-shape")).toContainText("not part of the current protocol");
+  await expect(page.getByTestId("space-hierarchy-children-empty")).toContainText("No hierarchy children");
 });
 
 test("login page covers connection auth methods and token refresh", async ({ page }) => {
@@ -166,23 +158,22 @@ test("kanban card detail exposes linked discussion and locked discussion boundar
   await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
 });
 
-test("kanban queues card Event Envelopes and replays through events API", async ({ page }) => {
+test("kanban queues Move submissions and replays through move API", async ({ page }) => {
   await page.getByTestId("connect-button").click();
   await page.getByRole("link", { name: "Kanban" }).click();
   await page.getByTestId("add-card-button").first().click();
-  await page.getByTestId("new-card-title-input").fill("Event envelope card");
+  await page.getByTestId("new-card-title-input").fill("Move-backed card");
   await page.getByTestId("save-card-button").click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("actor_seq");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("schema cx.schema.core.v1");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("cx:move:sha256:");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
 
-  const eventSubmit = page.waitForRequest("**/api/v1/events/submit");
+  const moveSubmit = page.waitForRequest("**/api/v1/moves");
   await page.getByTestId("replay-board-queue").click();
-  const eventBody = await eventSubmit.then((request) => request.postDataJSON());
-  expect(eventBody.event.type).toBe("cx.flow.create");
-  expect(eventBody.event.auth_refs).toContain("cx:capability:board.write");
-  await expect(page.getByTestId("board-status")).toContainText("accepted");
-  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:event");
+  const moveBody = await moveSubmit.then((request) => request.postDataJSON());
+  expect(moveBody.id).toContain("cx:move:sha256:");
+  expect(moveBody.body?.cell?.family).toBe("cx.component.flow.position.v1");
+  await expect(page.getByTestId("board-status")).toContainText("state=pending");
 });
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
@@ -239,7 +230,7 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
   await expect(page.getByTestId("timeline")).toHaveAttribute("role", "feed");
   await expect(page.getByTestId("timeline")).toHaveAttribute("aria-live", "polite");
 
-  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
+  const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("composer-input").fill("a11y smoke message");
   await page.getByTestId("send-button").click();
   await sendRequest;
@@ -331,7 +322,7 @@ test("product account space lifecycle and canonical message flow works", async (
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:e2e-product");
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:product");
-  await expect(page.getByTestId("sync-metrics")).toContainText("cx:commit:e2e-product");
+  await expect(page.getByTestId("sync-metrics")).toContainText("cx:event:e2e-product");
 
   await page.getByTestId("product-nav-button").click();
   await page.getByTestId("remove-member-button").click();
@@ -348,134 +339,31 @@ test("chat creates discussion entities and sends structured mention payloads", a
   await page.getByTestId("new-channel-name").fill("Ops Announce");
   await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
   await page.getByTestId("channel-kind-announce").click();
-  const channelCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  const channelEvent = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("create-channel-button").click();
-  const channelBody = await channelCommit.then((request) => request.postDataJSON());
-  expect(channelBody.commit.operations[0].type).toBe("cx.flow.create");
-  expect(channelBody.commit.operations[0].body.kind).toBe("announce");
-  expect(channelBody.commit.operations[0].body.flow_id).toContain("cx:flow:");
-  expect(channelBody.commit.operations[0].body.title).toBe("Ops Announce");
-  expect(channelBody.commit.operations[0].body.rank).toBeTruthy();
+  const channelBody = await channelEvent.then((request) => request.postDataJSON());
+  expect(channelBody.kind).toBe("cx.flow.create");
+  expect(channelBody.payload.kind).toBe("announce");
+  expect(channelBody.payload.flow_id).toContain("cx:flow:");
+  expect(channelBody.payload.title).toBe("Ops Announce");
+  expect(channelBody.payload.rank).toBeTruthy();
   await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
-  await expect(page.getByTestId("chat-status")).toContainText("flow committed");
+  await expect(page.getByTestId("chat-status")).toContainText("flow event accepted");
 
-  const chatSend = page.waitForRequest("**/api/v1/messages/send");
+  const chatSend = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
-  expect(chatBody.content.flow_id).toContain("cx:flow:");
-  expect(chatBody.content.branch).toBe("discussion");
-  expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
-  expect(chatBody.content.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
+  expect(chatBody.kind).toBe("cx.message.create");
+  expect(chatBody.payload.flow_id).toContain("cx:flow:");
+  expect(chatBody.payload.branch).toBe("discussion");
+  expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
+  expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
   await expect(page.getByTestId("chat-mentions").last()).toContainText("did:web:bob.example");
   await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Revision chain");
   await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Tombstone");
   await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Linked discussion access");
-});
-
-test("forum anchors topics and stores comments separately from chat messages", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
-  await page.getByRole("link", { name: "Forum" }).click();
-  await expect(page.getByTestId("forum-panel")).toBeVisible();
-
-  await page.getByTestId("new-topic-button").click();
-  await page.getByTestId("topic-title-input").fill("Runbook Review");
-  await page.getByTestId("topic-body-input").fill("Review this with @carol.example before #cx:task:follow-up");
-  await page.getByTestId("topic-tags-input").fill("ops, review");
-  await page.getByTestId("anchor-kind-run").click();
-  await page.getByTestId("topic-anchor-target-input").fill("cx:run:incident-7");
-  const topicCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("submit-topic-button").click();
-  const topicBody = await topicCommit.then((request) => request.postDataJSON());
-  expect(topicBody.commit.operations[0].type).toBe("cx.topic.create");
-  expect(topicBody.commit.operations[0].body.anchor_ref.kind).toBe("run");
-  expect(topicBody.commit.operations[0].body.anchor_ref.target).toBe("cx:run:incident-7");
-  expect(topicBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.relation.create")).toBeTruthy();
-  await expect(page.getByTestId("forum-topic").last()).toContainText("Runbook Review");
-  await expect(page.getByTestId("forum-topic").last()).toContainText("cx:run:incident-7");
-
-  await page.getByTestId("forum-topic").last().click();
-  await expect(page.getByTestId("topic-anchor")).toContainText("cx:run:incident-7");
-  const commentCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("reply-input").fill("Looks good, track #cx:task:follow-up");
-  await page.getByTestId("submit-reply-button").click();
-  const commentBody = await commentCommit.then((request) => request.postDataJSON());
-  expect(commentBody.commit.operations[0].type).toBe("cx.comment.create");
-  expect(commentBody.commit.operations[0].target_ref).toContain("cx:topic:");
-  await expect(page.getByTestId("forum-comment")).toContainText("Looks good, track #cx:task:follow-up");
-  await expect(page.getByTestId("forum-status")).toContainText("comment committed");
-});
-
-test("agent runs and memory review submit lifecycle fact commits", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
-
-  await page.getByTestId("agent-runs-nav-button").click();
-  await expect(page.getByTestId("agent-runs-panel")).toBeVisible();
-  await page.getByTestId("run-agent-input").fill("release-agent");
-  await page.getByTestId("run-input").fill("Find blocker tasks");
-  const createRun = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("start-run-button").click();
-  const createRunBody = await createRun.then((request) => request.postDataJSON());
-  expect(createRunBody.commit.operations[0].type).toBe("cx.run.create");
-  expect(createRunBody.commit.operations[0].body.run_id).toContain("cx:run:");
-  expect(createRunBody.commit.operations[0].body.status).toBe("running");
-  await expect(page.getByTestId("agent-run-status")).toContainText("run created");
-  await expect(page.getByTestId("agent-run").last()).toContainText("release-agent");
-
-  const updateRun = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("update-run-button").last().click();
-  const updateRunBody = await updateRun.then((request) => request.postDataJSON());
-  expect(updateRunBody.commit.operations[0].type).toBe("cx.run.update");
-  expect(updateRunBody.commit.operations[0].body.step.output).toBe("tool step recorded");
-  await expect(page.getByTestId("agent-run-status")).toContainText("run updated");
-
-  const completeRun = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("complete-run-button").last().click();
-  const completeRunBody = await completeRun.then((request) => request.postDataJSON());
-  expect(completeRunBody.commit.operations[0].type).toBe("cx.run.complete");
-  expect(completeRunBody.commit.operations[0].body.status).toBe("completed");
-  await expect(page.getByTestId("agent-run").last()).toContainText("completed");
-
-  await page.getByTestId("memory-review-nav-button").click();
-  await expect(page.getByTestId("memory-review-panel")).toBeVisible();
-  await page.getByTestId("new-memory-input").fill("Agent should preserve provenance");
-  const createMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("capture-memory-button").click();
-  const createMemoryBody = await createMemory.then((request) => request.postDataJSON());
-  expect(createMemoryBody.commit.operations[0].type).toBe("cx.memory.create");
-  expect(createMemoryBody.commit.operations[0].body.state).toBe("candidate");
-  await expect(page.getByTestId("memory-status")).toContainText("memory captured");
-  await expect(page.getByTestId("memory-entry").last()).toContainText("Agent should preserve provenance");
-
-  await page.getByTestId("edit-memory-button").last().click();
-  await page.getByTestId("memory-edit-input").fill("Agent should preserve provenance and source");
-  const updateMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("save-memory-edit").click();
-  const updateMemoryBody = await updateMemory.then((request) => request.postDataJSON());
-  expect(updateMemoryBody.commit.operations[0].type).toBe("cx.memory.update");
-  expect(updateMemoryBody.commit.operations[0].body.content).toBe("Agent should preserve provenance and source");
-  await expect(page.getByTestId("memory-status")).toContainText("memory updated");
-
-  const confirmMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("accept-memory-button").last().click();
-  const confirmMemoryBody = await confirmMemory.then((request) => request.postDataJSON());
-  expect(confirmMemoryBody.commit.operations[0].type).toBe("cx.memory.confirm");
-  expect(confirmMemoryBody.commit.operations[0].target_ref).toContain("cx:memory:");
-  await expect(page.getByTestId("memory-entry").last()).toContainText("confirmed");
-
-  const supersedeMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("supersede-memory-button").last().click();
-  const supersedeMemoryBody = await supersedeMemory.then((request) => request.postDataJSON());
-  expect(supersedeMemoryBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.memory.create")).toBeTruthy();
-  expect(supersedeMemoryBody.commit.operations.some((operation: { type: string }) => operation.type === "cx.memory.supersede")).toBeTruthy();
-  await expect(page.getByTestId("memory-status")).toContainText("memory superseded");
-
-  const invalidateMemory = page.waitForRequest("**/api/v1/repo/submit-commit");
-  await page.getByTestId("reject-memory-button").last().click();
-  const invalidateMemoryBody = await invalidateMemory.then((request) => request.postDataJSON());
-  expect(invalidateMemoryBody.commit.operations[0].type).toBe("cx.memory.invalidate");
-  await expect(page.getByTestId("memory-status")).toContainText("memory invalidated");
 });
 
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
@@ -486,15 +374,18 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
 
-  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
+  const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("composer-input").fill("plain e2e message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message");
-  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:e2e-message-1");
+  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
 
   const editRequest = page.waitForRequest(
-    (request) => request.url().includes("/api/v1/messages/") && request.method() === "PATCH",
+    (request) =>
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST" &&
+      request.postDataJSON().kind === "cx.message.revise",
   );
   await page.getByTestId("edit-button").last().click();
   await page.getByTestId("edit-composer").locator("textarea").fill("plain e2e message edited");
@@ -502,16 +393,19 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   expect((await editRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message edited");
   await expect(page.getByTestId("revision-chain")).toContainText("plain e2e message");
-  await expect(page.getByTestId("event-fact").last()).toContainText("cx:operation:e2e-edit");
+  await expect(page.getByTestId("event-fact").last()).toContainText("cx:operation:");
 
   const redactRequest = page.waitForRequest(
-    (request) => request.url().includes("/redact") && request.method() === "POST",
+    (request) =>
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST" &&
+      request.postDataJSON().kind === "cx.message.redact",
   );
   await page.getByTestId("redact-button").last().click();
   await page.getByTestId("confirm-redact-button").click();
   expect((await redactRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("redacted-tombstone")).toContainText("[Message redacted]");
-  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone cx:redaction:e2e:");
+  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone cx:event:");
 
   await page.getByTestId("composer-input").fill("secret e2e message");
   await page.getByTestId("encrypt-local-button").click();
@@ -570,11 +464,11 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
   await expect(page.getByTestId("write-status")).toContainText("plaintext blocked");
   await expect(page.getByTestId("plaintext-boundary-warning")).toContainText("not E2EE");
 
-  const sendRequest = page.waitForRequest("**/api/v1/messages/send");
+  const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("plaintext-boundary-ack").click();
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:e2e-message-1");
+  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
 });
 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
@@ -606,24 +500,24 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("updated");
 
   await page.getByTestId("invite-target-input").fill("did:web:carol.example");
-  const inviteCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  const inviteCommit = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
-  expect(inviteBody.commit.operations[0].type).toBe("cx.invite.create");
-  expect(inviteBody.commit.operations[0].body.invite_id).toBe("cx:invite:e2e");
+  expect(inviteBody.kind).toBe("cx.invite.create");
+  expect(inviteBody.payload.invite_id).toBe("cx:invite:e2e");
   await expect(page.getByTestId("space-admin-status")).toContainText("invited did:web:carol.example");
   await expect(page.getByTestId("invite-row")).toContainText("pending");
 
-  const acceptCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  const acceptCommit = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("accept-invite-button").click();
   const acceptBody = await acceptCommit.then((request) => request.postDataJSON());
-  expect(acceptBody.commit.operations[0].type).toBe("cx.invite.accept");
+  expect(acceptBody.kind).toBe("cx.invite.accept");
   await expect(page.getByTestId("invite-row")).toContainText("accepted");
 
-  const cancelCommit = page.waitForRequest("**/api/v1/repo/submit-commit");
+  const cancelCommit = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("cancel-invite-button").click();
   const cancelBody = await cancelCommit.then((request) => request.postDataJSON());
-  expect(cancelBody.commit.operations[0].type).toBe("cx.invite.cancel");
+  expect(cancelBody.kind).toBe("cx.invite.cancel");
   await expect(page.getByTestId("invite-row")).toContainText("canceled");
 
   await page.getByTestId("rotate-space-epoch").click();
@@ -633,16 +527,16 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("archived");
 });
 
-test("audit page loads repo operations commits conflicts and snapshots", async ({ page }) => {
+test("audit page refreshes event frontier metadata", async ({ page }) => {
   await page.getByRole("link", { name: "Audit" }).click();
   await expect(page.getByTestId("audit-panel")).toBeVisible();
   await expect(page.getByTestId("event-envelope-audit")).toContainText("actor_seq");
-  await expect(page.getByTestId("event-envelope-audit")).toContainText("auth_refs");
+  await expect(page.getByTestId("event-envelope-audit")).toContainText("refs");
 
   await page.getByTestId("refresh-audit-button").click();
   await expect(page.getByTestId("audit-status")).toContainText("loaded");
-  await expect(page.getByTestId("operation-row")).toContainText("cx:op:audit");
-  await expect(page.getByTestId("commit-row")).toContainText("cx:commit:e2e");
+  await expect(page.getByTestId("batch-display")).toContainText("cx:snapshot:");
+  await expect(page.getByTestId("event-envelope-audit")).toContainText("cx:snapshot:");
 });
 
 test("audit capability explanation shows grants constraints and frontier reason", async ({ page }) => {

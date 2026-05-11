@@ -658,7 +658,7 @@ pub fn DevicesPanel(
                                                     // 2) Epoch-advance Move: separate Move
                                                     //    to advance the governance
                                                     //    covered_frontier so subsequent
-                                                    //    message Moves bind. Reuses the
+                                                    //    message Events bind. Reuses the
                                                     //    build_mls_commit_move builder with
                                                     //    a +1 epoch number — soland's
                                                     //    reducer treats it as a no-op-on

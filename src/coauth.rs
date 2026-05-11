@@ -2,8 +2,8 @@ use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -14,7 +14,6 @@ const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
 const OIDC_STATE_PLACEHOLDER: &str = "TODO_STATE";
 const OIDC_NONCE_PLACEHOLDER: &str = "TODO_NONCE";
 const OIDC_CODE_CHALLENGE_PLACEHOLDER: &str = "TODO_PKCE_CODE_CHALLENGE";
-const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc.scaffold.v1";
 
 #[derive(Clone, Debug)]
 pub struct CoauthApi {
@@ -229,9 +228,7 @@ impl OidcTokenResponse {
         audience_hint: Option<&str>,
     ) -> crate::local_state::OidcTokenBundle {
         let now = chrono::Utc::now();
-        let expires_at_unix = self
-            .expires_in
-            .map(|secs| now.timestamp() + secs);
+        let expires_at_unix = self.expires_in.map(|secs| now.timestamp() + secs);
         let audience = self
             .extras
             .get("audience")
@@ -270,81 +267,6 @@ pub struct CoauthOidcExchangeDescribe {
     pub failure_codes: Vec<String>,
     #[serde(default)]
     pub example_request: Value,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthRecoveryDescribe {
-    pub contract: String,
-    pub version: String,
-    pub recovery_start_path: String,
-    pub recovery_status_path: String,
-    pub recovery_resend_path: String,
-    pub recovery_principal_snapshot_path: String,
-    pub recovery_principal_cache_status_path: String,
-    pub recovery_principal_cache_refresh_path: String,
-    pub recovery_principal_cache_queue_path: String,
-    pub recovery_principal_cache_complete_path: String,
-    pub recovery_principal_cache_fail_path: String,
-    pub recovery_principal_cache_policy_path: String,
-    pub recovery_principal_cache_retry_path: String,
-    pub recovery_principal_cache_invalidate_path: String,
-    pub recovery_principal_cache_failures_path: String,
-    pub recovery_principal_cache_upstream_path: String,
-    pub recovery_principal_cache_upstream_probe_path: String,
-    pub recovery_principal_cache_upstream_bind_path: String,
-    pub key_backup_rest_base: String,
-    pub key_backup_schema: String,
-    pub device_message_schema: String,
-    pub principal_recovery_contract_stack_path: String,
-    pub principal_recovery_stack_bundle_path: String,
-    pub principal_recovery_discovery_path: String,
-    pub principal_recovery_readiness_path: String,
-    pub principal_device_messages_describe_path: String,
-    pub principal_key_backups_describe_path: String,
-    pub principal_restore_state_describe_path: String,
-    pub principal_restore_state_export_path: String,
-    pub principal_restore_state_import_path: String,
-    pub principal_restore_state_durability_path: String,
-    pub principal_restore_state_checkpoint_collection_path: String,
-    pub principal_restore_start_path: String,
-    pub principal_restore_describe_path: String,
-    pub principal_restore_ticket_collection_path: String,
-    pub principal_restore_ticket_path: String,
-    pub principal_restore_ticket_advance_path: String,
-    pub principal_restore_ticket_resume_path: String,
-    pub principal_restore_ticket_cancel_path: String,
-    pub principal_restore_ticket_retry_path: String,
-    pub principal_restore_approval_status_path: String,
-    pub principal_restore_approval_submit_path: String,
-    pub principal_restore_executor_status_path: String,
-    pub principal_restore_executor_enqueue_path: String,
-    pub principal_restore_executor_start_path: String,
-    pub principal_restore_executor_complete_path: String,
-    pub principal_restore_result_path: String,
-    pub principal_restore_receipt_path: String,
-    pub principal_restore_materialized_device_handoff_path: String,
-    pub principal_restore_bundle_path: String,
-    pub principal_restore_activity_path: String,
-    pub principal_restore_timeline_path: String,
-    pub principal_restore_audit_feed_path: String,
-    pub principal_recovery_live_snapshot_path: String,
-    pub principal_authz_describe_path: String,
-    pub principal_authz_check_path: String,
-    pub principal_policy_describe_path: String,
-    pub principal_policy_collection_path: String,
-    pub principal_policy_item_path: String,
-    #[serde(default)]
-    pub verification_event_kinds: Vec<String>,
-    #[serde(default)]
-    pub recovery_modes: Vec<String>,
-    #[serde(default)]
-    pub example_backup_payload: Value,
-    #[serde(default)]
-    pub recovery_restore_examples: Value,
-    #[serde(default)]
-    pub recovery_authz_examples: Value,
     #[serde(default)]
     pub todos: Vec<String>,
 }
@@ -501,55 +423,6 @@ impl CoauthApi {
         self.get_json("api/v1/integration/describe").await
     }
 
-    pub async fn recovery_describe(&self) -> anyhow::Result<CoauthRecoveryDescribe> {
-        self.get_json("api/v1/auth/recovery/describe").await
-    }
-
-    pub async fn principal_recovery_snapshot(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-snapshot").await
-    }
-
-    pub async fn principal_recovery_cache_status(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-cache/status").await
-    }
-
-    pub async fn refresh_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/refresh", payload)
-            .await
-    }
-
-    pub async fn principal_recovery_cache_queue(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-cache/queue").await
-    }
-
-    pub async fn complete_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/complete", payload)
-            .await
-    }
-
-    pub async fn fail_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/fail", payload)
-            .await
-    }
-
-    pub async fn principal_recovery_cache_policy(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-cache/policy").await
-    }
-
-    pub async fn retry_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/retry", payload)
-            .await
-    }
-
-    pub async fn invalidate_principal_recovery_cache(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/invalidate", payload)
-            .await
-    }
-
-    pub async fn principal_recovery_cache_failures(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-cache/failures").await
-    }
-
     /// Round 23 (M6): list invite-quarantine entries from coauth's
     /// admin endpoint. Admins receive every quarantined invite in the
     /// deployment; non-admin tokens 403 — the caller surfaces an
@@ -587,20 +460,6 @@ impl CoauthApi {
             body,
         )
         .await
-    }
-
-    pub async fn principal_recovery_cache_upstream(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/auth/recovery/principal-cache/upstream").await
-    }
-
-    pub async fn probe_principal_recovery_cache_upstream(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/upstream/probe", payload)
-            .await
-    }
-
-    pub async fn bind_principal_recovery_cache_upstream(&self, payload: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/auth/recovery/principal-cache/upstream/bind", payload)
-            .await
     }
 
     pub async fn password_login(
@@ -652,38 +511,6 @@ impl CoauthApi {
             }),
         )
         .await
-    }
-
-    pub async fn exchange_oidc_code_legacy(
-        &self,
-        authorization_code: &str,
-        code_verifier: &str,
-        redirect_uri: &str,
-        issuer: &str,
-        token_endpoint: &str,
-        userinfo_endpoint: &str,
-        client_id: &str,
-        login_hint: &str,
-        device_id: &str,
-        principal_audience: Option<&str>,
-        state: Option<&str>,
-        expected_state: Option<&str>,
-    ) -> anyhow::Result<CoauthLoginResponse> {
-        self.exchange_oidc_code(
-            "api/v1/auth/oidc/exchange",
-            authorization_code,
-            code_verifier,
-            redirect_uri,
-            issuer,
-            token_endpoint,
-            userinfo_endpoint,
-            client_id,
-            login_hint,
-            device_id,
-            principal_audience,
-            state,
-            expected_state,
-        ).await
     }
 
     /// Round 24 (A1): real OIDC token-endpoint exchange. Drives the
@@ -763,7 +590,10 @@ impl CoauthApi {
             .await
             .context("refresh token endpoint POST failed")?;
         let status = response.status();
-        let body = response.text().await.context("read refresh response body")?;
+        let body = response
+            .text()
+            .await
+            .context("read refresh response body")?;
         if !status.is_success() {
             anyhow::bail!(
                 "refresh endpoint returned {status}: {body}",
@@ -828,9 +658,7 @@ pub fn active_oidc_redirect_uri() -> String {
     current_oidc_redirect_uri()
 }
 
-pub fn summarize_coauth_integration_manifest(
-    manifest: &CoauthIntegrationManifest,
-) -> String {
+pub fn summarize_coauth_integration_manifest(manifest: &CoauthIntegrationManifest) -> String {
     let dependencies = if manifest.dependencies.is_empty() {
         "none".to_owned()
     } else {
@@ -877,73 +705,6 @@ pub fn summarize_coauth_integration_manifest(
         surfaces,
         todos,
     )
-}
-
-pub fn summarize_coauth_recovery_bridge(
-    recovery: &CoauthRecoveryDescribe,
-) -> anyhow::Result<String> {
-    let kinds = if recovery.verification_event_kinds.is_empty() {
-        "none".to_owned()
-    } else {
-        recovery.verification_event_kinds.join(", ")
-    };
-    let modes = if recovery.recovery_modes.is_empty() {
-        "none".to_owned()
-    } else {
-        recovery.recovery_modes.join(", ")
-    };
-    let todos = if recovery.todos.is_empty() {
-        "none".to_owned()
-    } else {
-        recovery.todos.join(" ")
-    };
-
-    Ok(format!(
-        "contract={} version={}\nstart={}\nstatus={}\nresend={}\nkey_backup_base={} schema={}\ndevice_message_schema={}\nprincipal_recovery_contract_stack={}\nprincipal_device_messages_describe={}\nprincipal_key_backups_describe={}\nprincipal_restore_state_describe={}\nprincipal_restore_state_export={}\nprincipal_restore_state_import={}\nprincipal_restore_start={}\nprincipal_restore_describe={}\nprincipal_restore_ticket_collection={}\nprincipal_restore_ticket={}\nprincipal_restore_ticket_advance={}\nprincipal_restore_ticket_resume={}\nprincipal_restore_ticket_cancel={}\nprincipal_restore_ticket_retry={}\nprincipal_restore_approval_status={}\nprincipal_restore_approval_submit={}\nprincipal_restore_executor_status={}\nprincipal_restore_executor_enqueue={}\nprincipal_restore_executor_start={}\nprincipal_restore_executor_complete={}\nprincipal_restore_result={}\nprincipal_restore_receipt={}\nprincipal_restore_materialized_device_handoff={}\nprincipal_restore_bundle={}\nprincipal_authz_describe={}\nprincipal_authz_check={}\nprincipal_policy_describe={}\nprincipal_policy_collection={}\nprincipal_policy_item={}\nverification_kinds={}\nrecovery_modes={}\nexample_backup_payload:\n{}\nrecovery_restore_examples:\n{}\nrecovery_authz_examples:\n{}\ntodos={}",
-        recovery.contract,
-        recovery.version,
-        recovery.recovery_start_path,
-        recovery.recovery_status_path,
-        recovery.recovery_resend_path,
-        recovery.key_backup_rest_base,
-        recovery.key_backup_schema,
-        recovery.device_message_schema,
-        recovery.principal_recovery_contract_stack_path,
-        recovery.principal_device_messages_describe_path,
-        recovery.principal_key_backups_describe_path,
-        recovery.principal_restore_state_describe_path,
-        recovery.principal_restore_state_export_path,
-        recovery.principal_restore_state_import_path,
-        recovery.principal_restore_start_path,
-        recovery.principal_restore_describe_path,
-        recovery.principal_restore_ticket_collection_path,
-        recovery.principal_restore_ticket_path,
-        recovery.principal_restore_ticket_advance_path,
-        recovery.principal_restore_ticket_resume_path,
-        recovery.principal_restore_ticket_cancel_path,
-        recovery.principal_restore_ticket_retry_path,
-        recovery.principal_restore_approval_status_path,
-        recovery.principal_restore_approval_submit_path,
-        recovery.principal_restore_executor_status_path,
-        recovery.principal_restore_executor_enqueue_path,
-        recovery.principal_restore_executor_start_path,
-        recovery.principal_restore_executor_complete_path,
-        recovery.principal_restore_result_path,
-        recovery.principal_restore_receipt_path,
-        recovery.principal_restore_materialized_device_handoff_path,
-        recovery.principal_restore_bundle_path,
-        recovery.principal_authz_describe_path,
-        recovery.principal_authz_check_path,
-        recovery.principal_policy_describe_path,
-        recovery.principal_policy_collection_path,
-        recovery.principal_policy_item_path,
-        kinds,
-        modes,
-        serde_json::to_string_pretty(&recovery.example_backup_payload)?,
-        serde_json::to_string_pretty(&recovery.recovery_restore_examples)?,
-        serde_json::to_string_pretty(&recovery.recovery_authz_examples)?,
-        todos,
-    ))
 }
 
 pub fn build_soland_session_grant_plan(
@@ -1210,10 +971,7 @@ pub fn build_session_grant_introspection_proof(
 /// `session_grant_jwt_hash` (`"sha256:" + hex(sha256(grant_jwt))`).
 /// Public so callers can verify their proof binding before sending.
 pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
-    format!(
-        "sha256:{:x}",
-        Sha256::digest(grant_jwt.as_bytes())
-    )
+    format!("sha256:{:x}", Sha256::digest(grant_jwt.as_bytes()))
 }
 
 /// Internal helper: serialize claims to canonical JSON, base64url-encode
@@ -1251,8 +1009,8 @@ pub fn open_oidc_authorize_url(authorize_url: &str) -> anyhow::Result<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn open_authorize_url_impl(authorize_url: &str) -> anyhow::Result<()> {
-    let window = web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     window
         .location()
         .assign(authorize_url)
@@ -1327,15 +1085,15 @@ pub fn extract_error_description_from_callback(
     callback_url: &str,
 ) -> anyhow::Result<Option<String>> {
     let url = Url::parse(callback_url)?;
-    Ok(url.query_pairs().find_map(|(key, value)| {
-        (key == "error_description").then(|| value.into_owned())
-    }))
+    Ok(url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "error_description").then(|| value.into_owned())))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
-    let window = web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let href = window
         .location()
         .href()
@@ -1360,8 +1118,8 @@ pub fn persist_oidc_scaffold(
     principal_actor_did: &str,
     device_id: &str,
 ) -> anyhow::Result<()> {
-    let window = web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let storage = window
         .local_storage()
         .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
@@ -1378,10 +1136,7 @@ pub fn persist_oidc_scaffold(
         authorize_url: bundle.authorize_url.clone(),
     };
     storage
-        .set_item(
-            OIDC_SCAFFOLD_STORAGE_KEY,
-            &serde_json::to_string(&payload)?,
-        )
+        .set_item(OIDC_SCAFFOLD_STORAGE_KEY, &serde_json::to_string(&payload)?)
         .map_err(|error| anyhow::anyhow!("failed to persist OIDC scaffold: {error:?}"))?;
     Ok(())
 }
@@ -1399,8 +1154,8 @@ pub fn persist_oidc_scaffold(
 
 #[cfg(target_arch = "wasm32")]
 pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> {
-    let window = web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let Some(storage) = window
         .local_storage()
         .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
@@ -1423,8 +1178,8 @@ pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> 
 
 #[cfg(target_arch = "wasm32")]
 pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
-    let window = web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let Some(storage) = window
         .local_storage()
         .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
@@ -1659,8 +1414,7 @@ const PKCE_VERIFIER_BYTES: usize = 32;
 
 fn random_url_safe_token(byte_len: usize) -> anyhow::Result<String> {
     let mut buf = vec![0u8; byte_len];
-    getrandom::fill(&mut buf)
-        .map_err(|error| anyhow::anyhow!("getrandom failed: {error}"))?;
+    getrandom::fill(&mut buf).map_err(|error| anyhow::anyhow!("getrandom failed: {error}"))?;
     Ok(URL_SAFE_NO_PAD.encode(&buf))
 }
 
@@ -1681,7 +1435,9 @@ mod tests {
         let verifier = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
         assert_eq!(verifier.len(), 43, "32-byte seed → 43-char URL-safe base64");
         assert!(
-            verifier.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            verifier
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "must be URL-safe base64 (no padding, no +/)"
         );
     }
@@ -1763,10 +1519,7 @@ mod tests {
             extras,
         };
         let bundle = response.to_persisted_bundle(Some("https://hint.example/api"));
-        assert_eq!(
-            bundle.audience.as_deref(),
-            Some("https://wire.example/api")
-        );
+        assert_eq!(bundle.audience.as_deref(), Some("https://wire.example/api"));
     }
 
     /// Round 24 (A2): the introspection proof MUST be a valid Ed25519
@@ -1778,7 +1531,7 @@ mod tests {
     /// surface as `InvalidProof` at the principal server.
     #[test]
     fn session_grant_proof_signs_canonical_claims() {
-        use ed25519_dalek::{Verifier, SigningKey};
+        use ed25519_dalek::{SigningKey, Verifier};
         let signing = SigningKey::from_bytes(&[7u8; 32]);
         let verifying = signing.verifying_key();
         let proof_jwt = build_session_grant_introspection_proof(
@@ -1805,8 +1558,7 @@ mod tests {
         let claims: SessionGrantIntrospectionProofClaims =
             serde_json::from_slice(&payload_bytes).unwrap();
         assert_eq!(
-            claims.kind,
-            "cx.session_grant.introspection_proof.v1",
+            claims.kind, "cx.session_grant.introspection_proof.v1",
             "type claim must match coauth's spec"
         );
         assert_eq!(claims.grant_id, "01HABC123");
@@ -1830,38 +1582,10 @@ mod tests {
     #[test]
     fn session_grant_proof_rejects_empty_inputs() {
         let signing = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
-        assert!(build_session_grant_introspection_proof(
-            "",
-            "j",
-            "a",
-            "c",
-            &signing
-        )
-        .is_err());
-        assert!(build_session_grant_introspection_proof(
-            "g",
-            "",
-            "a",
-            "c",
-            &signing
-        )
-        .is_err());
-        assert!(build_session_grant_introspection_proof(
-            "g",
-            "j",
-            "",
-            "c",
-            &signing
-        )
-        .is_err());
-        assert!(build_session_grant_introspection_proof(
-            "g",
-            "j",
-            "a",
-            "",
-            &signing
-        )
-        .is_err());
+        assert!(build_session_grant_introspection_proof("", "j", "a", "c", &signing).is_err());
+        assert!(build_session_grant_introspection_proof("g", "", "a", "c", &signing).is_err());
+        assert!(build_session_grant_introspection_proof("g", "j", "", "c", &signing).is_err());
+        assert!(build_session_grant_introspection_proof("g", "j", "a", "", &signing).is_err());
     }
 
     #[test]
@@ -1967,8 +1691,7 @@ mod tests {
                 grant_types: vec!["authorization_code".to_owned()],
                 token_endpoint_auth_method: Some("none".to_owned()),
             }],
-            oidc_browser_bridge_session_path: "api/v1/auth/oidc/browser-bridge/session"
-                .to_owned(),
+            oidc_browser_bridge_session_path: "api/v1/auth/oidc/browser-bridge/session".to_owned(),
             oidc_exchange_describe_path: "api/v1/auth/oidc/exchange/describe".to_owned(),
             oidc_exchange_path: "api/v1/auth/oidc/exchange".to_owned(),
             auth_bridge_contract: "auth-bridge".to_owned(),

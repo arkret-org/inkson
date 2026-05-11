@@ -167,21 +167,13 @@ impl SecureKeyStore for MemorySecureKeyStore {
 /// `"yougen"` or `"yougen.test"`) plus the per-secret `key` as the
 /// "username" slot. That two-level naming matches `cmdkey /list`,
 /// `Keychain Access.app`, and `seahorse` UX.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows",
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
 #[derive(Clone, Debug)]
 pub struct KeyringSecureKeyStore {
     service_name: String,
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows",
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
 impl KeyringSecureKeyStore {
     /// Construct a store whose entries land under
     /// `service_name`. Conventional value: `"yougen"`.
@@ -203,11 +195,7 @@ impl KeyringSecureKeyStore {
     }
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows",
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
 impl SecureKeyStore for KeyringSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
         let entry = self.entry(key)?;
@@ -391,11 +379,7 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 /// runtime feature flag, or substitute [`MemorySecureKeyStore`]
 /// explicitly with the usual "secrets in plaintext heap" UX warning.
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows",
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
     {
         Arc::new(KeyringSecureKeyStore::new(service_name.to_owned()))
     }
@@ -536,11 +520,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows",
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
     #[test]
     fn keyring_store_exposes_service_name() {
         let store = KeyringSecureKeyStore::new("yougen.test.unit");

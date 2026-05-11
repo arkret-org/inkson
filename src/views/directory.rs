@@ -1,14 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    entity::{EntityFacet, ViewRenderer, choose_entity_render_kind, unknown_entity_facets},
-    models::*,
-    views::helpers::authed_api,
-};
-
-const INDEX_RENDERER: &str = "card";
-const INDEX_FACET_RENDERABLE: &str = "renderable";
+use crate::{models::*, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
@@ -25,7 +18,6 @@ struct PaginationState {
     spaces_cursor: Option<String>,
     orgs_cursor: Option<String>,
     actors_cursor: Option<String>,
-    index_cursor: Option<String>,
     loading_more: bool,
 }
 
@@ -42,7 +34,6 @@ pub fn DirectoryPanel(
     let mut query = use_signal(String::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
-    let mut index_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
     let mut handle_result = use_signal(|| Option::<ResolveHandleResponse>::None);
     let mut pagination = use_signal(PaginationState::default);
@@ -208,7 +199,6 @@ pub fn DirectoryPanel(
                                 pagination.write().spaces_cursor = None;
                                 pagination.write().orgs_cursor = None;
                                 pagination.write().actors_cursor = None;
-                                pagination.write().index_cursor = None;
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
                                         match tab {
@@ -220,36 +210,9 @@ pub fn DirectoryPanel(
                                                 match api.search_spaces(&q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().spaces_cursor = search.next_cursor.clone();
-                                                        let results = search.results;
-                                                        let space_ids = results
-                                                            .iter()
-                                                            .map(|space| space.space_id.clone())
-                                                            .collect::<Vec<_>>();
-                                                        spaces.set(results);
-                                                        if space_ids.is_empty() {
-                                                            index_results.set(Vec::new());
-                                                        } else {
-                                                            let index_facets = index_query_facets();
-                                                            match api.index_query_with_options(
-                                                                &space_ids,
-                                                                None,
-                                                                Some(&index_facets),
-                                                                Some(INDEX_RENDERER),
-                                                            ).await {
-                                                                Ok(index) => {
-                                                                    pagination.write().index_cursor = index.next_cursor.clone();
-                                                                    status.set(format!(
-                                                                        "indexed {} space projection(s)",
-                                                                        index.results.len()
-                                                                    ));
-                                                                    index_results.set(index.results);
-                                                                }
-                                                                Err(error) => {
-                                                                    index_results.set(Vec::new());
-                                                                    status.set(index_error_context("index query", &error));
-                                                                }
-                                                            }
-                                                        }
+                                                        let count = search.results.len();
+                                                        spaces.set(search.results);
+                                                        status.set(format!("loaded {count} space result(s)"));
                                                     }
                                                     Err(error) => status.set(format!("search failed: {error}")),
                                                 }
@@ -311,7 +274,6 @@ pub fn DirectoryPanel(
                                     pagination.write().spaces_cursor = None;
                                     pagination.write().orgs_cursor = None;
                                     pagination.write().actors_cursor = None;
-                                    pagination.write().index_cursor = None;
                                     spawn(async move {
                                         if let Ok(api) = authed_api(&base, api_token) {
                                             match tab {
@@ -323,36 +285,9 @@ pub fn DirectoryPanel(
                                                     match api.search_spaces(&q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().spaces_cursor = search.next_cursor.clone();
-                                                            let results = search.results;
-                                                            let space_ids = results
-                                                                .iter()
-                                                                .map(|space| space.space_id.clone())
-                                                                .collect::<Vec<_>>();
-                                                            spaces.set(results);
-                                                            if space_ids.is_empty() {
-                                                                index_results.set(Vec::new());
-                                                            } else {
-                                                                let index_facets = index_query_facets();
-                                                                match api.index_query_with_options(
-                                                                    &space_ids,
-                                                                    None,
-                                                                    Some(&index_facets),
-                                                                    Some(INDEX_RENDERER),
-                                                                ).await {
-                                                                    Ok(index) => {
-                                                                        pagination.write().index_cursor = index.next_cursor.clone();
-                                                                        status.set(format!(
-                                                                            "indexed {} space projection(s)",
-                                                                            index.results.len()
-                                                                        ));
-                                                                        index_results.set(index.results);
-                                                                    }
-                                                                    Err(error) => {
-                                                                        index_results.set(Vec::new());
-                                                                        status.set(index_error_context("index query", &error));
-                                                                    }
-                                                                }
-                                                            }
+                                                            let count = search.results.len();
+                                                            spaces.set(search.results);
+                                                            status.set(format!("loaded {count} space result(s)"));
                                                         }
                                                         Err(error) => status.set(format!("search failed: {error}")),
                                                     }
@@ -478,18 +413,7 @@ pub fn DirectoryPanel(
                         }
                     }
                 }
-                if !index_results().is_empty() {
-                    div { class: "event", "data-testid": "index-query-results",
-                        div { class: "event-head",
-                            span { "Indexed Views" }
-                            span { "{index_results().len()} result(s)" }
-                        }
-                        for result in index_results() {
-                            GenericIndexResult { result }
-                        }
-                    }
-                }
-                if pagination().spaces_cursor.is_some() || pagination().index_cursor.is_some() {
+                if pagination().spaces_cursor.is_some() {
                     div { class: "event",
                         div { class: "actions",
                             if pagination().spaces_cursor.is_some() {
@@ -522,44 +446,6 @@ pub fn DirectoryPanel(
                                         }
                                     },
                                     if pagination().loading_more { "Loading..." } else { "Load More Spaces" }
-                                }
-                            }
-                            if pagination().index_cursor.is_some() {
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "load-more-index",
-                                    disabled: pagination().loading_more,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let base = base.clone();
-                                            let space_ids = spaces().iter().map(|s| s.space_id.clone()).collect::<Vec<_>>();
-                                            let api_token = token();
-                                            let cursor = pagination.read().index_cursor.clone();
-                                            pagination.write().loading_more = true;
-                                            spawn(async move {
-                                                if let Ok(api) = authed_api(&base, api_token) {
-                                                    let index_facets = index_query_facets();
-                                                    match api.index_query_with_options(
-                                                        &space_ids,
-                                                        cursor.as_deref(),
-                                                        Some(&index_facets),
-                                                        Some(INDEX_RENDERER),
-                                                    ).await {
-                                                        Ok(index) => {
-                                                            pagination.write().index_cursor = index.next_cursor.clone();
-                                                            let mut current = index_results();
-                                                            current.extend(index.results);
-                                                            index_results.set(current);
-                                                        }
-                                                        Err(error) => status.set(index_error_context("load more index", &error)),
-                                                    }
-                                                }
-                                                pagination.write().loading_more = false;
-                                            });
-                                        }
-                                    },
-                                    if pagination().loading_more { "Loading..." } else { "Load More Index" }
                                 }
                             }
                         }
@@ -964,155 +850,6 @@ fn protocol_object_results(query: &str) -> Vec<Value> {
     ]
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexEntityPresentation {
-    render_kind: String,
-    renderer: String,
-    title: String,
-    subtitle: String,
-    entity_type: String,
-    facets: Vec<String>,
-    unknown_facets: Vec<String>,
-    projection_facets: Vec<String>,
-}
-
-#[component]
-fn GenericIndexResult(result: Value) -> Element {
-    let presentation = index_entity_presentation(&result);
-    let class_name = format!("event entity-{}", presentation.render_kind);
-    let facets_label = if presentation.facets.is_empty() {
-        "none".to_owned()
-    } else {
-        presentation.facets.join(", ")
-    };
-    let projection_facets_label = presentation.projection_facets.join("; ");
-    let unknown_facets_label = presentation.unknown_facets.join(", ");
-
-    rsx! {
-        div {
-            class: class_name,
-            "data-testid": "generic-entity-card",
-            "data-render-kind": "{presentation.render_kind}",
-            div { class: "event-head",
-                span { "{presentation.render_kind}" }
-                span { "renderer {presentation.renderer}" }
-            }
-            div { class: "space-title", "data-testid": "generic-entity-title", "{presentation.title}" }
-            div { class: "muted", "data-testid": "entity-type-label",
-                "entity type {presentation.entity_type}"
-            }
-            if !presentation.subtitle.is_empty() {
-                div { class: "muted", "data-testid": "generic-entity-subtitle", "{presentation.subtitle}" }
-            }
-            div { class: "muted", "data-testid": "entity-facets",
-                "facets {facets_label}"
-            }
-            if !presentation.projection_facets.is_empty() {
-                div { class: "muted", "data-testid": "projection-facets",
-                    "projection facets {projection_facets_label}"
-                }
-            }
-            if !presentation.unknown_facets.is_empty() {
-                div { class: "muted", "data-testid": "unknown-facets-debug",
-                    "unknown facets {unknown_facets_label}"
-                }
-            }
-        }
-    }
-}
-
-fn index_entity_presentation(result: &Value) -> IndexEntityPresentation {
-    let facets = index_facet_values(result);
-    let entity_facets = facets
-        .iter()
-        .map(|facet| EntityFacet::from_str(facet))
-        .collect::<Vec<_>>();
-    let renderer = value_str(result, "renderer", value_str(result, "view_renderer", ""));
-    let view_renderer = (!renderer.is_empty()).then(|| ViewRenderer::from_str(&renderer));
-    let render_kind = choose_entity_render_kind(&entity_facets, view_renderer.as_ref());
-    let title = value_str(
-        result,
-        "title",
-        value_str(
-            result,
-            "name",
-            value_str(
-                result,
-                "entity_id",
-                value_str(result, "space_id", "untitled"),
-            ),
-        ),
-    );
-    let subtitle = value_str(
-        result,
-        "description",
-        value_str(result, "summary", value_str(result, "body", "")),
-    );
-    let entity_type = value_str(result, "entity_type", value_str(result, "kind", "unknown"));
-    let projection_facets = projection_facet_labels(result);
-
-    IndexEntityPresentation {
-        render_kind: render_kind.as_str().to_owned(),
-        renderer: view_renderer
-            .as_ref()
-            .map(ViewRenderer::as_str)
-            .unwrap_or("auto")
-            .to_owned(),
-        title,
-        subtitle,
-        entity_type,
-        facets,
-        unknown_facets: unknown_entity_facets(&entity_facets),
-        projection_facets,
-    }
-}
-
-fn index_facet_values(value: &Value) -> Vec<String> {
-    let mut facets = Vec::new();
-    for key in [
-        "facets",
-        "entity_facets",
-        "item_facets",
-        "message_facets",
-        "node_facets",
-    ] {
-        extend_unique(&mut facets, value_vec(value, key));
-    }
-    facets
-}
-
-fn projection_facet_labels(value: &Value) -> Vec<String> {
-    [
-        ("item", "item_facets"),
-        ("message", "message_facets"),
-        ("node", "node_facets"),
-    ]
-    .into_iter()
-    .filter_map(|(label, key)| {
-        let facets = value_vec(value, key);
-        (!facets.is_empty()).then(|| format!("{label}: {}", facets.join(", ")))
-    })
-    .collect()
-}
-
-fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
-    for value in values {
-        if !target.contains(&value) {
-            target.push(value);
-        }
-    }
-}
-
-fn index_query_facets() -> Vec<String> {
-    vec![INDEX_FACET_RENDERABLE.to_owned()]
-}
-
-fn index_error_context(action: &str, error: &impl std::fmt::Display) -> String {
-    format!(
-        "{action} failed (renderer={INDEX_RENDERER}, facets={INDEX_FACET_RENDERABLE}; cursor must match the same renderer/facet filter): {error}"
-    )
-}
-
 fn value_vec(value: &Value, key: &str) -> Vec<String> {
     value
         .get(key)
@@ -1124,54 +861,4 @@ fn value_vec(value: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn index_presentation_uses_renderer_and_preserves_unknown_facets() {
-        let result = json!({
-            "entity_id": "cx:message:1",
-            "entity_type": "message",
-            "title": "Thread",
-            "facets": ["replyable", "com.example.live"],
-            "renderer": "thread"
-        });
-
-        let presentation = index_entity_presentation(&result);
-        assert_eq!(presentation.render_kind, "message");
-        assert_eq!(presentation.renderer, "thread");
-        assert_eq!(presentation.entity_type, "message");
-        assert_eq!(presentation.unknown_facets, vec!["com.example.live"]);
-    }
-
-    #[test]
-    fn index_presentation_reads_projection_facet_fields() {
-        let result = json!({
-            "kind": "view_projection",
-            "name": "Tasks",
-            "item_facets": ["stateful", "rankable"],
-            "node_facets": ["container"],
-            "renderer": "table"
-        });
-
-        let presentation = index_entity_presentation(&result);
-        assert_eq!(presentation.render_kind, "table");
-        assert!(presentation.facets.contains(&"stateful".to_owned()));
-        assert!(
-            presentation
-                .projection_facets
-                .join("; ")
-                .contains("item: stateful, rankable")
-        );
-        assert!(
-            presentation
-                .projection_facets
-                .join("; ")
-                .contains("node: container")
-        );
-    }
 }

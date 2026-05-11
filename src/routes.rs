@@ -64,15 +64,6 @@ pub enum Route {
     #[route("/chat/:space_id", ChatSpacePage)]
     ChatSpace { space_id: String },
 
-    #[route("/forum", crate::app::RouterView)]
-    Forum,
-
-    #[route("/memory", crate::app::RouterView)]
-    MemoryReview,
-
-    #[route("/agents", crate::app::RouterView)]
-    AgentRuns,
-
     #[route("/notifications", crate::app::RouterView)]
     Notifications,
 
@@ -152,9 +143,6 @@ impl Route {
             Route::Audit => View::Audit,
             Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
             Route::Chat | Route::ChatSpace { .. } => View::Chat,
-            Route::Forum => View::Forum,
-            Route::MemoryReview => View::MemoryReview,
-            Route::AgentRuns => View::AgentRuns,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentSpace { .. } => View::Document,
             Route::Call => View::Call,
@@ -206,9 +194,6 @@ impl From<View> for Route {
             View::Audit => Route::Audit,
             View::Kanban => Route::Kanban,
             View::Chat => Route::Chat,
-            View::Forum => Route::Forum,
-            View::MemoryReview => Route::MemoryReview,
-            View::AgentRuns => Route::AgentRuns,
             View::Notifications => Route::Notifications,
             View::Document => Route::Document,
             View::Call => Route::Call,
@@ -240,9 +225,6 @@ mod tests {
             Route::Audit,
             Route::Kanban,
             Route::Chat,
-            Route::Forum,
-            Route::MemoryReview,
-            Route::AgentRuns,
             Route::Notifications,
             Route::Document,
             Route::Call,

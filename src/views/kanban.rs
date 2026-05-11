@@ -6,8 +6,7 @@ use crate::{
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
     move_builder::{
-        UnsignedMove, build_flow_position_move, did_key_verification_method,
-        sign_unsigned_move,
+        UnsignedMove, build_flow_position_move, did_key_verification_method, sign_unsigned_move,
     },
     operation::uuid_v8,
     routes::Route,
@@ -207,11 +206,7 @@ fn collection_projection_to_columns(
             id: group.group_id.clone(),
             title: group.title.clone(),
             rank: group.rank.clone().unwrap_or_default(),
-            cards: group
-                .items
-                .iter()
-                .map(card_from_projection_item)
-                .collect(),
+            cards: group.items.iter().map(card_from_projection_item).collect(),
         })
         .collect()
 }
@@ -220,9 +215,7 @@ fn collection_projection_to_columns(
 /// is honoured: `visibility="locked"` produces a [`LockedFlow`] with an
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
-fn card_from_projection_item(
-    item: &contrix_sdk::CollectionProjectionItem,
-) -> KanbanCard {
+fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> KanbanCard {
     let id = item
         .object
         .get("id")
@@ -265,8 +258,7 @@ fn card_from_projection_item(
         if d.visibility == "locked" {
             Some(LockedFlow {
                 flow_id_hash: format!("sha256:{}", id),
-                reason: "Locked discussion: title and members are not disclosed."
-                    .to_owned(),
+                reason: "Locked discussion: title and members are not disclosed.".to_owned(),
             })
         } else {
             None
@@ -340,9 +332,7 @@ pub fn KanbanPanel(
     } else {
         BoardProjectionSource::SeedFallback
     };
-    let mut columns = use_signal(|| {
-        try_load_api_columns(view_id).unwrap_or_else(seed_columns)
-    });
+    let mut columns = use_signal(|| try_load_api_columns(view_id).unwrap_or_else(seed_columns));
     let mut projection_source = use_signal(|| initial_source);
     let mut new_column_title = use_signal(String::new);
     let mut new_card_title = use_signal(String::new);
@@ -394,9 +384,7 @@ pub fn KanbanPanel(
                     ));
                 }
                 Err(error) => {
-                    board_status.set(format!(
-                        "API projection unavailable on mount: {error}"
-                    ));
+                    board_status.set(format!("API projection unavailable on mount: {error}"));
                 }
             }
         }
@@ -498,7 +486,7 @@ pub fn KanbanPanel(
                     div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
                     div { class: "metric", strong { "Frontier" } span { "{repo_state}" } div { class: "muted", "CAS moves rebase from latest projection" } }
-                    div { class: "metric", strong { "Write plane" } span { if event_write_ready { "cx.events.submit" } else { "queued local" } } div { class: "muted", "legacy operation helpers remain bridge-only" } }
+                    div { class: "metric", strong { "Write plane" } span { if event_write_ready { "cx.events.submit" } else { "queued local" } } div { class: "muted", "active writes use operation/event surfaces directly" } }
                 }
                 div { class: "workflow-form",
                     div { class: "actions",
@@ -566,7 +554,7 @@ pub fn KanbanPanel(
                             onclick: {
                                 // Round 24 (F1): replay path now resubmits
                                 // a queued Move via api.submit_move (no
-                                // legacy event-envelope path).
+                                // event-envelope path).
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
                                 move |_| {
@@ -684,7 +672,7 @@ pub fn KanbanPanel(
                                                     "list_id": col_id,
                                                     "title": title,
                                                     "rank": rank,
-                                                    "flow_kind": "card",
+                                                    "kind": "card",
                                                 });
                                                 submit_kanban_move(
                                                     base.clone(),
@@ -876,7 +864,7 @@ pub fn KanbanPanel(
                         div { class: "muted", "{card.audit_hint}" }
                     }
                     // Audit trail excerpt — claude-design desktop/audit.html
-                    // sync/operations-sync.md (Event Envelope, prev_refs, auth_refs)
+                    // sync/operations-sync.md (Event Envelope, prev_refs, refs)
                     div { class: "event", "data-testid": "card-audit-excerpt",
                         div { class: "event-head",
                             span { "Recent events on this card" }
@@ -968,20 +956,15 @@ fn submit_kanban_move(
     };
     let did = identity.device_did.clone();
     let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = match build_flow_position_move(
-        &did,
-        &space_id,
-        &subject,
-        value.clone(),
-        &anchor_ref,
-        &hlc,
-    ) {
-        Ok(u) => u,
-        Err(err) => {
-            board_status.set(format!("build {kind} Move failed: {err}"));
-            return;
-        }
-    };
+    let unsigned: UnsignedMove =
+        match build_flow_position_move(&did, &space_id, &subject, value.clone(), &anchor_ref, &hlc)
+        {
+            Ok(u) => u,
+            Err(err) => {
+                board_status.set(format!("build {kind} Move failed: {err}"));
+                return;
+            }
+        };
     let signed = sign_unsigned_move(unsigned, &identity.signing_key, &vm);
     let move_id = signed.id.as_str().to_owned();
     let cell_id = format!("cx:cell:cx.component.flow.position.v1:{subject}");
@@ -1041,10 +1024,8 @@ fn submit_kanban_move(
                         .find(|r| r.move_id == move_for_track)
                     {
                         record.state = card_state;
-                        record.note = format!(
-                            "submit_move state={} reason={:?}",
-                            resp.state, resp.reason
-                        );
+                        record.note =
+                            format!("submit_move state={} reason={:?}", resp.state, resp.reason);
                     }
                     board_status.set(format!(
                         "{kind_for_record} Move {} state={}",
@@ -1069,8 +1050,7 @@ fn submit_kanban_move(
 }
 
 /// Round 24 (F1): replay the first queued Move via api.submit_move.
-/// Replaces the legacy `replay_first_event` which targeted
-/// `cx.events.submit` — Move pipeline is the canonical write path.
+/// Move pipeline is the canonical write path for these board edits.
 fn replay_first_move(
     base_url: String,
     token: Signal<String>,
@@ -1079,11 +1059,9 @@ fn replay_first_move(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
-    let Some(idx) = write_records
-        .read()
-        .iter()
-        .position(|record| record.state == CardState::Queued || record.state == CardState::SoftFailed)
-    else {
+    let Some(idx) = write_records.read().iter().position(|record| {
+        record.state == CardState::Queued || record.state == CardState::SoftFailed
+    }) else {
         board_status.set("no queued Move to replay".to_owned());
         return;
     };
@@ -1256,9 +1234,8 @@ mod tests {
     #[test]
     fn collection_projection_maps_to_kanban_columns() {
         use contrix_sdk::{
-            CollectionProjectionDiscussion, CollectionProjectionGroup,
-            CollectionProjectionItem, CollectionProjectionResponse, ViewId, ViewKind,
-            ViewRenderer,
+            CollectionProjectionDiscussion, CollectionProjectionGroup, CollectionProjectionItem,
+            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
         };
         let projection = CollectionProjectionResponse {
             kind: ViewKind::Collection,
@@ -1343,12 +1320,12 @@ mod tests {
             BoardProjectionSource::ApiDerived.label(),
             BoardProjectionSource::SeedFallback.label()
         );
-        assert!(BoardProjectionSource::ApiDerived
-            .label()
-            .contains("API-derived"));
-        assert!(BoardProjectionSource::SeedFallback
-            .label()
-            .contains("seed"));
+        assert!(
+            BoardProjectionSource::ApiDerived
+                .label()
+                .contains("API-derived")
+        );
+        assert!(BoardProjectionSource::SeedFallback.label().contains("seed"));
     }
 
     #[test]

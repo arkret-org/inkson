@@ -16,6 +16,7 @@ use reqwest::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -182,41 +183,31 @@ impl Default for CancellationToken {
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResponse, AppletPingResponse,
-    AppletProtocolMetadataResponse, AppletQueryActorResponse, AppletQuerySpaceResponse,
-    AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse, BackfillResponse,
-    BanMemberResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
+    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResponse,
+    AppletPingResponse, AppletProtocolMetadataResponse, AppletQueryActorResponse,
+    AppletQuerySpaceResponse, AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse,
+    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
     DeviceMessagesReceiveResponse, DeviceMessagesSendResponse, DeviceTrustResponse,
-    DirectoryDescribeResponse, EditMessageResponse, EffectiveGrantsResponse,
-    EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
-    FederationTransactionResponse, FederationVerifyActorResponse, GetCommitResponse,
-    GetOperationsResponse, HealthResponse, IceConfigResponse, IdentityDescribeResponse,
-    IdentityLogResponse, IdentityReceiptsResponse, IdentityResolveResponse, IndexDescribeResponse,
-    IndexEntityResponse, IndexInboxResponse, IndexNotificationsResponse, IndexQueryResponse,
-    IndexSearchResponse, IndexThreadResponse, InvitesResponse, KeysClaimResponse,
-    KeysQueryResponse, KeysUploadResponse, ListCommitsResponse, MimiConsentResponse,
+    DirectoryDescribeResponse, EffectiveGrantsResponse, EventsDescribeResponse,
+    FederationOperationsResponse, FederationSpaceMembersResponse, FederationTransactionResponse,
+    FederationVerifyActorResponse, HealthResponse, IceConfigResponse, IdentityDescribeResponse,
+    IdentityLogResponse, IdentityReceiptsResponse, IdentityResolveResponse, InvitesResponse,
+    KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, MimiConsentResponse,
     MimiGroupInfoResponse, MimiIdentifierQueryResponse, MimiKeyMaterialResponse,
     MimiNotifyResponse, MimiProviderDirectoryResponse, MimiProxyDownloadResponse,
     MimiReportAbuseResponse, MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse,
     MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
     ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
     PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
-    PushRegisterResponse, ReactionResponse, ReceiptResponse, RedactMessageResponse,
-    RepoDescribeResponse, RepoSyncResponse, ResolveHandleResponse, ResolveSpaceResponse,
+    PushRegisterResponse, ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse,
     RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    SendMessageResponse, ServerDescription, SnapshotHeadResponse, SpaceHierarchyResponse,
-    SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse,
-    SignAnchorResponse, SubmitAnchorResponse, SubmitCommitResponse, SubmitDidOperationResponse,
-    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
+    ServerDescription, SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse,
+    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse,
+    SubmitDidOperationResponse, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
     ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
     UpdateSpaceResponse, VerifyDeviceResponse,
 };
-use crate::operation::{EventEnvelope, uuid_v8};
-
-/// Backwards-compatible alias for `ContrixApi`. Some views (e.g. `views/settings.rs`)
-/// were written against `ApiClient` while this crate had two SDK eras; both names
-/// resolve to the same Principal Server HTTP client.
-pub type ApiClient = ContrixApi;
+use crate::operation::{OperationEnvelope, uuid_v7, uuid_v8};
 
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
@@ -448,11 +439,15 @@ impl ContrixApi {
         self.get_json("api/v1/server/describe").await
     }
 
-    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
+    pub async fn auth_bridge_describe(
+        &self,
+    ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
         self.get_json("api/v1/auth/bridge/describe").await
     }
 
-    pub async fn integration_describe(&self) -> anyhow::Result<PrincipalIntegrationManifestResponse> {
+    pub async fn integration_describe(
+        &self,
+    ) -> anyhow::Result<PrincipalIntegrationManifestResponse> {
         self.get_json("api/v1/integration/describe").await
     }
 
@@ -470,10 +465,6 @@ impl ContrixApi {
 
     pub async fn key_backups_describe(&self) -> anyhow::Result<serde_json::Value> {
         self.get_json("api/v1/keys/backups/describe").await
-    }
-
-    pub async fn recovery_contract_stack(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/recovery/contract-stack").await
     }
 
     pub async fn dev_login(
@@ -516,11 +507,7 @@ impl ContrixApi {
         if let Some(introspection_proof) = introspection_proof {
             body["introspection_proof"] = serde_json::to_value(introspection_proof)?;
         }
-        self.post_json(
-            path,
-            body,
-        )
-        .await
+        self.post_json(path, body).await
     }
 
     pub async fn exchange_session_grant(
@@ -534,7 +521,8 @@ impl ContrixApi {
             grant_jwt,
             principal_did,
             device_id,
-        ).await
+        )
+        .await
     }
 
     pub async fn register_account(
@@ -610,9 +598,8 @@ impl ContrixApi {
 
     // C10.D (2026-05-09 十六轮) Move/Anchor pipeline — the protocol-canonical
     // write path for cell-driven state changes (consent, capability, member
-    // state, anchorer cell, MLS epoch, etc.). Use these instead of legacy
-    // direct-event endpoints (`messages/send`, `entities/...`) when the
-    // operation maps to a `cell_family` per spec event-kind-registry.
+    // state, anchorer cell, MLS epoch, etc.). Non-cell writes use
+    // `POST /api/v1/events` instead.
 
     /// Submit a signed [`contrix_sdk::Move`] for the next anchorer batch.
     /// Returns the server's verdict (`pending` if accepted into MoveStore,
@@ -650,10 +637,8 @@ impl ContrixApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!(
-            "api/admin/v1/spaces/{space_id}/anchorer"
-        ))
-        .await
+        self.get_json(&format!("api/admin/v1/spaces/{space_id}/anchorer"))
+            .await
     }
 
     /// Trigger one anchorer signing pass for `space_id`. Admin-only.
@@ -718,29 +703,6 @@ impl ContrixApi {
         }
     }
 
-    pub async fn send_message(
-        &self,
-        space_id: &str,
-        thread_id: Option<&str>,
-        content: Value,
-        encrypted: bool,
-    ) -> anyhow::Result<SendMessageResponse> {
-        let request_id = uuid_v8();
-        let request = self
-            .http
-            .post(self.endpoint("api/v1/messages/send")?)
-            .json(&json!({
-                "space_id": space_id,
-                "thread_id": thread_id,
-                "content": content,
-                "encrypted": encrypted,
-                "request_id": request_id.clone(),
-            }));
-        let request = self.with_write_request_headers(request, &request_id);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
-            .await
-    }
-
     pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResponse> {
         self.get_json("api/v1/identity/describe").await
     }
@@ -789,117 +751,15 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn index_query(
-        &self,
-        space_ids: &[String],
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<IndexQueryResponse> {
-        self.index_query_with_options(space_ids, next_cursor, None, None)
-            .await
-    }
-
-    pub async fn index_query_with_options(
-        &self,
-        space_ids: &[String],
-        next_cursor: Option<&str>,
-        facets: Option<&[String]>,
-        renderer: Option<&str>,
-    ) -> anyhow::Result<IndexQueryResponse> {
-        let mut body = json!({"space_ids": space_ids, "entity_types": [], "limit": 20});
-        if let Some(facets) = facets {
-            body["facets"] = json!(facets);
-        }
-        if let Some(renderer) = renderer {
-            body["renderer"] = json!(renderer);
-        }
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/index/query", body).await
-    }
-
-    pub async fn index_describe(&self) -> anyhow::Result<IndexDescribeResponse> {
-        self.get_json("api/v1/index/describe").await
-    }
-
-    pub async fn repo_describe(&self) -> anyhow::Result<RepoDescribeResponse> {
-        self.get_json("api/v1/repo/describe").await
-    }
-
-    pub async fn list_commits(&self, limit: usize) -> anyhow::Result<ListCommitsResponse> {
-        self.get_json(&format!("api/v1/repo/commits?limit={limit}"))
-            .await
-    }
-
-    pub async fn get_commit(&self, commit_id: &str) -> anyhow::Result<GetCommitResponse> {
-        self.get_json(&format!("api/v1/repo/commit?commit_id={commit_id}"))
-            .await
-    }
-
-    pub async fn get_operations(
-        &self,
-        operation_ids: &[String],
-    ) -> anyhow::Result<GetOperationsResponse> {
-        self.post_json(
-            "api/v1/repo/operations",
-            json!({"operation_ids": operation_ids, "include_payload": true}),
-        )
-        .await
-    }
-
-    pub async fn repo_sync(
-        &self,
-        repo_id: &str,
-        since: Option<&str>,
-    ) -> anyhow::Result<RepoSyncResponse> {
-        self.post_json(
-            "api/v1/repo/sync",
-            json!({"repo_id": repo_id, "since": since, "limit": 100, "filters": null}),
-        )
-        .await
-    }
-
-    pub async fn submit_commit(
-        &self,
-        repo_id: &str,
-        commit: Value,
-        expected_head: Option<&str>,
-        idempotency_key: Option<&str>,
-    ) -> anyhow::Result<SubmitCommitResponse> {
-        let idempotency_key = idempotency_key
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(uuid_v8);
-        let request = self
-            .http
-            .post(self.endpoint("api/v1/repo/submit-commit")?)
-            .json(&json!({
-                "repo_id": repo_id,
-                "commit": commit,
-                "expected_head": expected_head,
-                "idempotency_key": idempotency_key.clone()
-            }));
-        let request = self.with_write_request_headers(request, &idempotency_key);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
-            .await
-    }
-
-    /// C17 (spec 2026-05-08): renamed from `backfill` (`/api/v1/sync/backfill`)
-    /// to `events_query` (`/api/v1/events`). Folds the legacy `cx.events.list`
-    /// (forward) and `cx.sync.backfill` (backward) into a single op gated by
-    /// `direction`. Soland tolerates `space_id` singular during transition.
+    /// Query durable events through the current `/api/v1/events` surface.
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResponse> {
-        self.get_json(&format!("api/v1/events?spaces={space_id}&direction=backward"))
-            .await
+        self.get_json(&format!(
+            "api/v1/events?spaces={space_id}&direction=backward"
+        ))
+        .await
     }
 
-    /// C17 (spec 2026-05-08): subscribe to the live event stream for one or
-    /// more Spaces via `cx.events.subscribe` (`GET /api/v1/events/subscribe`).
-    /// Renamed wire-break of legacy `cx.sync.subscribe`. The frame envelope's
-    /// top field is `kind` (replacing `type`); response includes seven new
-    /// control kinds (`catchup_complete` / `heartbeat` / `dropped` /
-    /// `epoch_rotation` / `unauthorized` / `resync_required` / `frontier`).
-    /// Use [`Self::events_subscribe_typed`] to parse the response into
-    /// [`contrix_sdk::EventsSubscribeFrame`] enum values directly.
+    /// Subscribe to the live event stream for one or more Spaces.
     pub async fn events_subscribe(
         &self,
         space_id: &str,
@@ -927,14 +787,15 @@ impl ContrixApi {
         from: Option<&str>,
         include_history: Option<bool>,
     ) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrame>> {
-        let response = self.events_subscribe(space_id, from, include_history).await?;
+        let response = self
+            .events_subscribe(space_id, from, include_history)
+            .await?;
         let mut frames = Vec::new();
         if let Some(frames_array) = response.get("frames").and_then(|f| f.as_array()) {
             for frame in frames_array {
-                let typed: contrix_sdk::EventsSubscribeFrame = serde_json::from_value(frame.clone())
-                    .map_err(|err| {
-                        anyhow::anyhow!("failed to parse subscribe frame: {err}")
-                    })?;
+                let typed: contrix_sdk::EventsSubscribeFrame =
+                    serde_json::from_value(frame.clone())
+                        .map_err(|err| anyhow::anyhow!("failed to parse subscribe frame: {err}"))?;
                 frames.push(typed);
             }
         }
@@ -1022,7 +883,9 @@ impl ContrixApi {
             .unregister_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(OkResponse { ok: response.body.ok })
+        Ok(OkResponse {
+            ok: response.body.ok,
+        })
     }
 
     /// Build a [`ContrixPushClient`] that mirrors this api client's auth
@@ -1054,10 +917,14 @@ impl ContrixApi {
             "api/v1/keys/upload",
             json!({
                 "device_id": device_id,
-                "device_keys": {"alg": "mls-rfc9420", "key": "yougen-dev-key"},
-                "one_time_keys": [{"key_id": "yougen-otk-1", "key": "yougen-one-time"}],
+                "one_time_keys": {
+                    "signed_curve25519:yougen-otk-1": {
+                        "key_id": "yougen-otk-1",
+                        "key": "yougen-one-time"
+                    }
+                },
                 "fallback_keys": {},
-                "device_signature": {"alg": "none"}
+                "device_signature": {"alg": "EdDSA", "signature": "yougen-dev-signature"}
             }),
         )
         .await
@@ -1120,12 +987,8 @@ impl ContrixApi {
         content: serde_json::Value,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
         let path = "api/v1/device_messages";
-        let payload = build_device_message_envelope(
-            target_actor,
-            target_device_id,
-            message_type,
-            content,
-        );
+        let payload =
+            build_device_message_envelope(target_actor, target_device_id, message_type, content);
         let request = self
             .http
             .post(self.endpoint(path)?)
@@ -1153,276 +1016,7 @@ impl ContrixApi {
     }
 
     pub async fn get_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/{backup_id}")).await
-    }
-
-    pub async fn get_key_backup_restore_describe(
-        &self,
-        backup_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/{backup_id}/restore/describe"))
-            .await
-    }
-
-    pub async fn get_key_backup_restore_state_describe(
-        &self,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/restore-state/describe")
-            .await
-    }
-
-    pub async fn get_key_backup_restore_state_export(
-        &self,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/restore-state/export")
-            .await
-    }
-
-    pub async fn post_key_backup_restore_state_import(
-        &self,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json("api/v1/keys/backups/restore-state/import", payload)
-            .await
-    }
-
-    pub async fn post_key_backup_restore_start(
-        &self,
-        backup_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/{backup_id}/restore/start"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn list_key_backup_restore_tickets(
-        &self,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/restore-tickets").await
-    }
-
-    pub async fn get_key_backup_restore_ticket(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}"))
-            .await
-    }
-
-    pub async fn post_key_backup_restore_ticket_advance(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/advance"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn post_key_backup_restore_ticket_resume(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/resume"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn post_key_backup_restore_ticket_cancel(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/cancel"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn post_key_backup_restore_ticket_retry(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/retry"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn get_key_backup_restore_approval_status(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!(
-            "api/v1/keys/backups/restore-tickets/{ticket_id}/approvals/status"
-        ))
-        .await
-    }
-
-    pub async fn post_key_backup_restore_approval_submit(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/approvals/submit"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn get_key_backup_restore_executor_status(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!(
-            "api/v1/keys/backups/restore-tickets/{ticket_id}/executor/status"
-        ))
-        .await
-    }
-
-    pub async fn post_key_backup_restore_executor_enqueue(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/executor/enqueue"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn post_key_backup_restore_executor_start(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/executor/start"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn post_key_backup_restore_executor_complete(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!("api/v1/keys/backups/restore-tickets/{ticket_id}/executor/complete"),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn get_key_backup_restore_result(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/result"))
-            .await
-    }
-
-    pub async fn get_key_backup_restore_receipt(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/receipt"))
-            .await
-    }
-
-    pub async fn post_key_backup_restore_materialized_device_handoff(
-        &self,
-        ticket_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json(
-            &format!(
-                "api/v1/keys/backups/restore-tickets/{ticket_id}/materialized-device-handoff"
-            ),
-            payload,
-        )
-        .await
-    }
-
-    pub async fn get_key_backup_restore_bundle(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/bundle"))
-            .await
-    }
-
-    pub async fn get_key_backup_restore_activity(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/activity"))
-            .await
-    }
-
-    pub async fn get_recovery_live_snapshot(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/recovery/live-snapshot").await
-    }
-
-    pub async fn get_recovery_stack_bundle(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/recovery/stack-bundle").await
-    }
-
-    pub async fn get_recovery_discovery(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/recovery/discovery").await
-    }
-
-    pub async fn get_recovery_readiness(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/recovery/readiness").await
-    }
-
-    pub async fn get_key_backup_restore_timeline(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/timeline"))
-            .await
-    }
-
-    pub async fn get_key_backup_restore_audit_feed(
-        &self,
-        ticket_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/restore-tickets/{ticket_id}/audit-feed"))
-            .await
-    }
-
-    pub async fn get_key_backup_restore_state_durability(
-        &self,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/restore-state/durability").await
-    }
-
-    pub async fn list_key_backup_restore_state_checkpoints(
-        &self,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/restore-state/checkpoints").await
-    }
-
-    pub async fn post_key_backup_restore_state_checkpoint(
-        &self,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.post_json("api/v1/keys/backups/restore-state/checkpoints", payload)
+        self.get_json(&format!("api/v1/keys/backups/{backup_id}"))
             .await
     }
 
@@ -1691,67 +1285,6 @@ impl ContrixApi {
         .await
     }
 
-    // ── Messaging ───────────────────────────────────────────────────
-
-    pub async fn edit_message(
-        &self,
-        message_id: &str,
-        content: Value,
-    ) -> anyhow::Result<EditMessageResponse> {
-        let request_id = uuid_v8();
-        let request = self
-            .http
-            .patch(self.endpoint(&format!("api/v1/messages/{message_id}"))?)
-            .json(&json!({
-                "content": content,
-                "request_id": request_id.clone(),
-            }));
-        let request = self.with_write_request_headers(request, &request_id);
-        self.send_json_retryable(self.prepare_request(request), Method::PATCH)
-            .await
-    }
-
-    pub async fn redact_message(
-        &self,
-        message_id: &str,
-        reason: Option<&str>,
-    ) -> anyhow::Result<RedactMessageResponse> {
-        let request_id = uuid_v8();
-        let request = self
-            .http
-            .post(self.endpoint(&format!("api/v1/messages/{message_id}/redact"))?)
-            .json(&json!({
-                "reason": reason,
-                "request_id": request_id.clone(),
-            }));
-        let request = self.with_write_request_headers(request, &request_id);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
-            .await
-    }
-
-    pub async fn add_reaction(
-        &self,
-        message_id: &str,
-        reaction_key: &str,
-    ) -> anyhow::Result<ReactionResponse> {
-        self.post_json(
-            &format!("api/v1/messages/{message_id}/reactions"),
-            json!({"reaction_key": reaction_key}),
-        )
-        .await
-    }
-
-    pub async fn remove_reaction(
-        &self,
-        message_id: &str,
-        reaction_key: &str,
-    ) -> anyhow::Result<ReactionResponse> {
-        self.delete_json(&format!(
-            "api/v1/messages/{message_id}/reactions/{reaction_key}"
-        ))
-        .await
-    }
-
     pub async fn send_typing(
         &self,
         space_id: &str,
@@ -1786,11 +1319,8 @@ impl ContrixApi {
         &self,
         view_id: &str,
     ) -> anyhow::Result<contrix_sdk::CollectionProjectionResponse> {
-        self.post_json(
-            &format!("api/v1/views/{view_id}/projection"),
-            json!({}),
-        )
-        .await
+        self.post_json(&format!("api/v1/views/{view_id}/projection"), json!({}))
+            .await
     }
 
     // ── Device & Crypto ─────────────────────────────────────────────
@@ -1862,114 +1392,6 @@ impl ContrixApi {
 
     pub async fn get_policy(&self, resource: &str) -> anyhow::Result<PolicyResponse> {
         self.get_json(&format!("api/v1/policy/{resource}")).await
-    }
-
-    // ── Index / AppView ─────────────────────────────────────────────
-
-    pub async fn index_entity(
-        &self,
-        entity_id: &str,
-        space_id: &str,
-    ) -> anyhow::Result<IndexEntityResponse> {
-        self.post_json(
-            "api/v1/index/entity",
-            json!({"entity_id": entity_id, "space_id": space_id}),
-        )
-        .await
-    }
-
-    pub async fn index_thread(
-        &self,
-        entity_id: &str,
-        limit: Option<usize>,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<IndexThreadResponse> {
-        let mut body = json!({"entity_id": entity_id, "limit": limit.unwrap_or(50)});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/index/thread", body).await
-    }
-
-    pub async fn index_notifications(
-        &self,
-        limit: Option<usize>,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<IndexNotificationsResponse> {
-        let mut body = json!({"limit": limit.unwrap_or(50)});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/index/notifications", body).await
-    }
-
-    pub async fn index_inbox(
-        &self,
-        limit: Option<usize>,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<IndexInboxResponse> {
-        let mut body = json!({"limit": limit.unwrap_or(50)});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/index/inbox", body).await
-    }
-
-    pub async fn index_search(
-        &self,
-        query: &str,
-        space_ids: Option<&[String]>,
-        entity_types: Option<&[String]>,
-        facets: Option<&[String]>,
-        renderer: Option<&str>,
-        limit: Option<usize>,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<IndexSearchResponse> {
-        let mut body = json!({
-            "query": query,
-            "space_ids": space_ids,
-            "entity_types": entity_types,
-            "facets": facets,
-            "renderer": renderer,
-            "limit": limit.unwrap_or(20)
-        });
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("api/v1/index/search", body).await
-    }
-
-    pub async fn index_space_hierarchy(
-        &self,
-        space_id: &str,
-    ) -> anyhow::Result<SpaceHierarchyResponse> {
-        self.index_space_hierarchy_with_options(space_id, Some(2), Some(false))
-            .await
-    }
-
-    pub async fn index_space_hierarchy_with_options(
-        &self,
-        space_id: &str,
-        depth: Option<u32>,
-        include_unconfirmed: Option<bool>,
-    ) -> anyhow::Result<SpaceHierarchyResponse> {
-        let mut url = self.endpoint("api/v1/index/space-hierarchy")?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("space_id", space_id);
-            if let Some(depth) = depth {
-                query.append_pair("depth", &depth.to_string());
-            }
-            if let Some(include_unconfirmed) = include_unconfirmed {
-                query.append_pair(
-                    "include_unconfirmed",
-                    if include_unconfirmed { "true" } else { "false" },
-                );
-            }
-        }
-        let request = self.http.get(url);
-        self.send_json(self.prepare_request(request), Method::GET)
-            .await
     }
 
     // ── Federation ──────────────────────────────────────────────────
@@ -2251,9 +1673,25 @@ impl ContrixApi {
         self.get_json("api/v1/events/describe").await
     }
 
-    pub async fn submit_event(&self, event: &EventEnvelope) -> anyhow::Result<SubmitEventResponse> {
-        self.post_json("api/v1/events/submit", json!({"event": event}))
+    async fn submit_event(&self, event: &Value) -> anyhow::Result<SubmitEventResponse> {
+        let idempotency_key = event
+            .get("unsigned")
+            .and_then(|value| value.get("local_operation_idempotency_alias"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(uuid_v8);
+        let request = self.http.post(self.endpoint("api/v1/events")?).json(event);
+        let request = self.with_write_request_headers(request, &idempotency_key);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
+    }
+
+    pub async fn submit_operation_event(
+        &self,
+        operation: &OperationEnvelope,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let event = operation_event_envelope(operation)?;
+        self.submit_event(&event).await
     }
 
     pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResponse> {
@@ -2455,6 +1893,59 @@ impl ContrixApi {
     }
 }
 
+fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Value> {
+    let event_id = format!("cx:event:{}", uuid_v7());
+    let payload = operation.body.clone();
+    let mut event = json!({
+        "event_id": event_id,
+        "kind": operation.op_type,
+        "actor_id": operation.actor,
+        "actor_seq": operation.causal.actor_seq,
+        "space_id": operation.space_id,
+        "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "hlc": operation.causal.hlc,
+        "prev_refs": [],
+        "refs": [],
+        "payload": payload,
+        "unsigned": {
+            "local_operation_idempotency_alias": operation.operation_id,
+        },
+        "proofs": [{
+            "kind": "detached_jws",
+            "alg": "EdDSA",
+            "verification_method": format!("{}#yougen", operation.actor),
+            "payload_hash": "",
+            "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "jws": "a..b",
+        }],
+    });
+    if let Some(target_ref) = &operation.target_ref {
+        event["unsigned"]["local_target_ref"] = Value::String(target_ref.clone());
+    }
+    refresh_event_proof(&mut event)?;
+    Ok(event)
+}
+
+fn event_canonical_digest(event: &Value) -> anyhow::Result<String> {
+    let mut canonical = event.clone();
+    if let Value::Object(object) = &mut canonical {
+        object.remove("proofs");
+        object.remove("unsigned");
+    }
+    sha256_json_result(&canonical)
+}
+
+fn refresh_event_proof(event: &mut Value) -> anyhow::Result<()> {
+    let digest = event_canonical_digest(event)?;
+    event["proofs"][0]["payload_hash"] = Value::String(digest);
+    Ok(())
+}
+
+fn sha256_json_result(value: &Value) -> anyhow::Result<String> {
+    let bytes = serde_json::to_vec(value)?;
+    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
 /// Build the canonical `cx.schema.device_message.v1` envelope:
 ///
 /// ```json
@@ -2493,9 +1984,7 @@ pub fn build_device_message_envelope(
 /// Project chime's full [`RegisterDeviceResponse`](chime::RegisterDeviceResponse)
 /// onto yougen's slimmer `PushRegisterResponse` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
-fn map_chime_register_response(
-    response: chime::RegisterDeviceResponse,
-) -> PushRegisterResponse {
+fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushRegisterResponse {
     PushRegisterResponse {
         ok: response.ok,
         registration_id: response.registration_id,
@@ -2587,14 +2076,6 @@ pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescrib
 }
 
 pub fn parse_resolve_space(value: Value) -> anyhow::Result<ResolveSpaceResponse> {
-    Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_repo_describe(value: Value) -> anyhow::Result<RepoDescribeResponse> {
-    Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_index_describe(value: Value) -> anyhow::Result<IndexDescribeResponse> {
     Ok(serde_json::from_value(value)?)
 }
 
@@ -2700,7 +2181,7 @@ mod tests {
             .prepare_request(
                 api.with_write_request_headers(
                     api.http
-                        .post(api.endpoint("api/v1/messages/send").unwrap())
+                        .post(api.endpoint("api/v1/events").unwrap())
                         .json(&json!({"body": "hello"})),
                     "req-123",
                 ),

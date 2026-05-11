@@ -81,7 +81,7 @@ cd ../soland
 cargo run -- --bind 127.0.0.1:8787
 ```
 
-The client probes server discovery, Event Envelope write-plane readiness (`cx.profile.core_event_store.v1`, `cx.events.describe`, `cx.events.submit`), sync, directory search/resolve, index query, repo compatibility, sync backfill, authz check, profile presence, and push registration so the first screen can verify that the reference server surface is coherent.
+The client probes server discovery, Event Envelope write-plane readiness (`cx.profile.core_event_store.v1`, `cx.events.describe`, `cx.events.submit`), sync, directory search/resolve, index query, sync backfill, authz check, profile presence, and push registration so the first screen can verify that the reference server surface is coherent.
 
 ## Product Shell
 
@@ -89,5 +89,5 @@ The first screen is the client shell, not a landing page. It includes:
 
 - Space list and exact directory resolve.
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
-- Sync status, device queue count, Event Envelope/repo-compatibility audit status, directory browser, settings, devices, push registration, and moderation report controls.
+- Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, push registration, and moderation report controls.
 - Development login bootstrap using `POST /api/v1/auth/dev-login`; production identity and recovery flows remain tracked in the cross-project `../_todos.md`.

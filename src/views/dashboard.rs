@@ -167,10 +167,6 @@ pub fn DashboardPanel(
                                             Ok(i) => checks.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
                                             Err(e) => checks.push(("Identity".to_owned(), format!("Error: {e}"))),
                                         }
-                                        match api.index_describe().await {
-                                            Ok(idx) => checks.push(("Index".to_owned(), format!("{} query features", idx.query_features.len()))),
-                                            Err(e) => checks.push(("Index".to_owned(), format!("Error: {e}"))),
-                                        }
                                     }
                                     protocol_health.set(checks);
                                     health_loading.set(false);

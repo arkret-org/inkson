@@ -561,7 +561,6 @@ pub fn RouterView() -> Element {
                                         spaces,
                                         timeline,
                                         device_queue,
-                                        repo_state,
                                         crypto_state,
                                         push_state,
                                         config_store,
@@ -607,7 +606,6 @@ pub fn RouterView() -> Element {
                                     spaces,
                                     timeline,
                                     device_queue,
-                                    repo_state,
                                     crypto_state,
                                     push_state,
                                     config_store,
@@ -660,11 +658,8 @@ pub fn RouterView() -> Element {
                     }
                     if chat_ready {
                         Link { class: "secondary", to: Route::Chat, "Chat" }
-                        Link { class: "secondary", to: Route::Forum, "Forum" }
                     }
                     if full_ready {
-                        Link { class: "secondary", "data-testid": "memory-review-nav-button", to: Route::MemoryReview, "Memory" }
-                        Link { class: "secondary", "data-testid": "agent-runs-nav-button", to: Route::AgentRuns, "Agents" }
                         Link { class: "secondary", to: Route::Audit, "Audit" }
                     }
                     if minimal_ready || push_ready {
@@ -974,57 +969,6 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "chat_only_client" } }
                         }
                     },
-                    Route::Forum => {
-                        if chat_ready {
-                            rsx! {
-                                crate::views::forum::ForumPanel {
-                                    base_url: base_url(),
-                                    account_did: account_did(),
-                                    token,
-                                    selected_space: selected_space(),
-                                    sync_cursor,
-                                    repo_state,
-                                    state_store,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "chat_only_client" } }
-                        }
-                    },
-                    Route::MemoryReview => {
-                        if full_ready {
-                            rsx! {
-                                crate::views::memory_review::MemoryReviewPanel {
-                                    base_url: base_url(),
-                                    account_did: account_did(),
-                                    token,
-                                    selected_space: selected_space(),
-                                    sync_cursor,
-                                    repo_state,
-                                    state_store,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
-                    },
-                    Route::AgentRuns => {
-                        if full_ready {
-                            rsx! {
-                                crate::views::agent_runs::AgentRunsPanel {
-                                    base_url: base_url(),
-                                    account_did: account_did(),
-                                    token,
-                                    selected_space: selected_space(),
-                                    sync_cursor,
-                                    repo_state,
-                                    state_store,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
-                    },
                     Route::Notifications => rsx! {
                         crate::views::notifications::NotificationsPanel {
                             base_url: base_url(),
@@ -1132,7 +1076,6 @@ struct ConnectContext {
     spaces: Signal<Vec<SpacePreview>>,
     timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
-    repo_state: Signal<String>,
     crypto_state: Signal<String>,
     push_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
@@ -1177,7 +1120,6 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
         let mut device_queue = ctx.device_queue;
-        let mut repo_state = ctx.repo_state;
         let mut crypto_state = ctx.crypto_state;
         let mut push_state = ctx.push_state;
         let config_store = ctx.config_store;
@@ -1318,17 +1260,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         ConnectionState::Offline.label()
                     ));
                 }
-                if let Ok(repo) = api.repo_describe().await {
-                    repo_state.set(repo.head_commit.unwrap_or_else(|| "empty".to_owned()));
-                }
                 let _ = api.identity_describe().await;
                 let _ = api.identity_resolve(&actor).await;
                 let _ = api.sync_describe().await;
-                let _ = api.index_describe().await;
                 let _ = api.snapshot_head(DEMO_SPACE).await;
-                let _ = api.list_commits(20).await;
-                let _ = api.get_operations(&[]).await;
-                let _ = api.repo_sync("did:web:serverx.local", None).await;
                 let _ = api.authz_check(&actor, "space.read", DEMO_SPACE).await;
                 let _ = api.effective_grants(&actor).await;
                 let _ = api.invites().await;
@@ -1374,7 +1309,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // Mirror the orchestrator-side persisted state into
                         // the live signal-backed store so the rest of the UI
                         // sees it immediately.
-                        state_store.write().save_push_registration(outcome.state.clone());
+                        state_store
+                            .write()
+                            .save_push_registration(outcome.state.clone());
                         push_state.set(
                             outcome
                                 .response

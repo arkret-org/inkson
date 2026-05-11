@@ -99,15 +99,6 @@ pub struct SignAnchorResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SendMessageResponse {
-    pub event_id: String,
-    pub operation_id: String,
-    pub commit_id: String,
-    pub head_commit: Option<String>,
-    pub sync_token: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServerDescription {
     pub service_did: String,
     pub service_type: String,
@@ -253,35 +244,6 @@ pub struct SpacePreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexQueryResponse {
-    pub results: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub frontier: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexDescribeResponse {
-    pub service_did: String,
-    #[serde(default)]
-    pub reducer_profiles: Vec<String>,
-    #[serde(default)]
-    pub schema_profiles: Vec<String>,
-    #[serde(default)]
-    pub query_features: Vec<String>,
-    #[serde(default)]
-    pub frontier: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RepoDescribeResponse {
-    pub repo_did: String,
-    pub head_commit: Option<String>,
-    #[serde(default)]
-    pub supported_signatures: Vec<String>,
-    pub limits: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackfillResponse {
     #[serde(default)]
     pub events: Vec<Value>,
@@ -298,47 +260,6 @@ pub struct SnapshotHeadResponse {
     pub frontier: Value,
     #[serde(default)]
     pub signature: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ListCommitsResponse {
-    #[serde(default)]
-    pub commits: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GetCommitResponse {
-    pub commit: Value,
-    #[serde(default)]
-    pub operations: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GetOperationsResponse {
-    #[serde(default)]
-    pub operations: Vec<Value>,
-    #[serde(default)]
-    pub missing: Vec<String>,
-    #[serde(default)]
-    pub unauthorized: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RepoSyncResponse {
-    #[serde(default)]
-    pub operations: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitCommitResponse {
-    pub status: String,
-    pub commit_id: String,
-    pub head_commit: Option<String>,
-    pub sync_token: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -546,27 +467,6 @@ pub struct BanMemberResponse {
     pub banned: bool,
 }
 
-// ── Messaging ───────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EditMessageResponse {
-    pub event_id: String,
-    pub operation_id: String,
-    pub commit_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RedactMessageResponse {
-    pub event_id: String,
-    pub redaction_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReactionResponse {
-    pub event_id: String,
-    pub reaction_key: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypingResponse {
     pub ok: bool,
@@ -646,65 +546,6 @@ pub struct ModerationResolveResponse {
 pub struct PolicyResponse {
     pub resource: String,
     pub policy: Value,
-}
-
-// ── Index / AppView ──────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexEntityResponse {
-    pub entity: Value,
-    #[serde(default)]
-    pub relations: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexThreadResponse {
-    #[serde(default)]
-    pub messages: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexNotificationsResponse {
-    #[serde(default)]
-    pub notifications: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub unread_count: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexInboxResponse {
-    #[serde(default)]
-    pub items: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexSearchResponse {
-    #[serde(default)]
-    pub results: Vec<Value>,
-    pub next_cursor: Option<String>,
-    pub total_estimate: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceHierarchyResponse {
-    #[serde(default)]
-    pub root: Value,
-    #[serde(default)]
-    pub root_space_id: Option<String>,
-    #[serde(default)]
-    pub children: Vec<Value>,
-    #[serde(default)]
-    pub spaces: Vec<Value>,
-    #[serde(default)]
-    pub edges: Vec<Value>,
-    pub next_cursor: Option<String>,
-    #[serde(default)]
-    pub frontier: Value,
-    #[serde(default)]
-    pub cycle_detected: bool,
 }
 
 // ── Federation ───────────────────────────────────────────────────
@@ -834,13 +675,15 @@ pub struct SubmitDidOperationResponse {
 pub struct EventsDescribeResponse {
     pub service_did: String,
     #[serde(default)]
-    pub schema_profiles: Vec<String>,
+    pub supported_profiles: Vec<String>,
     #[serde(default)]
-    pub reducer_profiles: Vec<String>,
+    pub registry: Value,
     #[serde(default)]
-    pub supported_event_types: Vec<String>,
+    pub schema_profile: Option<String>,
     #[serde(default)]
-    pub frontier: Vec<String>,
+    pub reducer_profile: Option<String>,
+    #[serde(default)]
+    pub capabilities: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -848,11 +691,13 @@ pub struct SubmitEventResponse {
     pub event_id: String,
     pub status: String,
     #[serde(default)]
-    pub accepted_frontier: Vec<String>,
+    pub canonical_digest: Option<String>,
     #[serde(default)]
-    pub reducer_receipt: Value,
+    pub sync_token: String,
     #[serde(default)]
-    pub sync_token: Option<String>,
+    pub received_at: Option<String>,
+    #[serde(default)]
+    pub receipt: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn test_offline_queue_enqueue_dequeue() {
         let queue = OfflineQueue::new(100);
-        let op = QueuedOperationBuilder::new("api/v1/messages", "POST")
+        let op = QueuedOperationBuilder::new("api/v1/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
             .build();
         let op_id = op.id.clone();
@@ -410,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn test_offline_queue_clear() {
         let queue = OfflineQueue::new(100);
-        let op = QueuedOperationBuilder::new("api/v1/messages", "POST").build();
+        let op = QueuedOperationBuilder::new("api/v1/events", "POST").build();
         queue.enqueue(op).await.unwrap();
 
         queue.clear().await;
@@ -438,13 +438,13 @@ mod tests {
     async fn test_offline_queue_remove_where() {
         let queue = OfflineQueue::new(100);
 
-        let op1 = QueuedOperationBuilder::new("api/v1/messages", "POST")
+        let op1 = QueuedOperationBuilder::new("api/v1/events", "POST")
             .with_op_type("message")
             .build();
         let op2 = QueuedOperationBuilder::new("api/v1/reactions", "POST")
             .with_op_type("reaction")
             .build();
-        let op3 = QueuedOperationBuilder::new("api/v1/messages", "POST")
+        let op3 = QueuedOperationBuilder::new("api/v1/events", "POST")
             .with_op_type("message")
             .build();
 
@@ -475,14 +475,14 @@ mod tests {
 
     #[test]
     fn test_queued_operation_builder() {
-        let op = QueuedOperationBuilder::new("api/v1/messages", "POST")
+        let op = QueuedOperationBuilder::new("api/v1/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
             .with_space("cx:space:test")
             .with_op_type("message")
             .with_max_retries(5)
             .build();
 
-        assert_eq!(op.endpoint, "api/v1/messages");
+        assert_eq!(op.endpoint, "api/v1/events");
         assert_eq!(op.method, "POST");
         assert_eq!(op.space_id, Some("cx:space:test".to_owned()));
         assert_eq!(op.op_type, Some("message".to_owned()));

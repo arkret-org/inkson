@@ -2,10 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use chime::{
     PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
-    PushPreferences, PushRegistrationState,
-    RegisterDeviceRequest, RegisterDeviceResponse, UnregisterDeviceRequest,
-    build_register_device_request, build_registration_state, build_unregister_device_request,
-    push_bridge_describe_url, push_integration_describe_url,
+    PushPreferences, PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse,
+    UnregisterDeviceRequest, build_register_device_request, build_registration_state,
+    build_unregister_device_request, push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
 
@@ -42,9 +41,7 @@ pub fn is_placeholder_push_key(key: &str) -> bool {
 /// describing why the registration must NOT be sent. Callers in the login /
 /// settings flow should funnel through this helper before POSTing a register
 /// request to a non-loopback push gateway.
-pub fn ensure_production_register_request(
-    request: &RegisterDeviceRequest,
-) -> anyhow::Result<()> {
+pub fn ensure_production_register_request(request: &RegisterDeviceRequest) -> anyhow::Result<()> {
     if is_placeholder_push_key(&request.push_key) {
         anyhow::bail!(
             "refusing to register device {device_id}: push_key is a development placeholder. \
@@ -518,8 +515,7 @@ async fn web_push_subscribe(
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
-        PushManager, PushSubscriptionOptionsInit, ServiceWorkerContainer,
-        ServiceWorkerRegistration,
+        PushManager, PushSubscriptionOptionsInit, ServiceWorkerContainer, ServiceWorkerRegistration,
     };
 
     let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("no browser window"))?;
@@ -792,11 +788,17 @@ mod tests {
 
     #[test]
     fn placeholder_push_key_predicate_matches_known_markers() {
-        assert!(is_placeholder_push_key("desktop:yougen-dev-placeholder-token"));
-        assert!(is_placeholder_push_key("webpush:yougen-dev-placeholder-token"));
+        assert!(is_placeholder_push_key(
+            "desktop:yougen-dev-placeholder-token"
+        ));
+        assert!(is_placeholder_push_key(
+            "webpush:yougen-dev-placeholder-token"
+        ));
         assert!(is_placeholder_push_key("DESKTOP:Yougen-Dev-Placeholder"));
         assert!(!is_placeholder_push_key("apns:abcd1234efgh"));
-        assert!(!is_placeholder_push_key("webpush:https://example.com/wp/abc123"));
+        assert!(!is_placeholder_push_key(
+            "webpush:https://example.com/wp/abc123"
+        ));
     }
 
     #[test]
