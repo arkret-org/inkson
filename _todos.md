@@ -42,7 +42,7 @@ Protocol semantics to preserve:
 ## Phase 4 - Directory / Discovery
 - [x] Clean up Directory top area and search card.
 - [x] Keep the three independent discovery axes visible, but reduce paragraph density.
-- [ ] Improve result cards for Spaces, Organizations, Actors, Handles, and Applets.
+- [x] Improve result cards for Spaces, Organizations, Actors, Handles, and Applets.
 
 ## Phase 5 - Secondary surfaces
 - [x] Review Timeline, Kanban, Chat, Notifications, Devices, Audit, Space Admin, Product, and Readiness for shell compatibility.
@@ -50,8 +50,12 @@ Protocol semantics to preserve:
 - [x] Add protocol boundary labels only where they affect user decisions.
 
 ## Phase 6 - Verification
-- [ ] `cargo fmt --check`
+- [x] `cargo fmt --check`
 - [x] `cargo check`
-- [ ] Run available E2E or smoke tests if the local environment supports it.
-- [ ] Browser-verify desktop home and settings layouts.
-- [ ] Browser-verify mobile width shell behavior.
+- [x] Run available E2E or smoke tests if the local environment supports it.
+- [x] Browser-verify desktop home and settings layouts.
+- [x] Browser-verify mobile width shell behavior.
+
+Notes:
+- Targeted affected Playwright smoke passed: bootstrap/right-panel/registration/settings/kanban/directory/mobile/visual smoke.
+- Full `npm run e2e` was attempted twice but exceeded the command timeout; latest failure contexts were outside the visual redesign surface (audit decode, product/timeline operation id, chat payload, move replay).
