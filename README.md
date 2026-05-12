@@ -11,7 +11,7 @@ Cross-platform Contrix client built with Dioxus 0.7.
 Platform notes:
 
 - Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep `CLIENTX_SERVER_URL` or the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
-- Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `http://127.0.0.1:8787` and stores the last server/account/device/session settings in the local config store.
+- Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop serverx process.
 - All platforms use the same typed API client, bounded retry/backoff policy, Contrix error envelope decoding, and encrypted-payload preservation path.
 
@@ -74,20 +74,20 @@ powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
 docker build -f docker-context/yougen/Dockerfile -t yougen-web docker-context
 ```
 
-By default the UI points at `http://127.0.0.1:8787`. Start `soland` first:
+By default the UI points at `https://local.host`. Start `soland` first:
 
 ```powershell
 cd ../soland
-cargo run -- --bind 127.0.0.1:8787
+cargo run -- --bind local.host:443
 ```
 
-The client probes server discovery, Event Envelope write-plane readiness (`cx.profile.core_event_store.v1`, `cx.events.describe`, `cx.events.submit`), sync, directory search/resolve, index query, sync backfill, authz check, profile presence, and push registration so the first screen can verify that the reference server surface is coherent.
+The Connect action probes server discovery first. Authenticated sync, directory, device, and push flows run only after a real session is available.
 
 ## Product Shell
 
-The first screen is the client shell, not a landing page. It includes:
+Unauthenticated users see only the login or registration entry screen. After a real server session is established, the client shell includes:
 
 - Space list and exact directory resolve.
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
 - Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, push registration, and moderation report controls.
-- Development login bootstrap using `POST /api/v1/auth/dev-login`; production identity and recovery flows remain tracked in the cross-project `../_todos.md`.
+- Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Principal Server session.

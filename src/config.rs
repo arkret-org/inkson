@@ -7,8 +7,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8787";
-const DEFAULT_ACCOUNT_DID: &str = "did:web:alice.example";
+const DEFAULT_SERVER_URL: &str = "https://local.host";
+const DEFAULT_ACCOUNT_DID: &str = "";
 const DEFAULT_DEVICE_ID: &str = "dev_yougen";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
@@ -192,8 +192,8 @@ mod tests {
     #[test]
     fn default_config_matches_dev_server_bootstrap() {
         let config = ClientConfig::default();
-        assert_eq!(config.server_url, "http://127.0.0.1:8787");
-        assert_eq!(config.account_did, "did:web:alice.example");
+        assert_eq!(config.server_url, "https://local.host");
+        assert!(config.account_did.is_empty());
         assert_eq!(config.device_id, "dev_yougen");
         assert!(config.session_token.is_empty());
     }

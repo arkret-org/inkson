@@ -120,6 +120,17 @@ pub fn SettingsPanel(
     let active_direction = active_locale.direction().as_str();
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
+    let has_session = !token().trim().is_empty();
+    let principal_label = if has_session {
+        account_did()
+    } else {
+        "Not signed in".to_owned()
+    };
+    let device_label = if has_session {
+        device_id()
+    } else {
+        "No authenticated device session".to_owned()
+    };
     let settings_pages = [
         ("Profile", "Server"),
         ("Identity", "Server"),
@@ -153,7 +164,7 @@ pub fn SettingsPanel(
             div { class: "settings-header-card",
                 div { class: "event-head",
                     span { "Settings" }
-                    span { "Acme Inc. · Principal Server context" }
+                    span { "Principal Server context" }
                 }
                 div { class: "settings-page-grid", "data-testid": "settings-page-map",
                     for (name, section) in settings_pages {
@@ -221,28 +232,28 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "transport-invariant",
                     div { class: "event-head",
                         span { "Principal Context" }
-                        span { "organization vs service" }
+                        span { if has_session { "authenticated" } else { "not signed in" } }
                     }
                     div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "Organization Principal" }
-                            span { "Acme Inc." }
-                            div { class: "muted", "did:web:acme.example.com" }
-                        }
                         div { class: "metric",
                             strong { "Principal Server" }
                             span { "{base_url}" }
                             div { class: "muted", "delegated service boundary" }
                         }
                         div { class: "metric",
-                            strong { "Actor" }
-                            span { "{account_did}" }
-                            div { class: "muted", "signs Events; server cannot forge" }
+                            strong { "Principal" }
+                            span { "{principal_label}" }
+                            div { class: "muted", if has_session { "signs Events; server cannot forge" } else { "loaded after server auth" } }
                         }
                         div { class: "metric",
                             strong { "Device" }
-                            span { "{device_id}" }
-                            div { class: "muted", "local client identity" }
+                            span { "{device_label}" }
+                            div { class: "muted", if has_session { "local client identity" } else { "not bound yet" } }
+                        }
+                        div { class: "metric",
+                            strong { "Organization" }
+                            span { "None selected" }
+                            div { class: "muted", "Organizations are principals, not servers" }
                         }
                     }
                     div { class: "actions",
@@ -282,7 +293,8 @@ pub fn SettingsPanel(
                         oninput: move |event| {
                             let value = event.value();
                             base_url.set(value.clone());
-                            persist_config(config_store, value, account_did(), device_id(), token());
+                            token.set(String::new());
+                            persist_config(config_store, value, account_did(), device_id(), String::new());
                         }
                     }
                     label { "Account DID" }

@@ -16,16 +16,22 @@ pub fn DashboardPanel(
 ) -> Element {
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
+    let has_session = !token().trim().is_empty();
+    let sync_delta = if has_session {
+        format!("online · {device_queue} pending")
+    } else {
+        "offline · 0 pending".to_owned()
+    };
 
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
             div { class: "spread mb-24", "data-testid": "dashboard-hero",
                 div {
                     h1 { style: "font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em;",
-                        "Good afternoon, Alice"
+                        if has_session { "Workspace" } else { "No active session" }
                     }
                     div { class: "muted f-12",
-                        "3 mentions need attention. Sync frontier and device queue are cleanly visible below."
+                        if has_session { "Server-backed workspace data is shown below." } else { "Connect a Principal Server, then sign in to load spaces, inbox, devices, and flows." }
                     }
                 }
                 div { class: "row gap-6 wrap",
@@ -51,8 +57,8 @@ pub fn DashboardPanel(
                     to: Route::Notifications,
                     onclick: move |_| view.set(super::View::Notifications),
                     div { class: "lbl", "Inbox" }
-                    div { class: "val", "3" }
-                    div { class: "delta", "+2 since yesterday" }
+                    div { class: "val", "0" }
+                    div { class: "delta", if has_session { "No loaded notifications" } else { "Sign in required" } }
                 }
                 Link {
                     class: "metric",
@@ -60,15 +66,15 @@ pub fn DashboardPanel(
                     onclick: move |_| view.set(super::View::Audit),
                     div { class: "lbl", "Sync frontier" }
                     div { class: "val mono", style: "font-size: 14px;", "{sync_cursor}" }
-                    div { class: "delta", "online · {device_queue} pending" }
+                    div { class: "delta", "{sync_delta}" }
                 }
                 Link {
                     class: "metric",
                     to: Route::Devices,
                     onclick: move |_| view.set(super::View::Devices),
                     div { class: "lbl", "Devices" }
-                    div { class: "val", "3" }
-                    div { class: "delta", "Chrome · iPhone · iPad" }
+                    div { class: "val", if has_session { "1" } else { "0" } }
+                    div { class: "delta", if has_session { "Current session device" } else { "No authenticated devices" } }
                 }
                 div { class: "metric", "data-testid": "device-queue-card",
                     div { class: "lbl", "Local queue" }
@@ -80,10 +86,13 @@ pub fn DashboardPanel(
             div { class: "callout warn mb-16", "data-testid": "sync-health-banner", role: "status",
                 span { class: "ico", "!" }
                 div { class: "body",
-                    strong { "DID resolver fallback" }
+                    strong { if has_session { "Server data" } else { "Session required" } }
                     div { class: "mt-4",
-                        code { "did:webvh:acme.example.com" }
-                        " is using cached evidence. New federation writes stay paused until resolver health returns."
+                        if has_session {
+                            "Use protocol health checks to verify this Principal Server before write-heavy workflows."
+                        } else {
+                            "No organization, space, or device data is shown until the server auth flow returns a real session."
+                        }
                     }
                     div { class: "actions",
                         Link {
@@ -117,42 +126,14 @@ pub fn DashboardPanel(
                         }
                         div { class: "stack-sm", style: "padding: 10px 14px 14px;",
                             if spaces().is_empty() {
-                                Link {
+                                div {
                                     class: "m-list-item",
-                                    "data-testid": "dashboard-space-card",
-                                    to: Route::Timeline,
-                                    onclick: move |_| view.set(super::View::Timeline),
-                                    span { class: "avatar org", style: "background: linear-gradient(135deg,#3730a3,#6366f1);", "E" }
+                                    "data-testid": "dashboard-spaces-empty",
+                                    span { class: "avatar", "0" }
                                     span { class: "grow",
-                                        span { class: "title", "Engineering" }
-                                        span { class: "sub", "Hub Space · org-backed · independent policy" }
+                                        span { class: "title", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
+                                        span { class: "sub", if has_session { "The connected server did not return spaces yet." } else { "The client is not showing placeholder spaces." } }
                                     }
-                                    span { class: "pill success dot", "E2EE" }
-                                }
-                                Link {
-                                    class: "m-list-item",
-                                    "data-testid": "dashboard-space-card",
-                                    to: Route::Kanban,
-                                    onclick: move |_| view.set(super::View::Kanban),
-                                    span { class: "avatar org", style: "background: linear-gradient(135deg,#b45309,#f59e0b);", "B" }
-                                    span { class: "grow",
-                                        span { class: "title", "Acme x Beta partnership" }
-                                        span { class: "sub", "Controlled cross-org · closed federation · partner members" }
-                                    }
-                                    span { class: "pill warning xs", "HA" }
-                                    span { class: "pill muted xs", "closed" }
-                                }
-                                Link {
-                                    class: "m-list-item",
-                                    "data-testid": "dashboard-space-card",
-                                    to: Route::Document,
-                                    onclick: move |_| view.set(super::View::Document),
-                                    span { class: "avatar", style: "background: linear-gradient(135deg,#475569,#94a3b8);", "N" }
-                                    span { class: "grow",
-                                        span { class: "title", "My notes" }
-                                        span { class: "sub", "purpose=personal · not hub-owned" }
-                                    }
-                                    span { class: "pill muted xs", "private" }
                                 }
                             } else {
                                 for space in spaces() {
@@ -195,59 +176,9 @@ pub fn DashboardPanel(
                             }
                             tbody {
                                 tr {
-                                    td { span { class: "pill accent xs", "FLO-247" } }
-                                    td {
-                                        Link {
-                                            to: Route::Kanban,
-                                            onclick: move |_| view.set(super::View::Kanban),
-                                            "Rank rebalance in cx.flow.move reducer"
-                                        }
+                                    td { class: "dim", colspan: "5",
+                                        if has_session { "No recent flows loaded" } else { "Sign in to load recent flows" }
                                     }
-                                    td { "Engineering" }
-                                    td { span { class: "pill warning xs", "in_review" } }
-                                    td { class: "dim mono", "2m" }
-                                }
-                                tr {
-                                    td { span { class: "pill accent xs", "EXT-12" } }
-                                    td {
-                                        Link {
-                                            "data-testid": "recent-board-release",
-                                            to: Route::Kanban,
-                                            onclick: move |_| view.set(super::View::Kanban),
-                                            "Beta SDK integration review"
-                                        }
-                                    }
-                                    td { "Acme x Beta" }
-                                    td { span { class: "pill warning xs", "awaiting" } }
-                                    td { class: "dim mono", "3h" }
-                                }
-                                tr {
-                                    td { span { class: "pill accent xs", "DSN-89" } }
-                                    td {
-                                        Link {
-                                            "data-testid": "recent-board-roadmap",
-                                            to: Route::Kanban,
-                                            onclick: move |_| view.set(super::View::Kanban),
-                                            "Dark mode token revision"
-                                        }
-                                    }
-                                    td { "Design" }
-                                    td { span { class: "pill success xs", "closed" } }
-                                    td { class: "dim mono", "1h" }
-                                }
-                                tr {
-                                    td { span { class: "pill accent xs", "TRI-19" } }
-                                    td {
-                                        Link {
-                                            "data-testid": "recent-board-triage",
-                                            to: Route::Kanban,
-                                            onclick: move |_| view.set(super::View::Kanban),
-                                            "Triage board stale-card sweep"
-                                        }
-                                    }
-                                    td { "Ops" }
-                                    td { span { class: "pill xs", "backlog" } }
-                                    td { class: "dim mono", "1d" }
                                 }
                             }
                         }
@@ -257,17 +188,10 @@ pub fn DashboardPanel(
                         div { class: "section-title mb-8", "Recent Activity" }
                         div { class: "stack-sm",
                             div { class: "m-list-item",
-                                span { class: "pill accent xs", "cx.flow.move" }
+                                span { class: "pill muted xs", "empty" }
                                 span { class: "grow",
-                                    span { class: "title", "Legal review moved into Doing" }
-                                    span { class: "sub", "Launch Board" }
-                                }
-                            }
-                            div { class: "m-list-item",
-                                span { class: "pill accent xs", "cx.message.create" }
-                                span { class: "grow",
-                                    span { class: "title", "Bob mentioned you in a visible discussion" }
-                                    span { class: "sub", "branch=discussion" }
+                                    span { class: "title", if has_session { "No activity loaded" } else { "No session activity" } }
+                                    span { class: "sub", if has_session { "Sync has not returned recent events." } else { "Activity appears after authenticated sync." } }
                                 }
                             }
                         }
@@ -320,12 +244,12 @@ pub fn DashboardPanel(
                                 div { class: "label f-12", "Local frontier" }
                                 div { class: "sub mono", "{sync_cursor}" }
                             }
-                            span { class: "pill success dot", "healthy" }
+                            span { class: if has_session { "pill success dot" } else { "pill muted xs" }, if has_session { "loaded" } else { "not connected" } }
                         }
                         div { class: "settings-row",
                             div {
                                 div { class: "label f-12", "Repo head" }
-                                div { class: "sub", "Principal Server reported" }
+                                div { class: "sub", if has_session { "Principal Server reported" } else { "Not loaded" } }
                             }
                             span { class: "mono f-11", "data-testid": "repo-head-card", "{repo_state}" }
                         }
@@ -403,25 +327,10 @@ pub fn DashboardPanel(
                         }
                         div { class: "stack-sm", style: "padding: 8px 12px 12px;",
                             div { class: "m-list-item",
-                                span { class: "avatar xs", style: "background: linear-gradient(135deg,#0ea5e9,#14b8a6);", "B" }
+                                span { class: "avatar xs", "0" }
                                 span { class: "grow",
-                                    span { class: "title f-13", "Ben mentioned you" }
-                                    span { class: "sub", "FLO-247 rank_exhausted recovery" }
-                                }
-                                span { class: "dim f-11 mono", "3m" }
-                            }
-                            div { class: "m-list-item",
-                                span { class: "pill warning xs", "approval" }
-                                span { class: "grow",
-                                    span { class: "title f-13", "Researcher Agent requested read_flow" }
-                                    span { class: "sub mono", "approval_constraint=2_of_3_admin" }
-                                }
-                            }
-                            div { class: "m-list-item",
-                                span { class: "pill xs", "conflict" }
-                                span { class: "grow",
-                                    span { class: "title f-13", "Concurrent move resolved" }
-                                    span { class: "sub", "Losing write remains auditable." }
+                                    span { class: "title f-13", if has_session { "No inbox items loaded" } else { "Sign in to load inbox" } }
+                                    span { class: "sub", "Server-backed notifications only" }
                                 }
                             }
                         }

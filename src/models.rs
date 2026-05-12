@@ -28,6 +28,20 @@ pub struct AccountResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContactResponse {
+    pub requester: String,
+    pub target: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContactsResponse {
+    pub contacts: Vec<ContactResponse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpaceLifecycleResponse {
     pub ok: bool,
     pub space_id: String,

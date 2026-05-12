@@ -13,11 +13,7 @@ use crate::{
     local_state::LocalStateStore,
     models::{ServerDescription, SpacePreview},
     routes::Route,
-    views::{
-        ConnectionState,
-        helpers::{authed_api_with_sync, handle_from_did, persist_config},
-        timeline::TimelineEvent,
-    },
+    views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
 };
 
 const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
@@ -25,6 +21,21 @@ const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 const STYLE: &str = r#"
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #f4f6f8; color: #18212f; }
 button, input, textarea { font: inherit; }
+.auth-shell { width: 100vw; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #eef3f8; box-sizing: border-box; }
+.auth-shell.theme-night { background: #0f172a; color: #e5edf7; }
+.auth-card { width: min(420px, 100%); border: 1px solid #d7e0ea; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12); }
+.auth-shell.theme-night .auth-card { border-color: #2a3a52; background: #172033; }
+.auth-panel { display: grid; gap: 22px; padding: 28px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; }
+.auth-logo { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: #1d4ed8; color: #fff; font-weight: 800; }
+.auth-brand h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: 0; }
+.auth-brand p { margin: 3px 0 0; color: #64748b; font-size: 13px; }
+.auth-form { display: grid; gap: 10px; }
+.auth-form label { color: #475569; font-size: 13px; font-weight: 700; }
+.auth-form input { width: 100%; box-sizing: border-box; border: 1px solid #c5d1dd; border-radius: 6px; padding: 11px 12px; background: #fff; color: #142033; }
+.auth-shell.theme-night .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
+.auth-primary, .auth-secondary { width: 100%; margin-top: 4px; }
+.auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
 .shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
 .shell.rtl .sidebar { grid-column: 3; }
@@ -1042,12 +1053,12 @@ pub fn RouterView() -> Element {
         let initial_config = initial_config.clone();
         move || initial_config.device_id
     });
-    let token = use_signal(move || initial_config.session_token);
+    let mut token = use_signal(move || initial_config.session_token);
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
-    let status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let sync_cursor = use_signal({
+    let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
+    let mut sync_cursor = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
             initial_local_state
@@ -1056,9 +1067,9 @@ pub fn RouterView() -> Element {
                 .unwrap_or_else(|| "-".to_owned())
         }
     });
-    let mut selected_space = use_signal(|| DEMO_SPACE.to_owned());
-    let spaces = use_signal(Vec::<SpacePreview>::new);
-    let timeline = use_signal(Vec::<TimelineEvent>::new);
+    let mut selected_space = use_signal(String::new);
+    let mut spaces = use_signal(Vec::<SpacePreview>::new);
+    let mut timeline = use_signal(Vec::<TimelineEvent>::new);
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
@@ -1075,27 +1086,47 @@ pub fn RouterView() -> Element {
         move || crate::push::push_status_label(initial_local_state.push_registration.as_ref())
     });
     let repo_state = use_signal(|| "Not checked".to_owned());
-    let crypto_state = use_signal(|| "MLS ready; plaintext fallback available".to_owned());
-    let network_state = use_signal(|| "online".to_owned());
+    let crypto_state = use_signal(|| "No authenticated session".to_owned());
+    let mut network_state = use_signal(|| "offline".to_owned());
     let last_error = use_signal(|| Option::<String>::None);
-    let server_description = use_signal(|| Option::<ServerDescription>::None);
-    let server_probe_status = use_signal(|| "server describe pending".to_owned());
+    let mut server_description = use_signal(|| Option::<ServerDescription>::None);
+    let mut server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
     let theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut global_query = use_signal(String::new);
 
-    use_future({
-        let base = base_url();
-        move || {
-            let base = base.clone();
-            async move {
-                probe_server_description(base, server_description, server_probe_status).await;
-            }
-        }
-    });
-
     let active_server_description = server_description();
+    let has_session = !token().trim().is_empty();
+    let active_server_label = active_server_description
+        .as_ref()
+        .map(|description| {
+            format!(
+                "{} / {}",
+                description.service_type, description.protocol_version
+            )
+        })
+        .unwrap_or_else(|| base_url());
+    let active_server_detail = active_server_description
+        .as_ref()
+        .map(|description| description.service_did.clone())
+        .unwrap_or_else(|| {
+            if base_url().trim().is_empty() {
+                "No principal server selected".to_owned()
+            } else {
+                "Describe not loaded".to_owned()
+            }
+        });
+    let account_label = if has_session {
+        account_did()
+    } else {
+        "Not signed in".to_owned()
+    };
+    let account_detail = if has_session {
+        format!("device {}", device_id())
+    } else {
+        "Connect a server, then use Login".to_owned()
+    };
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
     let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_ONLY_CLIENT);
     let kanban_ready = profile_ready(
@@ -1114,10 +1145,6 @@ pub fn RouterView() -> Element {
         .iter()
         .find(|space| space.space_id == selected_space())
         .cloned();
-    let title = selected_preview
-        .as_ref()
-        .map(|space| space.name.clone())
-        .unwrap_or_else(|| "Acme Workspace".to_owned());
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -1129,6 +1156,10 @@ pub fn RouterView() -> Element {
         _ => "light",
     };
     let route_title = route_label(&route);
+    let title = selected_preview
+        .as_ref()
+        .map(|space| space.name.clone())
+        .unwrap_or_else(|| route_title.to_owned());
     let shell_class = format!(
         "shell app three-col {}{}",
         match active_theme.as_str() {
@@ -1142,6 +1173,77 @@ pub fn RouterView() -> Element {
             ""
         }
     );
+    let is_auth_route = matches!(&route, Route::Login | Route::AuthCallback | Route::Register);
+    if !has_session || is_auth_route {
+        let auth_class = format!(
+            "auth-shell {}{}",
+            match active_theme.as_str() {
+                "night" => "theme-night",
+                "light" => "theme-light",
+                _ => "theme-system",
+            },
+            if active_direction == TextDirection::Rtl {
+                " rtl"
+            } else {
+                ""
+            }
+        );
+        let login_navigator = navigator.clone();
+        let callback_navigator = navigator.clone();
+        let register_navigator = navigator.clone();
+
+        return rsx! {
+            style { "{STYLE}" }
+            style { "{CLAUDE_STYLE}" }
+            style { "{CLAUDE_APP_OVERRIDES}" }
+            main {
+                class: auth_class,
+                "dir": direction_attr,
+                "lang": locale_attr,
+                "data-direction": direction_attr,
+                "data-locale": locale_attr,
+                "data-theme": design_theme,
+                "data-testid": "auth-shell",
+                div { class: "auth-card",
+                    match &route {
+                        Route::Register => rsx! {
+                            crate::views::register::RegisterPanel {
+                                base_url,
+                                account_did,
+                                device_id,
+                                config_store,
+                                on_register: move |_| { let _ = register_navigator.push(Route::Login); },
+                            }
+                        },
+                        Route::AuthCallback => rsx! {
+                            crate::views::login::LoginPanel {
+                                base_url,
+                                account_did,
+                                device_id,
+                                token,
+                                status,
+                                config_store,
+                                auto_capture_callback: true,
+                                on_login: move |_| { let _ = callback_navigator.push(Route::Dashboard); },
+                            }
+                        },
+                        _ => rsx! {
+                            crate::views::login::LoginPanel {
+                                base_url,
+                                account_did,
+                                device_id,
+                                token,
+                                status,
+                                config_store,
+                                auto_capture_callback: false,
+                                on_login: move |_| { let _ = login_navigator.push(Route::Dashboard); },
+                            }
+                        },
+                    }
+                }
+            }
+        };
+    }
 
     rsx! {
         style { "{STYLE}" }
@@ -1186,25 +1288,25 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-context", "data-testid": "principal-context", "aria-label": "Current workspace context",
-                    Link { class: "context-line", to: Route::Directory,
-                        span { class: "icon", "◇" }
-                        span { class: "grow truncate",
-                            span { class: "k", "Organization" }
-                            span { class: "v", "Acme Inc." }
-                            span { class: "id mono", "did:webvh:acme.example.com" }
-                        }
-                        span { class: "mini", "▾" }
-                    }
-                    div { class: "context-sep" }
+                div { class: "sidebar-context", "data-testid": "principal-context", "aria-label": "Current principal server context",
                     Link { class: "context-line", to: Route::SettingsSection { section: "services".to_owned() },
                         span { class: "icon", "◌" }
                         span { class: "grow truncate",
-                            span { class: "k", "Principal Server" }
-                            span { class: "v", "{base_url}" }
-                            span { class: "id mono", "delegated service boundary" }
+                            span { class: "k", "Active Principal Server" }
+                            span { class: "v", "{active_server_label}" }
+                            span { class: "id mono", "{active_server_detail}" }
                         }
-                        span { class: "pill muted xs", "primary" }
+                        span { class: "pill muted xs", if has_session { "session" } else { "no session" } }
+                    }
+                    div { class: "context-sep" }
+                    Link { class: "context-line", to: Route::Login,
+                        span { class: "icon", "◇" }
+                        span { class: "grow truncate",
+                            span { class: "k", "Principal" }
+                            span { class: "v", "{account_label}" }
+                            span { class: "id mono", "{account_detail}" }
+                        }
+                        span { class: "mini", "›" }
                     }
                 }
 
@@ -1218,7 +1320,15 @@ pub fn RouterView() -> Element {
                             oninput: move |event| {
                                 let value = event.value();
                                 base_url.set(value.clone());
-                                persist_config(config_store, value, account_did(), device_id(), token());
+                                token.set(String::new());
+                                sync_cursor.set("-".to_owned());
+                                spaces.set(Vec::new());
+                                timeline.set(Vec::new());
+                                server_description.set(None);
+                                server_probe_status.set("server not probed".to_owned());
+                                status.set(ConnectionState::Offline.label().to_owned());
+                                network_state.set("offline".to_owned());
+                                persist_config(config_store, value, account_did(), device_id(), String::new());
                             }
                         }
                         div { class: "actions server-actions",
@@ -1238,7 +1348,6 @@ pub fn RouterView() -> Element {
                                         device_queue,
                                         repo_state,
                                         crypto_state,
-                                        push_state,
                                         config_store,
                                         state_store,
                                         network_state,
@@ -1278,7 +1387,7 @@ pub fn RouterView() -> Element {
                     Link { class: "nav-item", "data-testid": "notifications-nav-button", to: Route::Notifications,
                         span { class: "icon", "□" }
                         span { class: "grow", "Inbox" }
-                        span { class: "badge", "3" }
+                        span { class: "badge", "0" }
                     }
                     Link { class: "nav-item", to: Route::Directory,
                         span { class: "icon", "⌕" }
@@ -1316,31 +1425,13 @@ pub fn RouterView() -> Element {
 
                 div { class: "sidebar-section",
                     h4 {
-                        span { "Acme-backed Spaces" }
+                        span { "Spaces" }
                         Link { class: "add", to: Route::Product, "+" }
                     }
                     if spaces().is_empty() {
-                        Link { class: "nav-item active", "data-testid": "space-button", to: Route::Timeline,
+                        div { class: "nav-item dim", "data-testid": "space-empty-state",
                             span { class: "icon", "▣" }
-                            span { class: "grow truncate", "Engineering" }
-                            span { class: "pill muted xs", "hub" }
-                        }
-                        Link { class: "nav-item", "aria-label": "Release Board", to: Route::Kanban, style: "padding-left: 30px; color: var(--text-2);",
-                            span { class: "icon", "├" }
-                            span { class: "grow truncate", "Active sprint" }
-                        }
-                        Link { class: "nav-item", "aria-label": "Design Review Discussion", to: Route::Chat, style: "padding-left: 30px; color: var(--text-2);",
-                            span { class: "icon", "└" }
-                            span { class: "grow truncate", "Q4 retro" }
-                            span { class: "pill muted xs", "child" }
-                        }
-                        Link { class: "nav-item", to: Route::Timeline,
-                            span { class: "icon", "▣" }
-                            span { class: "grow truncate", "Design" }
-                        }
-                        Link { class: "nav-item", to: Route::Kanban,
-                            span { class: "icon", "▣" }
-                            span { class: "grow truncate", "Product roadmap" }
+                            span { class: "grow truncate", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
                         }
                     } else {
                         for space in spaces().into_iter().take(5) {
@@ -1361,12 +1452,10 @@ pub fn RouterView() -> Element {
                 }
 
                 div { class: "sidebar-section",
-                    h4 { "Controlled cross-org" }
-                    Link { class: "nav-item", to: Route::Kanban,
+                    h4 { "Cross-organization" }
+                    div { class: "nav-item dim", "data-testid": "cross-org-empty-state",
                         span { class: "icon", "◎" }
-                        span { class: "grow truncate", "Acme x Beta partnership" }
-                        span { class: "pill warning xs", "HA" }
-                        span { class: "pill muted xs", "closed" }
+                        span { class: "grow truncate", "No cross-org spaces loaded" }
                     }
                 }
 
@@ -1375,13 +1464,9 @@ pub fn RouterView() -> Element {
                         span { "Personal Spaces" }
                         Link { class: "add", to: Route::Product, "+" }
                     }
-                    Link { class: "nav-item", to: Route::Document,
+                    div { class: "nav-item dim", "data-testid": "personal-spaces-empty-state",
                         span { class: "icon", "□" }
-                        span { class: "grow truncate", "My notes" }
-                    }
-                    Link { class: "nav-item dim", to: Route::Document,
-                        span { class: "icon", "□" }
-                        span { class: "grow truncate", "Drafts" }
+                        span { class: "grow truncate", "No personal spaces loaded" }
                     }
                 }
 
@@ -1427,7 +1512,6 @@ pub fn RouterView() -> Element {
                                         device_queue,
                                         repo_state,
                                         crypto_state,
-                                        push_state,
                                         config_store,
                                         state_store,
                                         network_state,
@@ -1448,12 +1532,16 @@ pub fn RouterView() -> Element {
                 }
 
                 Link { class: "sidebar-footer", to: Route::Settings,
-                    span { class: "avatar", "A" }
+                    span { class: "avatar", if has_session { "P" } else { "?" } }
                     span { class: "grow",
-                        span { class: "who", "Alice Wang" }
-                        span { class: "handle", "@alice.example.com" }
+                        span { class: "who", "{account_label}" }
+                        span { class: "handle", "{account_detail}" }
                     }
-                    span { class: "dot-online", title: "online", style: "margin-right: 4px;" }
+                    if has_session {
+                        span { class: "dot-online", title: "online", style: "margin-right: 4px;" }
+                    } else {
+                        span { class: "pill muted xs", "offline" }
+                    }
                     span { class: "btn icon sm ghost", "⚙" }
                 }
             }
@@ -1461,13 +1549,15 @@ pub fn RouterView() -> Element {
             main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar workspace-header",
                     div { class: "crumbs",
-                        Link { to: Route::Directory, strong { "Acme Inc." } }
-                        span { class: "crumb-tag", "Org" }
+                        Link { to: Route::SettingsSection { section: "services".to_owned() }, strong { "{active_server_label}" } }
+                        span { class: "crumb-tag", if has_session { "Session" } else { "Server" } }
                         span { class: "sep", "/" }
                         span { "{route_title}" }
                         span { class: "sep", "/" }
                         span { class: "id", "data-testid": "space-title", "{title}" }
-                        span { class: "id", "data-testid": "selected-space-id", "selected Space {selected_space}" }
+                        if selected_preview.is_some() {
+                            span { class: "id", "data-testid": "selected-space-id", "selected Space {selected_space}" }
+                        }
                         span { class: "id", "Principal Server {base_url}" }
                     }
                     div { class: "actions",
@@ -1499,29 +1589,7 @@ pub fn RouterView() -> Element {
                             to: Route::Product,
                             "+ Space"
                         }
-                        span { class: "pill muted xs", "data-testid": "topbar-members", "3 members" }
-                        button {
-                            class: "btn sm ghost",
-                            "data-testid": "backfill-button",
-                            onclick: move |_| {
-                                let base = base_url();
-                                let id = selected_space();
-                                let api_token = token();
-                                let wait_for = active_sync_token(sync_cursor());
-                                spawn(async move {
-                                    if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                        let _ = api.backfill(&id).await;
-                                    }
-                                });
-                            },
-                            "Backfill"
-                        }
-                        Link {
-                            class: "btn sm ghost",
-                            "data-testid": "resolve-nav-button",
-                            to: Route::Directory,
-                            "Resolve"
-                        }
+                        span { class: "pill muted xs", "data-testid": "topbar-members", "{spaces().len()} spaces" }
                     }
                 }
                 div { class: "workspace-body",
@@ -1566,7 +1634,10 @@ pub fn RouterView() -> Element {
                     },
                     Route::Register => rsx! {
                         crate::views::register::RegisterPanel {
-                            base_url: base_url(),
+                            base_url,
+                            account_did,
+                            device_id,
+                            config_store,
                             on_register: move |_| { let _ = navigator.push(Route::Login); },
                         }
                     },
@@ -1898,7 +1969,6 @@ struct ConnectContext {
     device_queue: Signal<usize>,
     repo_state: Signal<String>,
     crypto_state: Signal<String>,
-    push_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     network_state: Signal<String>,
@@ -1907,43 +1977,16 @@ struct ConnectContext {
     server_probe_status: Signal<String>,
 }
 
-async fn probe_server_description(
-    base: String,
-    mut server_description: Signal<Option<ServerDescription>>,
-    mut server_probe_status: Signal<String>,
-) {
-    match ContrixApi::new(&base) {
-        Ok(api) => match api.describe().await {
-            Ok(description) => {
-                server_probe_status.set(format!(
-                    "server describe loaded: {} / {}",
-                    description.service_type, description.protocol_version
-                ));
-                server_description.set(Some(description));
-            }
-            Err(error) => {
-                server_probe_status.set(format!("server describe failed: {error}"));
-                server_description.set(None);
-            }
-        },
-        Err(error) => {
-            server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
-            server_description.set(None);
-        }
-    }
-}
-
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     spawn(async move {
         let mut status = ctx.status;
         let mut sync_cursor = ctx.sync_cursor;
-        let mut token = ctx.token;
+        let token = ctx.token;
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
         let mut device_queue = ctx.device_queue;
         let mut repo_state = ctx.repo_state;
         let mut crypto_state = ctx.crypto_state;
-        let mut push_state = ctx.push_state;
         let config_store = ctx.config_store;
         let mut state_store = ctx.state_store;
         let mut network_state = ctx.network_state;
@@ -1956,7 +1999,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         last_error.set(None);
         match ContrixApi::new(&base) {
             Ok(api) => {
-                match api.describe().await {
+                let description = match api.describe().await {
                     Ok(description) => {
                         status.set(format!(
                             "{}: {} / {}",
@@ -1969,7 +2012,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             "server describe loaded: {} / {}",
                             description.service_type, description.protocol_version
                         ));
-                        server_description.set(Some(description));
+                        server_description.set(Some(description.clone()));
+                        description
                     }
                     Err(error) => {
                         status.set(format!(
@@ -1980,57 +2024,43 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         last_error.set(Some(format!("describe: {error}")));
                         server_probe_status.set(format!("server describe failed: {error}"));
                         server_description.set(None);
-                    }
-                }
-                let authed = match api.dev_login(&actor, &device).await {
-                    Ok(session) => {
-                        token.set(session.access_token.clone());
-                        persist_config(
-                            config_store,
-                            base.clone(),
-                            actor.clone(),
-                            device.clone(),
-                            session.access_token.clone(),
-                        );
-                        crypto_state.set(format!("session {}", session.device_id));
-                        api.clone().with_bearer(session.access_token)
-                    }
-                    Err(error) => {
-                        let handle = handle_from_did(&actor);
-                        match api
-                            .register_account(&actor, &handle, Some("yougen"), Some(&device))
-                            .await
-                        {
-                            Ok(_) => match api.dev_login(&actor, &device).await {
-                                Ok(session) => {
-                                    token.set(session.access_token.clone());
-                                    persist_config(
-                                        config_store,
-                                        base.clone(),
-                                        actor.clone(),
-                                        device.clone(),
-                                        session.access_token.clone(),
-                                    );
-                                    crypto_state.set(format!("session {}", session.device_id));
-                                    api.clone().with_bearer(session.access_token)
-                                }
-                                Err(retry_error) => {
-                                    crypto_state.set(format!(
-                                        "login failed: {error}; retry failed: {retry_error}"
-                                    ));
-                                    api.clone()
-                                }
-                            },
-                            Err(register_error) => {
-                                crypto_state.set(format!(
-                                    "login failed: {error}; register failed: {register_error}"
-                                ));
-                                api.clone()
-                            }
-                        }
+                        return;
                     }
                 };
-                match api.search_spaces("", None).await {
+
+                let session_token = token();
+                if session_token.trim().is_empty() {
+                    status.set(format!(
+                        "Connected: {} / {}; login required",
+                        description.service_type, description.protocol_version
+                    ));
+                    network_state.set("online".to_owned());
+                    sync_cursor.set("-".to_owned());
+                    spaces.set(Vec::new());
+                    timeline.set(Vec::new());
+                    device_queue.set(0);
+                    crypto_state.set("No authenticated session".to_owned());
+                    persist_config(
+                        config_store,
+                        base.clone(),
+                        actor.clone(),
+                        device.clone(),
+                        String::new(),
+                    );
+                    return;
+                }
+
+                let authed = api.clone().with_bearer(session_token.clone());
+                persist_config(
+                    config_store,
+                    base.clone(),
+                    actor.clone(),
+                    device.clone(),
+                    session_token,
+                );
+                crypto_state.set(format!("session token loaded for {device}"));
+
+                match authed.search_spaces("", None).await {
                     Ok(search) if search.results.is_empty() => {
                         status.set(ConnectionState::Empty.label().to_owned());
                         spaces.set(search.results);
@@ -2078,91 +2108,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     );
                 } else {
                     status.set(format!(
-                        "{}: sync unavailable, showing cached/local state",
-                        ConnectionState::Offline.label()
+                        "Connected: authenticated sync unavailable, showing cached/local state"
                     ));
                 }
-                if let Ok(events) = api.events_describe().await {
+                if let Ok(events) = authed.events_describe().await {
                     if let Some(frontier) = frontier_label(&events.frontier) {
                         repo_state.set(frontier);
-                    }
-                }
-                let _ = api.identity_describe().await;
-                let _ = api.identity_resolve(&actor).await;
-                let _ = api.sync_describe().await;
-                let _ = api.snapshot_head(DEMO_SPACE).await;
-                let _ = api.authz_check(&actor, "space.read", DEMO_SPACE).await;
-                let _ = api.effective_grants(&actor).await;
-                let _ = api.invites().await;
-                let _ = api.profile_presence(&actor).await;
-                let _ = authed.upload_keys(&device).await;
-                let _ = authed.query_keys(&actor, &device).await;
-                let _ = authed
-                    .claim_keys(&actor, &device, "signed_curve25519")
-                    .await;
-                let _ = authed.receive_device_messages().await;
-                if let Ok(blob) = authed.upload_blob(b"yougen encrypted bytes").await {
-                    let _ = authed.get_blob_bytes(&blob.blob_ref).await;
-                }
-                // C33.2: chime-driven push registration.
-                //
-                // Goes through `push_registration::register_via_chime` which:
-                //   1. resolves a real OS / Web Push token via the active
-                //      `PushTokenProvider` (no placeholder fallback);
-                //   2. POSTs the chime register-device request to the
-                //      principal server;
-                //   3. persists the resulting `PushRegistrationState` to
-                //      `LocalStateStore`.
-                //
-                // When no provider is installed (or the provider declines
-                // — permission denied / not yet ready) the orchestrator
-                // returns `NoRealToken`; we surface that as a non-fatal
-                // status so the UI keeps booting without push.
-                let mut store_for_push = state_store.write().clone();
-                let push_outcome = crate::push_registration::register_via_chime(
-                    crate::push_registration::RegisterContext {
-                        principal_server_url: base.clone(),
-                        floria_gateway_url: String::new(),
-                        device_id: device.clone(),
-                        principal_did: Some(actor.clone()),
-                        bearer_token: Some(token()),
-                        session_grant: None,
-                    },
-                    &mut store_for_push,
-                )
-                .await;
-                match push_outcome {
-                    Ok(outcome) => {
-                        // Mirror the orchestrator-side persisted state into
-                        // the live signal-backed store so the rest of the UI
-                        // sees it immediately.
-                        state_store
-                            .write()
-                            .save_push_registration(outcome.state.clone());
-                        push_state.set(
-                            outcome
-                                .response
-                                .registration_id
-                                .unwrap_or_else(|| "registered".to_owned()),
-                        );
-                    }
-                    Err(error) => {
-                        if cfg!(all(debug_assertions, target_arch = "wasm32")) {
-                            push_state.set("cx:push:e2e".to_owned());
-                        } else if cfg!(debug_assertions) {
-                            match authed.register_push_device().await {
-                                Ok(response) => push_state.set(
-                                    response
-                                        .registration_id
-                                        .unwrap_or_else(|| "registered".to_owned()),
-                                ),
-                                Err(fallback_error) => push_state.set(format!(
-                                    "push unavailable: {error}; fallback failed: {fallback_error}"
-                                )),
-                            }
-                        } else {
-                            push_state.set(format!("push unavailable: {error}"));
-                        }
                     }
                 }
             }
@@ -2178,10 +2129,6 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
             }
         }
     });
-}
-
-fn active_sync_token(sync_cursor: String) -> Option<String> {
-    (!sync_cursor.trim().is_empty() && sync_cursor != "-").then_some(sync_cursor)
 }
 
 fn frontier_label(frontier: &serde_json::Value) -> Option<String> {

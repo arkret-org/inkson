@@ -1303,7 +1303,9 @@ fn build_authorize_url(
         query.append_pair("scope", scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
-        query.append_pair("login_hint", actor_did);
+        if !actor_did.trim().is_empty() {
+            query.append_pair("login_hint", actor_did);
+        }
         query.append_pair("resource", principal_audience);
         if let Some(pkce_method) = pkce_method {
             query.append_pair("code_challenge_method", pkce_method);

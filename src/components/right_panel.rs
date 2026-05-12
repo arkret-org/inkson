@@ -53,7 +53,7 @@ pub fn RightPanel(
     let hierarchy_loading = use_signal(|| false);
     let mut requested_space = use_signal(String::new);
 
-    if requested_space() != selected_space {
+    if !selected_space.trim().is_empty() && requested_space() != selected_space {
         let sid = selected_space.clone();
         requested_space.set(sid.clone());
         refresh_space_hierarchy(sid, hierarchy, hierarchy_status, hierarchy_loading);
@@ -62,7 +62,13 @@ pub fn RightPanel(
     let selected_name = selected_preview
         .as_ref()
         .map(|space| space.name.clone())
-        .unwrap_or_else(|| selected_space.clone());
+        .unwrap_or_else(|| {
+            if selected_space.trim().is_empty() {
+                "No space selected".to_owned()
+            } else {
+                selected_space.clone()
+            }
+        });
     let selected_detail = selected_preview.as_ref().and_then(|space| {
         space.description.clone().or_else(|| {
             space
@@ -98,10 +104,13 @@ pub fn RightPanel(
                 || edges.iter().any(|edge| edge.cycle_detected)
         })
         .unwrap_or(false);
-    let root_id = response
-        .as_ref()
-        .map(response_root_id)
-        .unwrap_or_else(|| selected_space.clone());
+    let root_id = response.as_ref().map(response_root_id).unwrap_or_else(|| {
+        if selected_space.trim().is_empty() {
+            "No space selected".to_owned()
+        } else {
+            selected_space.clone()
+        }
+    });
 
     rsx! {
         section {
@@ -118,43 +127,47 @@ pub fn RightPanel(
                 div { class: "metric",
                     strong { "Selected Space" }
                     span { "{selected_name}" }
-                    div { class: "muted", "{selected_space}" }
+                    if !selected_space.trim().is_empty() {
+                        div { class: "muted", "{selected_space}" }
+                    }
                     if let Some(detail) = selected_detail {
                         div { class: "muted", "{detail}" }
                     }
                 }
-                nav {
-                    class: "quick-nav",
-                    "aria-label": "Space quick links",
-                    Link {
-                        class: "secondary quick-nav__item",
-                        "data-testid": "right-panel-space-info-link",
-                        to: Route::TimelineSpace { space_id: selected_space.clone() },
-                        "Space Info"
-                    }
-                    Link {
-                        class: "secondary quick-nav__item",
-                        "data-testid": "right-panel-members-link",
-                        to: Route::SpaceAdmin { space_id: selected_space.clone() },
-                        "Members"
-                    }
-                    Link {
-                        class: "secondary quick-nav__item",
-                        "data-testid": "right-panel-files-link",
-                        to: Route::DocumentSpace { space_id: selected_space.clone() },
-                        "Files"
-                    }
-                    Link {
-                        class: "secondary quick-nav__item",
-                        "data-testid": "right-panel-pinned-link",
-                        to: Route::TimelineSpace { space_id: selected_space.clone() },
-                        "Pinned"
-                    }
-                    Link {
-                        class: "secondary quick-nav__item",
-                        "data-testid": "right-panel-notifications-link",
-                        to: Route::Notifications,
-                        "Notifications"
+                if !selected_space.trim().is_empty() {
+                    nav {
+                        class: "quick-nav",
+                        "aria-label": "Space quick links",
+                        Link {
+                            class: "secondary quick-nav__item",
+                            "data-testid": "right-panel-space-info-link",
+                            to: Route::TimelineSpace { space_id: selected_space.clone() },
+                            "Space Info"
+                        }
+                        Link {
+                            class: "secondary quick-nav__item",
+                            "data-testid": "right-panel-members-link",
+                            to: Route::SpaceAdmin { space_id: selected_space.clone() },
+                            "Members"
+                        }
+                        Link {
+                            class: "secondary quick-nav__item",
+                            "data-testid": "right-panel-files-link",
+                            to: Route::DocumentSpace { space_id: selected_space.clone() },
+                            "Files"
+                        }
+                        Link {
+                            class: "secondary quick-nav__item",
+                            "data-testid": "right-panel-pinned-link",
+                            to: Route::TimelineSpace { space_id: selected_space.clone() },
+                            "Pinned"
+                        }
+                        Link {
+                            class: "secondary quick-nav__item",
+                            "data-testid": "right-panel-notifications-link",
+                            to: Route::Notifications,
+                            "Notifications"
+                        }
                     }
                 }
             }
@@ -175,7 +188,7 @@ pub fn RightPanel(
                     button {
                         class: "secondary compact-button",
                         "data-testid": "right-panel-refresh-hierarchy",
-                        disabled: hierarchy_loading(),
+                        disabled: hierarchy_loading() || selected_space.trim().is_empty(),
                         onclick: {
                             let sid = selected_space.clone();
                             move |_| {

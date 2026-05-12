@@ -186,26 +186,26 @@ use crate::models::{
     AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResponse,
     AppletPingResponse, AppletProtocolMetadataResponse, AppletQueryActorResponse,
     AppletQuerySpaceResponse, AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse,
-    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, DevLoginResponse,
-    DeviceMessagesReceiveResponse, DeviceMessagesSendResponse, DeviceTrustResponse,
-    DirectoryDescribeResponse, EffectiveGrantsResponse, EventsDescribeResponse,
-    FederationOperationsResponse, FederationSpaceMembersResponse, FederationTransactionResponse,
-    FederationVerifyActorResponse, HealthResponse, IceConfigResponse, IdentityDescribeResponse,
-    IdentityLogResponse, IdentityReceiptsResponse, IdentityResolveResponse, InvitesResponse,
-    KeysClaimResponse, KeysQueryResponse, KeysUploadResponse, MimiConsentResponse,
-    MimiGroupInfoResponse, MimiIdentifierQueryResponse, MimiKeyMaterialResponse,
-    MimiNotifyResponse, MimiProviderDirectoryResponse, MimiProxyDownloadResponse,
-    MimiReportAbuseResponse, MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse,
-    MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
-    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
-    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
-    PushRegisterResponse, ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse,
-    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    ServerDescription, SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse,
-    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse,
-    SubmitDidOperationResponse, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
-    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
-    UpdateSpaceResponse, VerifyDeviceResponse,
+    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactResponse,
+    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
+    DeviceTrustResponse, DirectoryDescribeResponse, EffectiveGrantsResponse,
+    EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
+    FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse,
+    IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
+    IdentityResolveResponse, InvitesResponse, KeysClaimResponse, KeysQueryResponse,
+    KeysUploadResponse, MimiConsentResponse, MimiGroupInfoResponse, MimiIdentifierQueryResponse,
+    MimiKeyMaterialResponse, MimiNotifyResponse, MimiProviderDirectoryResponse,
+    MimiProxyDownloadResponse, MimiReportAbuseResponse, MimiRoomUpdateResponse,
+    MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
+    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
+    OidcCallbackResponse, OkResponse, PasskeyChallengeResponse, PasskeyVerifyResponse,
+    PolicyCheckResponse, PolicyResponse, PushRegisterResponse, ReceiptResponse,
+    ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse,
+    SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SignAnchorResponse,
+    SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
+    SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResponse, SubmitEventResponse,
+    SubmitMoveResponse, SyncDescribeResponse, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
+    TokenRefreshResponse, TypingResponse, UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::{OperationEnvelope, uuid_v7, uuid_v8};
 
@@ -546,6 +546,27 @@ impl ContrixApi {
 
     pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
         self.get_json("api/v1/account/me").await
+    }
+
+    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
+        self.post_json("api/v1/contacts/request", json!({"target": target}))
+            .await
+    }
+
+    pub async fn respond_contact(
+        &self,
+        requester: &str,
+        action: &str,
+    ) -> anyhow::Result<ContactResponse> {
+        self.post_json(
+            "api/v1/contacts/respond",
+            json!({"requester": requester, "action": action}),
+        )
+        .await
+    }
+
+    pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
+        self.get_json("api/v1/contacts").await
     }
 
     pub async fn logout(&self) -> anyhow::Result<OkResponse> {
