@@ -1917,6 +1917,7 @@ impl ContrixApi {
 fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Value> {
     let event_id = format!("cx:event:{}", uuid_v7());
     let payload = operation.body.clone();
+    let operation_id = typed_operation_id(&operation.operation_id);
     let mut event = json!({
         "event_id": event_id,
         "kind": operation.op_type,
@@ -1929,7 +1930,7 @@ fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Val
         "refs": [],
         "payload": payload,
         "unsigned": {
-            "local_operation_idempotency_alias": operation.operation_id,
+            "local_operation_idempotency_alias": operation_id,
         },
         "proofs": [{
             "kind": "detached_jws",
@@ -1945,6 +1946,14 @@ fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Val
     }
     refresh_event_proof(&mut event)?;
     Ok(event)
+}
+
+fn typed_operation_id(operation_id: &str) -> String {
+    if operation_id.starts_with("cx:operation:") {
+        operation_id.to_owned()
+    } else {
+        format!("cx:operation:{operation_id}")
+    }
 }
 
 fn event_canonical_digest(event: &Value) -> anyhow::Result<String> {

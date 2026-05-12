@@ -1,5 +1,8 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use dioxus::prelude::*;
 use dioxus_router::{Link, Router, hooks::*};
+use serde_json::Value;
 
 use crate::{
     api::ContrixApi,
@@ -637,6 +640,91 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --right-pane-w: 340px;
 }
 
+.auth-shell {
+  width: 100vw;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+.auth-card {
+  width: min(520px, 100%);
+  max-width: none;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-panel {
+  padding: 28px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-form input {
+  min-width: 0;
+}
+
+.auth-form .actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-mode-button {
+  min-height: 58px;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.auth-mode-button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.auth-result {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+
+.auth-result strong {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.auth-checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.auth-checkline input {
+  width: auto;
+}
+
 .shell.app {
   min-height: 0;
   height: 100vh;
@@ -953,6 +1041,24 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 @media (max-width: 860px) {
+  .auth-shell {
+    padding: 16px;
+    align-items: start;
+  }
+
+  .auth-card {
+    width: 100%;
+  }
+
+  .auth-panel {
+    padding: 22px;
+  }
+
+  .auth-mode-grid,
+  .auth-form .actions {
+    grid-template-columns: 1fr;
+  }
+
   .shell.app,
   .shell.app.three-col {
     grid-template-columns: 1fr;
@@ -1191,6 +1297,7 @@ pub fn RouterView() -> Element {
         let login_navigator = navigator.clone();
         let callback_navigator = navigator.clone();
         let register_navigator = navigator.clone();
+        let recovery_navigator = navigator.clone();
 
         return rsx! {
             style { "{STYLE}" }
@@ -1212,7 +1319,20 @@ pub fn RouterView() -> Element {
                                 account_did,
                                 device_id,
                                 config_store,
+                                state_store,
+                                initial_recovery: false,
                                 on_register: move |_| { let _ = register_navigator.push(Route::Login); },
+                            }
+                        },
+                        Route::Recovery => rsx! {
+                            crate::views::register::RegisterPanel {
+                                base_url,
+                                account_did,
+                                device_id,
+                                config_store,
+                                state_store,
+                                initial_recovery: true,
+                                on_register: move |_| { let _ = recovery_navigator.push(Route::Login); },
                             }
                         },
                         Route::AuthCallback => rsx! {
@@ -1638,6 +1758,8 @@ pub fn RouterView() -> Element {
                             account_did,
                             device_id,
                             config_store,
+                            state_store,
+                            initial_recovery: false,
                             on_register: move |_| { let _ = navigator.push(Route::Login); },
                         }
                     },
@@ -2087,25 +2209,23 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             store.set_anchor_view(id.clone(), view);
                         }
                     }
-                    sync_cursor.set(sync.next_batch);
+                    let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
+                    {
+                        let mut current_spaces = spaces.write();
+                        for preview in space_previews_from_sync_spaces(&sync.spaces) {
+                            if let Some(existing) = current_spaces
+                                .iter_mut()
+                                .find(|space| space.space_id == preview.space_id)
+                            {
+                                *existing = preview;
+                            } else {
+                                current_spaces.push(preview);
+                            }
+                        }
+                    }
+                    timeline.set(synced_timeline);
                     device_queue.set(sync.to_device.len());
-                    timeline.set(
-                        sync.spaces
-                            .into_iter()
-                            .map(|(id, body)| {
-                                TimelineEvent::system_notice(
-                                    format!("summary-{id}"),
-                                    "serverx",
-                                    format!(
-                                        "{id}: {}",
-                                        body["summary"]["summary"]
-                                            .as_str()
-                                            .unwrap_or("No summary available")
-                                    ),
-                                )
-                            })
-                            .collect(),
-                    );
+                    sync_cursor.set(sync.next_batch);
                 } else {
                     status.set(format!(
                         "Connected: authenticated sync unavailable, showing cached/local state"
@@ -2129,6 +2249,127 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
             }
         }
     });
+}
+
+fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
+    spaces
+        .iter()
+        .map(|(id, body)| {
+            let summary = body.get("summary").unwrap_or(&Value::Null);
+            let title = summary
+                .get("title")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    summary
+                        .get("flow")
+                        .and_then(|flow| flow.get("title"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or(id)
+                .to_owned();
+            let description = summary
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            let tags = summary
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
+            SpacePreview {
+                space_id: id.clone(),
+                name: title,
+                description,
+                tags,
+                public: true,
+                category: summary
+                    .get("category")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            }
+        })
+        .collect()
+}
+
+fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
+    let mut events = Vec::new();
+    for (id, body) in spaces {
+        events.push(TimelineEvent::system_notice(
+            format!("summary-{id}"),
+            "serverx",
+            format!(
+                "{id}: {}",
+                body["summary"]["summary"]
+                    .as_str()
+                    .unwrap_or("No summary available")
+            ),
+        ));
+
+        let Some(timeline_events) = body
+            .get("timeline")
+            .and_then(|timeline| timeline.get("events"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+
+        for event in timeline_events {
+            if event.get("kind").and_then(Value::as_str) != Some("cx.message.create") {
+                continue;
+            }
+            let event_id = event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or("event:unknown")
+                .to_owned();
+            let content = event.get("content").unwrap_or(&Value::Null);
+            let body = content
+                .get("body")
+                .and_then(Value::as_str)
+                .or_else(|| event.get("body").and_then(Value::as_str))
+                .or_else(|| {
+                    content
+                        .get("blocks")
+                        .and_then(Value::as_array)
+                        .and_then(|blocks| blocks.first())
+                        .and_then(|block| block.get("text"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or("[message]")
+                .to_owned();
+            events.push(TimelineEvent {
+                id: event_id.clone(),
+                sender: event
+                    .get("sender")
+                    .and_then(Value::as_str)
+                    .unwrap_or("did:web:unknown")
+                    .to_owned(),
+                sender_display: event
+                    .get("sender")
+                    .and_then(Value::as_str)
+                    .unwrap_or("server")
+                    .to_owned(),
+                body,
+                timestamp: event
+                    .get("created_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                thread_id: event
+                    .get("thread_id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                event_id: Some(event_id),
+                ..TimelineEvent::default()
+            });
+        }
+    }
+    events
 }
 
 fn frontier_label(frontier: &serde_json::Value) -> Option<String> {

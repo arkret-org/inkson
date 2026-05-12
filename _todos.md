@@ -35,3 +35,31 @@ Verification notes:
 - `rustfmt --edition 2024 --check src\app.rs src\views\dashboard.rs` passed.
 - Full `cargo fmt --check` was executed, but it is blocked by pre-existing newline style issues in `src/api.rs`, `src/capability.rs`, `src/coauth.rs`, `src/discovery.rs`, and `tests/serverx_contract.rs`.
 - Playwright affected smoke passed: `settings can update account`, `mobile viewport`, and `visual smoke`.
+
+# Auth Registration And Recovery Todos
+
+Primary boundary decision:
+- `soland` remains the pure Principal Server and embedded `did:webvh` provider.
+- `coauth` owns account registration, email verification, optional password setup, lost-password/account recovery, notification settings, and the trusted call into soland's embedded webvh registration endpoint.
+- `yougen` owns client-side routing, form state, local key generation, and showing the returned `did:webvh` / key metadata to the user.
+
+## Implementation Tasks
+- [x] Fix `/login` and `/register` auth card centering after the `claude-design` stylesheet is loaded.
+- [x] Replace email-or-DID registration entry with two explicit paths: bind an existing DID, or create a new soland-backed `did:webvh`.
+- [x] For new `did:webvh`, collect username first, then email, then verification code; allow dev/test deployments to bypass actual email delivery.
+- [x] Generate/prepare client key material for the webvh update key and send only the public multibase key through coauth to soland.
+- [x] Add the password step after email verification; make password optional only when coauth reports a passwordless/passkey-capable policy.
+- [x] Surface registration completion with `did:webvh`, key id, key log head, document/log URLs, and clear local-key ownership wording.
+- [x] Add lost-password/account recovery entry points; account recovery accepts email and routes through coauth.
+- [x] Add yougen API types/methods for the coauth registration/recovery contract and update Playwright mocks.
+- [x] Check whether coauth already stores email/recovery settings in its own DB/config; add or adjust config for test email bypass if missing.
+- [x] Check soland's embedded webvh provider stays business-logic-free; only adjust describe/register metadata if needed.
+- [x] Run `cargo fmt --check`, `cargo check`, and targeted Playwright auth/registration tests.
+
+Verification notes:
+- `cargo check` passed in `yougen`.
+- `rustfmt --edition 2024 --check src\app.rs src\views\register.rs src\views\login.rs src\coauth.rs` passed; full `yougen` `cargo fmt --check` is still blocked by pre-existing newline style issues in `src\capability.rs`, `src\discovery.rs`, and `tests\serverx_contract.rs`.
+- `cargo fmt --check` passed in `coauth`.
+- `cargo check -p coauth-backend -p coauth-config -p coauth-data` passed in `coauth` with existing warnings.
+- `cargo test -p coauth-config loads_registration_email_delivery_bypass_from_env --lib` passed.
+- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page|registration"`.

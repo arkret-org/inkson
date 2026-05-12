@@ -112,14 +112,12 @@ impl OperationBuilder {
     }
 }
 
-/// Generate a UUID v8-style identifier (timestamp + random).
+/// Generate a protocol-compatible UUIDv7 identifier.
+///
+/// The function name is kept for older UI call sites, but typed Contrix IDs
+/// are validated as UUIDv7 at service boundaries.
 pub fn uuid_v8() -> String {
-    let now = chrono::Utc::now().timestamp_millis() as u64;
-    let ts_hi = (now >> 16) as u32;
-    let ts_lo = (now & 0xFFFF) as u16;
-    let rand_a: u16 = 0x8000 | (rand_u16() & 0x0FFF);
-    let rand_b = rand_u64();
-    format!("{:08x}-{:04x}-{:04x}-{:016x}", ts_hi, ts_lo, rand_a, rand_b)
+    uuid_v7()
 }
 
 /// Generate a canonical UUIDv7 string for typed protocol identifiers.

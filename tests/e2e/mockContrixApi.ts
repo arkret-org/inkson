@@ -8,6 +8,7 @@ export async function mockContrixApi(page: Page) {
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
   let submitCounter = 0;
+  let webvhUsername = "new-alice";
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -287,6 +288,82 @@ export async function mockContrixApi(page: Page) {
         access_token: "sx_playwright_refreshed",
         token_type: "Bearer",
         expires_at: "2026-04-28T13:00:00Z",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/register/webvh/start" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      webvhUsername = body.username ?? "new-alice";
+      return json(route, {
+        status: "success",
+        registration_id: "reg-webvh-1",
+        next_step: "email",
+        provider_id: "soland.embedded",
+        email_verification_bypass_allowed: true,
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/email" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        status: "sent",
+        next_step: "verify_email",
+        delivery: body.skip_email_delivery ? "skipped" : "email",
+        dev_code: body.skip_email_delivery ? "123456" : null,
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/verify-email" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      if (body.code !== "123456") {
+        return json(route, { status: "error", error: "invalid verification code" }, 400);
+      }
+      return json(route, {
+        status: "success",
+        next_step: "password",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/finish" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      const did = `did:webvh:zmock:${webvhUsername}`;
+      return json(route, {
+        status: "success",
+        username: webvhUsername,
+        did,
+        key_id: `${did}#key-1`,
+        key_log_head: "1-zmockhead",
+        document_url: `https://local.host/.well-known/did-webvh/${webvhUsername}/did.json`,
+        log_url: `https://local.host/.well-known/did-webvh/${webvhUsername}/did.jsonl`,
+        provider_id: "soland.embedded",
+        did_document: {
+          id: did,
+          verificationMethod: [{
+            id: `${did}#key-1`,
+            type: "Multikey",
+            controller: did,
+            publicKeyMultibase: body.public_key_multibase,
+          }],
+        },
+        did_log: [{ versionId: "1-zmockhead", parameters: { updateKeys: [body.public_key_multibase] } }],
+      }, 201);
+    }
+
+    if (url.pathname === "/api/v1/auth/register/did/start" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        status: "proof_required",
+        did: body.did,
+        proof_url: `https://local.host/auth/register/did/proof?did=${encodeURIComponent(body.did)}`,
+        next_step: "did_proof",
+      });
+    }
+
+    if (url.pathname === "/api/v1/auth/recovery/start" && route.request().method() === "POST") {
+      return json(route, {
+        status: "success",
+        id: "recovery-e2e",
+        flow_session_id: "flow-recovery-e2e",
       });
     }
 

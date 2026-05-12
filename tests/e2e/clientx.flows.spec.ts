@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   await mockContrixApi(page);
+  if (testInfo.title.startsWith("login page") || testInfo.title.startsWith("registration ")) {
+    return;
+  }
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
 });
@@ -33,73 +36,69 @@ test("right panel shows space hierarchy without implicit cascade", async ({ page
   await expect(page.getByTestId("space-hierarchy-children-empty")).toContainText("No hierarchy children");
 });
 
-test("login page covers connection auth methods and token refresh", async ({ page }) => {
+test("login page exposes account creation and recovery entry points", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
+  await expect(page.getByTestId("login-server-url")).toHaveValue("https://local.host");
+  await expect(page.getByTestId("start-server-login-button")).toBeVisible();
 
-  await page.getByTestId("test-connection-button").click();
-  await expect(page.getByTestId("health-status")).toContainText("serverx");
-
-  await page.getByTestId("passkey-login-button").click();
-  await expect(page.getByTestId("passkey-status")).toContainText("Challenge received");
-
-  await page.getByTestId("oidc-login-button").click();
-  await expect(page.getByTestId("oidc-status")).toContainText("Redirect:");
-
-  await page.getByTestId("dev-login-button").click();
-  await expect(page.getByTestId("status-label")).toContainText("Online: dev-login");
+  await page.getByTestId("create-account-link").click();
+  await expect(page.getByTestId("register-panel")).toBeVisible();
 
   await page.goto("/login", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("refresh-token-button").click();
-  await expect(page.getByTestId("refresh-status")).toContainText("Refreshed");
+  await page.getByTestId("forgot-account-link").click();
+  await expect(page.getByTestId("register-panel")).toBeVisible();
+  await expect(page.getByTestId("recovery-email-input")).toBeVisible();
 });
 
-test("registration wizard completes account bootstrap", async ({ page }) => {
+test("registration creates a new soland-backed did:webvh account", async ({ page }) => {
   await page.goto("/register", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("register-panel")).toBeVisible();
-  await expect(page.getByTestId("did-method-policy")).toContainText("did:plc");
-  await expect(page.getByTestId("did-method-policy")).toContainText("did:uuid");
+  await page.getByTestId("register-path-new-webvh").click();
+  await page.getByTestId("register-username-input").fill("new-alice");
+  await page.getByTestId("next-to-email").click();
+  await expect(page.getByTestId("register-status")).toContainText("soland.embedded");
 
-  await page.getByTestId("generate-did-button").click();
-  await page.getByTestId("register-handle-input").fill("new-alice.example");
-  await page.getByTestId("next-to-displayname").click();
-  await page.getByTestId("register-display-name").fill("New Alice");
-  await page.getByTestId("register-device-label").fill("alice-laptop");
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByTestId("generate-proof-button").click();
-  await page.getByRole("button", { name: "Sign & Continue" }).click();
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByTestId("complete-registration-button").click();
+  await page.getByTestId("register-email-input").fill("alice@example.com");
+  await page.getByTestId("skip-email-delivery-toggle").check();
+  await page.getByTestId("send-verification-code-button").click();
+  await expect(page.getByTestId("register-status")).toContainText("Test code: 123456");
+
+  await page.getByTestId("register-verification-code").fill("123456");
+  await page.getByTestId("verify-email-button").click();
+  await expect(page.getByTestId("register-status")).toContainText("Email verified");
+
+  await page.getByTestId("register-password-input").fill("correct horse battery staple");
+  await page.getByTestId("register-password-confirm").fill("correct horse battery staple");
+  const finishRequest = page.waitForRequest("**/api/v1/auth/register/webvh/reg-webvh-1/finish");
+  await page.getByTestId("complete-webvh-registration-button").click();
+  const finishBody = await finishRequest.then((request) => request.postDataJSON());
+  expect(finishBody.public_key_multibase).toMatch(/^z/);
+  expect(finishBody.key_id).toBe("key-1");
 
   await expect(page.getByTestId("registration-complete")).toContainText("Account registered successfully");
-  await expect(page.getByTestId("register-summary-status")).toContainText("cx:didop:e2e");
+  await expect(page.getByTestId("registered-did-webvh")).toContainText("did:webvh:zmock:new-alice");
+  await expect(page.getByTestId("register-key-id")).toContainText("#key-1");
+  await expect(page.getByTestId("register-key-log-head")).toContainText("1-zmockhead");
 });
 
-test("registration can bind an existing protocol DID with scoped proof", async ({ page }) => {
+test("registration can bind an existing DID and start account recovery", async ({ page }) => {
   await page.goto("/register", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("register-path-bind").click();
-  await page.getByTestId("bind-existing-did-input").fill("did:web:team.example");
-  await page.getByTestId("bind-existing-did-button").click();
-  await page.getByTestId("register-handle-input").fill("team.example");
-  await page.getByTestId("next-to-displayname").click();
-  await page.getByTestId("register-display-name").fill("Team Workspace");
-  await page.getByTestId("register-device-label").fill("team-laptop");
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByTestId("generate-proof-button").click();
-  await expect(page.getByTestId("proof-challenge")).toContainText("challenge-");
-  await expect(page.getByTestId("proof-verification-method")).toHaveValue("authentication");
-  await page.getByRole("button", { name: "Sign & Continue" }).click();
-  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByTestId("register-path-existing-did").click();
+  await page.getByTestId("existing-did-input").fill("did:web:team.example");
+  await page.getByTestId("existing-did-username-input").fill("team");
+  const existingRequest = page.waitForRequest("**/api/v1/auth/register/did/start");
+  await page.getByTestId("start-existing-did-registration-button").click();
+  const existingBody = await existingRequest.then((request) => request.postDataJSON());
+  expect(existingBody.did).toBe("did:web:team.example");
+  await expect(page.getByTestId("existing-did-proof")).toContainText("did%3Aweb%3Ateam.example");
 
-  const didOperation = page.waitForRequest("**/api/v1/identity/submit-did-operation");
-  await page.getByTestId("complete-registration-button").click();
-  const didBody = await didOperation.then((request) => request.postDataJSON());
-  expect(didBody.did).toBe("did:web:team.example");
-  expect(didBody.operation.type).toBe("cx.did.bind");
-  expect(didBody.operation.did_method).toBe("did:web");
-  expect(didBody.operation.proof.audience).toContain("127.0.0.1");
-  expect(didBody.operation.proof.verification_method).toBe("authentication");
-  await expect(page.getByTestId("registration-complete")).toContainText("did:web:team.example");
+  await page.getByTestId("register-recovery-link").click();
+  await page.getByTestId("recovery-email-input").fill("team@example.com");
+  const recoveryRequest = page.waitForRequest("**/api/v1/auth/recovery/start");
+  await page.getByTestId("start-recovery-button").click();
+  expect((await recoveryRequest).postDataJSON()).toEqual({ email: "team@example.com" });
+  await expect(page.getByTestId("recovery-status")).toContainText("flow-recovery-e2e");
 });
 
 test("settings can update account and device before session bootstrap", async ({ page }) => {

@@ -42,6 +42,7 @@ pub fn ProductPanel(
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
     let mut space_state = use_signal(|| "No lifecycle operation yet".to_owned());
     let mut message_state = use_signal(|| "No canonical message persisted".to_owned());
+    let has_session = !token().trim().is_empty();
 
     rsx! {
         div { class: "timeline", "data-testid": "product-panel",
@@ -310,6 +311,7 @@ pub fn ProductPanel(
                         button {
                             class: "primary",
                             "data-testid": "create-space-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -346,6 +348,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "update-space-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -378,6 +381,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "set-space-policy-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -402,6 +406,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "list-invites-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -429,6 +434,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "add-member-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -452,6 +458,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "remove-member-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -475,6 +482,7 @@ pub fn ProductPanel(
                         button {
                             class: "secondary",
                             "data-testid": "delete-space-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -515,6 +523,7 @@ pub fn ProductPanel(
                         button {
                             class: "primary",
                             "data-testid": "persist-message-button",
+                            disabled: !has_session,
                             onclick: {
                                 let base = base_url;
                                 let actor = account_did.clone();

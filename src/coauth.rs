@@ -84,6 +84,91 @@ pub struct CoauthPrincipalServerInfo {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct CoauthWebvhRegistrationStartResponse {
+    pub status: String,
+    #[serde(default)]
+    pub registration_id: Option<String>,
+    #[serde(default)]
+    pub next_step: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub email_verification_bypass_allowed: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthWebvhEmailResponse {
+    pub status: String,
+    #[serde(default)]
+    pub next_step: Option<String>,
+    #[serde(default)]
+    pub delivery: Option<String>,
+    #[serde(default)]
+    pub dev_code: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthWebvhVerifyResponse {
+    pub status: String,
+    #[serde(default)]
+    pub next_step: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthWebvhFinishResponse {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    pub did: String,
+    #[serde(default)]
+    pub key_id: Option<String>,
+    #[serde(default)]
+    pub key_log_head: Option<String>,
+    #[serde(default)]
+    pub document_url: Option<String>,
+    #[serde(default)]
+    pub log_url: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub did_document: Value,
+    #[serde(default)]
+    pub did_log: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthExistingDidRegistrationResponse {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub did: Option<String>,
+    #[serde(default)]
+    pub proof_url: Option<String>,
+    #[serde(default)]
+    pub next_step: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CoauthRecoveryStartResponse {
+    pub status: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub flow_session_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct CoauthAuthBridgeDescribe {
     pub contract: String,
     pub version: String,
@@ -475,6 +560,98 @@ impl CoauthApi {
             json!({
                 "username": username,
                 "password": password,
+            }),
+        )
+        .await
+    }
+
+    pub async fn start_webvh_registration(
+        &self,
+        username: &str,
+        principal_server_url: &str,
+    ) -> anyhow::Result<CoauthWebvhRegistrationStartResponse> {
+        self.post_json(
+            "api/v1/auth/register/webvh/start",
+            json!({
+                "username": username,
+                "principal_server_url": principal_server_url,
+            }),
+        )
+        .await
+    }
+
+    pub async fn send_webvh_registration_email(
+        &self,
+        registration_id: &str,
+        email: &str,
+        skip_email_delivery: bool,
+    ) -> anyhow::Result<CoauthWebvhEmailResponse> {
+        self.post_json(
+            &format!("api/v1/auth/register/webvh/{registration_id}/email"),
+            json!({
+                "email": email,
+                "skip_email_delivery": skip_email_delivery,
+            }),
+        )
+        .await
+    }
+
+    pub async fn verify_webvh_registration_email(
+        &self,
+        registration_id: &str,
+        code: &str,
+    ) -> anyhow::Result<CoauthWebvhVerifyResponse> {
+        self.post_json(
+            &format!("api/v1/auth/register/webvh/{registration_id}/verify-email"),
+            json!({ "code": code }),
+        )
+        .await
+    }
+
+    pub async fn finish_webvh_registration(
+        &self,
+        registration_id: &str,
+        public_key_multibase: &str,
+        key_id: &str,
+        device_id: &str,
+        password: &str,
+        password_confirm: &str,
+    ) -> anyhow::Result<CoauthWebvhFinishResponse> {
+        self.post_json(
+            &format!("api/v1/auth/register/webvh/{registration_id}/finish"),
+            json!({
+                "public_key_multibase": public_key_multibase,
+                "key_id": key_id,
+                "device_id": device_id,
+                "password": password,
+                "password_confirm": password_confirm,
+            }),
+        )
+        .await
+    }
+
+    pub async fn bind_existing_did_registration(
+        &self,
+        did: &str,
+        username: &str,
+        device_id: &str,
+    ) -> anyhow::Result<CoauthExistingDidRegistrationResponse> {
+        self.post_json(
+            "api/v1/auth/register/did/start",
+            json!({
+                "did": did,
+                "username": username,
+                "device_id": device_id,
+            }),
+        )
+        .await
+    }
+
+    pub async fn start_recovery(&self, email: &str) -> anyhow::Result<CoauthRecoveryStartResponse> {
+        self.post_json(
+            "api/v1/auth/recovery/start",
+            json!({
+                "email": email,
             }),
         )
         .await

@@ -1,6 +1,6 @@
 use chrono::Utc;
 use dioxus::prelude::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     conformance::PlaintextBoundary,
@@ -288,6 +288,7 @@ pub fn TimelinePanel(
     let mut search_query = use_signal(String::new);
     let mut private_plaintext = use_signal(|| false);
     let mut plaintext_ack = use_signal(|| false);
+    let mut initial_sync_requested = use_signal(|| false);
 
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
@@ -316,6 +317,24 @@ pub fn TimelinePanel(
     };
     let plaintext_can_leave = plaintext_boundary.can_send_plaintext(&plaintext_service);
     let plaintext_blocked = private_plaintext() && !encrypt_toggle() && !plaintext_ack();
+
+    if timeline().is_empty() && !initial_sync_requested() && !token().trim().is_empty() {
+        initial_sync_requested.set(true);
+        let base = base_url_sig();
+        let api_token = token();
+        let wait_for = active_sync_token(sync_cursor());
+        spawn(async move {
+            if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for)
+                && let Ok(sync) = api.sync(None).await
+            {
+                let events = timeline_events_from_sync_spaces(&sync.spaces);
+                if !events.is_empty() {
+                    timeline.set(events);
+                }
+                sync_cursor.set(sync.next_batch);
+            }
+        });
+    }
 
     rsx! {
         div {
@@ -1285,7 +1304,77 @@ pub fn TimelinePanel(
 }
 
 fn active_sync_token(sync_cursor: String) -> Option<String> {
-    (!sync_cursor.trim().is_empty() && sync_cursor != "-").then_some(sync_cursor)
+    let sync_cursor = sync_cursor.trim();
+    sync_cursor
+        .starts_with("sx:")
+        .then(|| sync_cursor.to_owned())
+}
+
+fn timeline_events_from_sync_spaces(
+    spaces: &std::collections::BTreeMap<String, Value>,
+) -> Vec<TimelineEvent> {
+    let mut events = Vec::new();
+    for body in spaces.values() {
+        let Some(timeline_events) = body
+            .get("timeline")
+            .and_then(|timeline| timeline.get("events"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+
+        for event in timeline_events {
+            if event.get("kind").and_then(Value::as_str) != Some("cx.message.create") {
+                continue;
+            }
+            let event_id = event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or("event:unknown")
+                .to_owned();
+            let content = event.get("content").unwrap_or(&Value::Null);
+            let body = content
+                .get("body")
+                .and_then(Value::as_str)
+                .or_else(|| event.get("body").and_then(Value::as_str))
+                .or_else(|| {
+                    content
+                        .get("blocks")
+                        .and_then(Value::as_array)
+                        .and_then(|blocks| blocks.first())
+                        .and_then(|block| block.get("text"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or("[message]")
+                .to_owned();
+            events.push(TimelineEvent {
+                id: event_id.clone(),
+                sender: event
+                    .get("sender")
+                    .and_then(Value::as_str)
+                    .unwrap_or("did:web:unknown")
+                    .to_owned(),
+                sender_display: event
+                    .get("sender")
+                    .and_then(Value::as_str)
+                    .unwrap_or("server")
+                    .to_owned(),
+                body,
+                timestamp: event
+                    .get("created_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                thread_id: event
+                    .get("thread_id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                event_id: Some(event_id),
+                ..TimelineEvent::default()
+            });
+        }
+    }
+    events
 }
 
 fn reply_target_label(events: &[TimelineEvent], reply_idx: usize) -> String {

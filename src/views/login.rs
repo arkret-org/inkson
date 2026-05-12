@@ -152,6 +152,13 @@ pub fn LoginPanel(
                     "Create account"
                 }
 
+                Link {
+                    class: "secondary auth-secondary",
+                    "data-testid": "forgot-account-link",
+                    to: Route::Recovery,
+                    "Lost password or account"
+                }
+
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
                 }
