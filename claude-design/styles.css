@@ -380,10 +380,6 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   font-size: 13px;
   font-weight: 700;
 }
-.sidebar-header .org-meta { display: flex; flex-direction: column; min-width: 0; }
-.sidebar-header .org-meta .org-name { font-size: 13px; font-weight: 600; truncate: ellipsis; }
-.sidebar-header .org-meta .org-did { font-size: 10px; color: var(--text-3); font-family: var(--font-mono); }
-
 .sidebar-header .product-meta {
   display: flex;
   flex-direction: column;
@@ -820,6 +816,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 .pill.solid-success { background: var(--success); color: white; }
 .pill.solid-danger  { background: var(--danger);  color: white; }
 .pill.solid-warning { background: var(--warning); color: white; }
+.pill.xs { font-size: 9.5px; padding: 1px 6px; }
 
 .kbd-tag {
   font-family: var(--font-mono);

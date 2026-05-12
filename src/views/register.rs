@@ -102,6 +102,11 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                             span { "did:key" }
                             div { class: "muted", "test, bootstrap, device, or invite only" }
                         }
+                        div { class: "metric",
+                            strong { "Legacy import" }
+                            span { "did:uuid" }
+                            div { class: "muted", "accepted only when binding an existing protocol DID" }
+                        }
                     }
                     div { class: "actions",
                         button {

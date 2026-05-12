@@ -677,6 +677,8 @@ pub struct EventsDescribeResponse {
     #[serde(default)]
     pub supported_profiles: Vec<String>,
     #[serde(default)]
+    pub frontier: Value,
+    #[serde(default)]
     pub registry: Value,
     #[serde(default)]
     pub schema_profile: Option<String>,

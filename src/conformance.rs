@@ -468,7 +468,10 @@ pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadi
 
 pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bool {
     server
-        .map(|description| missing_requirements(profile_id, description).is_empty())
+        .map(|description| {
+            description.supports_profile(profile_id)
+                || missing_requirements(profile_id, description).is_empty()
+        })
         .unwrap_or(true)
 }
 

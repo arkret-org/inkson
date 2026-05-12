@@ -112,7 +112,7 @@ pub fn RightPanel(
 
             div { class: "section", "data-testid": "right-panel-space-info",
                 div { class: "section-head",
-                    h2 { "Space Info" }
+                    h2 { "Space Boundary" }
                     StatusBadge { status: is_public, kind: Some("info".to_owned()) }
                 }
                 div { class: "metric",
@@ -191,7 +191,7 @@ pub fn RightPanel(
                     }
                 }
                 div { class: "muted", "data-testid": "hierarchy-query-shape",
-                    "Derived locally from the selected Space; remote index hierarchy API is not part of the current protocol."
+                    "Navigation/discoverability only; hierarchy API is not part of the current protocol."
                 }
                 div { class: "muted", "data-testid": "hierarchy-status", role: "status", "aria-live": "polite",
                     "{hierarchy_status}"
@@ -217,11 +217,11 @@ pub fn RightPanel(
                     class: "event hierarchy-boundary-note",
                     "data-testid": "hierarchy-no-cascade-note",
                     div { class: "event-head",
-                        span { "Boundary" }
-                        span { "no implicit cascade" }
+                        span { "Independent boundary" }
+                        span { "no cascade" }
                     }
                     div { class: "muted",
-                        "membership, capability grants, history visibility, and encryption do not implicitly cascade across parent/child Space edges."
+                        "membership, capability grants, history visibility, and encryption stay per Space."
                     }
                 }
 
@@ -317,7 +317,7 @@ fn refresh_space_hierarchy(
         edges: Vec::new(),
         cycle_detected: false,
     }));
-    hierarchy_status.set("Loaded selected Space boundary; child hierarchy is resolved from synced Space/Place events.".to_owned());
+    hierarchy_status.set("Loaded selected Space boundary.".to_owned());
     hierarchy_loading.set(false);
 }
 

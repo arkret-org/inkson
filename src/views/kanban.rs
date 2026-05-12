@@ -839,7 +839,7 @@ pub fn KanbanPanel(
                             }
                         }
                         if let Some(locked_flow) = &card.locked_flow {
-                            div { class: "space-meta", "Locked Discussion" }
+                            div { class: "space-meta", "Locked discussion" }
                             div { class: "event error-banner", "data-testid": "locked-discussion-fail-closed",
                                 div { class: "event-head", span { "Hidden by policy" } span { "fail-closed" } }
                                 div { class: "muted", "Flow/discussion name and members are not disclosed. Opaque ref: {locked_flow.flow_id_hash}" }

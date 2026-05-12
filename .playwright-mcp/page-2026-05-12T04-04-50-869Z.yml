@@ -1,0 +1,344 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - text: C
+    - navigation "Main navigation" [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]: C Contrix
+        - generic [ref=e18]: Protocol client
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]:
+            - generic [ref=e22]: Organization Principal
+            - generic [ref=e23]: Acme Inc.
+            - generic [ref=e24]: did:web:acme.example.com
+          - generic [ref=e25]: Org
+        - generic [ref=e26]:
+          - generic [ref=e27]:
+            - generic [ref=e28]: Principal Server
+            - generic [ref=e29]: http://127.0.0.1:8787
+            - generic [ref=e30]: delegated service boundary
+          - generic [ref=e31]: Service
+      - generic [ref=e32]:
+        - textbox "Principal Server URL" [ref=e33]: http://127.0.0.1:8787
+        - generic [ref=e34]:
+          - button "Connect" [ref=e35] [cursor=pointer]
+          - link "Directory" [ref=e36] [cursor=pointer]:
+            - /url: /directory
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - generic [ref=e39]: Personal
+          - link "Home workspace overview" [ref=e40] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e41]: Home
+            - generic [ref=e42]: workspace overview
+          - link "Inbox mentions, approvals, alerts" [ref=e43] [cursor=pointer]:
+            - /url: /notifications
+            - generic [ref=e44]: Inbox
+            - generic [ref=e45]: mentions, approvals, alerts
+          - link "Directory resolve Spaces, Actors, Orgs" [ref=e46] [cursor=pointer]:
+            - /url: /directory
+            - generic [ref=e47]: Directory
+            - generic [ref=e48]: resolve Spaces, Actors, Orgs
+        - generic [ref=e49]:
+          - generic [ref=e50]: Acme-backed Spaces
+          - link "Acme Engineering Hub Space · independent policy" [ref=e51] [cursor=pointer]:
+            - /url: /timeline
+            - generic [ref=e52]: Acme Engineering
+            - generic [ref=e53]: Hub Space · independent policy
+          - link "Release Board kind=board · renderer=board" [ref=e54] [cursor=pointer]:
+            - /url: /kanban
+            - generic [ref=e55]: Release Board
+            - generic [ref=e56]: kind=board · renderer=board
+          - link "Design Review Discussion · branch scoped" [ref=e57] [cursor=pointer]:
+            - /url: /chat
+            - generic [ref=e58]: Design Review
+            - generic [ref=e59]: Discussion · branch scoped
+        - generic [ref=e60]:
+          - generic [ref=e61]: Controlled cross-org
+          - link "Acme x Beta Launch closed federation · partner members HA closed" [ref=e62] [cursor=pointer]:
+            - /url: /kanban
+            - generic [ref=e63]: Acme x Beta Launch
+            - generic [ref=e64]: closed federation · partner members
+            - generic [ref=e65]:
+              - generic [ref=e66]: HA
+              - generic [ref=e67]: closed
+        - generic [ref=e68]:
+          - generic [ref=e69]: Personal Spaces
+          - link "My Drafts purpose=personal · not hub-owned" [ref=e70] [cursor=pointer]:
+            - /url: /document
+            - generic [ref=e71]: My Drafts
+            - generic [ref=e72]: purpose=personal · not hub-owned
+        - generic [ref=e73]:
+          - generic [ref=e74]: Protocol Tools
+          - link "Settings client, server, device" [ref=e75] [cursor=pointer]:
+            - /url: /settings
+            - generic [ref=e76]: Settings
+            - generic [ref=e77]: client, server, device
+          - link "Devices E2EE membership" [ref=e78] [cursor=pointer]:
+            - /url: /devices
+            - generic [ref=e79]: Devices
+            - generic [ref=e80]: E2EE membership
+          - link "Release Readiness profile gates" [ref=e81] [cursor=pointer]:
+            - /url: /readiness
+            - generic [ref=e82]: Release Readiness
+            - generic [ref=e83]: profile gates
+          - link "Create new Space workflow" [ref=e84] [cursor=pointer]:
+            - /url: /product
+            - generic [ref=e85]: Create
+            - generic [ref=e86]: new Space workflow
+          - link "Audit signed event envelope" [ref=e87] [cursor=pointer]:
+            - /url: /audit
+            - generic [ref=e88]: Audit
+            - generic [ref=e89]: signed event envelope
+      - status [ref=e90]:
+        - generic [ref=e91]: Offline
+        - generic [ref=e92]: cursor -
+        - generic [ref=e94]: online
+    - main "Main content" [ref=e95]:
+      - generic [ref=e96]:
+        - generic [ref=e97]:
+          - generic [ref=e98]: Acme Inc. · Organization Principal
+          - generic [ref=e99]: Acme Workspace
+          - generic [ref=e100]: Principal Server http://127.0.0.1:8787 · selected Space cx:space:0196419b-0000-7000-8000-000000000000
+        - textbox "Search Spaces, Cards, Discussions, Actors" [ref=e102]
+        - generic [ref=e103]:
+          - link "Inbox" [ref=e104] [cursor=pointer]:
+            - /url: /notifications
+          - link "Create" [ref=e105] [cursor=pointer]:
+            - /url: /product
+          - generic [ref=e106]: 3 members
+          - button "Backfill" [ref=e107] [cursor=pointer]
+          - link "Resolve" [ref=e108] [cursor=pointer]:
+            - /url: /directory
+      - generic [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]: Web Security Mode
+          - generic [ref=e112]: non-production
+        - generic [ref=e113]: Browser builds are running in compatibility mode, not production-secure E2EE.
+        - generic [ref=e114]: WebCrypto-backed keys, IndexedDB MLS state, and secure backup/recovery are not implemented yet. Treat browser encryption as development-only.
+      - generic [ref=e115]:
+        - generic [ref=e116]:
+          - generic [ref=e117]:
+            - generic [ref=e118]: Home
+            - generic [ref=e119]: Contrix workspace
+          - generic [ref=e120]: Acme Workspace
+          - generic [ref=e121]: "Organization Principal: Acme Inc. Principal Server is the connected service boundary; Spaces keep independent policy and history."
+        - generic [ref=e122]:
+          - generic [ref=e123]:
+            - strong [ref=e124]: Spaces
+            - text: "0"
+            - generic [ref=e125]: joined or discovered
+          - generic [ref=e126]:
+            - strong [ref=e127]: Cross-org
+            - text: "1"
+            - generic [ref=e128]: closed federation
+          - generic [ref=e129]:
+            - strong [ref=e130]: Inbox
+            - text: "28"
+            - generic [ref=e131]: mentions and approvals
+          - generic [ref=e132]:
+            - strong [ref=e133]: Local queue
+            - text: "0"
+            - generic [ref=e134]: pending local writes
+        - generic [ref=e135]:
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - generic [ref=e138]: Spaces
+              - generic [ref=e139]: policy boundaries
+            - generic [ref=e140]:
+              - link "Acme Engineering Hub Space · org-backed org principal independent policy" [ref=e141] [cursor=pointer]:
+                - /url: /timeline
+                - generic [ref=e142]: Acme Engineering
+                - generic [ref=e143]: Hub Space · org-backed
+                - generic [ref=e144]:
+                  - generic [ref=e145]: org principal
+                  - generic [ref=e146]: independent policy
+              - link "Acme x Beta Launch Controlled cross-org · closed federation HA closed" [ref=e147] [cursor=pointer]:
+                - /url: /kanban
+                - generic [ref=e148]: Acme x Beta Launch
+                - generic [ref=e149]: Controlled cross-org · closed federation
+                - generic [ref=e150]:
+                  - generic [ref=e151]: HA
+                  - generic [ref=e152]: closed
+              - link "My Drafts purpose=personal · no hub ownership implied private" [ref=e153] [cursor=pointer]:
+                - /url: /document
+                - generic [ref=e154]: My Drafts
+                - generic [ref=e155]: purpose=personal · no hub ownership implied
+                - generic [ref=e157]: private
+          - generic [ref=e158]:
+            - generic [ref=e159]:
+              - generic [ref=e160]: Quick Actions
+              - generic [ref=e161]: common paths
+            - generic [ref=e162]:
+              - link "Create Space" [ref=e163] [cursor=pointer]:
+                - /url: /product
+              - link "Open Board" [ref=e164] [cursor=pointer]:
+                - /url: /kanban
+              - link "Open Discussion" [ref=e165] [cursor=pointer]:
+                - /url: /chat
+              - link "Directory" [ref=e166] [cursor=pointer]:
+                - /url: /directory
+              - link "Settings" [ref=e167] [cursor=pointer]:
+                - /url: /settings
+            - generic [ref=e168]:
+              - generic [ref=e169]:
+                - strong [ref=e170]: Cursor
+                - text: "-"
+              - generic [ref=e171]:
+                - strong [ref=e172]: Repo
+                - text: Not checked
+        - generic [ref=e173]:
+          - generic [ref=e174]:
+            - generic [ref=e175]: Protocol Health
+            - generic [ref=e176]: server probes
+          - button "Run Health Check" [ref=e178] [cursor=pointer]
+          - generic [ref=e179]: Run checks when the Principal Server changes.
+        - status [ref=e180]:
+          - generic [ref=e181]:
+            - generic [ref=e182]: Sync Health
+            - generic [ref=e183]: frontier aligned
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - strong [ref=e186]: Cursor
+              - text: "-"
+              - generic [ref=e187]: read-your-writes barrier input
+            - generic [ref=e188]:
+              - strong [ref=e189]: Local queue
+              - text: "0"
+              - generic [ref=e190]: writes waiting for replay
+            - generic [ref=e191]:
+              - strong [ref=e192]: Repo head
+              - text: Not checked
+              - generic [ref=e193]: Principal Server reported
+        - generic [ref=e194]:
+          - generic [ref=e195]:
+            - generic [ref=e196]: Recent Boards
+            - generic [ref=e197]: kind=board
+          - generic [ref=e198]:
+            - link "Release Board kind=board · 5 lists · 38 flows renderer=board · view=v1.release" [ref=e199] [cursor=pointer]:
+              - /url: /kanban
+              - generic [ref=e200]: Release Board
+              - generic [ref=e201]: kind=board · 5 lists · 38 flows
+              - generic [ref=e202]: renderer=board · view=v1.release
+            - link "Triage Board kind=board · 3 lists · 92 flows · 7 overdue" [ref=e203] [cursor=pointer]:
+              - /url: /kanban
+              - generic [ref=e204]: Triage Board
+              - generic [ref=e205]: kind=board · 3 lists · 92 flows · 7 overdue
+            - link "Q3 Roadmap kind=board · timeline renderer" [ref=e206] [cursor=pointer]:
+              - /url: /kanban
+              - generic [ref=e207]: Q3 Roadmap
+              - generic [ref=e208]: kind=board · timeline renderer
+        - generic [ref=e209]:
+          - generic [ref=e210]:
+            - generic [ref=e211]: Pinned Inbox
+            - generic [ref=e212]: "@ mention · assignment · approval"
+          - link "Open Inbox" [ref=e214] [cursor=pointer]:
+            - /url: /notifications
+          - generic [ref=e215]:
+            - generic [ref=e216]:
+              - generic [ref=e217]: "@ mention"
+              - generic [ref=e218]: Review launch checklist
+            - generic [ref=e219]: Mei mentioned you
+            - generic [ref=e220]: branch=discussion · branch-scoped membership
+          - generic [ref=e221]:
+            - generic [ref=e222]:
+              - generic [ref=e223]: approval
+              - generic [ref=e224]: 1 / 2 admin
+            - generic [ref=e225]: Researcher Agent requested read_flow
+            - generic [ref=e226]: approval_constraint=2_of_3_admin
+          - generic [ref=e227]:
+            - generic [ref=e228]:
+              - generic [ref=e229]: conflict
+              - generic [ref=e230]: cx.flow.move superseded
+            - generic [ref=e231]: Concurrent move resolved
+            - generic [ref=e232]: Losing write remains auditable.
+        - generic [ref=e233]:
+          - generic [ref=e234]:
+            - generic [ref=e235]: Recent Activity
+            - generic [ref=e236]: derived projection
+          - generic [ref=e237]:
+            - generic [ref=e238]:
+              - generic [ref=e239]: cx.flow.move
+              - generic [ref=e240]: Launch Board
+            - generic [ref=e241]: Legal review moved into Doing
+          - generic [ref=e242]:
+            - generic [ref=e243]:
+              - generic [ref=e244]: cx.message.create
+              - generic [ref=e245]: Review discussion
+            - generic [ref=e246]: Bob mentioned you in a visible discussion
+    - complementary "Space, sync, and device info":
+      - generic:
+        - generic:
+          - heading "Space Boundary" [level=2]
+          - generic: unknown
+        - generic:
+          - strong: Selected Space
+          - text: cx:space:0196419b-0000-7000-8000-000000000000
+          - generic: cx:space:0196419b-0000-7000-8000-000000000000
+        - navigation "Space quick links":
+          - link "Space Info" [ref=e247] [cursor=pointer]:
+            - /url: /timeline/cx:space:0196419b-0000-7000-8000-000000000000
+          - link "Members" [ref=e248] [cursor=pointer]:
+            - /url: /space/cx:space:0196419b-0000-7000-8000-000000000000/admin
+          - link "Files" [ref=e249] [cursor=pointer]:
+            - /url: /document/cx:space:0196419b-0000-7000-8000-000000000000
+          - link "Pinned" [ref=e250] [cursor=pointer]:
+            - /url: /timeline/cx:space:0196419b-0000-7000-8000-000000000000
+          - link "Notifications" [ref=e251] [cursor=pointer]:
+            - /url: /notifications
+      - generic:
+        - heading "Sync" [level=2]
+        - generic:
+          - generic:
+            - strong: Spaces
+            - text: "0"
+          - generic:
+            - strong: Device Queue
+            - text: "0"
+          - generic:
+            - strong: Repo
+            - text: Not checked
+          - generic:
+            - strong: Push
+            - text: Not registered
+      - generic:
+        - generic:
+          - heading "Hierarchy" [level=2]
+          - button "Refresh hierarchy" [ref=e252] [cursor=pointer]
+        - generic: Navigation/discoverability only; no policy cascade.
+        - status: Loaded selected Space boundary.
+        - generic:
+          - generic:
+            - strong: Root
+            - text: cx:space:0196419b-0000-7000-8000-000000000000
+          - generic:
+            - strong: Children
+            - text: "0"
+          - generic:
+            - strong: Edges
+            - text: "0"
+          - generic:
+            - strong: Lazy/Cycle
+            - text: 0 / no
+        - generic:
+          - generic:
+            - generic: Independent boundary
+            - generic: no cascade
+          - generic: Membership, capability grants, history visibility, and E2EE stay per Space.
+        - generic: No hierarchy children returned for this Space.
+      - generic:
+        - heading "Device" [level=2]
+        - generic:
+          - strong: Account
+          - text: did:web:alice.example
+        - generic:
+          - strong: Device ID
+          - text: dev_yougen
+        - generic:
+          - strong: Crypto
+          - text: MLS ready; plaintext fallback available

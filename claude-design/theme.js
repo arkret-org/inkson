@@ -99,6 +99,7 @@
     var query = window.location.search;
 
     document.querySelectorAll(".sidebar .nav-item").forEach(function (item) {
+      if (item.querySelector(".kbd-tag")) return;
       var href = item.getAttribute("href") || "";
       if (!href || href.charAt(0) === "?") return;
       var parts = href.split("?");

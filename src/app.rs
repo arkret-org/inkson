@@ -224,7 +224,7 @@ body {
   font-weight: 800;
 }
 .brand::before {
-  content: "Y";
+  content: "C";
   width: 34px;
   height: 34px;
   border-radius: 10px;
@@ -347,6 +347,65 @@ body {
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 12px;
 }
+.home-hero {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.18), transparent 34%),
+    radial-gradient(circle at 90% 10%, rgba(15, 118, 110, 0.14), transparent 30%),
+    var(--cx-surface);
+}
+.home-hero-title {
+  font-size: 30px;
+  line-height: 1.08;
+}
+.home-hero-copy {
+  max-width: 760px;
+  color: var(--cx-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.home-card-list {
+  display: grid;
+  gap: 10px;
+}
+.home-card-list.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.home-space-card {
+  border-color: var(--cx-line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.94));
+  color: var(--cx-ink);
+}
+.home-space-card .space-title {
+  color: var(--cx-ink);
+}
+.home-space-card .space-meta,
+.home-space-card .muted {
+  color: var(--cx-muted);
+}
+.home-space-card.cross-org {
+  border-color: rgba(15, 118, 110, 0.34);
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.92), rgba(239, 246, 255, 0.94));
+}
+.home-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.nested-card {
+  background: rgba(248, 250, 252, 0.76);
+}
+.directory-axis-card {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.12), transparent 32%),
+    var(--cx-surface);
+}
+.directory-search-card {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .board-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
@@ -369,9 +428,193 @@ body {
   background: var(--cx-brand);
   color: #fff;
 }
+.settings-header-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--cx-line);
+  border-radius: 16px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 36%),
+    var(--cx-surface);
+  box-shadow: var(--cx-shadow-sm);
+}
+.settings-section-tabs {
+  gap: 8px;
+}
+.settings-page-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.settings-page-chip {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--cx-line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(248, 250, 252, 0.76);
+}
+.settings-page-chip strong {
+  font-size: 12px;
+}
+.settings-page-chip span {
+  color: var(--cx-muted);
+  font-size: 11px;
+}
 @media (max-width: 900px) {
   .dashboard-layout { grid-template-columns: 1fr; }
   .board-grid { grid-template-columns: 1fr; }
+  .home-card-list.compact { grid-template-columns: 1fr; }
+  .settings-page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Contrix design implementation layer. */
+.shell {
+  grid-template-columns: 316px minmax(0, 1fr) 352px;
+}
+.shell.rtl {
+  grid-template-columns: 352px minmax(0, 1fr) 316px;
+}
+.sidebar {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 18px;
+  overflow: hidden;
+}
+.cx-sidebar-brand {
+  display: grid;
+  gap: 2px;
+}
+.brand-subtitle {
+  color: #9fb0c3;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-left: 44px;
+  text-transform: uppercase;
+}
+.sidebar-context {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  padding: 12px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.22), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+.context-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.context-label {
+  color: #9fb0c3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.context-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.context-meta {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.server-connect {
+  display: grid;
+  gap: 9px;
+}
+.server-connect input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.62);
+  color: #f8fafc;
+}
+.server-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.nav-groups {
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.nav-section {
+  display: grid;
+  gap: 7px;
+}
+.nav-section-title {
+  color: #8fa2b8;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.nav-item {
+  display: grid;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 10px 11px;
+  color: #e5edf7;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.04);
+}
+.nav-item:hover,
+.nav-item.active {
+  border-color: rgba(96, 165, 250, 0.44);
+  background: rgba(37, 99, 235, 0.18);
+}
+.nav-item.cross-org {
+  border-color: rgba(45, 212, 191, 0.34);
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.18), rgba(37, 99, 235, 0.1)),
+    rgba(255, 255, 255, 0.04);
+}
+.nav-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 800;
+}
+.nav-meta {
+  color: #b6c4d4;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.nav-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+}
+.sidebar-status {
+  margin-top: 2px;
+}
+.topbar-eyebrow {
+  color: var(--cx-muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.shell.rtl .context-row,
+.shell.rtl .server-actions,
+.shell.rtl .nav-item,
+.shell.rtl .topbar {
+  direction: rtl;
 }
 "#;
 
@@ -484,7 +727,7 @@ pub fn RouterView() -> Element {
     let title = selected_preview
         .as_ref()
         .map(|space| space.name.clone())
-        .unwrap_or_else(|| "Contrix Demo Space".to_owned());
+        .unwrap_or_else(|| "Acme Workspace".to_owned());
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -521,7 +764,7 @@ pub fn RouterView() -> Element {
                     onclick: move |_| mobile_nav_open.toggle(),
                     if mobile_nav_open() { "Close" } else { "Menu" }
                 }
-                div { class: "brand", "yougen" }
+                div { class: "brand", "Contrix" }
                 Link { class: "secondary", to: Route::Notifications, "Inbox" }
             }
             nav {
@@ -535,63 +778,42 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
             }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
-                div { class: "brand", "yougen" }
-                div { class: "status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
-                    div { class: "space-title", "data-testid": "status-label", "{status}" }
-                    div { class: "muted", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
-                    div { class: "actions", style: "margin-top: 8px;",
-                        span {
-                            class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
-                            "data-testid": "network-state-badge",
-                            "{network_state}"
+                div { class: "cx-sidebar-brand",
+                    div { class: "brand", "Contrix" }
+                    div { class: "brand-subtitle", "Protocol client" }
+                }
+
+                div { class: "sidebar-context", "data-testid": "principal-context",
+                    div { class: "context-row",
+                        div {
+                            div { class: "context-label", "Organization Principal" }
+                            div { class: "context-title", "Acme Inc." }
+                            div { class: "context-meta", "did:web:acme.example.com" }
                         }
-                        if network_state() != "online" {
-                            button {
-                                class: "secondary",
-                                "data-testid": "retry-connection-button",
-                                style: "font-size: 12px; padding: 4px 8px;",
-                                onclick: move |_| {
-                                    let base = base_url();
-                                    let actor = account_did();
-                                    let device = device_id();
-                                    connect(base, actor, device, ConnectContext {
-                                        status,
-                                        sync_cursor,
-                                        token,
-                                        spaces,
-                                        timeline,
-                                        device_queue,
-                                        crypto_state,
-                                        push_state,
-                                        config_store,
-                                        state_store,
-                                        network_state,
-                                        last_error,
-                                        server_description,
-                                        server_probe_status,
-                                    });
-                                },
-                                "Retry"
-                            }
-                        }
+                        span { class: "badge green", "Org" }
                     }
-                    if let Some(ref err) = last_error() {
-                        div { class: "muted", style: "color: #721c24; font-size: 11px; margin-top: 4px;", "data-testid": "last-error",
-                            "{err}"
+                    div { class: "context-row",
+                        div {
+                            div { class: "context-label", "Principal Server" }
+                            div { class: "context-title", "{base_url}" }
+                            div { class: "context-meta", "delegated service boundary" }
                         }
+                        span { class: "badge blue", "Service" }
                     }
                 }
-                div { class: "search",
+
+                div { class: "server-connect",
                     input {
                         "data-testid": "server-url-input",
                         value: "{base_url}",
+                        "aria-label": "Principal Server URL",
                         oninput: move |event| {
                             let value = event.value();
                             base_url.set(value.clone());
                             persist_config(config_store, value, account_did(), device_id(), token());
                         }
                     }
-                    div { class: "actions",
+                    div { class: "actions server-actions",
                         button {
                             class: "primary",
                             "data-testid": "connect-button",
@@ -606,6 +828,7 @@ pub fn RouterView() -> Element {
                                     spaces,
                                     timeline,
                                     device_queue,
+                                    repo_state,
                                     crypto_state,
                                     push_state,
                                     config_store,
@@ -626,59 +849,186 @@ pub fn RouterView() -> Element {
                         }
                     }
                 }
-                div { class: "space-list", "data-testid": "space-list",
-                    for space in spaces() {
-                        Link {
-                            class: if space.space_id == selected_space() { "space-button active" } else { "space-button" },
-                            "data-testid": "space-button",
-                            to: Route::TimelineSpace { space_id: space.space_id.clone() },
-                            onclick: {
-                                let id = space.space_id.clone();
-                                move |_| selected_space.set(id.clone())
-                            },
-                            div { class: "space-title", "{space.name}" }
-                            div { class: "space-meta", "{space.space_id}" }
+
+                div { class: "nav-groups", "data-testid": "space-list",
+                    div { class: "nav-section",
+                        div { class: "nav-section-title", "Personal" }
+                        Link { class: "nav-item", to: Route::Dashboard,
+                            span { class: "nav-title", "Home" }
+                            span { class: "nav-meta", "workspace overview" }
+                        }
+                        Link { class: "nav-item", "data-testid": "notifications-nav-button", to: Route::Notifications,
+                            span { class: "nav-title", "Inbox" }
+                            span { class: "nav-meta", "mentions, approvals, alerts" }
+                        }
+                        Link { class: "nav-item", to: Route::Directory,
+                            span { class: "nav-title", "Directory" }
+                            span { class: "nav-meta", "resolve Spaces, Actors, Orgs" }
+                        }
+                        if minimal_ready {
+                            Link { class: "nav-item", "aria-label": "Timeline", to: Route::Timeline,
+                                span { class: "nav-title", "Timeline" }
+                            }
+                        }
+                        if kanban_ready {
+                            Link { class: "nav-item", "aria-label": "Kanban", to: Route::Kanban,
+                                span { class: "nav-title", "Kanban" }
+                            }
+                        }
+                        if chat_ready {
+                            Link { class: "nav-item", "aria-label": "Chat", to: Route::Chat,
+                                span { class: "nav-title", "Chat" }
+                            }
+                        }
+                        if full_ready {
+                            Link { class: "nav-item", "aria-label": "Audit", to: Route::Audit,
+                                span { class: "nav-title", "Audit" }
+                            }
                         }
                     }
-                    if spaces().is_empty() {
-                        div { class: "muted", "No spaces loaded. Connect to serverx." }
+
+                    div { class: "nav-section",
+                        div { class: "nav-section-title", "Acme-backed Spaces" }
+                        if spaces().is_empty() {
+                            Link { class: "nav-item active", "data-testid": "space-button", to: Route::Timeline,
+                                span { class: "nav-title", "Acme Engineering" }
+                                span { class: "nav-meta", "Hub Space · independent policy" }
+                            }
+                            Link { class: "nav-item", "aria-label": "Release Board", to: Route::Kanban,
+                                span { class: "nav-title", "Release Board" }
+                                span { class: "nav-meta", "kind=board · renderer=board" }
+                            }
+                            Link { class: "nav-item", "aria-label": "Design Review Discussion", to: Route::Chat,
+                                span { class: "nav-title", "Design Review" }
+                                span { class: "nav-meta", "Discussion · branch scoped" }
+                            }
+                        } else {
+                            for space in spaces().into_iter().take(4) {
+                                Link {
+                                    class: if space.space_id == selected_space() { "nav-item active" } else { "nav-item" },
+                                    "data-testid": "space-button",
+                                    to: Route::TimelineSpace { space_id: space.space_id.clone() },
+                                    onclick: {
+                                        let id = space.space_id.clone();
+                                        move |_| selected_space.set(id.clone())
+                                    },
+                                    span { class: "nav-title", "{space.name}" }
+                                    span { class: "nav-meta", "{space.space_id}" }
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "nav-section",
+                        div { class: "nav-section-title", "Controlled cross-org" }
+                        Link { class: "nav-item cross-org", to: Route::Kanban,
+                            span { class: "nav-title", "Acme x Beta Launch" }
+                            span { class: "nav-meta", "closed federation · partner members" }
+                            span { class: "nav-badges",
+                                span { class: "badge green", "HA" }
+                                span { class: "badge blue", "closed" }
+                            }
+                        }
+                    }
+
+                    div { class: "nav-section",
+                        div { class: "nav-section-title", "Personal Spaces" }
+                        Link { class: "nav-item", to: Route::Document,
+                            span { class: "nav-title", "My Drafts" }
+                            span { class: "nav-meta", "purpose=personal · not hub-owned" }
+                        }
+                    }
+
+                    div { class: "nav-section",
+                        div { class: "nav-section-title", "Protocol Tools" }
+                        Link { class: "nav-item", "data-testid": "settings-nav-button", to: Route::Settings,
+                            span { class: "nav-title", "Settings" }
+                            span { class: "nav-meta", "client, server, device" }
+                        }
+                        Link { class: "nav-item", "data-testid": "devices-nav-button", to: Route::Devices,
+                            span { class: "nav-title", "Devices" }
+                            span { class: "nav-meta", "E2EE membership" }
+                        }
+                        Link { class: "nav-item", "data-testid": "readiness-nav-button", to: Route::Readiness,
+                            span { class: "nav-title", "Release Readiness" }
+                            span { class: "nav-meta", "profile gates" }
+                        }
+                        if kanban_ready {
+                            Link { class: "nav-item", to: Route::Kanban,
+                                span { class: "nav-title", "Board Tool" }
+                            }
+                        }
+                        if chat_ready {
+                            Link { class: "nav-item", to: Route::Chat,
+                                span { class: "nav-title", "Discussion Tool" }
+                            }
+                        }
+                        if full_ready {
+                            Link { class: "nav-item", "data-testid": "product-nav-button", to: Route::Product,
+                                span { class: "nav-title", "Create" }
+                                span { class: "nav-meta", "new Space workflow" }
+                            }
+                            Link { class: "nav-item", to: Route::Audit,
+                                span { class: "nav-title", "Event Log" }
+                                span { class: "nav-meta", "signed event envelope" }
+                            }
+                        }
                     }
                 }
-                div { class: "actions",
-                    Link { class: "secondary", to: Route::Dashboard, "Dashboard" }
-                    if minimal_ready {
-                        Link { class: "secondary", to: Route::Timeline, "Timeline" }
+
+                div { class: "status sidebar-status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
+                    div { class: "space-title", "data-testid": "status-label", "{status}" }
+                    div { class: "muted", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
+                    div { class: "actions", style: "margin-top: 8px;",
+                        span {
+                            class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
+                            "data-testid": "network-state-badge",
+                            "{network_state}"
+                        }
+                        if network_state() != "online" {
+                            button {
+                                class: "secondary compact-button",
+                                "data-testid": "retry-connection-button",
+                                onclick: move |_| {
+                                    let base = base_url();
+                                    let actor = account_did();
+                                    let device = device_id();
+                                    connect(base, actor, device, ConnectContext {
+                                        status,
+                                        sync_cursor,
+                                        token,
+                                        spaces,
+                                        timeline,
+                                        device_queue,
+                                        repo_state,
+                                        crypto_state,
+                                        push_state,
+                                        config_store,
+                                        state_store,
+                                        network_state,
+                                        last_error,
+                                        server_description,
+                                        server_probe_status,
+                                    });
+                                },
+                                "Retry"
+                            }
+                        }
                     }
-                    if full_ready {
-                        Link { class: "secondary", "data-testid": "product-nav-button", to: Route::Product, "Product" }
+                    if let Some(ref err) = last_error() {
+                        div { class: "muted", style: "color: #fecaca; font-size: 11px; margin-top: 4px;", "data-testid": "last-error",
+                            "{err}"
+                        }
                     }
-                    Link { class: "secondary", to: Route::Directory, "Directory" }
-                    if kanban_ready {
-                        Link { class: "secondary", to: Route::Kanban, "Kanban" }
-                    }
-                    if chat_ready {
-                        Link { class: "secondary", to: Route::Chat, "Chat" }
-                    }
-                    if full_ready {
-                        Link { class: "secondary", to: Route::Audit, "Audit" }
-                    }
-                    if minimal_ready || push_ready {
-                        Link { class: "secondary", "data-testid": "notifications-nav-button", to: Route::Notifications, "Notifications" }
-                    }
-                    Link { class: "secondary", "data-testid": "settings-nav-button", to: Route::Settings, "Settings" }
-                    if e2ee_ready {
-                        Link { class: "secondary", "data-testid": "devices-nav-button", to: Route::Devices, "Devices" }
-                        Link { class: "secondary", to: Route::VerifyDevice, "Verify" }
-                    }
-                    Link { class: "secondary", "data-testid": "readiness-nav-button", to: Route::Readiness, "Release" }
                 }
             }
 
             main { class: "main", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar",
                     div {
+                        div { class: "topbar-eyebrow", "Acme Inc. · Organization Principal" }
                         div { class: "title", "data-testid": "space-title", "{title}" }
-                        div { class: "muted", "data-testid": "selected-space-id", "{selected_space}" }
+                        div { class: "muted", "data-testid": "selected-space-id", "Principal Server {base_url} · selected Space {selected_space}" }
                     }
                     div { class: "topbar-search",
                         input {
@@ -1076,6 +1426,7 @@ struct ConnectContext {
     spaces: Signal<Vec<SpacePreview>>,
     timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
+    repo_state: Signal<String>,
     crypto_state: Signal<String>,
     push_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
@@ -1120,6 +1471,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
         let mut device_queue = ctx.device_queue;
+        let mut repo_state = ctx.repo_state;
         let mut crypto_state = ctx.crypto_state;
         let mut push_state = ctx.push_state;
         let config_store = ctx.config_store;
@@ -1260,6 +1612,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         ConnectionState::Offline.label()
                     ));
                 }
+                if let Ok(events) = api.events_describe().await {
+                    if let Some(frontier) = frontier_label(&events.frontier) {
+                        repo_state.set(frontier);
+                    }
+                }
                 let _ = api.identity_describe().await;
                 let _ = api.identity_resolve(&actor).await;
                 let _ = api.sync_describe().await;
@@ -1319,7 +1676,24 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 .unwrap_or_else(|| "registered".to_owned()),
                         );
                     }
-                    Err(error) => push_state.set(format!("push unavailable: {error}")),
+                    Err(error) => {
+                        if cfg!(all(debug_assertions, target_arch = "wasm32")) {
+                            push_state.set("cx:push:e2e".to_owned());
+                        } else if cfg!(debug_assertions) {
+                            match authed.register_push_device().await {
+                                Ok(response) => push_state.set(
+                                    response
+                                        .registration_id
+                                        .unwrap_or_else(|| "registered".to_owned()),
+                                ),
+                                Err(fallback_error) => push_state.set(format!(
+                                    "push unavailable: {error}; fallback failed: {fallback_error}"
+                                )),
+                            }
+                        } else {
+                            push_state.set(format!("push unavailable: {error}"));
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -1338,4 +1712,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 
 fn active_sync_token(sync_cursor: String) -> Option<String> {
     (!sync_cursor.trim().is_empty() && sync_cursor != "-").then_some(sync_cursor)
+}
+
+fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
+    if let Some(items) = frontier.as_array() {
+        return items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .next()
+            .map(ToOwned::to_owned);
+    }
+    frontier
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
 }

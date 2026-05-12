@@ -120,11 +120,52 @@ pub fn SettingsPanel(
     let active_direction = active_locale.direction().as_str();
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
+    let settings_pages = [
+        ("Profile", "Server"),
+        ("Identity", "Server"),
+        ("Disclosure policy", "Privacy"),
+        ("Account lifecycle", "Privacy"),
+        ("Devices & keys", "Encryption"),
+        ("Sessions", "Server"),
+        ("Recovery", "Encryption"),
+        ("Encryption", "Encryption"),
+        ("Notification rules", "Push"),
+        ("Push routes", "Push"),
+        ("Do not disturb", "Push"),
+        ("Personal blocklist", "Privacy"),
+        ("Read receipts", "Privacy"),
+        ("Theme / font", "Theme"),
+        ("Language & TZ", "Theme"),
+        ("Accessibility", "Theme"),
+        ("Shortcuts", "Theme"),
+        ("Bound services", "Server"),
+        ("Sync & channels", "Storage"),
+        ("Authorized applets", "MIMI"),
+        ("Agent sessions", "MIMI"),
+        ("Export", "Storage"),
+        ("My activity / audit", "Release"),
+        ("Advanced / Dev", "Release"),
+    ];
 
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
             // Section selector
-            div { class: "actions", "data-testid": "settings-sections",
+            div { class: "settings-header-card",
+                div { class: "event-head",
+                    span { "Settings" }
+                    span { "Acme Inc. · Principal Server context" }
+                }
+                div { class: "settings-page-grid", "data-testid": "settings-page-map",
+                    for (name, section) in settings_pages {
+                        div { class: "settings-page-chip",
+                            strong { "{name}" }
+                            span { "{section}" }
+                        }
+                    }
+                }
+            }
+
+            div { class: "actions settings-section-tabs", "data-testid": "settings-sections",
                 button {
                     class: if active_section() == SettingsSection::Server { "primary" } else { "secondary" },
                     "data-testid": "section-server",
@@ -177,25 +218,63 @@ pub fn SettingsPanel(
 
             // ── Server / Account settings ────────────────────────
             if active_section() == SettingsSection::Server {
-                // Transport invariant — sync/transport-bindings.md (Round 5: HTTP/JSON locked)
                 div { class: "event", "data-testid": "transport-invariant",
                     div { class: "event-head",
-                        span { "Transport" }
-                        span { "v1 core normative" }
+                        span { "Principal Context" }
+                        span { "organization vs service" }
                     }
-                    div { class: "muted",
-                        "v1 core 互操作 transport 锁定为 HTTP/JSON。gRPC / WebSocket / SSE / Message Queue / libp2p binding 都是 v1.1+ extension binding profile，本客户端走 reqwest HTTPS。"
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "Organization Principal" }
+                            span { "Acme Inc." }
+                            div { class: "muted", "did:web:acme.example.com" }
+                        }
+                        div { class: "metric",
+                            strong { "Principal Server" }
+                            span { "{base_url}" }
+                            div { class: "muted", "delegated service boundary" }
+                        }
+                        div { class: "metric",
+                            strong { "Actor" }
+                            span { "{account_did}" }
+                            div { class: "muted", "signs Events; server cannot forge" }
+                        }
+                        div { class: "metric",
+                            strong { "Device" }
+                            span { "{device_id}" }
+                            div { class: "muted", "local client identity" }
+                        }
                     }
                     div { class: "actions",
-                        span { class: "badge green", "HTTP/JSON · normative" }
-                        span { class: "badge", "WebSocket · v1.1+ extension" }
-                        span { class: "badge", "gRPC · v1.1+ extension" }
-                        span { class: "badge", "SSE / MQ / libp2p · v1.1+ extension" }
+                        span { class: "badge green", "HTTP/JSON" }
+                        span { class: "badge blue", "v1 core" }
+                    }
+                }
+
+                div { class: "event", "data-testid": "bound-services-settings",
+                    div { class: "event-head", span { "Bound Services" } span { "Principal Server delegated" } }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "soland" }
+                            span { "events, sync, projections" }
+                        }
+                        div { class: "metric",
+                            strong { "coauth" }
+                            span { "auth bridge / session grant" }
+                        }
+                        div { class: "metric",
+                            strong { "chime" }
+                            span { "push wakeups, redacted by default" }
+                        }
+                        div { class: "metric",
+                            strong { "applet runtime" }
+                            span { "capability-scoped extensions" }
+                        }
                     }
                 }
 
                 div { class: "event", "data-testid": "server-settings",
-                    div { class: "event-head", span { "Settings" } span { "client configuration" } }
+                    div { class: "event-head", span { "Principal Server" } span { "client configuration" } }
                     label { "Server URL" }
                     input {
                         "data-testid": "settings-server-url-input",

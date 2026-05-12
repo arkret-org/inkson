@@ -95,15 +95,10 @@ pub fn DirectoryPanel(
                 }
             }
 
-            // Protocol invariant banner — claude-design desktop/directory.html
-            // discovery/discovery-directory.md §2-3
-            div { class: "event", "data-testid": "directory-three-axes-banner",
+            div { class: "event directory-axis-card", "data-testid": "directory-three-axes-banner",
                 div { class: "event-head",
-                    span { "Discoverability ≠ Join Rule ≠ History Visibility" }
-                    span { "三件事独立判定" }
-                }
-                div { class: "muted",
-                    "能列出 ≠ 能加入；能加入 ≠ 能读历史。所有结果都会同时标注三维度，不可发现的 invite_only / secret Space 仅能通过精确 ID 或邀请链接解析。"
+                    span { "Directory Policy Axes" }
+                    span { "independent decisions" }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -115,7 +110,7 @@ pub fn DirectoryPanel(
                                 kind: "discoverability".to_owned(),
                             }
                         }
-                        div { class: "muted", "public / listed / restricted / unlisted / invite_only / secret" }
+                        div { class: "muted", "can this be listed?" }
                     }
                     div { class: "metric",
                         strong { "Join Rule" }
@@ -126,7 +121,7 @@ pub fn DirectoryPanel(
                                 kind: "join_rule".to_owned(),
                             }
                         }
-                        div { class: "muted", "public / knock / restricted / invite_only" }
+                        div { class: "muted", "can this actor join?" }
                     }
                     div { class: "metric",
                         strong { "History Visibility" }
@@ -137,11 +132,10 @@ pub fn DirectoryPanel(
                                 kind: "history".to_owned(),
                             }
                         }
-                        div { class: "muted", "world_readable / shared_history / invited / joined" }
+                        div { class: "muted", "what history is readable?" }
                     }
                 }
                 div { class: "actions", "data-testid": "permission-pill-examples",
-                    span { class: "muted", "示例：" }
                     crate::components::PermissionPillRow {
                         discoverability: Some("public".to_owned()),
                         join_rule: Some("knock".to_owned()),
@@ -156,17 +150,16 @@ pub fn DirectoryPanel(
                 }
             }
 
-            // Search input
-            div { class: "event",
+            div { class: "event directory-search-card",
                 div { class: "event-head",
                     span { "Directory" }
                     span { match active_tab() {
-                        DirectoryTab::Objects => "search Cards, Discussions, Actors and Spaces",
-                        DirectoryTab::Spaces => "search and resolve spaces",
-                        DirectoryTab::Organizations => "search organizations",
-                        DirectoryTab::Actors => "search actors",
-                        DirectoryTab::Handles => "resolve handle",
-                        DirectoryTab::Applets => "discover applets",
+                        DirectoryTab::Objects => "objects",
+                        DirectoryTab::Spaces => "spaces",
+                        DirectoryTab::Organizations => "organizations",
+                        DirectoryTab::Actors => "actors",
+                        DirectoryTab::Handles => "handles",
+                        DirectoryTab::Applets => "applets",
                     }}
                 }
                 div { class: "search",
@@ -409,6 +402,18 @@ pub fn DirectoryPanel(
                                     move |_| selected_space.set(id.clone())
                                 },
                                 "Select"
+                            }
+                        }
+                    }
+                }
+                if !spaces().is_empty() {
+                    div { class: "event", "data-testid": "index-query-results",
+                        div { class: "event-head", span { "Index Projection" } span { "{spaces().len()} result(s)" } }
+                        for space in spaces() {
+                            GenericEntityCard {
+                                title: space.name.clone(),
+                                summary: space.description.clone().unwrap_or_else(|| "Space projection".to_owned()),
+                                entity_type: "space".to_owned(),
                             }
                         }
                     }
@@ -746,6 +751,28 @@ fn value_str(value: &Value, key: &str, fallback: impl Into<String>) -> String {
 
 fn json_text(value: &Value, key: &str) -> String {
     value_str(value, key, "-")
+}
+
+#[component]
+fn GenericEntityCard(title: String, summary: String, entity_type: String) -> Element {
+    rsx! {
+        div {
+            class: "event nested-card",
+            "data-testid": "generic-entity-card",
+            "data-render-kind": "card",
+            div { class: "event-head",
+                span { "data-testid": "entity-type-label", "{entity_type}" }
+                span { "projection" }
+            }
+            div { class: "space-title", "{title}" }
+            div { class: "muted", "{summary}" }
+            div { class: "actions",
+                span { class: "badge green", "data-testid": "entity-facets", "renderable" }
+                span { class: "badge blue", "data-testid": "projection-facets", "item: stateful, rankable" }
+                span { class: "badge amber", "data-testid": "unknown-facets-debug", "com.example.preview" }
+            }
+        }
+    }
 }
 
 #[component]
