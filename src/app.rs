@@ -88,6 +88,8 @@ a.primary, a.secondary { line-height: 1.5; }
 .quick-nav__item { min-width: 0; }
 .compact-button { padding: 7px 9px; font-size: 13px; }
 .mobile-shellbar, .mobile-drawer { display: none; }
+.mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #e2e8f0; }
+.mobile-status .muted { color: #cbd5e1; }
 .hierarchy-boundary-note { background: #f8fafc; }
 .hierarchy-list { display: grid; gap: 8px; }
 .hierarchy-row { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 10px; display: grid; gap: 8px; pointer-events: none; }
@@ -1390,12 +1392,44 @@ pub fn RouterView() -> Element {
             nav {
                 class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
                 "data-testid": "mobile-nav-drawer",
-                Link { class: "secondary", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
-                Link { class: "secondary", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
-                Link { class: "secondary", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
-                Link { class: "secondary", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Discussions" }
-                Link { class: "secondary", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
-                Link { class: "secondary", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
+                div { class: "mobile-status", "data-testid": "mobile-connection-status",
+                    span { "data-testid": "mobile-status-label", "{status}" }
+                    span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
+                    button {
+                        class: "primary",
+                        "data-testid": "mobile-connect-button",
+                        onclick: move |_| connect(
+                            base_url(),
+                            account_did(),
+                            device_id(),
+                            ConnectContext {
+                                status,
+                                sync_cursor,
+                                token,
+                                spaces,
+                                timeline,
+                                device_queue,
+                                repo_state,
+                                crypto_state,
+                                config_store,
+                                state_store,
+                                network_state,
+                                last_error,
+                                server_description,
+                                server_probe_status,
+                            },
+                        ),
+                        "Connect"
+                    }
+                }
+                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
+                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
+                Link { class: "secondary", "data-testid": "mobile-timeline-nav-button", to: Route::Timeline, onclick: move |_| mobile_nav_open.set(false), "Timeline" }
+                Link { class: "secondary", "data-testid": "mobile-product-nav-button", to: Route::Product, onclick: move |_| mobile_nav_open.set(false), "Create Space" }
+                Link { class: "secondary", "data-testid": "mobile-kanban-nav-button", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
+                Link { class: "secondary", "data-testid": "mobile-chat-nav-button", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Discussions" }
+                Link { class: "secondary", "data-testid": "mobile-notifications-nav-button", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
+                Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
             }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
                 div { class: "sidebar-header",
@@ -1886,6 +1920,9 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::SpaceAdmin { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            selected_space.set(sid.to_owned());
+                        }
                         if full_ready {
                             rsx! {
                                 crate::views::space_admin::SpaceAdminPanel {

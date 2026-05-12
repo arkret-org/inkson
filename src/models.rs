@@ -20,6 +20,13 @@ pub struct DevLoginResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LogoutResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountResponse {
     pub did: String,
     pub handle: String,

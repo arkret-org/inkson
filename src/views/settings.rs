@@ -112,6 +112,7 @@ pub fn SettingsPanel(
         use_signal(|| "cx:backup:01964137-0000-7000-8000-000000000000".to_owned());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
+    let mut session_state = use_signal(|| "Session idle".to_owned());
     let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
     let muted_spaces = state_store.read().muted_spaces();
@@ -320,8 +321,62 @@ pub fn SettingsPanel(
                 }
                 div { class: "event", "data-testid": "session-panel",
                     div { class: "event-head", span { "Session" } span { "bearer" } }
-                    div { class: "muted", if token().is_empty() { "No token" } else { "Token loaded" } }
-                    div { "{crypto_state}" }
+                    div { class: "muted", "data-testid": "session-token-state",
+                        if token().is_empty() { "No token" } else { "Token loaded" }
+                    }
+                    div { "data-testid": "session-crypto-state", "{crypto_state}" }
+                    div { "data-testid": "session-state", "{session_state}" }
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "session-refresh-button",
+                            disabled: !has_session,
+                            onclick: {
+                                let base = base_url();
+                                move |_| {
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    session_state.set("refreshing session".to_owned());
+                                    spawn(async move {
+                                        match authed_api(&base, api_token) {
+                                            Ok(api) => match api.account_me().await {
+                                                Ok(account) => session_state.set(format!("session refresh ok: {}", account.did)),
+                                                Err(error) => session_state.set(format!("session refresh failed: {error}")),
+                                            },
+                                            Err(error) => session_state.set(format!("invalid server URL: {error}")),
+                                        }
+                                    });
+                                }
+                            },
+                            "Refresh"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "session-logout-button",
+                            disabled: !has_session,
+                            onclick: move |_| {
+                                let base = base_url();
+                                let actor = account_did();
+                                let device = device_id();
+                                let api_token = token();
+                                session_state.set("logging out".to_owned());
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.logout().await {
+                                            Ok(response) => {
+                                                token.set(String::new());
+                                                persist_config(config_store, base, actor, device, String::new());
+                                                session_state.set(format!("logout ok: revoked {}", response.revoked));
+                                            }
+                                            Err(error) => session_state.set(format!("logout failed: {error}")),
+                                        },
+                                        Err(error) => session_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            },
+                            "Log out"
+                        }
+                    }
                 }
             }
 

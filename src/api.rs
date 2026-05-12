@@ -193,19 +193,20 @@ use crate::models::{
     FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse,
     IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
     IdentityResolveResponse, InvitesResponse, KeysClaimResponse, KeysQueryResponse,
-    KeysUploadResponse, MimiConsentResponse, MimiGroupInfoResponse, MimiIdentifierQueryResponse,
-    MimiKeyMaterialResponse, MimiNotifyResponse, MimiProviderDirectoryResponse,
-    MimiProxyDownloadResponse, MimiReportAbuseResponse, MimiRoomUpdateResponse,
-    MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse, ModerationReportResponse,
-    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
-    OidcCallbackResponse, OkResponse, PasskeyChallengeResponse, PasskeyVerifyResponse,
-    PolicyCheckResponse, PolicyResponse, PushRegisterResponse, ReceiptResponse,
-    ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse,
-    SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SignAnchorResponse,
-    SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
-    SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResponse, SubmitEventResponse,
-    SubmitMoveResponse, SyncDescribeResponse, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
-    TokenRefreshResponse, TypingResponse, UpdateSpaceResponse, VerifyDeviceResponse,
+    KeysUploadResponse, LogoutResponse, MimiConsentResponse, MimiGroupInfoResponse,
+    MimiIdentifierQueryResponse, MimiKeyMaterialResponse, MimiNotifyResponse,
+    MimiProviderDirectoryResponse, MimiProxyDownloadResponse, MimiReportAbuseResponse,
+    MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse,
+    ModerationReportResponse, ModerationReportsResponse, ModerationResolveResponse,
+    OidcAuthorizeResponse, OidcCallbackResponse, OkResponse, PasskeyChallengeResponse,
+    PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse, PushRegisterResponse,
+    ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
+    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription,
+    SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
+    SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResponse,
+    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse, ThirdPartyLocationsResponse,
+    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateSpaceResponse,
+    VerifyDeviceResponse,
 };
 use crate::operation::{OperationEnvelope, uuid_v7, uuid_v8};
 
@@ -569,7 +570,7 @@ impl ContrixApi {
         self.get_json("api/v1/contacts").await
     }
 
-    pub async fn logout(&self) -> anyhow::Result<OkResponse> {
+    pub async fn logout(&self) -> anyhow::Result<LogoutResponse> {
         self.post_json("api/v1/auth/logout", json!({})).await
     }
 
