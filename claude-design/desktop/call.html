@@ -1,88 +1,77 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark" data-lang="zh" data-no-top-controls>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Design review · 实时通话</title>
+  <title>通话 · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="call-stage">
-    <div style="background:#15161e;color:#dadcec;padding:10px 18px;border-bottom:1px solid #2a2c40;display:flex;align-items:center;gap:12px;font-size:13px;">
-      <a href="flow-detail.html" style="color:#a5b4fc;">← Flow: Review launch checklist</a>
-      <span style="color:#6c6f8c;">·</span>
-      <strong>Design review</strong>
-      <span class="pill" style="background:#2a2c40;color:#a5b4fc;">SFU · sfu.acme.example</span>
-      <span class="pill" style="background:#1f3a2a;color:#86efac;">E2EE 媒体</span>
-      <span class="pill" style="background:#3a1f2a;color:#fda4af;">未录制</span>
-      <span style="margin-left:auto;color:#9094b3;">04:32 · 5 人</span>
+  <main class="call-stage has-rail">
+
+    <!-- Top banner -->
+    <div class="call-banner">
+      <span class="pill solid-success xs">🔒 E2EE</span>
+      <a class="link" href="discussion.html?id=q4-retro" style="color:white;">Q4 retro</a>
+      <span class="dim">·</span>
+      <span class="i18n"><span class="zh">SFU 多人模式</span><span class="en">SFU multi-party</span></span>
+      <span class="dim">· media service</span>
+      <a class="link mono" href="space-admin.html?tab=federation" style="color:rgba(255,255,255,0.85);">did:web:media.acme.com</a>
+      <span class="dim">·</span>
+      <span class="i18n"><span class="zh">ICE TTL 47m</span><span class="en">ICE TTL 47m</span></span>
+      <span class="grow"></span>
+      <span class="dim mono">cx:morph:call:1f4a · state=active · started 12:14</span>
     </div>
 
+    <!-- Tiles -->
     <div class="call-tiles">
       <div class="tile speaker">
-        <div class="avatar lg">M</div>
-        <div class="peer-name">Mei (主讲)</div>
-        <div class="peer-icons">🎙 ↑ · 🎥 1080p</div>
+        <span class="avatar xl">A</span>
+        <span class="peer-icons">🎤</span>
+        <span class="peer-name"><a href="directory.html?actor=did:webvh:alice.example.com" style="color:white;">Alice Wang</a> · you</span>
       </div>
       <div class="tile">
-        <div class="avatar lg">A</div>
-        <div class="peer-name">Alice (你)</div>
-        <div class="peer-icons">🔇 · 🎥</div>
+        <span class="avatar xl" style="background:linear-gradient(135deg,#0ea5e9,#14b8a6);">B</span>
+        <span class="peer-icons">🎤 📹</span>
+        <span class="peer-name"><a href="directory.html?actor=did:webvh:ben.acme.com" style="color:white;">Ben Lin</a></span>
       </div>
       <div class="tile">
-        <div class="avatar lg">C</div>
-        <div class="peer-name">Carlos</div>
-        <div class="peer-icons">🎙 · 🎥 720p</div>
-      </div>
-      <div class="tile" style="background:linear-gradient(180deg,#1d2c4a,#0c1424);">
-        <div style="position:absolute;inset:12px;border:1px dashed #38426b;border-radius:8px;display:grid;place-items:center;color:#7c87b3;font-size:12px;">
-          🖥 Mei 正在共享：release-checklist.md
-        </div>
-        <div class="peer-name">屏幕共享</div>
+        <span class="avatar xl" style="background:linear-gradient(135deg,#be185d,#ec4899);">C</span>
+        <span class="peer-icons">🔇 📹</span>
+        <span class="peer-name"><a href="directory.html?actor=did:webvh:carol.example.com" style="color:white;">Carol Lee</a> · muted</span>
       </div>
       <div class="tile">
-        <div class="avatar lg agent">α</div>
-        <div class="peer-name">Researcher Agent</div>
-        <div class="peer-icons">🔇 · 🎥 ✕ · listen-only</div>
+        <span class="avatar xl" style="background:linear-gradient(135deg,#0e7490,#0ea5e9);">D</span>
+        <span class="peer-icons">🎤</span>
+        <span class="peer-name"><a href="directory.html?actor=did:webvh:dan.acme.com" style="color:white;">Dan Yu</a></span>
       </div>
-      <div class="tile" style="opacity:.6;">
-        <div class="avatar lg">B</div>
-        <div class="peer-name">Brian (Slack ghost) · audio bridge</div>
-        <div class="peer-icons">📞 PSTN</div>
+      <div class="tile">
+        <span class="avatar xl applet" style="font-size: 26px;">📺</span>
+        <span class="peer-icons">share</span>
+        <span class="peer-name"><span class="i18n"><span class="zh">Alice 的屏幕</span><span class="en">Alice's screen</span></span></span>
       </div>
     </div>
 
+    <!-- Controls -->
     <div class="call-controls">
-      <button class="call-btn" title="麦克风">🎙</button>
-      <button class="call-btn" title="摄像头">🎥</button>
-      <button class="call-btn primary" title="共享屏幕">🖥</button>
-      <button class="call-btn" title="举手">✋</button>
-      <button class="call-btn" title="表情">😀</button>
-      <button class="call-btn" title="录制（需授权）">⏺</button>
-      <button class="call-btn" title="参会者">👥</button>
-      <button class="call-btn" title="信息">ⓘ</button>
-      <button class="call-btn danger" title="挂断">✕</button>
+      <button class="call-btn" title="mute">🎤</button>
+      <button class="call-btn" title="camera">📹</button>
+      <button class="call-btn" title="screen share">📺</button>
+      <button class="call-btn primary" title="record" onclick="alert('需要 cx.call.record capability + 显式确认 modal')">⏺</button>
+      <button class="call-btn" title="participants">👥</button>
+      <button class="call-btn" title="chat">💬</button>
+      <button class="call-btn" title="settings">⚙</button>
+      <button class="call-btn danger lg" title="leave"><span style="transform:rotate(135deg);">📞</span></button>
     </div>
+  </main>
 
-    <!-- Floating info panel as overlay -->
-    <div style="position:fixed;right:16px;top:80px;width:300px;background:#15161e;color:#dadcec;border:1px solid #2a2c40;border-radius:12px;padding:14px;box-shadow:0 18px 40px rgba(0,0,0,0.45);font-size:12px;">
-      <strong style="font-size:13px;color:white;">通话信息</strong>
-      <div style="margin-top:8px;line-height:1.7;color:#a4a8c8;">
-        <div>· call_id <span class="mono" style="color:#cbd5ff;">cx:call:01js0cl…0007</span></div>
-        <div>· mode SFU · TURN: turn.contrix.social</div>
-        <div>· 参会成员裁剪：discussion branch members + α agent (capability=listen)</div>
-        <div>· 录制：未启用 · 启用需 2 名 admin 同意</div>
-        <div>· 信令：Ephemeral channel（不写入 Space history）</div>
-      </div>
-      <hr style="border-color:#2a2c40;">
-      <strong style="font-size:13px;color:white;">会议结束后</strong>
-      <div style="margin-top:6px;color:#a4a8c8;line-height:1.6;">
-        会落地为 <span class="mono" style="color:#cbd5ff;">cx.morph.create morph_type=call</span>，包含开始/结束时间、参与者、共享文档引用。摘要可由 Researcher Agent 生成（可选）。
-      </div>
-      <hr style="border-color:#2a2c40;">
-      <strong style="font-size:13px;color:white;">媒体路径 ≠ 信任路径</strong>
-      <div style="margin-top:6px;color:#a4a8c8;">SFU 仅转发，不获得 Space 权限。MCU/录制必须显式授权后才会处于明文路径。</div>
-    </div>
+  <!-- Optional: floating exit -->
+  <a href="discussion.html?id=q4-retro" style="position:fixed; top:14px; right:18px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:white; padding:6px 12px; border-radius:6px; font-size:12px; text-decoration:none; backdrop-filter: blur(8px);">← <span class="i18n" style="display:inline;"><span class="zh">返回讨论</span><span class="en">Back</span></span></a>
+
+  <!-- Bottom note -->
+  <div style="position:fixed; left:18px; bottom:8px; color:rgba(255,255,255,0.45); font-size:10px; font-family: var(--font-mono);">
+    Ephemeral signaling · only call summary &amp; recording artifact persist as Events
   </div>
 </body>
 </html>

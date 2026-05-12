@@ -1,149 +1,395 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>设置 · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="sidebar-header"><div class="brand"><span class="logo">C</span> Contrix</div><span class="pill accent" style="margin-left:auto;">v1</span></div>
-      <div class="sidebar-section">
-        <h4>设置</h4>
-        <div class="nav-item active" style="padding-left:24px;">Profile</div>
-        <div class="nav-item" style="padding-left:24px;">隐私 / 渐进披露</div>
-        <div class="nav-item" style="padding-left:24px;">通知 / Push</div>
-        <div class="nav-item" style="padding-left:24px;">外观 / 语言</div>
-        <div class="nav-item" style="padding-left:24px;">个人 Blocklist</div>
-        <div class="nav-item" style="padding-left:24px;">连接的 Resolver / Servers</div>
-        <div class="nav-item" style="padding-left:24px;">Account Lifecycle</div>
-        <div class="nav-item" style="padding-left:24px;">Release Readiness</div>
-      </div>
-      <div class="sidebar-section">
-        <h4>跳转</h4>
-        <a class="nav-item" href="devices.html"><span class="icon">📱</span> 设备</a>
-        <a class="nav-item" href="recovery.html"><span class="icon">🛟</span> 恢复</a>
-      </div>
-      <div class="sidebar-footer">
-        <div class="avatar">A</div>
-        <div style="font-size:12px;line-height:1.3;"><div style="font-weight:600;">Alice</div><div class="dim mono">did:plc:7bzr2x…</div></div>
-      </div>
-    </aside>
+  <main class="app">
 
+    <!-- ╔══════════ CANONICAL SIDEBAR ══════════╗ -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <a class="brand" href="home.html" style="text-decoration:none; color:inherit;">
+          <span class="logo">⌘</span>
+          <span class="product-meta">
+            <span class="product-name">Contrix</span>
+            <span class="product-sub">v1 client</span>
+          </span>
+        </a>
+      </div>
+
+      <div class="sidebar-context" aria-label="Current workspace context">
+        <a class="context-line" href="directory.html?org=did:webvh:acme.example.com">
+          <span class="icon">◇</span>
+          <span class="grow truncate">
+            <span class="k">Organization</span>
+            <span class="v">Acme Inc.</span>
+            <span class="id mono">did:webvh:acme.example.com</span>
+          </span>
+          <span class="mini">▾</span>
+        </a>
+        <div class="context-sep"></div>
+        <a class="context-line" href="settings.html?tab=services">
+          <span class="icon">◌</span>
+          <span class="grow truncate">
+            <span class="k">Principal Server</span>
+            <span class="v">server.acme.example.com</span>
+            <span class="id mono">did:web:server.acme.example.com</span>
+          </span>
+          <span class="pill muted xs">primary</span>
+        </a>
+      </div>
+
+      <div class="sidebar-section" style="padding-bottom: 0;">
+        <a class="nav-item" href="directory.html">
+          <span class="icon">⌕</span>
+          <span class="i18n"><span class="zh">搜索 / 发现</span><span class="en">Search / Directory</span></span>
+          <span class="kbd-tag" style="margin-left:auto;">⌘K</span>
+        </a>
+      </div>
+
+      <div class="sidebar-section">
+        <h4 class="i18n"><span class="zh">个人</span><span class="en">Personal</span></h4>
+        <a class="nav-item" href="home.html"><span class="icon">⌂</span><span class="i18n"><span class="zh">工作台</span><span class="en">Home</span></span></a>
+        <a class="nav-item" href="inbox.html"><span class="icon">□</span><span class="i18n"><span class="zh">收件箱</span><span class="en">Inbox</span></span><span class="badge" style="margin-left:auto;">3</span></a>
+        <a class="nav-item" href="directory.html"><span class="icon">⌕</span><span class="i18n"><span class="zh">发现</span><span class="en">Directory</span></span></a>
+        <a class="nav-item" href="settings.html"><span class="icon">⚙</span><span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span></a>
+      </div>
+
+      <div class="sidebar-section">
+        <h4>
+          <span class="i18n"><span class="zh">Acme 背书 Spaces</span><span class="en">Acme-backed Spaces</span></span>
+          <a class="add" href="space-admin.html?new=1" title="New Space">+</a>
+        </h4>
+        <a class="nav-item" href="space.html?id=eng"><span class="icon">▣</span><span class="grow truncate">Engineering</span><span class="pill muted xs">12</span></a>
+        <a class="nav-item" href="board.html?id=eng-sprint" style="padding-left:30px; color:var(--text-2);"><span class="icon">├</span><span class="grow truncate"><span class="i18n"><span class="zh">本期 sprint</span><span class="en">Active sprint</span></span></span></a>
+        <a class="nav-item" href="discussion.html?id=q4-retro" style="padding-left:30px; color:var(--text-2);"><span class="icon">└</span><span class="grow truncate">Q4 retro</span><span class="pill muted xs" title="child Space · independent boundary">child</span></a>
+        <a class="nav-item" href="space.html?id=design"><span class="icon">▣</span><span class="grow truncate">Design</span></a>
+        <a class="nav-item" href="space.html?id=roadmap"><span class="icon">▣</span><span class="grow truncate">Product roadmap</span></a>
+        <a class="nav-item" href="space.html?id=ops"><span class="icon">▣</span><span class="grow truncate">Ops &amp; on-call</span></a>
+      </div>
+
+      <div class="sidebar-section">
+        <h4 class="i18n"><span class="zh">受控跨组织</span><span class="en">Controlled cross-org</span></h4>
+        <a class="nav-item" href="space.html?id=acme-beta"><span class="icon">◎</span><span class="grow truncate">Acme × Beta partnership</span><span class="pill warning xs">HA</span><span class="pill muted xs">closed</span></a>
+      </div>
+
+      <div class="sidebar-section">
+        <h4>
+          <span class="i18n"><span class="zh">个人 Spaces</span><span class="en">Personal Spaces</span></span>
+          <a class="add" href="space-admin.html?new=1&amp;purpose=personal" title="New personal Space">+</a>
+        </h4>
+        <a class="nav-item" href="space.html?id=notes"><span class="icon">□</span><span class="grow truncate"><span class="i18n"><span class="zh">我的笔记</span><span class="en">My notes</span></span></span></a>
+        <a class="nav-item dim" href="space.html?id=drafts"><span class="icon">□</span><span class="grow truncate"><span class="i18n"><span class="zh">草稿箱</span><span class="en">Drafts</span></span></span></a>
+      </div>
+
+      <a class="sidebar-footer" href="settings.html" style="text-decoration:none; color:inherit;">
+        <span class="avatar">A</span>
+        <span class="grow">
+          <span class="who">Alice Wang</span>
+          <span class="handle">@alice.example.com</span>
+        </span>
+        <span class="dot-online" title="online" style="margin-right:4px;"></span>
+        <span class="btn icon sm ghost" onclick="event.preventDefault(); location.href='settings.html?tab=account';">⚙</span>
+      </a>
+    </aside>
+    <!-- ╚══════════ END SIDEBAR ══════════╝ -->
+
+    <!-- ============ WORKSPACE ============ -->
     <section class="workspace">
       <header class="workspace-header">
-        <div class="crumbs"><strong>设置 · Profile</strong></div>
+        <div class="crumbs">
+          <a href="directory.html?org=did:webvh:acme.example.com"><strong>Acme Inc.</strong></a><span class="crumb-tag">Org</span>
+          <span class="sep">/</span>
+          <a href="directory.html?actor=did:webvh:alice.example.com">Alice Wang</a>
+          <span class="sep">/</span>
+          <span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span>
+        </div>
         <div class="actions">
-          <button class="btn">放弃</button>
-          <button class="btn primary">保存（cx.actor.profile.update）</button>
+          <span class="pill muted dot" id="save-state"><span class="i18n"><span class="zh">已自动保存</span><span class="en">auto-saved</span></span></span>
+          <a class="btn sm" href="account-status.html"><span class="i18n"><span class="zh">查看账号状态</span><span class="en">Account status</span></span></a>
         </div>
       </header>
 
-      <div class="workspace-body">
-        <div style="max-width:760px;">
+      <div class="workspace-body no-pad" style="display:grid; grid-template-columns: 220px 1fr; min-height:0;">
 
-          <div class="surface pad" style="margin-bottom:16px;">
-            <div class="row gap-12">
-              <div class="avatar lg">A</div>
-              <div class="grow">
-                <div class="row gap-8"><strong>Alice Wong</strong><span class="pill success">@alice@contrix.social</span></div>
-                <div class="muted mono" style="font-size:12px;">did:plc:7bzr2xrh4wkynjs8xlcd2ntm</div>
-                <div class="muted" style="font-size:12px;margin-top:2px;">cross-signed · 3 设备 · 加入 4 个 Space</div>
-              </div>
-              <button class="btn">更换头像</button>
-            </div>
+        <!-- ============ LEFT: settings tabs ============ -->
+        <nav style="border-right:1px solid var(--border); padding:14px 8px; overflow-y:auto; background: var(--surface);">
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">账户</span><span class="en">Account</span></h4>
+            <a class="nav-item active" href="?tab=profile" data-settings-tab="profile"><span class="icon">👤</span><span class="i18n"><span class="zh">个人资料</span><span class="en">Profile</span></span></a>
+            <a class="nav-item" href="?tab=identity" data-settings-tab="identity"><span class="icon">🪪</span><span class="i18n"><span class="zh">身份 (DID / Handle)</span><span class="en">Identity (DID / Handle)</span></span></a>
+            <a class="nav-item" href="?tab=disclosure" data-settings-tab="disclosure"><span class="icon">🪞</span><span class="i18n"><span class="zh">隐私披露策略</span><span class="en">Disclosure policy</span></span></a>
+            <a class="nav-item" href="?tab=account" data-settings-tab="account"><span class="icon">🛡</span><span class="i18n"><span class="zh">账号生命周期</span><span class="en">Account lifecycle</span></span></a>
           </div>
-
-          <h3 class="section-title">公开 Profile（可被任意 Space 解析）</h3>
-          <div class="surface pad" style="margin-bottom:16px;">
-            <div class="field"><label>显示名</label><input class="input" value="Alice Wong"></div>
-            <div class="field"><label>简介</label><input class="input" value="Protocol engineer · contrix.org · curious about MLS"></div>
-            <div class="field"><label>关联的 handle</label>
-              <div class="row gap-4">
-                <span class="pill success">@alice@contrix.social</span>
-                <span class="pill muted">alice.acme.example (verified)</span>
-                <button class="btn sm ghost">＋ 添加</button>
-              </div>
-              <div class="hint">Handle 仅作为人类可读入口；权限决策仍以 DID 为主键。</div>
-            </div>
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">安全</span><span class="en">Security</span></h4>
+            <a class="nav-item" href="?tab=devices" data-settings-tab="devices"><span class="icon">📱</span><span class="i18n"><span class="zh">设备 &amp; 密钥</span><span class="en">Devices &amp; keys</span></span></a>
+            <a class="nav-item" href="?tab=sessions" data-settings-tab="sessions"><span class="icon">🎟</span><span class="i18n"><span class="zh">会话</span><span class="en">Sessions</span></span></a>
+            <a class="nav-item" href="?tab=recovery" data-settings-tab="recovery"><span class="icon">🔑</span><span class="i18n"><span class="zh">恢复策略</span><span class="en">Recovery</span></span></a>
+            <a class="nav-item" href="?tab=encryption" data-settings-tab="encryption"><span class="icon">🔒</span><span class="i18n"><span class="zh">加密 (MLS / Secret storage)</span><span class="en">Encryption (MLS / vault)</span></span></a>
           </div>
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">通知</span><span class="en">Notifications</span></h4>
+            <a class="nav-item" href="?tab=notifications" data-settings-tab="notifications"><span class="icon">🔔</span><span class="i18n"><span class="zh">通知规则</span><span class="en">Rules</span></span></a>
+            <a class="nav-item" href="?tab=push" data-settings-tab="push"><span class="icon">📡</span><span class="i18n"><span class="zh">推送通道</span><span class="en">Push routes</span></span></a>
+            <a class="nav-item" href="?tab=dnd" data-settings-tab="dnd"><span class="icon">🌙</span><span class="i18n"><span class="zh">免打扰</span><span class="en">Do not disturb</span></span></a>
+            <a class="nav-item" href="?tab=blocklist" data-settings-tab="blocklist"><span class="icon">🚫</span><span class="i18n"><span class="zh">个人 blocklist</span><span class="en">Personal blocklist</span></span></a>
+            <a class="nav-item" href="?tab=read-receipts" data-settings-tab="read-receipts"><span class="icon">👁</span><span class="i18n"><span class="zh">已读回执</span><span class="en">Read receipts</span></span></a>
+          </div>
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">外观与本地化</span><span class="en">Appearance</span></h4>
+            <a class="nav-item" href="?tab=appearance" data-settings-tab="appearance"><span class="icon">🎨</span><span class="i18n"><span class="zh">主题 / 字体</span><span class="en">Theme / font</span></span></a>
+            <a class="nav-item" href="?tab=language" data-settings-tab="language"><span class="icon">🌐</span><span class="i18n"><span class="zh">语言与时区</span><span class="en">Language &amp; TZ</span></span></a>
+            <a class="nav-item" href="?tab=a11y" data-settings-tab="a11y"><span class="icon">♿</span><span class="i18n"><span class="zh">无障碍</span><span class="en">Accessibility</span></span></a>
+            <a class="nav-item" href="?tab=keyboard" data-settings-tab="keyboard"><span class="icon">⌨</span><span class="i18n"><span class="zh">快捷键</span><span class="en">Shortcuts</span></span></a>
+          </div>
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">服务与同步</span><span class="en">Services &amp; sync</span></h4>
+            <a class="nav-item" href="?tab=services" data-settings-tab="services"><span class="icon">🏷</span><span class="i18n"><span class="zh">绑定的服务</span><span class="en">Bound services</span></span></a>
+            <a class="nav-item" href="?tab=sync" data-settings-tab="sync"><span class="icon">⇄</span><span class="i18n"><span class="zh">同步与频道</span><span class="en">Sync &amp; channels</span></span></a>
+            <a class="nav-item" href="?tab=integrations" data-settings-tab="integrations"><span class="icon">🧪</span><span class="i18n"><span class="zh">已授权 Applets</span><span class="en">Authorized applets</span></span></a>
+            <a class="nav-item" href="?tab=agent-sessions" data-settings-tab="agent-sessions"><span class="icon">🤖</span><span class="i18n"><span class="zh">Agent sessions</span><span class="en">Agent sessions</span></span></a>
+          </div>
+          <div class="sidebar-section" style="padding: 4px 4px;">
+            <h4 class="i18n"><span class="zh">数据</span><span class="en">Data</span></h4>
+            <a class="nav-item" href="?tab=export" data-settings-tab="export"><span class="icon">⬇</span><span class="i18n"><span class="zh">导出数据</span><span class="en">Export</span></span></a>
+            <a class="nav-item" href="?tab=audit" data-settings-tab="audit"><span class="icon">🧾</span><span class="i18n"><span class="zh">我的活动 / 审计</span><span class="en">My activity / audit</span></span></a>
+            <a class="nav-item dim" href="?tab=advanced" data-settings-tab="advanced"><span class="icon">⚗</span><span class="i18n"><span class="zh">高级 / Dev</span><span class="en">Advanced / Dev</span></span></a>
+          </div>
+        </nav>
 
-          <h3 class="section-title">渐进披露（按请求决定可见字段）</h3>
-          <div class="surface pad" style="margin-bottom:16px;">
-            <div class="muted" style="font-size:12px;margin-bottom:8px;">不同对方请求时，Contrix 自动按 disclosure policy 选择最小必要字段。</div>
-            <table class="tbl">
-              <thead><tr><th>请求方</th><th>可见字段</th><th>额外 claim</th><th></th></tr></thead>
-              <tbody>
-                <tr><td>公共目录 (public)</td><td>display_name, avatar</td><td>—</td><td><button class="btn sm ghost">编辑</button></td></tr>
-                <tr><td>已有共同 Space 的成员</td><td>+ pronouns, presence</td><td>—</td><td><button class="btn sm ghost">编辑</button></td></tr>
-                <tr><td>组织内成员 (acme.example)</td><td>+ work_email, team</td><td>org_membership</td><td><button class="btn sm ghost">编辑</button></td></tr>
-                <tr><td>外部 Space (Beta Co.)</td><td>display_name (限定字段)</td><td>需 mutual claim</td><td><button class="btn sm ghost">编辑</button></td></tr>
-                <tr><td>未知请求</td><td>仅 DID + handle</td><td>需主动 presentation</td><td><button class="btn sm ghost">编辑</button></td></tr>
-              </tbody>
+        <!-- ============ RIGHT: content (tab = Profile by default) ============ -->
+        <div style="overflow-y:auto; padding:28px 36px 80px; max-width:820px;">
+          <section class="settings-panel" data-settings-panel="profile" id="profile">
+            <h1 class="i18n"><span class="zh">个人资料</span><span class="en">Profile</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head"><span class="i18n"><span class="zh">基础</span><span class="en">Basics</span></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">头像</span><span class="en">Avatar</span></div><div class="sub">thumbnail · 1 MB max</div></div><div class="row gap-8"><span class="avatar lg">A</span><button class="btn sm"><span class="i18n"><span class="zh">上传</span><span class="en">Upload</span></span></button></div></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">显示名</span><span class="en">Display name</span></div></div><input class="input" value="Alice Wang" style="max-width:240px;"></div>
+              <div class="settings-row"><div><div class="label">Bio</div></div><textarea class="textarea" style="max-width:340px; min-height:64px;">Protocol designer, working on Contrix sync &amp; E2EE.</textarea></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">状态</span><span class="en">Presence</span></div></div><select class="select" style="max-width:180px;"><option>online</option><option>idle</option><option>do not disturb</option><option>invisible</option></select></div>
+            </div>
+            <div class="settings-card compact">
+              <div class="head"><span class="i18n"><span class="zh">Claims</span><span class="en">Claims</span></span></div>
+              <div class="settings-row"><div><div class="label">employee_at = acme.com</div><div class="sub mono">issuer: did:webvh:acme.example.com</div></div><span class="pill success xs">active</span></div>
+              <div class="settings-row"><div><div class="label">over_18 = true</div><div class="sub mono">issuer: did:webvh:gov.cn</div></div><span class="pill success xs">active</span></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="identity" id="identity" hidden>
+            <h1 class="i18n"><span class="zh">身份</span><span class="en">Identity</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head">DID / Handle</div>
+              <div class="settings-row"><div><div class="label">Actor DID</div><div class="sub mono">did:webvh:alice.example.com</div></div><span class="pill success xs">verified</span></div>
+              <div class="settings-row"><div><div class="label">Handle</div><div class="sub mono">@alice.example.com</div></div><button class="btn xs ghost">rotate</button></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">组织 claim</span><span class="en">Organization claim</span></div><div class="sub mono">employee_at=acme.com</div></div><span class="pill success xs">bound</span></div>
+            </div>
+            <div class="settings-card compact">
+              <div class="head"><span class="i18n"><span class="zh">解析策略</span><span class="en">Resolver policy</span></span></div>
+              <div class="settings-row"><div><div class="label">webvh witness</div><div class="sub mono">2/3 reachable</div></div><span class="pill warning xs">cached</span></div>
+              <div class="settings-row"><div><div class="label">trust roots</div><div class="sub mono">acme · public-webvh · gov-cn</div></div><button class="btn xs">edit</button></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="disclosure" id="disclosure" hidden>
+            <h1 class="i18n"><span class="zh">隐私披露策略</span><span class="en">Disclosure Policy</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head"><span class="i18n"><span class="zh">默认策略</span><span class="en">Defaults</span></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">未知审众</span><span class="en">Unknown verifier</span></div></div><select class="select" style="max-width:180px;"><option>ask</option><option>auto</option><option>never</option></select></div>
+              <div class="settings-row"><div><div class="label">transport_privacy</div></div><span class="switch on"></span></div>
+              <div class="settings-row"><div><div class="label">overbroad_request guard</div></div><span class="switch on"></span></div>
+            </div>
+            <table class="tbl compact">
+              <thead><tr><th>audience</th><th>allowed</th><th>forbidden</th><th>consent</th></tr></thead>
+              <tr><td class="mono">did:webvh:gov.cn</td><td>over_18</td><td>email, phone</td><td>required</td></tr>
+              <tr><td class="mono">did:webvh:acme.example.com</td><td>employee_at</td><td>address</td><td>auto</td></tr>
+              <tr><td><em class="dim">unknown</em></td><td>display_name</td><td>email, phone, employee_at</td><td>required</td></tr>
             </table>
-          </div>
+          </section>
 
-          <h3 class="section-title">通知 / Push</h3>
-          <div class="surface pad" style="margin-bottom:16px;">
-            <div class="stack-sm" style="font-size:13px;">
-              <div class="spread"><span>桌面通知</span><span class="pill success">开启</span></div>
-              <div class="spread"><span>移动 push（脱敏唤醒）</span><span class="pill success">开启</span></div>
-              <div class="spread"><span>静默时段</span><span>22:00 — 08:00</span></div>
-              <div class="spread"><span>外部 Space 通知</span><span class="pill warning">仅 inbox</span></div>
-              <div class="spread"><span>Agent 输出</span><span class="pill muted">仅 inbox</span></div>
-              <div class="spread"><span>触发紧急 capability approval</span><span class="pill success">穿透静默</span></div>
+          <section class="settings-panel" data-settings-panel="account" id="account" hidden>
+            <h1 class="i18n"><span class="zh">账号生命周期</span><span class="en">Account Lifecycle</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head">cx.account.status</div>
+              <div class="settings-row"><div><div class="label">active</div><div class="sub mono">since 2024-03-15</div></div><a class="btn xs" href="account-status.html">history</a></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">申诉入口</span><span class="en">Appeal URL</span></div></div><a class="btn xs ghost" href="account-status.html?tab=appeal">open</a></div>
             </div>
-            <small class="muted" style="display:block;margin-top:8px;">所有 push 都是 background_sync_needed；正文在本机解密。</small>
-          </div>
+            <div class="settings-card compact">
+              <div class="head danger"><span class="i18n"><span class="zh">高风险动作</span><span class="en">High-risk actions</span></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">登出所有设备</span><span class="en">Sign out everywhere</span></div></div><button class="btn sm danger"><span class="i18n"><span class="zh">执行</span><span class="en">Run</span></span></button></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">停用账号</span><span class="en">Deactivate account</span></div></div><button class="btn sm danger"><span class="i18n"><span class="zh">停用</span><span class="en">Deactivate</span></span></button></div>
+            </div>
+          </section>
 
-          <h3 class="section-title">连接的 Resolver / Server</h3>
-          <div class="surface pad" style="margin-bottom:16px;">
-            <table class="tbl">
-              <thead><tr><th>角色</th><th>service DID / endpoint</th><th>状态</th></tr></thead>
-              <tbody>
-                <tr><td>Principal Server</td><td class="mono dim">did:web:ps.contrix.social</td><td><span class="pill success">已委托</span></td></tr>
-                <tr><td>Identity Resolver (did:plc)</td><td class="mono dim">https://plc.directory</td><td><span class="pill info">默认</span></td></tr>
-                <tr><td>Push Gateway</td><td class="mono dim">did:web:push.contrix.social</td><td><span class="pill success">脱敏唤醒</span></td></tr>
-                <tr><td>TURN / Media Relay</td><td class="mono dim">turn.contrix.social</td><td><span class="pill success">已配置</span></td></tr>
-                <tr><td>Directory</td><td class="mono dim">did:web:directory.acme.example</td><td><span class="pill info">组织目录</span></td></tr>
-                <tr><td>Auth Server</td><td class="mono dim">https://auth.acme.example</td><td><span class="pill warning">企业 SSO</span></td></tr>
-              </tbody>
-            </table>
-          </div>
+          <section class="settings-panel" data-settings-panel="devices" id="devices" hidden>
+            <h1 class="i18n"><span class="zh">设备与密钥</span><span class="en">Devices &amp; Keys</span></h1>
+            <div class="settings-card compact">
+              <div class="head"><span class="i18n"><span class="zh">已授权设备</span><span class="en">Authorized devices</span></span><a class="btn xs ghost" href="devices.html" style="margin-left:auto;">full page</a></div>
+              <div class="settings-row"><div><div class="label">Chrome on Windows</div><div class="sub mono">device:win-chrome-a7 · current</div></div><span class="pill success xs">trusted</span></div>
+              <div class="settings-row"><div><div class="label">iPhone 15</div><div class="sub mono">last seen 3h ago</div></div><button class="btn xs danger">revoke</button></div>
+              <div class="settings-row"><div><div class="label">iPad</div><div class="sub mono">last seen 2d ago</div></div><button class="btn xs danger">revoke</button></div>
+            </div>
+          </section>
 
-          <h3 class="section-title">Release Readiness</h3>
-          <div class="surface pad" style="margin-bottom:16px;">
-            <div class="stack-sm" style="font-size:13px;">
-              <div class="row gap-8"><span>protocol_version</span><span class="grow"></span><span class="pill success">1.0</span></div>
-              <div class="row gap-8"><span>conformance profile</span><span class="grow"></span><span class="pill success">cx.profile.full_client.v1</span></div>
-              <div class="row gap-8"><span>schema profile</span><span class="grow"></span><span class="pill success">cx.profile.core_event_store.v1</span></div>
-              <div class="row gap-8"><span>encoding vectors</span><span class="grow"></span><span class="pill success">通过 12/12</span></div>
-              <div class="row gap-8"><span>state-resolution vectors</span><span class="grow"></span><span class="pill success">通过 9/9</span></div>
-              <div class="row gap-8"><span>MLS epoch backfill</span><span class="grow"></span><span class="pill success">通过</span></div>
-              <div class="row gap-8"><span>scalability bounds</span><span class="grow"></span><span class="pill warning">Board fan-out 接近 80%</span></div>
+          <section class="settings-panel" data-settings-panel="sessions" id="sessions" hidden>
+            <h1 class="i18n"><span class="zh">会话</span><span class="en">Sessions</span></h1>
+            <div class="settings-card compact">
+              <div class="head"><span class="i18n"><span class="zh">登录会话</span><span class="en">Login sessions</span></span></div>
+              <div class="settings-row"><div><div class="label">Codex desktop</div><div class="sub mono">access token · expires in 42m</div></div><span class="pill success xs">current</span></div>
+              <div class="settings-row"><div><div class="label">Safari iOS</div><div class="sub mono">refresh token · issued 2026-05-09</div></div><button class="btn xs danger">revoke</button></div>
+              <div class="settings-row"><div><div class="label">OAuth grants</div><div class="sub mono">2 applets · 1 agent runtime</div></div><a class="btn xs" href="?tab=integrations">review</a></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="recovery" id="recovery" hidden>
+            <h1 class="i18n"><span class="zh">恢复策略</span><span class="en">Recovery</span></h1>
+            <div class="settings-card compact">
+              <div class="head"><span class="i18n"><span class="zh">恢复材料</span><span class="en">Recovery material</span></span></div>
+              <div class="settings-row"><div><div class="label">recovery phrase</div><div class="sub">last verified 18 days ago</div></div><span class="pill success xs">stored offline</span></div>
+              <div class="settings-row"><div><div class="label">social recovery</div><div class="sub mono">2 of 3 guardians</div></div><button class="btn xs">manage</button></div>
+              <div class="settings-row"><div><div class="label">new device bootstrap</div></div><a class="btn xs" href="verify-device.html">open</a></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="encryption" id="encryption" hidden>
+            <h1 class="i18n"><span class="zh">加密</span><span class="en">Encryption</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head">Secret storage</div>
+              <div class="settings-row"><div><div class="label">vault</div><div class="sub mono">XChaCha20-Poly1305 · Argon2id</div></div><span class="pill success xs">unlocked</span></div>
+              <div class="settings-row"><div><div class="label">MLS history backup key</div></div><span class="pill success xs">in vault</span></div>
+            </div>
+            <table class="tbl compact"><thead><tr><th>Space</th><th>epoch</th><th>members</th><th>status</th></tr></thead><tr><td>Engineering</td><td>42</td><td>12</td><td><span class="pill success xs">ok</span></td></tr><tr><td>Acme × Beta</td><td>8</td><td>7</td><td><span class="pill warning xs">cross-org</span></td></tr></table>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="notifications" id="notifications" hidden>
+            <h1 class="i18n"><span class="zh">通知规则</span><span class="en">Notification Rules</span></h1>
+            <table class="tbl compact"><thead><tr><th>kind</th><th>match</th><th>action</th><th>locus</th></tr></thead><tr><td><span class="pill accent xs">override</span></td><td>@ mention</td><td>notify</td><td>server</td></tr><tr><td><span class="pill xs">content</span></td><td><code>keyword=on-call</code></td><td>highlight</td><td>client</td></tr><tr><td><span class="pill muted xs">default</span></td><td>all others</td><td>silent</td><td>server</td></tr></table>
+            <button class="btn sm mt-12">+ <span class="i18n"><span class="zh">添加规则</span><span class="en">Add rule</span></span></button>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="push" id="push" hidden>
+            <h1 class="i18n"><span class="zh">推送通道</span><span class="en">Push Routes</span></h1>
+            <div class="settings-card compact">
+              <div class="head">blind wakeup</div>
+              <div class="settings-row"><div><div class="label">apns_main</div><div class="sub mono">cx:pseudonym:push:9aF...</div></div><span class="pill success xs">active</span></div>
+              <div class="settings-row"><div><div class="label">fcm_voip</div><div class="sub mono">cx:pseudonym:push:1c0...</div></div><span class="pill success xs">active</span></div>
+              <div class="settings-row"><div><div class="label">sender hint</div></div><span class="switch"></span></div>
+              <div class="settings-row"><div><div class="label">rotation</div></div><select class="select" style="max-width:140px;"><option>30 days</option><option selected>90 days</option><option>180 days</option></select></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="dnd" id="dnd" hidden>
+            <h1 class="i18n"><span class="zh">免打扰</span><span class="en">Do Not Disturb</span></h1>
+            <div class="settings-card compact">
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">启用</span><span class="en">Enable</span></div></div><span class="switch on"></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">时间段</span><span class="en">Schedule</span></div></div><span class="mono">23:00-08:00</span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">override 仍触发</span><span class="en">Allow overrides</span></div></div><span class="switch on"></span></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="blocklist" id="blocklist" hidden>
+            <h1 class="i18n"><span class="zh">个人 Blocklist</span><span class="en">Personal Blocklist</span></h1>
+            <table class="tbl compact"><thead><tr><th>target</th><th>applies_to</th><th>reason</th><th></th></tr></thead><tr><td class="mono">actor:did:webvh:troll.example.com</td><td>messages, mentions</td><td>harassment</td><td><button class="btn xs ghost">remove</button></td></tr><tr><td class="mono">domain:spam-org.example.com</td><td>directory, dm</td><td>spam</td><td><button class="btn xs ghost">remove</button></td></tr></table>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="read-receipts" id="read-receipts" hidden>
+            <h1 class="i18n"><span class="zh">已读回执</span><span class="en">Read Receipts</span></h1>
+            <div class="settings-card compact">
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">默认发送</span><span class="en">Send by default</span></div></div><span class="switch on"></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">E2EE Space 中发送</span><span class="en">Send in E2EE Spaces</span></div></div><span class="switch"></span></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">显示他人的已读</span><span class="en">Show others</span></div></div><span class="switch on"></span></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="appearance" id="appearance" hidden>
+            <h1 class="i18n"><span class="zh">主题 / 字体</span><span class="en">Theme / Font</span></h1>
+            <div class="settings-card compact">
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">主题</span><span class="en">Theme</span></div></div><div class="btn-group"><button class="btn sm" data-theme-set="light">Light</button><button class="btn sm" data-theme-set="dark">Dark</button></div></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">字体大小</span><span class="en">Font size</span></div></div><div class="row gap-8"><input type="range" min="12" max="18" value="14"><span class="mono f-12">14px</span></div></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">密度</span><span class="en">Density</span></div></div><div class="btn-group"><button class="btn sm">compact</button><button class="btn sm active">cozy</button></div></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="language" id="language" hidden>
+            <h1 class="i18n"><span class="zh">语言与时区</span><span class="en">Language &amp; Time Zone</span></h1>
+            <div class="settings-card compact">
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">界面语言</span><span class="en">Language</span></div></div><div class="btn-group"><button class="btn sm" data-lang-btn="zh">中文</button><button class="btn sm" data-lang-btn="en">EN</button></div></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">时区</span><span class="en">Time zone</span></div></div><select class="select" style="max-width:240px;"><option selected>Asia/Shanghai</option><option>UTC</option><option>America/Los_Angeles</option></select></div>
+              <div class="settings-row"><div><div class="label i18n"><span class="zh">时间格式</span><span class="en">Time format</span></div></div><div class="btn-group"><button class="btn sm active">24h</button><button class="btn sm">12h</button></div></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="a11y" id="a11y" hidden>
+            <h1 class="i18n"><span class="zh">无障碍</span><span class="en">Accessibility</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label i18n"><span class="zh">高对比度</span><span class="en">High contrast</span></div></div><span class="switch"></span></div><div class="settings-row"><div><div class="label i18n"><span class="zh">减少动效</span><span class="en">Reduce motion</span></div></div><span class="switch on"></span></div><div class="settings-row"><div><div class="label i18n"><span class="zh">总是显示焦点环</span><span class="en">Always show focus ring</span></div></div><span class="switch"></span></div></div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="keyboard" id="keyboard" hidden>
+            <h1 class="i18n"><span class="zh">快捷键</span><span class="en">Shortcuts</span></h1>
+            <table class="tbl compact"><thead><tr><th>action</th><th>shortcut</th></tr></thead><tr><td>Command palette</td><td><kbd>⌘K</kbd></td></tr><tr><td>New Flow</td><td><kbd>C</kbd></td></tr><tr><td>Open Inbox</td><td><kbd>G I</kbd></td></tr><tr><td>Toggle sidebar</td><td><kbd>[</kbd></td></tr></table>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="services" id="services" hidden>
+            <h1 class="i18n"><span class="zh">绑定的服务</span><span class="en">Bound Services</span></h1>
+            <div class="settings-card compact mb-16">
+              <div class="head"><span class="i18n"><span class="zh">当前 Principal Server</span><span class="en">Current Principal Server</span></span></div>
+              <div class="settings-row"><div><div class="label">server.acme.example.com</div><div class="sub mono">did:web:server.acme.example.com · ContrixPrincipalServer</div></div><span class="pill success xs">primary</span></div>
+              <div class="settings-row"><div><div class="label">delegated by</div><div class="sub mono">did:webvh:acme.example.com</div></div><a class="btn xs ghost" href="audit.html?filter=service_binding">audit</a></div>
+            </div>
+            <table class="tbl compact"><thead><tr><th>service</th><th>DID</th><th>scope</th><th>status</th></tr></thead><tr><td>Directory</td><td class="mono">did:web:directory.acme.example</td><td>org listed resources</td><td><span class="pill success xs">ok</span></td></tr><tr><td>Blob</td><td class="mono">did:web:blob.acme.example</td><td>attachments</td><td><span class="pill success xs">ok</span></td></tr><tr><td>Push</td><td class="mono">did:web:push.acme.example</td><td>blind wakeup</td><td><span class="pill success xs">ok</span></td></tr><tr><td>Policy</td><td class="mono">did:web:policy.acme.example</td><td>authz</td><td><span class="pill warning xs">quarantine</span></td></tr></table>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="sync" id="sync" hidden>
+            <h1 class="i18n"><span class="zh">同步与频道</span><span class="en">Sync &amp; Channels</span></h1>
+            <div class="settings-card compact mb-16"><div class="head">Actor event chain</div><div class="settings-row"><div><div class="label">frontier</div><div class="sub mono">cx:hlc:4f3a:7b21 · actor_seq 9173</div></div><span class="pill success xs">healthy</span></div><div class="settings-row"><div><div class="label">outbox</div></div><span class="pill success xs">0 pending</span></div></div>
+            <table class="tbl compact"><thead><tr><th>Space</th><th>sync endpoint</th><th>federation</th></tr></thead><tr><td>Engineering</td><td class="mono">server.acme.example.com</td><td>closed</td></tr><tr><td>Acme × Beta</td><td class="mono">enclave.acme.example.com</td><td>allowlist</td></tr></table>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="integrations" id="integrations" hidden>
+            <h1 class="i18n"><span class="zh">已授权 Applets</span><span class="en">Authorized Applets</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label">Jira Bridge</div><div class="sub mono">ghost actor · Engineering</div></div><a class="btn xs" href="applets.html?id=jira-bridge">open</a></div><div class="settings-row"><div><div class="label">GitHub Issues</div><div class="sub mono">read-only · Product roadmap</div></div><button class="btn xs danger">revoke</button></div></div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="agent-sessions" id="agent-sessions" hidden>
+            <h1 class="i18n"><span class="zh">Agent Sessions</span><span class="en">Agent Sessions</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label">Release assistant</div><div class="sub mono">cx.agent.session:rel-42 · human approval required</div></div><a class="btn xs" href="agents.html">open</a></div><div class="settings-row"><div><div class="label">Spec triage bot</div><div class="sub mono">paused · no write grant</div></div><span class="pill muted xs">paused</span></div></div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="export" id="export" hidden>
+            <h1 class="i18n"><span class="zh">导出数据</span><span class="en">Export Data</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label">account export</div><div class="sub">canonical events · blobs · local projection cache</div></div><button class="btn sm">start export</button></div><div class="settings-row"><div><div class="label">encrypted backup</div><div class="sub mono">last run 2026-05-10</div></div><span class="pill success xs">current</span></div></div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="audit" id="audit" hidden>
+            <h1 class="i18n"><span class="zh">我的活动 / 审计</span><span class="en">My Activity / Audit</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label">recent writes</div><div class="sub mono">43 events · last 24h</div></div><a class="btn xs" href="audit.html">open audit</a></div><div class="settings-row"><div><div class="label">disclosure log</div><div class="sub mono">3 presentations · last 30d</div></div><a class="btn xs ghost" href="disclosure.html">open</a></div></div>
+          </section>
+
+          <section class="settings-panel" data-settings-panel="advanced" id="advanced" hidden>
+            <h1 class="i18n"><span class="zh">高级 / Dev</span><span class="en">Advanced / Dev</span></h1>
+            <div class="settings-card compact"><div class="settings-row"><div><div class="label">show service DID</div></div><span class="switch on"></span></div><div class="settings-row"><div><div class="label">force RYW wait</div><div class="sub mono">X-Contrix-Wait-For</div></div><span class="switch on"></span></div><div class="settings-row"><div><div class="label">local reducer profile</div><div class="sub mono">cx.reducer.default.v1</div></div><button class="btn xs">inspect</button></div></div>
+          </section>
+
+          <div class="callout proto mt-32">
+            <span class="ico mono">⌘</span>
+            <div class="body">
+              <strong class="i18n"><span class="zh">协议边界</span><span class="en">Protocol boundary</span></strong>
+              <small class="mt-4 block i18n"><span class="zh">Acme Inc. 是 Organization Principal；server.acme.example.com 是被委托的 Principal Server。设置项写入 Actor private account data 或对应的签名 state event。</span><span class="en">Acme Inc. is an Organization Principal; server.acme.example.com is the delegated Principal Server. Settings persist to Actor private account data or signed state events.</span></small>
             </div>
           </div>
-
-          <h3 class="section-title">Account Lifecycle</h3>
-          <div class="callout danger">
-            <span class="ico">🚨</span>
-            <div style="flex:1;">
-              <strong>这些操作不可静默回退。</strong>
-              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-                <button class="btn danger sm">挂起账号 (cx.account.suspend)</button>
-                <button class="btn danger sm">锁定登录因子</button>
-                <button class="btn danger sm">触发 legal hold</button>
-                <button class="btn danger sm">完全擦除（受 retention policy 约束）</button>
-              </div>
-              <div class="dim" style="margin-top:8px;font-size:12px;">擦除会写入 redaction event；他人 Space 中的引用会变为 tombstone，但 Event chain 哈希不变。</div>
-            </div>
-          </div>
-
         </div>
       </div>
     </section>
-  </div>
+  </main>
 </body>
 </html>
+
+
+
+
+

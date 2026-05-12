@@ -156,37 +156,22 @@ mod hlc_vectors {
 
 #[cfg(test)]
 mod cursor_vectors {
-    use crate::cursor::Cursor;
-
-    /// Test vector for cursor encoding.
-    struct CursorVector {
-        version: u32,
-        description: &'static str,
-    }
-
-    const CURSOR_VECTORS: &[CursorVector] = &[
-        CursorVector {
-            version: 1,
-            description: "basic cursor with version 1",
-        },
-        CursorVector {
-            version: 2,
-            description: "cursor with version 2",
-        },
-    ];
+    use crate::cursor::{Cursor, CursorPurpose};
 
     #[test]
     fn test_cursor_roundtrip() {
         let cursor = Cursor::new();
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
-        assert_eq!(decoded.version, cursor.version);
+        assert_eq!(decoded.v, cursor.v);
+        assert_eq!(decoded.purpose, CursorPurpose::Stream);
     }
 
     #[test]
     fn test_cursor_base64url_encoding() {
         let cursor = Cursor::new();
         let encoded = cursor.encode().unwrap();
+        assert!(encoded.starts_with("cx:cursor:"));
         // Base64URL should not contain +, /, or =
         assert!(!encoded.contains('+'));
         assert!(!encoded.contains('/'));
@@ -198,15 +183,14 @@ mod cursor_vectors {
         let mut cursor = Cursor::new();
         assert!(!cursor.is_expired());
 
-        cursor.expires_at = Some(chrono::Utc::now().timestamp() - 3600);
+        cursor.x = chrono::Utc::now().timestamp_millis() - 3600;
         assert!(cursor.is_expired());
     }
 
     #[test]
     fn test_cursor_space_hlc() {
         let cursor = Cursor::new();
-        // Should return None for non-existent space
-        assert!(cursor.space_hlc("nonexistent").is_none());
+        assert!(!cursor.s.contains_key("nonexistent"));
     }
 
     #[test]

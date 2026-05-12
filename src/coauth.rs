@@ -350,6 +350,9 @@ pub struct PersistedOidcScaffold {
     pub authorize_url: String,
 }
 
+#[cfg(target_arch = "wasm32")]
+const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc_scaffold.v1";
+
 impl CoauthApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Ok(Self {

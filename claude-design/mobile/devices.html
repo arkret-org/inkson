@@ -1,131 +1,137 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>设备 · Contrix Mobile</title>
+  <title>Mobile · Devices · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="mobile-stage">
-    <div class="frame-meta">📱 mobile/devices.html · <a href="../index.html">返回设计稿</a></div>
-    <div class="phone">
-      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
+  <main class="mobile-stage">
+    <div class="frame-meta"><a href="../index.html">← <span class="i18n"><span class="zh">返回</span><span class="en">Back</span></span></a></div>
 
+    <!-- A) Device list -->
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
       <div class="phone-screen">
         <div class="m-app-bar">
-          <a class="iconbtn" href="home.html">←</a>
-          <div class="grow">
-            <div>设备 / 密钥</div>
-            <div class="dim" style="font-size:11px;font-weight:normal;">3 设备 · 1 待验证</div>
-          </div>
-          <button class="iconbtn">＋</button>
+          <a class="iconbtn" href="settings.html">←</a>
+          <span class="grow i18n"><span class="zh">设备 &amp; 密钥</span><span class="en">Devices &amp; keys</span></span>
         </div>
 
-        <div style="padding:12px 16px 90px;">
-
-          <!-- pending pairing -->
-          <div class="surface" style="padding:14px;border-color:var(--accent);background:var(--accent-soft);margin-bottom:12px;">
-            <div class="row gap-8" style="margin-bottom:8px;">
-              <strong>待验证：MacBook · alice@home</strong>
-              <span class="pill warning" style="margin-left:auto;font-size:10px;">04:23</span>
+        <div class="m-section">
+          <div class="callout neutral" style="padding:8px 10px;">
+            <span class="ico" style="font-size:14px;">🛡</span>
+            <div class="body f-11 i18n">
+              <span class="zh">登录 / 设备授权 / 密钥验证是 3 件分开的事。</span>
+              <span class="en">Login / authorize / verify are 3 separate concerns.</span>
             </div>
-            <p class="muted" style="font-size:12px;margin:0 0 10px;">在新设备屏幕上确认下面的 emoji 与数字一致。</p>
-            <div class="sas-block" style="background:white;padding:14px;">
-              <div class="sas-emojis" style="gap:8px;">
-                <div class="sas-emoji" style="font-size:24px;">🐬<span class="lbl">Dolphin</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🌳<span class="lbl">Tree</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🚀<span class="lbl">Rocket</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🎩<span class="lbl">Hat</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🍯<span class="lbl">Honey</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🦊<span class="lbl">Fox</span></div>
-                <div class="sas-emoji" style="font-size:24px;">🪐<span class="lbl">Saturn</span></div>
-              </div>
-              <div class="sas-digits" style="font-size:18px;">3752 — 9104</div>
-              <div class="row gap-4" style="justify-content:center;margin-top:10px;">
-                <button class="btn danger sm">不一致</button>
-                <button class="btn primary sm">一致 · 授权</button>
-              </div>
-            </div>
-            <small class="muted" style="display:block;margin-top:8px;">完成后 → cx.device.authorized · cx.device.cross_sign · MLS Welcome ×3。</small>
           </div>
+        </div>
 
-          <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin:8px 0;">本人设备</h2>
-
-          <div class="device-row" style="margin-bottom:8px;">
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">当前设备</span><span class="en">This device</span></h2>
+          <div class="device-row" style="border-color: var(--accent); background: var(--accent-soft);">
             <div class="device-ico">📱</div>
             <div class="device-meta">
-              <div class="name">iPhone 15 Pro <span class="pill success" style="font-size:10px;">本机</span></div>
-              <div class="sub mono" style="font-size:11px;">cx:device:01js0dv…002</div>
-              <div class="sub" style="font-size:11px;">push token: apns:****-3a · 脱敏</div>
-            </div>
-          </div>
-
-          <div class="device-row" style="margin-bottom:8px;">
-            <div class="device-ico">💻</div>
-            <div class="device-meta">
-              <div class="name">Mac Studio</div>
-              <div class="sub" style="font-size:11px;">cross-signed · last sync 12s</div>
-            </div>
-            <span class="pill success" style="font-size:10px;">已验证</span>
-          </div>
-
-          <div class="device-row" style="margin-bottom:8px;border-color:var(--warning);">
-            <div class="device-ico">🌐</div>
-            <div class="device-meta">
-              <div class="name">Browser · Chrome</div>
-              <div class="sub" style="font-size:11px;">cx.session.grant ttl=58m · 不持有 E2EE 历史</div>
-            </div>
-            <span class="pill warning" style="font-size:10px;">短期</span>
-          </div>
-
-          <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin:14px 0 8px;">操作</h2>
-
-          <div class="surface" style="padding:0;overflow:hidden;margin-bottom:12px;">
-            <a class="m-list-item" style="border:none;border-radius:0;border-bottom:1px solid var(--border);">
-              <span style="font-size:18px;">🛟</span>
-              <div class="grow"><div class="title">恢复保险箱</div><div class="sub">Argon2id · xchacha20poly1305</div></div>
-              <span>›</span>
-            </a>
-            <a class="m-list-item" style="border:none;border-radius:0;border-bottom:1px solid var(--border);">
-              <span style="font-size:18px;">🔑</span>
-              <div class="grow"><div class="title">Recovery Key</div><div class="sub">EAGLE—HARP—…—Q1A0</div></div>
-              <span>›</span>
-            </a>
-            <a class="m-list-item" style="border:none;border-radius:0;border-bottom:1px solid var(--border);">
-              <span style="font-size:18px;">🛎</span>
-              <div class="grow"><div class="title">Push 设置</div><div class="sub">background_sync_needed</div></div>
-              <span>›</span>
-            </a>
-            <a class="m-list-item" style="border:none;border-radius:0;">
-              <span style="font-size:18px;">🚪</span>
-              <div class="grow"><div class="title danger" style="color:var(--danger);">注销并撤销本机</div><div class="sub">cx.device.revoked + MLS Remove</div></div>
-              <span>›</span>
-            </a>
-          </div>
-
-          <div class="callout proto">
-            <span class="ico">⚙️</span>
-            <div>
-              <strong style="color:white;">三件事是分开的</strong>
-              <div style="margin-top:4px;font-size:11px;color:#a5b4fc;line-height:1.6;">
-                · 登录因子 → 短期 session<br>
-                · 设备授权 → cx.device.authorized<br>
-                · 设备验证 → SAS / cross-sign
-              </div>
+              <div class="name">iPhone 15 <span class="pill accent xs">this</span></div>
+              <div class="sub mono">fp f4:2a:1b:7c · iOS 18</div>
             </div>
           </div>
         </div>
+
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">其他设备</span><span class="en">Other devices</span></h2>
+          <div class="device-row">
+            <div class="device-ico">🖥</div>
+            <div class="device-meta">
+              <div class="name">MacBook Pro <span class="pill success xs">verified</span></div>
+              <div class="sub mono">last 2m · Chrome</div>
+            </div>
+            <button class="btn xs danger">×</button>
+          </div>
+          <div class="device-row mt-8">
+            <div class="device-ico">📱</div>
+            <div class="device-meta">
+              <div class="name">iPad Pro <span class="pill warning xs">pending</span></div>
+              <div class="sub mono">awaiting SAS</div>
+            </div>
+            <a class="btn xs primary" href="?role=primary&amp;target=cx:device:3c1b">verify</a>
+          </div>
+        </div>
+
+        <div class="m-section">
+          <button class="btn primary full" style="margin-top:8px;">+ <span class="i18n"><span class="zh">添加新设备（扫码）</span><span class="en">Add new device (scan QR)</span></span></button>
+        </div>
+
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">Cross-signing</span><span class="en">Cross-signing</span></h2>
+          <div class="surface pad" style="padding:12px;">
+            <div class="row spread f-12 mb-4"><span class="muted">principal_signing</span><span class="pill success xs">in did.jsonl</span></div>
+            <div class="row spread f-12 mb-4"><span class="muted">self_signing</span><span class="pill success xs">vault</span></div>
+            <div class="row spread f-12 mb-4"><span class="muted">user_signing</span><span class="pill success xs">vault</span></div>
+            <div class="row spread f-12"><span class="muted"><span class="i18n"><span class="zh">已签他人</span><span class="en">Signed others</span></span></span><span>4</span></div>
+          </div>
+        </div>
+
+        <div style="height: 80px;"></div>
       </div>
 
       <div class="phone-bottom">
-        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
-        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
-        <a class="phone-tab" href="board.html"><div class="ico">▦</div><span>看板</span></a>
-        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
-        <div class="phone-tab active"><div class="ico">⚙</div><span>更多</span></div>
+        <a class="phone-tab" href="home.html"><span class="ico">🏠</span><span class="i18n"><span class="zh">工作台</span><span class="en">Home</span></span></a>
+        <a class="phone-tab" href="inbox.html"><span class="ico">📥</span>Inbox</a>
+        <a class="phone-tab" href="board.html"><span class="ico">📋</span>Board</a>
+        <a class="phone-tab" href="discussion.html"><span class="ico">💬</span><span class="i18n"><span class="zh">讨论</span><span class="en">Chat</span></span></a>
+        <a class="phone-tab active" href="settings.html"><span class="ico">⚙</span><span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span></a>
       </div>
     </div>
-  </div>
+
+    <!-- B) SAS Verification -->
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
+      <div class="phone-screen">
+        <div class="m-app-bar transparent">
+          <button class="iconbtn">←</button>
+          <span class="grow i18n"><span class="zh">SAS 比对</span><span class="en">SAS compare</span></span>
+        </div>
+        <div style="padding: 16px;">
+          <div class="muted f-12 center-text i18n" style="margin-bottom:12px;">
+            <span class="zh">在两台设备同时确认 emoji 与数字一致。</span>
+            <span class="en">Confirm emoji + digits match on both devices.</span>
+          </div>
+
+          <div class="sas-block">
+            <div class="muted f-11 mono">cx:txn:1f4ab8c2</div>
+            <div class="sas-emojis mt-12" style="gap:8px;">
+              <span class="sas-emoji" style="font-size:24px;">🐶<span class="lbl">dog</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🚲<span class="lbl">bicycle</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🌳<span class="lbl">tree</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🍎<span class="lbl">apple</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🎵<span class="lbl">music</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🔑<span class="lbl">key</span></span>
+              <span class="sas-emoji" style="font-size:24px;">🚀<span class="lbl">rocket</span></span>
+            </div>
+            <div class="sas-digits" style="font-size:20px;">
+              <span>4729</span><span>1834</span><span>5061</span>
+            </div>
+          </div>
+
+          <div class="row mt-16 gap-8">
+            <button class="btn danger" style="flex:1;"><span class="i18n"><span class="zh">✕ 不一致</span><span class="en">✕ Differ</span></span></button>
+            <button class="btn success primary" style="flex:1;"><span class="i18n"><span class="zh">✓ 一致</span><span class="en">✓ Match</span></span></button>
+          </div>
+
+          <div class="callout warn mt-16" style="padding:8px 10px;">
+            <span class="ico" style="font-size:14px;">⚠</span>
+            <div class="body f-11 i18n">
+              <span class="zh">如果不一致 — 可能存在中间人攻击。请取消。</span>
+              <span class="en">If they differ — possible MITM. Cancel.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
 </body>
 </html>

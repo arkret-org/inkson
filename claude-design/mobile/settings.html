@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mobile · Settings · Contrix</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
+</head>
+<body>
+  <main class="mobile-stage">
+    <div class="frame-meta"><a href="../index.html">← <span class="i18n"><span class="zh">返回</span><span class="en">Back</span></span></a></div>
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
+      <div class="phone-screen">
+        <div class="m-app-bar">
+          <a class="iconbtn" href="home.html">←</a>
+          <span class="grow i18n"><span class="zh">设置</span><span class="en">Settings</span></span>
+        </div>
+
+        <!-- Profile header -->
+        <a class="m-list-item" href="?tab=profile" style="margin: 12px 16px; text-decoration:none; color:inherit;">
+          <span class="avatar lg">A</span>
+          <span class="grow">
+            <span class="title">Alice Wang</span>
+            <span class="sub mono">@alice.example.com</span>
+          </span>
+          <span class="chev dim">›</span>
+        </a>
+
+        <!-- Section: Account -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">账户</span><span class="en">Account</span></h2>
+          <a class="m-list-item" href="?tab=profile" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">👤</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">个人资料</span><span class="en">Profile</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="?tab=identity" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🪪</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">身份 (DID / Handle)</span><span class="en">Identity</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="?tab=disclosure" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🪞</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">隐私披露策略</span><span class="en">Disclosure policy</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="../desktop/account-status.html" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🛡</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">账号生命周期</span><span class="en">Account lifecycle</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+        </div>
+
+        <!-- Section: Security -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">安全</span><span class="en">Security</span></h2>
+          <a class="m-list-item" href="devices.html" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">📱</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">设备 &amp; 密钥</span><span class="en">Devices &amp; keys</span></span></span><span class="sub">3 active</span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="?tab=recovery" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🔑</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">恢复策略</span><span class="en">Recovery</span></span></span><span class="sub">phrase + vault</span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="?tab=encryption" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🔒</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">加密</span><span class="en">Encryption</span></span></span><span class="sub">MLS · vault unlocked</span></span>
+            <span class="chev dim">›</span>
+          </a>
+        </div>
+
+        <!-- Section: Notifications -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">通知</span><span class="en">Notifications</span></h2>
+          <a class="m-list-item" href="?tab=notifications" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🔔</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">通知规则</span><span class="en">Rules</span></span></span><span class="sub">4 active</span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="?tab=dnd" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🌙</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">免打扰</span><span class="en">Do not disturb</span></span></span><span class="sub">23:00 – 08:00</span></span>
+            <span class="switch on" style="margin-left:auto;"></span>
+          </a>
+          <a class="m-list-item" href="?tab=blocklist" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🚫</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">个人 blocklist</span><span class="en">Personal blocklist</span></span></span><span class="sub">2 actors · 1 keyword</span></span>
+            <span class="chev dim">›</span>
+          </a>
+        </div>
+
+        <!-- Section: Appearance -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">外观</span><span class="en">Appearance</span></h2>
+          <div class="m-list-item">
+            <span style="font-size:18px;">🎨</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">主题</span><span class="en">Theme</span></span></span></span>
+            <div class="btn-group">
+              <button class="btn xs" data-theme-set="light">☀</button>
+              <button class="btn xs active" data-theme-set="dark">☾</button>
+              <button class="btn xs"><span class="i18n"><span class="zh">系统</span><span class="en">sys</span></span></button>
+            </div>
+          </div>
+          <div class="m-list-item">
+            <span style="font-size:18px;">🌐</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">语言</span><span class="en">Language</span></span></span></span>
+            <div class="btn-group">
+              <button class="btn xs active" data-lang-btn="zh">中</button>
+              <button class="btn xs" data-lang-btn="en">EN</button>
+            </div>
+          </div>
+          <a class="m-list-item" href="?tab=a11y" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">♿</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">无障碍</span><span class="en">Accessibility</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+        </div>
+
+        <!-- Section: Data -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">数据</span><span class="en">Data</span></h2>
+          <a class="m-list-item" href="?tab=export" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">⬇</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">导出我的数据</span><span class="en">Export my data</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+          <a class="m-list-item" href="../desktop/audit.html" style="text-decoration:none; color:inherit;">
+            <span style="font-size:18px;">🧾</span>
+            <span class="grow"><span class="title f-13"><span class="i18n"><span class="zh">我的活动 / 审计</span><span class="en">My activity / audit</span></span></span></span>
+            <span class="chev dim">›</span>
+          </a>
+        </div>
+
+        <div class="m-section">
+          <button class="btn danger full"><span class="i18n"><span class="zh">登出所有设备</span><span class="en">Sign out everywhere</span></span></button>
+          <button class="btn danger ghost full" style="margin-top: 8px;"><span class="i18n"><span class="zh">停用账号</span><span class="en">Deactivate account</span></span></button>
+        </div>
+
+        <div style="padding: 12px 16px; text-align:center; color: var(--text-3); font-size: 11px; font-family: var(--font-mono);">
+          v1.0 · cx.profile.full_client.v1
+        </div>
+
+        <div style="height: 16px;"></div>
+      </div>
+
+      <div class="phone-bottom">
+        <a class="phone-tab" href="home.html"><span class="ico">🏠</span><span class="i18n"><span class="zh">工作台</span><span class="en">Home</span></span></a>
+        <a class="phone-tab" href="inbox.html"><span class="ico">📥</span>Inbox</a>
+        <a class="phone-tab" href="board.html"><span class="ico">📋</span>Board</a>
+        <a class="phone-tab" href="discussion.html"><span class="ico">💬</span><span class="i18n"><span class="zh">讨论</span><span class="en">Chat</span></span></a>
+        <a class="phone-tab active" href="settings.html"><span class="ico">⚙</span><span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span></a>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

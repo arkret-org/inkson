@@ -1,106 +1,93 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Flow · Contrix Mobile</title>
+  <title>Mobile · Flow · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="mobile-stage">
-    <div class="frame-meta">📱 mobile/flow-detail.html · <a href="../index.html">返回设计稿</a></div>
+  <main class="mobile-stage">
+    <div class="frame-meta"><a href="../index.html">← <span class="i18n"><span class="zh">返回</span><span class="en">Back</span></span></a></div>
     <div class="phone">
-      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
-
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
       <div class="phone-screen">
         <div class="m-app-bar">
           <a class="iconbtn" href="board.html">←</a>
-          <div class="grow truncate">Review launch checklist</div>
-          <button class="iconbtn">⤴</button>
+          <span class="grow">
+            <div style="font-size:13px; font-weight:600;">FLO-247</div>
+            <div class="dim f-11"><a href="../desktop/space.html?id=eng" style="color:inherit;">Engineering</a> · Active sprint</div>
+          </span>
           <button class="iconbtn">⋯</button>
         </div>
 
-        <!-- branch tab -->
-        <div style="display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);">
-          <button class="btn sm" style="background:var(--accent-soft);color:var(--accent);border-color:transparent;">Synthesis</button>
-          <a class="btn sm ghost" href="discussion.html">💬 Discussion · 12</a>
-          <span class="grow"></span>
-          <span class="pill success" style="font-size:10px;">primary</span>
-        </div>
-
-        <div style="padding:14px 16px 90px;">
-          <div class="row gap-4" style="font-size:11px;color:var(--text-3);">
-            <span>cx:flow:01js0fk…0042</span>
-          </div>
-          <h2 style="font-size:18px;line-height:1.3;margin:6px 0 10px;">Review launch checklist</h2>
-          <div class="row gap-4" style="flex-wrap:wrap;margin-bottom:14px;">
-            <span class="pill info dot">review</span>
-            <span class="pill warning dot">P1</span>
-            <span class="pill danger" style="font-size:10px;">overdue 1d</span>
-            <span class="pill success" style="font-size:10px;">🔒 E2EE</span>
-          </div>
-
-          <div class="surface" style="padding:0;margin-bottom:12px;">
-            <div style="display:grid;grid-template-columns:90px 1fr;border-bottom:1px solid var(--border);padding:10px 12px;font-size:13px;">
-              <span class="muted">Status</span><span><span class="pill info dot">review</span></span>
-            </div>
-            <div style="display:grid;grid-template-columns:90px 1fr;border-bottom:1px solid var(--border);padding:10px 12px;font-size:13px;">
-              <span class="muted">Due</span><span>2026-05-03</span>
-            </div>
-            <div style="display:grid;grid-template-columns:90px 1fr;border-bottom:1px solid var(--border);padding:10px 12px;font-size:13px;">
-              <span class="muted">Assign</span><span><div class="avatar xs">M</div> Mei + <div class="avatar xs">A</div> Alice</span>
-            </div>
-            <div style="display:grid;grid-template-columns:90px 1fr;padding:10px 12px;font-size:13px;">
-              <span class="muted">List</span><span>Release Board / Review</span>
-            </div>
-          </div>
-
-          <div class="surface" style="padding:14px;margin-bottom:12px;line-height:1.55;font-size:14px;">
-            <strong style="font-size:13px;">Brief</strong>
-            <p style="margin:6px 0 10px;">v1.0 release legal + compliance 终审，2026-05-03 之前完成所有签字。</p>
-            <ul style="padding-left:18px;margin:0;font-size:13px;line-height:1.7;">
-              <li>✅ DID method allowlist</li>
-              <li>✅ Snapshot manifest 落地</li>
-              <li>🟡 Federation trust bundle (Beta Co.)</li>
-              <li>🔴 Push gateway 脱敏 contract</li>
-            </ul>
-          </div>
-
-          <div class="surface" style="padding:14px;margin-bottom:12px;">
-            <strong style="font-size:13px;">关系</strong>
-            <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-              <div class="relation-item" style="padding:6px 8px;font-size:12px;"><span class="relation-kind">depends_on</span><span>支付重构 — 风控回调</span></div>
-              <div class="relation-item" style="padding:6px 8px;font-size:12px;"><span class="relation-kind">references</span><span>🔒 Beta Co. 共享文档</span></div>
-              <div class="relation-item" style="padding:6px 8px;font-size:12px;"><span class="relation-kind">summarized_from</span><span>α agent brief</span></div>
-            </div>
-          </div>
-
-          <div class="surface" style="padding:14px;">
-            <strong style="font-size:13px;">附件</strong>
-            <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-              <div class="msg-attachment">📎 release-checklist.md · 8 KB</div>
-              <div class="msg-attachment">📎 trust_bundle_v1.json · 21 KB</div>
-              <div class="msg-attachment">🖼 launch-banner.png · 480 KB</div>
-            </div>
+        <!-- Title + meta -->
+        <div style="padding: 12px 16px;">
+          <h1 style="font-size:18px; margin:0 0 6px; line-height:1.3;" class="i18n">
+            <span class="zh">实现 cx.flow.move 中的 rank 重平衡</span>
+            <span class="en">Implement rank rebalance in cx.flow.move</span>
+          </h1>
+          <div class="row gap-6 wrap f-11 muted">
+            <span class="pill warning xs">in_review</span>
+            <span><a href="../desktop/directory.html?actor=did:webvh:alice.example.com" style="color:inherit;"><span class="avatar xs" style="vertical-align:-3px;">A</span> Alice</a></span>
+            <span>· P1 · due 05-20</span>
           </div>
         </div>
 
-        <!-- bottom action bar -->
-        <div style="position:absolute;left:0;right:0;bottom:78px;background:var(--surface);border-top:1px solid var(--border);padding:8px 12px;display:flex;gap:8px;">
-          <a class="btn grow" href="discussion.html" style="padding:10px;">💬 讨论 (12)</a>
-          <button class="btn primary" style="padding:10px 14px;">▶ 状态</button>
-          <button class="btn" style="padding:10px 14px;">📞</button>
+        <!-- Track tabs -->
+        <div style="padding: 0 12px; border-bottom: 1px solid var(--border); display:flex; gap:4px;">
+          <button style="padding: 8px 12px; background:none; border:none; border-bottom: 2px solid var(--accent); color: var(--text); font-weight:600; font-size: 13px;"><span class="i18n"><span class="zh">主体</span><span class="en">Synthesis</span></span> <span class="pill accent xs">primary</span></button>
+          <button style="padding: 8px 12px; background:none; border:none; color: var(--text-2); font-size: 13px;"><span class="i18n"><span class="zh">讨论 8</span><span class="en">Chat 8</span></span> <span class="pill success xs">🔒</span></button>
         </div>
+
+        <!-- Fields -->
+        <div class="m-section">
+          <div class="surface pad" style="padding: 12px;">
+            <div class="row spread f-12 mb-8"><span class="muted"><span class="i18n"><span class="zh">指派</span><span class="en">Assignee</span></span></span><a href="../desktop/directory.html?actor=did:webvh:alice.example.com"><span class="avatar xs">A</span> Alice</a></div>
+            <div class="row spread f-12 mb-8"><span class="muted">Labels</span><span><span class="lbl feature">feature</span> <span class="lbl bug">bug</span></span></div>
+            <div class="row spread f-12 mb-8"><span class="muted"><span class="i18n"><span class="zh">关联</span><span class="en">Relations</span></span></span><span class="dim">3 →</span></div>
+            <div class="row spread f-12 mb-8"><span class="muted">cx.flow.update</span><span class="dim">3d ago</span></div>
+          </div>
+        </div>
+
+        <!-- Body -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">背景</span><span class="en">Context</span></h2>
+          <div class="f-13 i18n" style="line-height:1.55;">
+            <span class="zh">在 board 上跨列拖动时，rank 字段使用 fractional indexing。两个 actor 同时拖到相邻槽位会触发 <code>rank_exhausted</code>，需要重平衡。</span>
+            <span class="en">Cross-list drag uses fractional indexing for rank. Two actors dragging to adjacent slot triggers <code>rank_exhausted</code>; needs rebalance.</span>
+          </div>
+        </div>
+
+        <!-- Attachment -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">附件</span><span class="en">Attachments</span></h2>
+          <div class="msg-attachment"><span class="ico">📊</span><span class="meta"><span class="name">rank-rebalance.fig</span><span class="size">312 KB</span></span></div>
+        </div>
+
+        <!-- Activity -->
+        <div class="m-section">
+          <h2 class="i18n"><span class="zh">活动</span><span class="en">Activity</span></h2>
+          <div class="activity-stream">
+            <div class="activity-item"><span class="avatar xs">A</span><div class="activity-body f-12"><span class="i18n"><span class="zh">Alice 把状态改为 in_review</span><span class="en">Alice → in_review</span></span><div class="meta mono">cx.flow.update · 14m</div></div></div>
+            <div class="activity-item"><span class="avatar xs agent">A2</span><div class="activity-body f-12"><span class="i18n"><span class="zh">research-bot 写了 12 references</span><span class="en">research-bot wrote 12 refs</span></span><div class="meta mono">cx.relation.create × 12</div></div></div>
+          </div>
+        </div>
+
+        <!-- Spacer for bottom action bar -->
+        <div style="height: 60px;"></div>
       </div>
 
-      <div class="phone-bottom">
-        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
-        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
-        <a class="phone-tab" href="board.html"><div class="ico">▦</div><span>看板</span></a>
-        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
-        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+      <!-- Bottom action bar -->
+      <div style="background: var(--surface); border-top: 1px solid var(--border); padding: 10px 14px 22px; display:flex; gap:6px; align-items:center;">
+        <button class="btn icon sm ghost">↩</button>
+        <button class="btn icon sm ghost">@</button>
+        <button class="btn icon sm ghost">📎</button>
+        <button class="btn primary sm" style="flex:1;"><span class="i18n"><span class="zh">发表评论</span><span class="en">Comment</span></span></button>
+        <button class="btn icon sm">⋯</button>
       </div>
     </div>
-  </div>
+  </main>
 </body>
 </html>

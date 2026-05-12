@@ -1,92 +1,105 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>看板 · Contrix Mobile</title>
+  <title>Mobile · Board · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="mobile-stage">
-    <div class="frame-meta">📱 mobile/board.html · <a href="../index.html">返回设计稿</a></div>
+  <main class="mobile-stage">
+    <div class="frame-meta"><a href="../index.html">← <span class="i18n"><span class="zh">返回设计稿</span><span class="en">Back</span></span></a></div>
     <div class="phone">
-      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
-
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
       <div class="phone-screen">
         <div class="m-app-bar">
           <a class="iconbtn" href="home.html">←</a>
-          <div class="grow">
-            <div>Release Board</div>
-            <div class="dim" style="font-size:11px;font-weight:normal;">Acme Engineering · kind=board</div>
+          <span class="grow"><div style="font-size:14px; font-weight:600;">Active sprint</div><div class="dim f-11">Engineering · 18 flows</div></span>
+          <button class="iconbtn">⌕</button>
+          <a class="iconbtn" href="../desktop/board.html">⤢</a>
+        </div>
+
+        <!-- List swipe nav -->
+        <div style="padding: 8px 12px; display:flex; gap:6px; overflow-x:auto;">
+          <button class="btn xs">Backlog 8</button>
+          <button class="btn xs active"><span class="i18n"><span class="zh">进行中</span><span class="en">In progress</span></span> 6</button>
+          <button class="btn xs">In review 3</button>
+          <button class="btn xs">Done 14</button>
+        </div>
+
+        <!-- WIP warn -->
+        <div class="m-section" style="padding-top:0; padding-bottom: 4px;">
+          <div class="inline-warn" style="padding:8px 10px; font-size:11px;">
+            <span class="ico">⚠</span>
+            <div class="body i18n"><span class="zh">WIP 上限 5；当前 6。</span><span class="en">WIP limit 5; currently 6.</span></div>
           </div>
-          <button class="iconbtn">⚲</button>
-          <button class="iconbtn">⋯</button>
         </div>
 
-        <!-- horizontal list switcher -->
-        <div style="overflow-x:auto;padding:10px 16px;display:flex;gap:6px;border-bottom:1px solid var(--border);background:var(--surface);">
-          <span class="pill muted">Backlog · 14</span>
-          <span class="pill accent">In Progress · 7</span>
-          <span class="pill muted">Review · 4</span>
-          <span class="pill muted">Done · 23</span>
-          <span class="pill muted" style="border-style:dashed;">＋ List</span>
-        </div>
-
-        <!-- conflict banner -->
-        <div style="margin:10px 16px 0;padding:8px 10px;border-radius:8px;background:var(--warning-soft);color:#92400e;font-size:11px;line-height:1.4;display:flex;gap:6px;">
-          <span>⚠️</span>
-          <span class="grow">并发收敛：Mei 的 cx.flow.move 胜出，你的写入已 superseded。</span>
-          <a style="color:inherit;text-decoration:underline;">详情</a>
-        </div>
-
-        <div style="padding: 10px 16px 100px;">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin:6px 0;">In Progress · 7</div>
-
-          <a href="flow-detail.html" class="kcard" style="margin-bottom:8px;">
-            <div class="kcard-labels"><span class="lbl bug">bug</span><span class="lbl infra">infra</span></div>
-            <div class="kcard-title">支付重构 — 风控回调</div>
-            <div class="kcard-meta"><span>📌 P1</span><span>·</span><span>05-09</span><span class="grow"></span><span>💬 4</span><div class="avatar xs">A</div></div>
+        <!-- Cards -->
+        <div class="m-section" style="padding-top:0;">
+          <a class="m-list-item" href="flow-detail.html" style="display:block; text-decoration:none; color:inherit;">
+            <div class="row gap-6 mb-8">
+              <span class="lbl feature">feature</span>
+              <span class="lbl bug">bug</span>
+              <span class="grow"></span>
+              <span class="pill accent xs">FLO-247</span>
+            </div>
+            <div class="title" style="margin-bottom:6px;"><span class="i18n"><span class="zh">实现 cx.flow.move reducer 中的 rank 重平衡</span><span class="en">Implement rank rebalance in cx.flow.move</span></span></div>
+            <div class="sub row gap-6">
+              <span class="avatar xs">A</span>
+              <span class="pill warning xs">in_review</span>
+              <span class="grow"></span>
+              <span>💬 8</span>
+            </div>
           </a>
 
-          <div class="kcard kcard-pending" style="margin-bottom:8px;">
-            <div class="kcard-labels"><span class="lbl feature">feature</span></div>
-            <div class="kcard-title">Branch-scoped E2EE override <span class="pill warning" style="font-size:9px;">pending sync</span></div>
-            <div class="kcard-meta dim"><span>离线写入 · 待回放</span><span class="grow"></span><div class="avatar xs">A</div></div>
+          <a class="m-list-item" href="flow-detail.html" style="display:block; text-decoration:none; color:inherit;">
+            <div class="row gap-6 mb-8">
+              <span class="lbl ux">ux</span>
+              <span class="grow"></span>
+              <span class="pill accent xs">FLO-246</span>
+            </div>
+            <div class="title" style="margin-bottom:6px;">Settings · 隐私 / 披露分区</div>
+            <div class="sub row gap-6">
+              <span class="avatar xs" style="background:linear-gradient(135deg,#0ea5e9,#14b8a6);">B</span>
+              <span class="pill xs">active</span>
+              <span class="grow"></span>
+              <span>💬 3</span>
+            </div>
+          </a>
+
+          <div class="m-list-item kcard-locked" style="display:block;">
+            <div class="row gap-6 mb-8">
+              <span class="lbl legal">legal</span>
+              <span class="grow"></span>
+              <span class="pill muted xs">locked</span>
+            </div>
+            <div class="title dim i18n"><span class="zh">[locked] 跨 Space 引用</span><span class="en">[locked] cross-Space ref</span></div>
+            <div class="sub i18n"><span class="zh">目标 Space 不披露细节</span><span class="en">target hides detail</span></div>
           </div>
 
-          <div class="kcard" style="margin-bottom:8px;">
-            <div class="kcard-labels"><span class="lbl compliance">compliance</span></div>
-            <div class="kcard-title">合规：DID method allowlist</div>
-            <div class="kcard-meta"><span>📌 P2</span><span>·</span><span>05-15</span><span class="grow"></span><div class="avatar xs">C</div></div>
-          </div>
-
-          <div class="kcard" style="margin-bottom:8px;">
-            <div class="kcard-labels"><span class="lbl docs">docs</span></div>
-            <div class="kcard-title">替换 channel → discussion 文案 <span class="pill success" style="font-size:9px;">✅ done</span></div>
-            <div class="kcard-meta"><span class="grow"></span><div class="avatar xs">C</div></div>
-          </div>
-
-          <button class="add-card-btn" style="margin-top:10px;">＋ 新建 Flow（cx.flow.create）</button>
-
-          <div style="margin-top:18px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:11px;color:var(--text-3);line-height:1.55;">
-            手势：<br>
-            · <strong>左右滑</strong>切换 List<br>
-            · <strong>长按</strong> Flow 拖动 → cx.flow.move / cx.flow.reorder<br>
-            · <strong>左滑</strong> Flow → assign / archive<br>
-          </div>
+          <a class="m-list-item lazy-link" href="flow-detail.html" style="display:block; text-decoration:none; color:inherit;">
+            <div class="row gap-6 mb-8">
+              <span class="lbl compliance">compliance</span>
+              <span class="grow"></span>
+              <span class="pill info xs">lazy_link</span>
+            </div>
+            <div class="title">[lazy_link] EXT-9 in Beta partnership</div>
+          </a>
         </div>
-
-        <button class="m-fab" title="新建 Flow">＋</button>
       </div>
 
       <div class="phone-bottom">
-        <a class="phone-tab" href="home.html"><div class="ico">⌂</div><span>首页</span></a>
-        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
-        <div class="phone-tab active"><div class="ico">▦</div><span>看板</span></div>
-        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
-        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+        <a class="phone-tab" href="home.html"><span class="ico">🏠</span><span class="i18n"><span class="zh">工作台</span><span class="en">Home</span></span></a>
+        <a class="phone-tab" href="inbox.html" style="position:relative;"><span class="ico">📥</span><span>Inbox</span><span class="badge" style="position:absolute; top:0; right:24%;">3</span></a>
+        <a class="phone-tab active" href="board.html"><span class="ico">📋</span>Board</a>
+        <a class="phone-tab" href="discussion.html"><span class="ico">💬</span><span class="i18n"><span class="zh">讨论</span><span class="en">Chat</span></span></a>
+        <a class="phone-tab" href="settings.html"><span class="ico">⚙</span><span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span></a>
       </div>
+
+      <button class="m-fab" title="New Flow">+</button>
     </div>
-  </div>
+  </main>
 </body>
 </html>

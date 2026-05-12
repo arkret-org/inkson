@@ -39,7 +39,6 @@ export async function mockContrixApi(page: Page) {
           "sync.backfill",
           "directory.search_spaces",
           "directory.resolve_space",
-          "index.query",
           "authz.check",
           "space.create",
           "space.manage_members",
@@ -63,7 +62,6 @@ export async function mockContrixApi(page: Page) {
           "cx.events.subscribe",
           "cx.directory.search_spaces",
           "cx.directory.resolve_space",
-          "cx.index.query",
           "cx.authz.check",
           "cx.spaces.create",
           "cx.events.submit",
@@ -525,7 +523,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         service_did: "did:web:serverx.local",
         resource_types: ["space", "organization", "actor"],
-        discovery_profiles: ["cx.profile.directory.v1"],
+        discovery_profiles: ["cx.profile.directory_service.v1"],
         restricted_query_proof: false,
       });
     }

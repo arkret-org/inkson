@@ -1996,11 +1996,11 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     serde_json::from_slice::<ApiErrorBody>(bytes)
         .map(|body| body.error)
         .or_else(|_| serde_json::from_slice::<ErrorEnvelope>(bytes))
-        .unwrap_or_else(|_| ErrorEnvelope {
-            errcode: "cx.error.http_status".to_owned(),
-            error: format!("HTTP request failed with status {status}"),
-            retry_after_ms: None,
-            extra: Default::default(),
+        .unwrap_or_else(|_| {
+            ErrorEnvelope::new(
+                "cx.error.http_status",
+                format!("HTTP request failed with status {status}"),
+            )
         })
 }
 
@@ -2132,10 +2132,10 @@ mod tests {
             StatusCode::CONFLICT,
             br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"expected_head mismatch","retry_after_ms":250,"scope":"repo"}}"#,
         );
-        assert_eq!(decoded.errcode, "expected_head_mismatch");
-        assert_eq!(decoded.error, "expected_head mismatch");
-        assert_eq!(decoded.retry_after_ms, Some(250));
-        assert_eq!(decoded.extra["scope"], "repo");
+        assert_eq!(decoded.code(), "expected_head_mismatch");
+        assert_eq!(decoded.message(), "expected_head mismatch");
+        assert_eq!(decoded.retry_after_ms(), Some(250));
+        assert_eq!(decoded.details()["scope"], "repo");
     }
 
     #[test]
@@ -2144,11 +2144,11 @@ mod tests {
             StatusCode::BAD_REQUEST,
             br#"{"errcode":"invalid_param","error":"invalid did"}"#,
         );
-        assert_eq!(decoded.errcode, "invalid_param");
+        assert_eq!(decoded.code(), "invalid_param");
 
         let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
-        assert_eq!(fallback.errcode, "cx.error.http_status");
-        assert!(fallback.error.contains("503 Service Unavailable"));
+        assert_eq!(fallback.code(), "cx.error.http_status");
+        assert!(fallback.message().contains("503 Service Unavailable"));
     }
 
     #[test]

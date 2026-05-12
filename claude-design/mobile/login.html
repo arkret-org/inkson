@@ -1,45 +1,138 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>登录 · Contrix Mobile</title>
+  <title>Mobile · Login · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="mobile-stage">
-    <div class="frame-meta">📱 mobile/login.html · <a href="../index.html">返回设计稿</a></div>
+  <main class="mobile-stage">
+    <div class="frame-meta">
+      <a href="../index.html">← <span class="i18n"><span class="zh">返回设计稿</span><span class="en">Back to gallery</span></span></a>
+    </div>
+
+    <!-- A) Initial method picker -->
     <div class="phone">
-      <div class="status-bar">
-        <span>9:41</span>
-        <div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div>
-      </div>
-      <div class="phone-screen" style="background:linear-gradient(180deg,#1f2030 0%,#4f46e5 70%);color:white;display:flex;flex-direction:column;">
-        <div style="padding:48px 28px 24px;">
-          <div class="row gap-8">
-            <div style="width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.18);display:grid;place-items:center;font-weight:700;">C</div>
-            <strong style="font-size:20px;">Contrix</strong>
-          </div>
-          <h1 style="font-size:26px;line-height:1.25;margin:32px 0 8px;">用主设备<br>把这台手机加入身份网</h1>
-          <p style="color:#cbd0e8;font-size:14px;line-height:1.5;">Contrix 不储存密码。手机的 device key 在本地生成；主设备扫码后才把它授权进 device set。</p>
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
+      <div class="phone-screen" style="background: var(--surface);">
+        <div style="padding: 56px 28px 24px; text-align:center;">
+          <div style="width:64px; height:64px; border-radius:14px; background:linear-gradient(135deg,#4f46e5,#8b5cf6); margin: 0 auto 16px; display:grid; place-items:center; color:white; font-size:28px; font-weight:700;">⌘</div>
+          <h1 style="font-size:22px; margin:0 0 4px;">Contrix</h1>
+          <div class="muted f-12 i18n"><span class="zh">把协作事实留在你的钥匙里</span><span class="en">Keep collaboration under your keys</span></div>
         </div>
 
-        <div style="background:white;color:var(--text);border-radius:24px 24px 0 0;flex:1;padding:24px 22px 30px;display:flex;flex-direction:column;gap:14px;">
-          <div class="qr-block" style="margin-top:0;">
-            <div class="qr"></div>
-            <div class="muted" style="font-size:12px;margin-top:8px;">在主设备扫描，或粘贴 <code>cx://pair?ch=…</code></div>
-            <div class="row gap-4" style="justify-content:center;font-size:11px;color:var(--text-3);margin-top:6px;">
-              <span class="dot-online"></span> 等待主设备 · 04:23
+        <div style="padding: 0 22px;">
+          <button class="auth-method" style="width:100%;">
+            <span class="ico">🔑</span>
+            <div class="body">
+              <div class="t i18n"><span class="zh">Passkey</span><span class="en">Passkey</span></div>
+              <div class="s i18n"><span class="zh">推荐 · WebAuthn 本地凭据</span><span class="en">Recommended · WebAuthn</span></div>
+            </div>
+            <span class="chev">›</span>
+          </button>
+          <button class="auth-method mt-12" style="width:100%;">
+            <span class="ico">📷</span>
+            <div class="body">
+              <div class="t i18n"><span class="zh">扫桌面 QR</span><span class="en">Scan desktop QR</span></div>
+              <div class="s i18n"><span class="zh">用已登录的桌面扫描此手机</span><span class="en">Scan with your signed-in desktop</span></div>
+            </div>
+            <span class="chev">›</span>
+          </button>
+          <button class="auth-method mt-12" style="width:100%;">
+            <span class="ico">🌐</span>
+            <div class="body">
+              <div class="t i18n"><span class="zh">SSO / OIDC</span><span class="en">SSO / OIDC</span></div>
+              <div class="s i18n"><span class="zh">组织 IdP</span><span class="en">Organization IdP</span></div>
+            </div>
+            <span class="chev">›</span>
+          </button>
+          <button class="auth-method mt-12" style="width:100%;">
+            <span class="ico">🔓</span>
+            <div class="body">
+              <div class="t i18n"><span class="zh">恢复</span><span class="en">Recover</span></div>
+              <div class="s i18n"><span class="zh">短语 / 口令 / 社交</span><span class="en">phrase / passphrase / social</span></div>
+            </div>
+            <span class="chev">›</span>
+          </button>
+
+          <div class="callout proto mt-24" style="font-size:11px;">
+            <span class="ico mono">⌘</span>
+            <div class="body">
+              <strong class="i18n"><span class="zh">登录、设备授权、密钥验证 = 3 件事</span><span class="en">Login / authorize / verify = 3 things</span></strong>
             </div>
           </div>
-          <div style="text-align:center;color:var(--text-3);font-size:12px;">— 或 —</div>
-          <button class="btn full" style="padding:12px;font-size:14px;">🪪 用 Passkey 登录</button>
-          <button class="btn full" style="padding:12px;font-size:14px;">🏢 企业 SSO (acme)</button>
-          <a class="btn full ghost" href="home.html" style="padding:12px;font-size:14px;">▶ 跳过 · 进入 Demo</a>
-          <small class="muted" style="text-align:center;margin-top:6px;">登录因子只签发短期 session；E2EE 历史仍需 device 授权。</small>
+
+          <a class="link f-12 i18n" href="../desktop/onboarding.html" style="display:block; text-align:center; padding: 24px 0;">
+            <span class="zh">创建新账号 →</span>
+            <span class="en">Create account →</span>
+          </a>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- B) Scanning QR state -->
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
+      <div class="phone-screen">
+        <div class="m-app-bar transparent">
+          <button class="iconbtn">←</button>
+          <span class="grow i18n"><span class="zh">扫描桌面 QR</span><span class="en">Scan desktop QR</span></span>
+        </div>
+
+        <div style="padding: 12px 22px; display: flex; flex-direction:column; align-items:center; gap:16px;">
+          <div style="width:240px; height:240px; background:#000; border-radius:14px; position:relative; overflow:hidden;">
+            <div style="position:absolute; inset:30px; border:2px solid #4f46e5; border-radius:8px;"></div>
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:white; font-size:11px; font-family:var(--font-mono); opacity:0.6;">camera preview</div>
+          </div>
+          <div class="f-12 muted center-text i18n">
+            <span class="zh">把摄像头对准桌面端「设备 → 添加新设备」显示的 QR。这只是密钥验证 — 不会让任何人替你登录。</span>
+            <span class="en">Aim at the QR on your desktop's "Devices → Add new device". This is key verification only — no one signs in for you.</span>
+          </div>
+          <div class="callout warn" style="width:100%;">
+            <span class="ico">⏱</span>
+            <div class="body f-12 i18n">
+              <span class="zh">QR 9:47 后失效，会触发 <code>timeout</code> 取消码，自动重生成。</span>
+              <span class="en">QR expires in 9:47; will trigger <code>timeout</code> and auto-refresh.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- C) Passkey in-progress -->
+    <div class="phone">
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
+      <div class="phone-screen">
+        <div class="m-app-bar transparent">
+          <button class="iconbtn">←</button>
+          <span class="grow">Passkey</span>
+        </div>
+        <div style="padding: 24px 22px;">
+          <div class="surface-2 pad" style="text-align:center;">
+            <div style="font-size:48px; margin-bottom:8px;">🔑</div>
+            <strong class="i18n"><span class="zh">请用 Face ID 确认</span><span class="en">Confirm with Face ID</span></strong>
+            <div class="muted f-12 mt-4 mono">audience: contrix.example.com</div>
+            <div class="muted f-12 mono">origin: https://contrix.example.com</div>
+            <div class="bar mt-12"><span style="width: 40%;"></span></div>
+          </div>
+
+          <div class="inline-error mt-16" style="display:none;">
+            <span class="ico">⚠</span>
+            <div class="body i18n">
+              <span class="zh">系统提示已取消。</span>
+              <span class="en">System prompt cancelled.</span>
+            </div>
+          </div>
+
+          <div class="row gap-8 mt-16">
+            <button class="btn ghost" style="flex:1;"><span class="i18n"><span class="zh">取消</span><span class="en">Cancel</span></span></button>
+            <button class="btn" style="flex:1;"><span class="i18n"><span class="zh">改用其他设备</span><span class="en">Other device</span></span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
 </body>
 </html>

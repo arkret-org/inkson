@@ -265,8 +265,8 @@ fn yougen_accepts_serverx_contract_payloads() {
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"expected_head mismatch","retry_after_ms":null}}"#,
     );
-    assert_eq!(error.errcode, "expected_head_mismatch");
-    assert_eq!(error.error, "expected_head mismatch");
+    assert_eq!(error.code(), "expected_head_mismatch");
+    assert_eq!(error.message(), "expected_head mismatch");
 }
 
 #[test]

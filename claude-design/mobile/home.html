@@ -1,126 +1,120 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>首页 · Contrix Mobile</title>
+  <title>Mobile · Home · Contrix</title>
   <link rel="stylesheet" href="../styles.css">
+  <script defer src="../theme.js"></script>
 </head>
 <body>
-  <div class="mobile-stage">
-    <div class="frame-meta">📱 mobile/home.html · <a href="../index.html">返回设计稿</a></div>
+  <main class="mobile-stage">
+    <div class="frame-meta"><a href="../index.html">← <span class="i18n"><span class="zh">返回设计稿</span><span class="en">Back to gallery</span></span></a></div>
+
     <div class="phone">
-      <div class="status-bar"><span>9:41</span><div class="icons"><span>📶</span><span>📡</span><span>🔋</span></div></div>
-
+      <div class="status-bar"><span>9:41</span><span class="icons">● ◐ 100%</span></div>
       <div class="phone-screen">
+
+        <!-- App bar -->
         <div class="m-app-bar">
-          <div class="avatar">A</div>
-          <div class="grow">
-            <div>早安，Alice</div>
-            <div class="dim mono" style="font-size:10px;font-weight:normal;">did:plc:7bzr2x…</div>
+          <a class="iconbtn" href="settings.html"><span class="avatar xs">A</span></a>
+          <span class="grow i18n"><span class="zh">工作台</span><span class="en">Home</span></span>
+          <a class="iconbtn" href="inbox.html" style="position:relative;">📥<span class="badge" style="position:absolute; top:6px; right:6px;">3</span></a>
+          <button class="iconbtn">⌕</button>
+        </div>
+
+        <!-- Greeting -->
+        <div style="padding: 12px 16px 4px;">
+          <div style="font-size:20px; font-weight:600; letter-spacing:-0.01em;" class="i18n">
+            <span class="zh">下午好，<a href="settings.html" style="color:inherit;">Alice</a> 👋</span>
+            <span class="en">Hi, <a href="settings.html" style="color:inherit;">Alice</a> 👋</span>
           </div>
-          <button class="iconbtn">🔍</button>
-          <button class="iconbtn">✎</button>
+          <div class="muted f-12 i18n"><span class="zh">今天有 3 条待处理 mention</span><span class="en">3 mentions to action today</span></div>
         </div>
 
-        <!-- sync banner -->
-        <div style="margin:12px 16px 0;padding:8px 12px;border-radius:10px;background:var(--info-soft);color:#075985;font-size:12px;display:flex;align-items:center;gap:8px;">
-          <span>↻</span>
-          <span class="grow">Sync 健康 · frontier 2 分钟前</span>
-          <span class="kbd-tag" style="background:white;">0 离线</span>
+        <!-- Sync banner -->
+        <div class="m-section" style="padding-top: 4px;">
+          <div class="callout warn" style="padding: 8px 10px;">
+            <span class="ico">⚠</span>
+            <div class="body f-11 i18n">
+              <span class="zh">DID 解析器暂时不可达 · 缓存 22h 19m。<a class="link" href="../desktop/audit.html?filter=webvh" style="color:inherit; text-decoration:underline;">audit →</a></span>
+              <span class="en">DID resolver unreachable · cached 22h 19m. <a class="link" href="../desktop/audit.html?filter=webvh" style="color:inherit; text-decoration:underline;">audit →</a></span>
+            </div>
+          </div>
         </div>
 
+        <!-- Spaces section -->
         <div class="m-section">
-          <h2>Inbox</h2>
-          <a class="m-list-item" href="inbox.html">
-            <span style="font-size:18px;">📌</span>
-            <div class="grow">
-              <div class="title">Mei 提到了你</div>
-              <div class="sub truncate">Review launch checklist · 🔒 E2EE</div>
-            </div>
-            <span class="pill danger" style="font-size:10px;">@</span>
+          <h2 class="i18n"><span class="zh">Spaces</span><span class="en">Spaces</span></h2>
+          <a class="m-list-item" href="../desktop/space.html?id=eng" style="text-decoration:none; color:inherit;">
+            <span class="avatar lg org" style="background:linear-gradient(135deg,#3730a3,#6366f1);">E</span>
+            <span class="grow">
+              <span class="title">Engineering</span>
+              <span class="sub">12 <span class="i18n"><span class="zh">成员</span><span class="en">members</span></span> · 🔒 mls · ●online</span>
+            </span>
+            <span class="badge">5</span>
           </a>
-          <a class="m-list-item" href="inbox.html">
-            <span style="font-size:18px;">✋</span>
-            <div class="grow">
-              <div class="title">Capability 申请 · 1/2</div>
-              <div class="sub truncate">Researcher Agent → read_flow</div>
-            </div>
-            <span class="pill warning" style="font-size:10px;">批</span>
+          <a class="m-list-item" href="../desktop/space.html?id=acme-beta" style="text-decoration:none; color:inherit;">
+            <span class="avatar lg org" style="background:linear-gradient(135deg,#b45309,#f59e0b);">B</span>
+            <span class="grow">
+              <span class="title">Acme × Beta partnership</span>
+              <span class="sub i18n"><span class="zh">受控跨组织 · closed federation</span><span class="en">Controlled · closed</span></span>
+            </span>
+            <span class="pill warning xs">HA</span>
           </a>
-          <a class="m-list-item" href="inbox.html">
-            <span style="font-size:18px;">⚠️</span>
-            <div class="grow">
-              <div class="title">并发收敛 · Mei 胜出</div>
-              <div class="sub truncate">cx.flow.move conflict</div>
-            </div>
-            <span class="pill muted" style="font-size:10px;">已合</span>
+          <a class="m-list-item" href="../desktop/space.html?id=design" style="text-decoration:none; color:inherit;">
+            <span class="avatar lg org" style="background:linear-gradient(135deg,#be185d,#ec4899);">D</span>
+            <span class="grow">
+              <span class="title">Design</span>
+              <span class="sub">8 <span class="i18n"><span class="zh">成员</span><span class="en">members</span></span></span>
+            </span>
           </a>
         </div>
 
+        <!-- Recent flows -->
         <div class="m-section">
-          <h2>Spaces</h2>
-          <a class="m-list-item" href="board.html">
-            <div class="avatar org">AE</div>
-            <div class="grow">
-              <div class="title">Acme Engineering</div>
-              <div class="sub">listed · 24 成员 · 🔒 E2EE</div>
-            </div>
-            <span class="pill danger" style="font-size:10px;">12</span>
+          <h2 class="i18n"><span class="zh">最近 Flows</span><span class="en">Recent Flows</span></h2>
+          <a class="m-list-item" href="flow-detail.html" style="text-decoration:none; color:inherit;">
+            <span class="avatar xs" style="background:linear-gradient(135deg,#0ea5e9,#14b8a6);">B</span>
+            <span class="grow">
+              <span class="title">FLO-247 · rank 重平衡</span>
+              <span class="sub"><span class="pill warning xs">in_review</span> · Engineering · 2m</span>
+            </span>
           </a>
-          <a class="m-list-item" href="board.html">
-            <div class="avatar org">LP</div>
-            <div class="grow">
-              <div class="title">Launch Plan</div>
-              <div class="sub">project · invite_only</div>
-            </div>
-          </a>
-          <a class="m-list-item" href="board.html" style="border-color:var(--warning);">
-            <div class="avatar org">AB</div>
-            <div class="grow">
-              <div class="title">Acme × Beta Co.</div>
-              <div class="sub">外部 · controlled · trust_bundle pending</div>
-            </div>
-            <span class="pill warning" style="font-size:10px;">外</span>
-          </a>
-          <a class="m-list-item" href="board.html">
-            <div class="avatar">P</div>
-            <div class="grow">
-              <div class="title">Personal</div>
-              <div class="sub">仅本人</div>
-            </div>
+          <a class="m-list-item" href="flow-detail.html" style="text-decoration:none; color:inherit;">
+            <span class="avatar xs agent">A2</span>
+            <span class="grow">
+              <span class="title">FLO-238 · references collected</span>
+              <span class="sub"><span class="pill xs">agent</span> · research-bot · 1h</span>
+            </span>
           </a>
         </div>
 
+        <!-- Sync card -->
         <div class="m-section">
-          <h2>分配给我</h2>
-          <a class="m-list-item" href="flow-detail.html">
-            <span style="font-size:18px;">📌</span>
+          <h2 class="i18n"><span class="zh">同步状态</span><span class="en">Sync</span></h2>
+          <a class="m-list-item" href="../desktop/audit.html" style="text-decoration:none; color:inherit;">
             <div class="grow">
-              <div class="title">Review launch checklist</div>
-              <div class="sub">review · 🔒 E2EE · overdue 1d</div>
+              <div class="title f-13">●<span class="i18n"><span class="zh"> 在线</span><span class="en"> online</span></span> · 0 <span class="i18n"><span class="zh">待发</span><span class="en">pending</span></span></div>
+              <div class="sub mono">cx:hlc:4f3a:7b21 · seq 9173</div>
             </div>
-          </a>
-          <a class="m-list-item" href="flow-detail.html">
-            <span style="font-size:18px;">🔧</span>
-            <div class="grow">
-              <div class="title">支付重构 — 风控回调</div>
-              <div class="sub">in_progress · 5/9</div>
-            </div>
+            <span class="chev dim">›</span>
           </a>
         </div>
-
-        <div style="height:24px;"></div>
       </div>
 
+      <!-- Bottom tab bar (5) -->
       <div class="phone-bottom">
-        <div class="phone-tab active"><div class="ico">⌂</div><span>首页</span></div>
-        <a class="phone-tab" href="inbox.html"><div class="ico">📥</div><span>Inbox</span></a>
-        <a class="phone-tab" href="board.html"><div class="ico">▦</div><span>看板</span></a>
-        <a class="phone-tab" href="discussion.html"><div class="ico">💬</div><span>讨论</span></a>
-        <a class="phone-tab" href="devices.html"><div class="ico">⚙</div><span>更多</span></a>
+        <a class="phone-tab active" href="home.html"><span class="ico">🏠</span><span class="i18n"><span class="zh">工作台</span><span class="en">Home</span></span></a>
+        <a class="phone-tab" href="inbox.html" style="position:relative;"><span class="ico">📥</span><span>Inbox</span><span class="badge" style="position:absolute; top:0; right:24%;">3</span></a>
+        <a class="phone-tab" href="board.html"><span class="ico">📋</span>Board</a>
+        <a class="phone-tab" href="discussion.html"><span class="ico">💬</span><span class="i18n"><span class="zh">讨论</span><span class="en">Chat</span></span></a>
+        <a class="phone-tab" href="settings.html"><span class="ico">⚙</span><span class="i18n"><span class="zh">设置</span><span class="en">Settings</span></span></a>
       </div>
+
+      <button class="m-fab" title="New Flow">+</button>
     </div>
-  </div>
+  </main>
 </body>
 </html>
+

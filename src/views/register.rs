@@ -102,11 +102,6 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                             span { "did:key" }
                             div { class: "muted", "test, bootstrap, device, or invite only" }
                         }
-                        div { class: "metric",
-                            strong { "Legacy" }
-                            span { "did:uuid" }
-                            div { class: "muted", "read-only migration; never generated here" }
-                        }
                     }
                     div { class: "actions",
                         button {
@@ -187,7 +182,7 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                                 },
                             }
                             div { class: "muted",
-                                "Binding keeps the identifier you already control and asks for a scoped proof before account registration. New did:uuid generation is intentionally unavailable."
+                                "Binding keeps the identifier you already control and asks for a scoped proof before account registration."
                             }
                             if !existing_did_status().is_empty() {
                                 div { class: "muted", "data-testid": "bind-existing-did-status", "{existing_did_status}" }
@@ -202,7 +197,7 @@ pub fn RegisterPanel(base_url: String, on_register: EventHandler<()>) -> Element
                                             existing_did_status.set("Enter the DID you want to bind.".to_owned());
                                         } else if !is_supported_existing_did(&did) {
                                             existing_did_status.set(
-                                                "Supported DID methods are did:plc, did:web, did:webvh, and temporary did:key. did:uuid is not accepted.".to_owned(),
+                                                "Supported DID methods are did:plc, did:web, did:webvh, and temporary did:key.".to_owned(),
                                             );
                                         } else {
                                             generated_did.set(did);
