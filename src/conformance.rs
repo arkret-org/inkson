@@ -113,7 +113,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_FULL_CLIENT,
             label: "full_client",
-            description: "Full client: product workflows, space lifecycle, audit, notifications, app views, and admin surfaces.",
+            description: "Full client: setup workflows, space lifecycle, audit, notifications, app views, and admin surfaces.",
             local_supported: true,
             degradation_path: "Fall back to minimal, chat-only, and kanban-only surfaces.",
             tier: ConformanceTier::V1Core,

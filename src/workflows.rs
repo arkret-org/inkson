@@ -16,7 +16,7 @@ impl WorkflowStage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProductWorkflow {
+pub struct ClientWorkflow {
     pub id: &'static str,
     pub name: &'static str,
     pub stage: WorkflowStage,
@@ -24,79 +24,79 @@ pub struct ProductWorkflow {
     pub server_dependency: &'static str,
 }
 
-pub fn production_release_workflows() -> Vec<ProductWorkflow> {
+pub fn production_release_workflows() -> Vec<ClientWorkflow> {
     vec![
-        ProductWorkflow {
+        ClientWorkflow {
             id: "account.dev_bootstrap",
             name: "Development account bootstrap",
             stage: WorkflowStage::Supported,
             client_surface: "Settings + Connect",
             server_dependency: "POST /api/v1/auth/dev-login",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "account.registration",
             name: "Production registration",
             stage: WorkflowStage::Blocked,
-            client_surface: "Product panel basic registration",
+            client_surface: "Onboarding identity bootstrap",
             server_dependency: "Needs DID proof challenge, recovery policy, and account/device verification before production",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "account.password_passkey_login",
             name: "Password/passkey login",
             stage: WorkflowStage::Blocked,
             client_surface: "Release panel gap",
             server_dependency: "Needs coauth-owned OIDC/passkey challenge, code/token exchange, soland session-grant handoff, and chime push registration grant reuse",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "identity.device_verification",
             name: "Device verification",
             stage: WorkflowStage::ClientReady,
             client_surface: "Devices panel + SDK device primitives",
             server_dependency: "Needs persisted device trust, cross-signing, SAS/QR verification, and revocation endpoints",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "space.discovery",
             name: "Discover and resolve public spaces",
             stage: WorkflowStage::Supported,
             client_surface: "Directory panel",
             server_dependency: "POST /api/v1/directory/search-spaces and resolve-space",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "space.create",
             name: "Create space",
             stage: WorkflowStage::Blocked,
-            client_surface: "Product panel basic create Space",
+            client_surface: "Workspace Setup space bootstrap",
             server_dependency: "Needs metadata edit, policy templates, signed operation templates, and retention rules",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "space.membership",
             name: "Invite, add, remove, and kick members",
             stage: WorkflowStage::Blocked,
-            client_surface: "Product panel basic add/remove member",
+            client_surface: "Workspace Setup + Space Admin membership",
             server_dependency: "Missing invite/member state operations, authz checks, MLS Welcome/Commit delivery, and removal epoch rotation",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "space.delete",
             name: "Leave, archive, and delete space",
             stage: WorkflowStage::Blocked,
-            client_surface: "Product panel basic delete Space",
+            client_surface: "Workspace Setup + Space Admin destructive flows",
             server_dependency: "Needs leave/archive UX, tombstone policy, and history retention enforcement",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "message.create",
             name: "Plaintext and local encrypted compose",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Timeline composer + Product panel canonical send",
+            client_surface: "Space timeline composer",
             server_dependency: "Needs real web MLS crypto store and client-side signed commit path for offline queue",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "moderation.report",
             name: "Moderation report",
             stage: WorkflowStage::Supported,
             client_surface: "Report / Queue",
             server_dependency: "POST /api/v1/moderation/report",
         },
-        ProductWorkflow {
+        ClientWorkflow {
             id: "release.packaging",
             name: "Release packaging and upgrade",
             stage: WorkflowStage::Blocked,
@@ -106,7 +106,7 @@ pub fn production_release_workflows() -> Vec<ProductWorkflow> {
     ]
 }
 
-pub fn blocked_release_workflows() -> Vec<ProductWorkflow> {
+pub fn blocked_release_workflows() -> Vec<ClientWorkflow> {
     production_release_workflows()
         .into_iter()
         .filter(|workflow| workflow.stage == WorkflowStage::Blocked)
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_workflow_inventory_keeps_major_product_gaps_visible() {
+    fn release_workflow_inventory_keeps_major_client_gaps_visible() {
         let blocked = blocked_release_workflows();
         assert!(
             blocked

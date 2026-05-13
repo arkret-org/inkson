@@ -11,7 +11,7 @@ use crate::{
     models::AccountDataSetOutcome,
     routes::Route,
     views::helpers::authed_api,
-    workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
+    workflows::blocked_release_workflows,
 };
 
 /// `cx.account_data` key used by the read-receipt preferences entry. Spec:
@@ -169,7 +169,6 @@ const SETTINGS_DELIVERY_GROUP: &[SettingsSection] =
 const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
     &[SettingsSection::Theme, SettingsSection::Storage];
 const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
-const SETTINGS_DIAGNOSTICS_GROUP: &[SettingsSection] = &[SettingsSection::Release];
 const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (
         "Account",
@@ -195,11 +194,6 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         "Integrations",
         "Applets, agents, and interop-specific controls.",
         SETTINGS_INTEGRATIONS_GROUP,
-    ),
-    (
-        "Diagnostics",
-        "Release gates, audit, and advanced build diagnostics.",
-        SETTINGS_DIAGNOSTICS_GROUP,
     ),
 ];
 
@@ -236,7 +230,6 @@ pub fn SettingsPanel(
         use_signal(|| "cx:backup:01964137-0000-7000-8000-000000000000".to_owned());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
-    let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
     let muted_spaces = state_store.read().muted_spaces();
     let active_locale = locale();
@@ -295,6 +288,9 @@ pub fn SettingsPanel(
                             }
                             if active_section == SettingsSection::Push {
                                 span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
+                            }
+                            if active_section == SettingsSection::Release {
+                                span { class: "badge amber", "Moved to Readiness" }
                             }
                         }
                     }
@@ -1322,34 +1318,29 @@ pub fn SettingsPanel(
                     // ── CI / Release gate status ─────────────────────────
                     if active_section == SettingsSection::Release {
                         div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "release-gate-status",
-                    div { class: "event-head", span { "Release Gate" } span { "{blocked_count} blockers" } }
-                    for workflow in &workflows {
-                        div { class: "event", "data-testid": "workflow-row",
-                            div { class: "event-head",
-                                span { "{workflow.stage.label()}" }
-                                span { "{workflow.id}" }
-                            }
-                            div { class: "space-title", "{workflow.name}" }
-                            div { class: "muted", "Client: {workflow.client_surface}" }
-                            div { class: "muted", "Dependency: {workflow.server_dependency}" }
-                            if workflow.stage == WorkflowStage::Blocked {
+                            div { class: "event", "data-testid": "release-moved-banner",
+                                div { class: "event-head",
+                                    span { "Diagnostics moved" }
+                                    span { "{blocked_count} blockers" }
+                                }
+                                div { class: "muted",
+                                    "Release gates and advanced build diagnostics no longer live in the everyday Settings tree. Use Readiness for release blocking work and Audit for protocol investigation."
+                                }
                                 div { class: "actions",
-                                    button {
+                                    Link {
+                                        class: "primary",
+                                        to: Route::Readiness,
+                                        UiIcon { name: "check" }
+                                        "Open Readiness"
+                                    }
+                                    Link {
                                         class: "secondary",
-                                        "data-testid": "blocked-workflow-button",
-                                        onclick: {
-                                            let name = workflow.name;
-                                            let dependency = workflow.server_dependency;
-                                            move |_| status.set(format!("Blocked: {name} requires {dependency}"))
-                                        },
-                                        "Show blocker"
+                                        to: Route::Audit,
+                                        UiIcon { name: "activity" }
+                                        "Open Audit"
                                     }
                                 }
                             }
-                        }
-                    }
-                }
                         }
                     }
 

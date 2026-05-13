@@ -370,33 +370,32 @@ test("notifications are derived from index projections and respect per-space mut
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 
-test("product account space lifecycle and canonical message flow works", async ({ page }) => {
+test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
-  await page.getByTestId("topbar-create-button").click();
-  await expect(page.getByTestId("product-panel")).toBeVisible();
-
+  await page.getByRole("link", { name: "Onboarding" }).click();
+  await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await page.getByTestId("register-account-button").click();
   await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
 
+  await page.getByTestId("topbar-create-button").click();
+  await expect(page.getByTestId("setup-panel")).toBeVisible();
+
   await page.getByTestId("create-space-button").click();
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0productflow000000000000");
-  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0productflow000000000000");
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0setupflow000000000000");
+  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0setupflow000000000000");
 
   await page.getByTestId("add-member-button").click();
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
-  await page.getByTestId("persist-message-button").click();
-  await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted");
-  await expect(page.getByTestId("message-persistence-flow")).toContainText("via cx:event:");
-  // C17 (spec 2026-05-08): cx.events.query replaces cx.sync.backfill at /api/v1/events
-  // with direction=backward.
-  const backfill = page.waitForRequest("**/api/v1/events?**direction=backward*");
-  await page.getByTestId("backfill-button").click();
-  expect((await backfill).headers()["x-contrix-wait-for"]).toBe("sx:e2e:product");
-  await page.getByRole("link", { name: "Timeline" }).click();
-  await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:");
-  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:product");
+  const sendRequest = page.waitForRequest("**/api/v1/events");
+  await page.getByRole("link", { name: "Open Current Space" }).first().click();
+  await expect(page.getByTestId("timeline")).toBeVisible();
+  await page.getByTestId("composer-input").fill("setup flow message");
+  await page.getByTestId("send-button").click();
+  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  await expect(page.getByTestId("timeline")).toContainText("setup flow message");
+  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
 
@@ -670,7 +669,7 @@ test("call panel loads server ICE configuration", async ({ page }) => {
   await expect(page.getByTestId("ice-ttl")).toContainText("600s");
 });
 
-test("visual smoke renders core product pages on desktop and mobile", async ({ page }) => {
+test("visual smoke renders core client pages on desktop and mobile", async ({ page }) => {
   await refreshServer(page);
   for (const [route, testId] of [
     ["/", "dashboard-panel"],

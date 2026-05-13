@@ -22,38 +22,46 @@ pub fn DashboardPanel(
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
     let has_session = !token().trim().is_empty();
-    let sync_delta = if has_session {
-        format!("online · {device_queue} pending")
-    } else {
-        "offline · 0 pending".to_owned()
-    };
-
+    let active_space = spaces()
+        .iter()
+        .find(|space| space.space_id == selected_space())
+        .cloned()
+        .or_else(|| spaces().first().cloned());
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
             div { class: "spread mb-24", "data-testid": "dashboard-hero",
                 div {
                     h1 { style: "font-size: 22px; margin: 0 0 4px; letter-spacing: 0;",
-                        if has_session { "Workspace" } else { "No active session" }
+                        if has_session { "Continue work" } else { "No active session" }
                     }
                     div { class: "muted f-12",
-                        if has_session { "Server-backed workspace data is shown below." } else { "Connect a Principal Server, then sign in to load spaces, inbox, devices, and flows." }
+                        if has_session { "Pick a Space, clear inbox, or browse the directory. Diagnostics stay below in a separate operations surface." } else { "Connect a Principal Server, then sign in to load spaces, inbox, and collaboration views." }
                     }
                 }
                 div { class: "row gap-6 wrap",
                     Link {
                         class: "btn sm primary",
-                        "data-testid": "quick-create-space",
-                        to: Route::Product,
-                        onclick: move |_| view.set(super::View::Product),
-                        UiIcon { name: "plus" }
-                        "New Space"
+                        "data-testid": "quick-open-inbox",
+                        to: Route::Notifications,
+                        onclick: move |_| view.set(super::View::Notifications),
+                        UiIcon { name: "inbox" }
+                        "Open Inbox"
                     }
                     Link {
                         class: "btn sm",
-                        to: Route::Call,
-                        onclick: move |_| view.set(super::View::Call),
-                        UiIcon { name: "phone" }
-                        "Call"
+                        "data-testid": "quick-browse-directory",
+                        to: Route::Directory,
+                        onclick: move |_| view.set(super::View::Directory),
+                        UiIcon { name: "search" }
+                        "Browse Directory"
+                    }
+                    Link {
+                        class: "btn sm ghost",
+                        "data-testid": "quick-workspace-setup",
+                        to: Route::Setup,
+                        onclick: move |_| view.set(super::View::Setup),
+                        UiIcon { name: "plus" }
+                        "Workspace Setup"
                     }
                 }
             }
@@ -65,28 +73,62 @@ pub fn DashboardPanel(
                     onclick: move |_| view.set(super::View::Notifications),
                     div { class: "lbl", "Inbox" }
                     div { class: "val", "0" }
-                    div { class: "delta", if has_session { "No loaded notifications" } else { "Sign in required" } }
+                    div { class: "delta", if has_session { "Unread and approvals" } else { "Sign in required" } }
                 }
                 Link {
                     class: "metric",
-                    to: Route::Audit,
-                    onclick: move |_| view.set(super::View::Audit),
-                    div { class: "lbl", "Sync frontier" }
-                    div { class: "val mono", style: "font-size: 14px;", "{sync_cursor}" }
-                    div { class: "delta", "{sync_delta}" }
+                    to: Route::Directory,
+                    onclick: move |_| view.set(super::View::Directory),
+                    div { class: "lbl", "Spaces" }
+                    div { class: "val", "{spaces().len()}" }
+                    div { class: "delta", if has_session { "Browse or join a Space" } else { "Sign in to load spaces" } }
                 }
-                Link {
-                    class: "metric",
-                    to: Route::Devices,
-                    onclick: move |_| view.set(super::View::Devices),
-                    div { class: "lbl", "Devices" }
-                    div { class: "val", if has_session { "1" } else { "0" } }
-                    div { class: "delta", if has_session { "Current session device" } else { "No authenticated devices" } }
-                }
-                div { class: "metric", "data-testid": "device-queue-card",
-                    div { class: "lbl", "Local queue" }
-                    div { class: "val", "{device_queue}" }
-                    div { class: "delta", "writes waiting for replay" }
+                if let Some(space) = active_space.as_ref() {
+                    Link {
+                        class: "metric",
+                        to: Route::Space { space_id: space.space_id.clone() },
+                        onclick: {
+                            let id = space.space_id.clone();
+                            move |_| {
+                                selected_space.set(id.clone());
+                                view.set(super::View::Timeline);
+                            }
+                        },
+                        div { class: "lbl", "Current Space" }
+                        div { class: "val", "{space.name}" }
+                        div { class: "delta", "Resume in the current context" }
+                    }
+                    Link {
+                        class: "metric",
+                        to: Route::Space { space_id: space.space_id.clone() },
+                        onclick: {
+                            let id = space.space_id.clone();
+                            move |_| {
+                                selected_space.set(id.clone());
+                                view.set(super::View::Timeline);
+                            }
+                        },
+                        div { class: "lbl", "Continue" }
+                        div { class: "val mono", style: "font-size: 14px;", "{space.space_id}" }
+                        div { class: "delta", "Open the last active Space view" }
+                    }
+                } else {
+                    Link {
+                        class: "metric",
+                        to: Route::Setup,
+                        onclick: move |_| view.set(super::View::Setup),
+                        div { class: "lbl", "Workspace Setup" }
+                        div { class: "val", if has_session { "Ready" } else { "Sign in" } }
+                        div { class: "delta", "Bootstrap your first Space and initial policy" }
+                    }
+                    Link {
+                        class: "metric",
+                        to: Route::Onboarding,
+                        onclick: move |_| view.set(super::View::Onboarding),
+                        div { class: "lbl", "Onboarding" }
+                        div { class: "val", "4 steps" }
+                        div { class: "delta", "Identity, device, and recovery setup" }
+                    }
                 }
             }
 
@@ -121,7 +163,7 @@ pub fn DashboardPanel(
                                     Link {
                                         class: "m-list-item",
                                         "data-testid": "dashboard-space-card",
-                                        to: Route::TimelineSpace { space_id: space.space_id.clone() },
+                                        to: Route::Space { space_id: space.space_id.clone() },
                                         onclick: {
                                             let id = space.space_id.clone();
                                             move |_| {
@@ -180,11 +222,36 @@ pub fn DashboardPanel(
                 }
 
                 div { class: "stack",
-                    div { class: "surface", "data-testid": "workspace-state",
+                    div { class: "surface", "data-testid": "pinned-inbox",
                         div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
-                            strong { "Workspace State" }
+                            strong { "Needs Attention" }
+                            Link {
+                                class: "btn icon sm ghost",
+                                "data-testid": "pinned-inbox-open",
+                                to: Route::Notifications,
+                                onclick: move |_| view.set(super::View::Notifications),
+                                style: "margin-left: auto;",
+                                title: "Open inbox",
+                                "aria-label": "Open inbox",
+                                UiIcon { name: "inbox" }
+                            }
+                        }
+                        div { class: "stack-sm", style: "padding: 8px 12px 12px;",
+                            div { class: "m-list-item",
+                                span { class: "avatar xs", "0" }
+                                span { class: "grow",
+                                    span { class: "title f-13", if has_session { "No inbox items loaded" } else { "Sign in to load inbox" } }
+                                    span { class: "sub", "Unread, approvals, and notifications appear here" }
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "surface", "data-testid": "operations-surface",
+                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
+                            strong { "Operations & Diagnostics" }
                             span { style: "margin-left: auto;",
-                                HelpTip { text: "Frontier values come from the current sync and event surfaces; no repo protocol is involved." }
+                                HelpTip { text: "Operational status stays separate from collaboration entry points. Use this surface for sync, device, and release diagnostics." }
                             }
                         }
                         div { class: "settings-row",
@@ -208,11 +275,28 @@ pub fn DashboardPanel(
                             }
                             span { class: "mono f-11", "{device_queue}" }
                         }
-                    }
-
-                    div { class: "surface", "data-testid": "protocol-health",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
-                            strong { "Protocol Health" }
+                        div { class: "actions", style: "padding: 12px 16px 0;",
+                            Link {
+                                class: "secondary",
+                                to: Route::Devices,
+                                onclick: move |_| view.set(super::View::Devices),
+                                UiIcon { name: "monitor" }
+                                "Devices"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::Readiness,
+                                onclick: move |_| view.set(super::View::Readiness),
+                                UiIcon { name: "check" }
+                                "Readiness"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::Audit,
+                                onclick: move |_| view.set(super::View::Audit),
+                                UiIcon { name: "activity" }
+                                "Audit"
+                            }
                             button {
                                 class: "btn icon sm ghost",
                                 "data-testid": "check-health-button",
@@ -256,7 +340,7 @@ pub fn DashboardPanel(
                         }
                         div { style: "padding: 12px 16px;",
                             if protocol_health().is_empty() {
-                                div { class: "muted f-12", "Run checks after changing the Principal Server." }
+                                div { class: "muted f-12", "Run checks after changing the Principal Server. Collaboration starts in Spaces; operational checks stay here." }
                             } else {
                                 div { class: "stack-sm",
                                     for (name, status) in protocol_health() {
@@ -265,31 +349,6 @@ pub fn DashboardPanel(
                                             span { class: "mono f-11", "{status}" }
                                         }
                                     }
-                                }
-                            }
-                        }
-                    }
-
-                    div { class: "surface", "data-testid": "pinned-inbox",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
-                            strong { "Inbox" }
-                            Link {
-                                class: "btn icon sm ghost",
-                                "data-testid": "pinned-inbox-open",
-                                to: Route::Notifications,
-                                onclick: move |_| view.set(super::View::Notifications),
-                                style: "margin-left: auto;",
-                                title: "Open inbox",
-                                "aria-label": "Open inbox",
-                                UiIcon { name: "inbox" }
-                            }
-                        }
-                        div { class: "stack-sm", style: "padding: 8px 12px 12px;",
-                            div { class: "m-list-item",
-                                span { class: "avatar xs", "0" }
-                                span { class: "grow",
-                                    span { class: "title f-13", if has_session { "No inbox items loaded" } else { "Sign in to load inbox" } }
-                                    span { class: "sub", "Server-backed notifications only" }
                                 }
                             }
                         }

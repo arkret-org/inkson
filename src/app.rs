@@ -83,10 +83,20 @@ a.primary, a.secondary { line-height: 1.5; }
 .metric span { overflow-wrap: anywhere; }
 .quick-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .quick-nav__item { min-width: 0; }
-.compact-button { padding: 7px 9px; font-size: 13px; }
 .mobile-shellbar, .mobile-drawer { display: none; }
 .mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #e2e8f0; }
 .mobile-status .muted { color: #cbd5e1; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .settings, .workflow-form { display: grid; gap: 10px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .badge-info { background: #e7edf3; color: #18212f; }
@@ -152,7 +162,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   .event { break-inside: avoid; }
 }
 
-/* Product theme layer: calm security-oriented palette shared by all views. */
+/* App theme layer: calm security-oriented palette shared by all views. */
 body {
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   background: #eef3ed;
@@ -1144,43 +1154,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .workspace-header .actions {
   align-items: center;
   gap: 8px;
-}
-
-.workspace-status {
-  min-width: 220px;
-  max-width: min(32vw, 340px);
-  padding: 8px 10px;
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
-.workspace-status__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.workspace-status__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-}
-
-.workspace-status__cursor {
-  flex: 1 1 180px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-status__error {
-  color: var(--danger-ink);
-  font-size: 11px;
-  margin-top: 4px;
 }
 
 .workspace-header > .sidebar-collapse-toggle {
@@ -2244,6 +2217,22 @@ pub fn RouterView() -> Element {
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
 
+    let routed_space_id = route.space_id().map(str::to_owned);
+    let remembered_space_id = selected_space();
+    let effective_space_id = routed_space_id.clone().or_else(|| {
+        if remembered_space_id.trim().is_empty() {
+            None
+        } else {
+            Some(remembered_space_id.clone())
+        }
+    });
+    let active_space_id = effective_space_id.clone().unwrap_or_default();
+    if let Some(route_space_id) = routed_space_id.as_deref() {
+        if remembered_space_id != route_space_id {
+            selected_space.set(route_space_id.to_owned());
+        }
+    }
+
     let active_server_description = server_description();
     let has_session = !token().trim().is_empty();
     let active_server_label = active_server_description
@@ -2295,10 +2284,42 @@ pub fn RouterView() -> Element {
         .as_ref()
         .map(|description| description.supports_event_envelope_write_plane())
         .unwrap_or(false);
+    let route_uses_space_context = route_uses_space_context(&route);
+    let context_space_id = if route_uses_space_context {
+        effective_space_id.clone()
+    } else {
+        None
+    };
+    let resolved_space_surface = resolve_space_surface(
+        &route,
+        &state_store(),
+        &account_did(),
+        context_space_id.as_deref(),
+    );
+    if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface) {
+        if matches!(
+            &route,
+            Route::TimelineSpace { .. }
+                | Route::KanbanSpace { .. }
+                | Route::ChatSpace { .. }
+                | Route::DocumentSpace { .. }
+        ) {
+            let stored_surface =
+                load_space_surface_preference(&state_store(), &account_did(), space_id);
+            if stored_surface != surface {
+                persist_space_surface_preference(
+                    &mut state_store.write(),
+                    &account_did(),
+                    space_id,
+                    surface,
+                );
+            }
+        }
+    }
 
     let selected_preview = spaces()
         .iter()
-        .find(|space| space.space_id == selected_space())
+        .find(|space| context_space_id.as_deref() == Some(space.space_id.as_str()))
         .cloned();
     let active_locale = locale();
     let active_direction = active_locale.direction();
@@ -2318,11 +2339,9 @@ pub fn RouterView() -> Element {
     } else {
         "Switch to night theme"
     };
-    let route_title = route_label(&route);
-    let title = selected_preview
-        .as_ref()
-        .map(|space| space.name.clone())
-        .unwrap_or_else(|| route_title.to_owned());
+    let route_title = resolved_space_surface
+        .map(SpaceSurface::title)
+        .unwrap_or_else(|| route_label(&route));
     let shell_class = format!(
         "shell app {}{}{}{}",
         match active_theme.as_str() {
@@ -2494,13 +2513,40 @@ pub fn RouterView() -> Element {
                         "Refresh"
                     }
                 }
-                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
+                div { class: "muted", "Workspace" }
+                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Home" }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
-                Link { class: "secondary", "data-testid": "mobile-timeline-nav-button", to: Route::Timeline, onclick: move |_| mobile_nav_open.set(false), "Timeline" }
-                Link { class: "secondary", "data-testid": "mobile-kanban-nav-button", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
-                Link { class: "secondary", "data-testid": "mobile-chat-nav-button", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Discussions" }
                 Link { class: "secondary", "data-testid": "mobile-notifications-nav-button", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
+                if !spaces().is_empty() {
+                    div { class: "muted", "Spaces" }
+                    for space in spaces().into_iter().take(4) {
+                        Link {
+                            class: "secondary",
+                            "data-testid": "mobile-space-nav-button",
+                            to: Route::Space { space_id: space.space_id.clone() },
+                            onclick: {
+                                let id = space.space_id.clone();
+                                move |_| {
+                                    selected_space.set(id.clone());
+                                    mobile_nav_open.set(false);
+                                }
+                            },
+                            "{space.name}"
+                        }
+                    }
+                }
+                div { class: "muted", "Setup & recovery" }
+                Link { class: "secondary", to: Route::Onboarding, onclick: move |_| mobile_nav_open.set(false), "Onboarding" }
+                Link { class: "secondary", to: Route::VerifyDevice, onclick: move |_| mobile_nav_open.set(false), "Verify Device" }
+                Link { class: "secondary", to: Route::Recovery, onclick: move |_| mobile_nav_open.set(false), "Recovery" }
+                Link { class: "secondary", to: Route::Applets, onclick: move |_| mobile_nav_open.set(false), "Applets & Agents" }
+                Link { class: "secondary", to: Route::Quarantine, onclick: move |_| mobile_nav_open.set(false), "Invite Quarantine" }
+                div { class: "muted", "Tools" }
+                Link { class: "secondary", to: Route::Devices, onclick: move |_| mobile_nav_open.set(false), "Devices" }
+                Link { class: "secondary", to: Route::Call, onclick: move |_| mobile_nav_open.set(false), "Call" }
+                Link { class: "secondary", to: Route::Audit, onclick: move |_| mobile_nav_open.set(false), "Audit" }
+                Link { class: "secondary", to: Route::Readiness, onclick: move |_| mobile_nav_open.set(false), "Readiness" }
             }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
                 div {
@@ -2676,13 +2722,13 @@ pub fn RouterView() -> Element {
                         "data-testid": "directory-nav-button",
                         to: Route::Directory,
                         span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                        span { class: "grow", "Search / Directory" }
+                        span { class: "grow", "Search" }
                         span { class: "kbd-tag", "⌘K" }
                     }
                 }
 
                 div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Personal" }
+                    h4 { class: "sidebar-nav-group-title", "Workspace" }
                     Link { class: "sidebar-nav-item", to: Route::Dashboard,
                         span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
                         span { class: "grow", "Home" }
@@ -2700,36 +2746,12 @@ pub fn RouterView() -> Element {
                         span { class: "sidebar-nav-icon", UiIcon { name: "settings" } }
                         span { class: "grow", "Settings" }
                     }
-                    if minimal_ready {
-                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Timeline", to: Route::Timeline,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "timeline" } }
-                            span { class: "grow", "Timeline" }
-                        }
-                    }
-                    if kanban_ready {
-                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Kanban", to: Route::Kanban,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "board" } }
-                            span { class: "grow", "Kanban" }
-                        }
-                    }
-                    if chat_ready {
-                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Chat", to: Route::Chat,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "message" } }
-                            span { class: "grow", "Chat" }
-                        }
-                    }
-                    if full_ready {
-                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Audit", to: Route::Audit,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "activity" } }
-                            span { class: "grow", "Audit" }
-                        }
-                    }
                 }
 
                 div { class: "sidebar-nav-group", "data-testid": "space-list",
                     h4 { class: "sidebar-nav-group-title",
                         span { "Spaces" }
-                        Link { class: "add", to: Route::Product, "+" }
+                        Link { class: "add", to: Route::SetupSection { section: "spaces".to_owned() }, "+" }
                     }
                     if spaces().is_empty() {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "space-empty-state",
@@ -2739,9 +2761,9 @@ pub fn RouterView() -> Element {
                     } else {
                         for space in spaces().into_iter().take(5) {
                             Link {
-                                class: if space.space_id == selected_space() { "sidebar-nav-item is-active" } else { "sidebar-nav-item" },
+                                class: if effective_space_id.as_deref() == Some(space.space_id.as_str()) { "sidebar-nav-item is-active" } else { "sidebar-nav-item" },
                                 "data-testid": "space-button",
-                                to: Route::TimelineSpace { space_id: space.space_id.clone() },
+                                to: Route::Space { space_id: space.space_id.clone() },
                                 onclick: {
                                     let id = space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
@@ -2755,29 +2777,44 @@ pub fn RouterView() -> Element {
                 }
 
                 div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Cross-organization" }
-                    div { class: "sidebar-nav-item is-dim", "data-testid": "cross-org-empty-state",
-                        span { class: "sidebar-nav-icon", UiIcon { name: "globe" } }
-                        span { class: "grow truncate", "No cross-org spaces loaded" }
+                    h4 { class: "sidebar-nav-group-title", "Setup & recovery" }
+                    Link { class: "sidebar-nav-item", to: Route::Onboarding,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
+                        span { class: "grow", "Onboarding" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::VerifyDevice,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
+                        span { class: "grow", "Verify Device" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::Recovery,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "archive" } }
+                        span { class: "grow", "Recovery" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::Applets,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "server" } }
+                        span { class: "grow", "Applets & Agents" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::Quarantine,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "inbox" } }
+                        span { class: "grow", "Invite Quarantine" }
                     }
                 }
 
                 div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title",
-                        span { "Personal Spaces" }
-                        Link { class: "add", to: Route::Product, "+" }
-                    }
-                    div { class: "sidebar-nav-item is-dim", "data-testid": "personal-spaces-empty-state",
-                        span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
-                        span { class: "grow truncate", "No personal spaces loaded" }
-                    }
-                }
-
-                div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Protocol Tools" }
+                    h4 { class: "sidebar-nav-group-title", "Tools" }
                     Link { class: "sidebar-nav-item", "data-testid": "devices-nav-button", to: Route::Devices,
                         span { class: "sidebar-nav-icon", UiIcon { name: "monitor" } }
                         span { class: "grow", "Devices" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::Call,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "phone" } }
+                        span { class: "grow", "Call" }
+                    }
+                    if full_ready {
+                        Link { class: "sidebar-nav-item", "aria-label": "Audit", to: Route::Audit,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "activity" } }
+                            span { class: "grow", "Audit" }
+                        }
                     }
                     Link { class: "sidebar-nav-item", "data-testid": "readiness-nav-button", to: Route::Readiness,
                         span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
@@ -2818,14 +2855,17 @@ pub fn RouterView() -> Element {
                     div { class: "crumbs", "data-testid": "topbar-crumbs",
                         Link { to: Route::SettingsSection { section: "server".to_owned() }, strong { "{active_server_label}" } }
                         span { class: "crumb-tag", if has_session { "Session" } else { "Server" } }
-                        span { class: "sep", "/" }
-                        span { class: "id", "data-testid": "space-title", "{route_title}" }
-                        if title != route_title {
+                        if let Some(space) = selected_preview.as_ref() {
                             span { class: "sep", "/" }
-                            span { class: "id", "{title}" }
-                        }
-                        if selected_preview.is_some() {
-                            span { class: "id", "data-testid": "selected-space-id", "selected Space {selected_space}" }
+                            span { class: "id", "Spaces" }
+                            span { class: "sep", "/" }
+                            span { class: "id", "data-testid": "space-title", "{space.name}" }
+                            span { class: "sep", "/" }
+                            span { class: "id", "{route_title}" }
+                            span { class: "id muted mono", "data-testid": "selected-space-id", "{space.space_id}" }
+                        } else {
+                            span { class: "sep", "/" }
+                            span { class: "id", "data-testid": "space-title", "{route_title}" }
                         }
                     }
                     div { class: "actions",
@@ -2857,52 +2897,12 @@ pub fn RouterView() -> Element {
                             }
                             kbd { "⌘K" }
                         }
-                        div { class: "status workspace-status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
-                            div { class: "workspace-status__head",
-                                div { class: "space-title", "data-testid": "status-label", "{status}" }
-                                span {
-                                    class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
-                                    "data-testid": "network-state-badge",
-                                    "{network_state}"
-                                }
-                            }
-                            div { class: "workspace-status__meta",
-                                div { class: "muted mono workspace-status__cursor", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
-                                if network_state() != "online" {
-                                    button {
-                                        class: "secondary compact-button",
-                                        "data-testid": "retry-connection-button",
-                                        onclick: move |_| {
-                                            let base = base_url();
-                                            let actor = account_did();
-                                            let device = device_id();
-                                            connect(base, actor, device, ConnectContext {
-                                                status,
-                                                sync_cursor,
-                                                token,
-                                                account_did,
-                                                selected_space,
-                                                spaces,
-                                                timeline,
-                                                device_queue,
-                                                frontier_state,
-                                                crypto_state,
-                                                config_store,
-                                                state_store,
-                                                network_state,
-                                                last_error,
-                                                server_description,
-                                                server_probe_status,
-                                            });
-                                        },
-                                        "Retry"
-                                    }
-                                }
-                            }
+                        div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
+                            span { "data-testid": "status-label", "{status}" }
+                            span { "data-testid": "network-state-badge", "{network_state}" }
+                            span { class: "mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
                             if let Some(ref err) = last_error() {
-                                div { class: "muted workspace-status__error", "data-testid": "last-error",
-                                    "{err}"
-                                }
+                                span { "data-testid": "last-error", "{err}" }
                             }
                         }
                         Link {
@@ -2914,9 +2914,9 @@ pub fn RouterView() -> Element {
                         Link {
                             class: "btn sm primary",
                             "data-testid": "topbar-create-button",
-                            to: Route::Product,
+                            to: Route::SetupSection { section: "spaces".to_owned() },
                             UiIcon { name: "plus" }
-                            "Space"
+                            "New Space"
                         }
                         span { class: "pill muted xs", "data-testid": "topbar-members", "{spaces().len()} spaces" }
                         div { class: "account-menu-wrap",
@@ -3102,6 +3102,18 @@ pub fn RouterView() -> Element {
                         }
                     }
                 }
+                if route_uses_space_context && !active_space_id.is_empty() {
+                    SpaceContextBar {
+                        space_id: active_space_id.clone(),
+                        current_surface: resolved_space_surface,
+                        account_did: account_did(),
+                        state_store,
+                        minimal_ready,
+                        kanban_ready,
+                        chat_ready,
+                        full_ready,
+                    }
+                }
                 div { class: "workspace-body",
                 match route {
                     Route::Login => rsx! {
@@ -3140,6 +3152,80 @@ pub fn RouterView() -> Element {
                             sync_cursor: sync_cursor(),
                         }
                     },
+                    Route::Space { .. } => {
+                        match resolved_space_surface.unwrap_or(SpaceSurface::Timeline) {
+                            SpaceSurface::Timeline => {
+                                if minimal_ready {
+                                    rsx! {
+                                        crate::views::timeline::TimelinePanel {
+                                            base_url: base_url(),
+                                            account_did: account_did(),
+                                            device_id: device_id(),
+                                            token,
+                                            selected_space: active_space_id.clone(),
+                                            timeline,
+                                            draft,
+                                            state_store,
+                                            crypto_state,
+                                            sync_cursor,
+                                            frontier_state,
+                                            base_url_sig: base_url,
+                                        }
+                                    }
+                                } else {
+                                    rsx! { ProfileGateNotice { profile: "minimal_client" } }
+                                }
+                            }
+                            SpaceSurface::Board => {
+                                if kanban_ready {
+                                    rsx! {
+                                        crate::views::kanban::KanbanPanel {
+                                            base_url: base_url(),
+                                            token,
+                                            account_did: account_did(),
+                                            selected_space: active_space_id.clone(),
+                                            sync_cursor,
+                                            frontier_state,
+                                            state_store,
+                                            event_write_ready,
+                                        }
+                                    }
+                                } else {
+                                    rsx! { ProfileGateNotice { profile: "kanban_only_client" } }
+                                }
+                            }
+                            SpaceSurface::Discussion => {
+                                if chat_ready {
+                                    rsx! {
+                                        crate::views::chat::ChatPanel {
+                                            base_url: base_url(),
+                                            account_did: account_did(),
+                                            token,
+                                            selected_space: active_space_id.clone(),
+                                            sync_cursor,
+                                            frontier_state,
+                                            state_store,
+                                        }
+                                    }
+                                } else {
+                                    rsx! { ProfileGateNotice { profile: "chat_only_client" } }
+                                }
+                            }
+                            SpaceSurface::Document => {
+                                if full_ready {
+                                    rsx! {
+                                        crate::views::document::DocumentPanel {
+                                            base_url: base_url(),
+                                            token,
+                                            selected_space: active_space_id.clone(),
+                                        }
+                                    }
+                                } else {
+                                    rsx! { ProfileGateNotice { profile: "full_client" } }
+                                }
+                            }
+                        }
+                    },
                     Route::Timeline | Route::TimelineSpace { .. } => {
                         if let Some(sid) = route.space_id() {
                             selected_space.set(sid.to_owned());
@@ -3151,7 +3237,7 @@ pub fn RouterView() -> Element {
                                     account_did: account_did(),
                                     device_id: device_id(),
                                     token,
-                                    selected_space: selected_space(),
+                                    selected_space: active_space_id.clone(),
                                     timeline,
                                     draft,
                                     state_store,
@@ -3175,21 +3261,16 @@ pub fn RouterView() -> Element {
                             view,
                         }
                     },
-                    Route::Product => {
+                    Route::Setup | Route::SetupSection { .. } => {
                         if full_ready {
                             rsx! {
-                                crate::views::product::ProductPanel {
+                                crate::views::setup::SetupPanel {
                                     base_url: base_url(),
-                                    account_did: account_did(),
-                                    device_id: device_id(),
                                     token,
                                     selected_space,
                                     spaces,
-                                    timeline,
                                     status,
-                                    sync_cursor,
-                                    frontier_state,
-                                    state_store,
+                                    section: route.setup_section().map(str::to_owned),
                                 }
                             }
                         } else {
@@ -3250,7 +3331,7 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "e2ee_client" } }
                         }
                     },
-                    Route::SpaceAdmin { .. } => {
+                    Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => {
                         if let Some(sid) = route.space_id() {
                             selected_space.set(sid.to_owned());
                         }
@@ -3260,10 +3341,11 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     account_did: account_did(),
                                     token,
-                                    selected_space: selected_space(),
+                                    selected_space: active_space_id.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
+                                    active_section: route.space_admin_section().map(str::to_owned),
                                 }
                             }
                         } else {
@@ -3292,7 +3374,7 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     token,
                                     account_did: account_did(),
-                                    selected_space: selected_space(),
+                                    selected_space: active_space_id.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3313,7 +3395,7 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     account_did: account_did(),
                                     token,
-                                    selected_space: selected_space(),
+                                    selected_space: active_space_id.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3339,7 +3421,7 @@ pub fn RouterView() -> Element {
                                 crate::views::document::DocumentPanel {
                                     base_url: base_url(),
                                     token,
-                                    selected_space: selected_space(),
+                                    selected_space: active_space_id.clone(),
                                 }
                             } else {
                                 ProfileGateNotice { profile: "full_client" }
@@ -3368,6 +3450,8 @@ pub fn RouterView() -> Element {
                         crate::views::onboarding::OnboardingPanel {
                             base_url: base_url(),
                             token,
+                            account_did,
+                            device_id,
                         }
                     },
                     Route::Quarantine => rsx! {
@@ -3395,6 +3479,67 @@ pub fn RouterView() -> Element {
 }
 
 #[component]
+fn SpaceContextBar(
+    space_id: String,
+    current_surface: Option<SpaceSurface>,
+    account_did: String,
+    state_store: Signal<LocalStateStore>,
+    minimal_ready: bool,
+    kanban_ready: bool,
+    chat_ready: bool,
+    full_ready: bool,
+) -> Element {
+    rsx! {
+        div { class: "event", "data-testid": "space-context-bar",
+            div { class: "event-head",
+                span { "Space views" }
+                span { "default entry follows your last selected view" }
+            }
+            div { class: "actions",
+                for surface in SpaceSurface::all() {
+                    if surface.is_available(minimal_ready, kanban_ready, chat_ready, full_ready) {
+                        Link {
+                            class: if current_surface == Some(surface) { "primary" } else { "secondary" },
+                            to: surface.route(space_id.clone()),
+                            onclick: {
+                                let account_did = account_did.clone();
+                                let space_id = space_id.clone();
+                                move |_| {
+                                    persist_space_surface_preference(
+                                        &mut state_store.write(),
+                                        &account_did,
+                                        &space_id,
+                                        surface,
+                                    );
+                                }
+                            },
+                            UiIcon { name: surface.icon_name() }
+                            "{surface.short_label()}"
+                        }
+                    } else {
+                        button {
+                            class: "secondary",
+                            disabled: true,
+                            UiIcon { name: surface.icon_name() }
+                            "{surface.short_label()}"
+                        }
+                    }
+                }
+                Link {
+                    class: if current_surface.is_none() { "primary" } else { "secondary" },
+                    to: Route::SpaceAdmin { space_id: space_id.clone() },
+                    UiIcon { name: "settings" }
+                    "Admin"
+                }
+            }
+            div { class: "muted",
+                "View preference is actor-private UI state. Board, discussion, and document stay inside the current Space instead of acting like separate products."
+            }
+        }
+    }
+}
+
+#[component]
 fn ProfileGateNotice(profile: &'static str) -> Element {
     rsx! {
         div { class: "timeline", "data-testid": "profile-gate-notice",
@@ -3410,28 +3555,206 @@ fn ProfileGateNotice(profile: &'static str) -> Element {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpaceSurface {
+    Timeline,
+    Board,
+    Discussion,
+    Document,
+}
+
+impl SpaceSurface {
+    fn all() -> [Self; 4] {
+        [
+            Self::Timeline,
+            Self::Board,
+            Self::Discussion,
+            Self::Document,
+        ]
+    }
+
+    fn short_label(self) -> &'static str {
+        match self {
+            Self::Timeline => "Timeline",
+            Self::Board => "Board",
+            Self::Discussion => "Discussion",
+            Self::Document => "Document",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Timeline => "Timeline View",
+            Self::Board => "Board View",
+            Self::Discussion => "Discussion View",
+            Self::Document => "Document View",
+        }
+    }
+
+    fn icon_name(self) -> &'static str {
+        match self {
+            Self::Timeline => "timeline",
+            Self::Board => "board",
+            Self::Discussion => "message",
+            Self::Document => "file",
+        }
+    }
+
+    fn preference_value(self) -> &'static str {
+        match self {
+            Self::Timeline => "timeline",
+            Self::Board => "board",
+            Self::Discussion => "discussion",
+            Self::Document => "document",
+        }
+    }
+
+    fn from_preference(value: &str) -> Option<Self> {
+        match value {
+            "timeline" => Some(Self::Timeline),
+            "board" => Some(Self::Board),
+            "discussion" => Some(Self::Discussion),
+            "document" => Some(Self::Document),
+            _ => None,
+        }
+    }
+
+    fn route(self, space_id: String) -> Route {
+        match self {
+            Self::Timeline => Route::TimelineSpace { space_id },
+            Self::Board => Route::KanbanSpace { space_id },
+            Self::Discussion => Route::ChatSpace { space_id },
+            Self::Document => Route::DocumentSpace { space_id },
+        }
+    }
+
+    fn is_available(
+        self,
+        minimal_ready: bool,
+        kanban_ready: bool,
+        chat_ready: bool,
+        full_ready: bool,
+    ) -> bool {
+        match self {
+            Self::Timeline => minimal_ready,
+            Self::Board => kanban_ready,
+            Self::Discussion => chat_ready,
+            Self::Document => full_ready,
+        }
+    }
+}
+
+fn space_surface_preference_key(space_id: &str) -> String {
+    format!("space_surface:{space_id}")
+}
+
+fn load_space_surface_preference(
+    state_store: &LocalStateStore,
+    account_key: &str,
+    space_id: &str,
+) -> SpaceSurface {
+    if account_key.trim().is_empty() {
+        return SpaceSurface::Timeline;
+    }
+
+    state_store
+        .load_private_data(account_key, &space_surface_preference_key(space_id))
+        .as_deref()
+        .and_then(SpaceSurface::from_preference)
+        .unwrap_or(SpaceSurface::Timeline)
+}
+
+fn persist_space_surface_preference(
+    state_store: &mut LocalStateStore,
+    account_key: &str,
+    space_id: &str,
+    surface: SpaceSurface,
+) {
+    if account_key.trim().is_empty() {
+        return;
+    }
+
+    state_store.save_private_data(
+        account_key,
+        space_surface_preference_key(space_id),
+        surface.preference_value(),
+    );
+}
+
+fn resolve_space_surface(
+    route: &Route,
+    state_store: &LocalStateStore,
+    account_key: &str,
+    _effective_space_id: Option<&str>,
+) -> Option<SpaceSurface> {
+    match route {
+        Route::Space { space_id } => Some(load_space_surface_preference(
+            state_store,
+            account_key,
+            space_id,
+        )),
+        Route::Timeline | Route::TimelineSpace { .. } => Some(SpaceSurface::Timeline),
+        Route::Kanban | Route::KanbanSpace { .. } => Some(SpaceSurface::Board),
+        Route::Chat | Route::ChatSpace { .. } => Some(SpaceSurface::Discussion),
+        Route::Document | Route::DocumentSpace { .. } => Some(SpaceSurface::Document),
+        Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => None,
+        _ => None,
+    }
+}
+
+fn route_uses_space_context(route: &Route) -> bool {
+    matches!(
+        route,
+        Route::Space { .. }
+            | Route::Timeline
+            | Route::TimelineSpace { .. }
+            | Route::Kanban
+            | Route::KanbanSpace { .. }
+            | Route::Chat
+            | Route::ChatSpace { .. }
+            | Route::Document
+            | Route::DocumentSpace { .. }
+            | Route::SpaceAdmin { .. }
+            | Route::SpaceAdminSection { .. }
+    )
+}
+
 fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
-        Route::Timeline | Route::TimelineSpace { .. } => "Timeline",
+        Route::Space { .. } => "Space",
+        Route::Timeline | Route::TimelineSpace { .. } => "Timeline View",
         Route::Directory => "Directory",
-        Route::Product => "Create Space",
+        Route::Setup => "Workspace Setup",
+        Route::SetupSection { section } => match section.as_str() {
+            "spaces" => "Space Setup",
+            _ => "Workspace Setup",
+        },
         Route::Settings | Route::SettingsSection { .. } => "Settings",
         Route::Devices => "Devices",
         Route::VerifyDevice => "Verify Device",
         Route::Readiness => "Readiness",
         Route::SpaceAdmin { .. } => "Space Admin",
+        Route::SpaceAdminSection { section, .. } => match section.as_str() {
+            "members" => "Members Admin",
+            "access" => "Access Policy",
+            "security" => "Security & MLS",
+            "governance" => "Governance",
+            "federation" => "Federation Trust",
+            "repair" => "Repair & Danger",
+            _ => "Space Admin",
+        },
         Route::Audit => "Audit",
-        Route::Kanban | Route::KanbanSpace { .. } => "Kanban",
-        Route::Chat | Route::ChatSpace { .. } => "Chat",
+        Route::Kanban | Route::KanbanSpace { .. } => "Board View",
+        Route::Chat | Route::ChatSpace { .. } => "Discussion View",
         Route::Notifications => "Inbox",
-        Route::Document | Route::DocumentSpace { .. } => "Files",
+        Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
-        Route::Applets => "Applets",
+        Route::Applets => "Applets & Agents",
         Route::Onboarding => "Onboarding",
-        Route::Quarantine => "Quarantine",
+        Route::Quarantine => "Invite Quarantine",
     }
 }
 

@@ -20,7 +20,11 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::routes::Route;
+use crate::{
+    api::ContrixApi,
+    routes::Route,
+    views::helpers::{authed_api, handle_from_did},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OnboardingStep {
@@ -51,13 +55,22 @@ impl OnboardingStep {
 }
 
 #[component]
-pub fn OnboardingPanel(base_url: String, token: Signal<String>) -> Element {
-    let _ = (base_url, token);
+pub fn OnboardingPanel(
+    base_url: String,
+    token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+) -> Element {
     let mut step = use_signal(|| OnboardingStep::DidMethod);
     let mut did_method = use_signal(|| "did:web".to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
     let mut handle_domain = use_signal(|| "users.contrix.social".to_owned());
     let mut recovery_choice = use_signal(|| "vault".to_owned());
+    let mut register_did = use_signal(|| account_did());
+    let mut register_handle = use_signal(|| handle_from_did(&account_did()));
+    let mut register_display_name = use_signal(|| "yougen".to_owned());
+    let mut register_device_id = use_signal(|| device_id());
+    let mut account_state = use_signal(|| "No bootstrap action yet".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "onboarding-panel", role: "region", "aria-label": "Onboarding stepper",
@@ -80,6 +93,102 @@ pub fn OnboardingPanel(base_url: String, token: Signal<String>) -> Element {
                             "{s.index()}. {s.label()}"
                         }
                     }
+                }
+            }
+
+            div { class: "event", "data-testid": "account-flow",
+                div { class: "event-head",
+                    span { "Identity bootstrap" }
+                    span { "account / session checks" }
+                }
+                div { class: "muted",
+                    "Account bootstrap moved out of Workspace Setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
+                }
+                div { class: "muted", "{account_state}" }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "account-register-did-input",
+                        value: "{register_did}",
+                        oninput: move |event| {
+                            let value = event.value();
+                            register_handle.set(handle_from_did(&value));
+                            register_did.set(value);
+                        }
+                    }
+                    input {
+                        "data-testid": "account-register-handle-input",
+                        value: "{register_handle}",
+                        oninput: move |event| register_handle.set(event.value())
+                    }
+                    input {
+                        "data-testid": "account-register-display-name-input",
+                        value: "{register_display_name}",
+                        oninput: move |event| register_display_name.set(event.value())
+                    }
+                    input {
+                        "data-testid": "account-register-device-id-input",
+                        value: "{register_device_id}",
+                        oninput: move |event| register_device_id.set(event.value())
+                    }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "register-account-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let actor = register_did();
+                                let handle = register_handle();
+                                let display = register_display_name();
+                                let device = register_device_id();
+                                spawn(async move {
+                                    match ContrixApi::new(&base) {
+                                        Ok(api) => match api.register_account(
+                                            &actor,
+                                            &handle,
+                                            Some(&display),
+                                            Some(&device),
+                                        ).await {
+                                            Ok(account) => account_state.set(format!("registered {}", account.handle)),
+                                            Err(error) => account_state.set(format!("register failed: {error}")),
+                                        },
+                                        Err(error) => account_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "Register"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "account-me-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.account_me().await {
+                                            Ok(account) => account_state.set(format!("me {}", account.did)),
+                                            Err(error) => account_state.set(format!("me failed: {error}")),
+                                        },
+                                        Err(error) => account_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "Me"
+                    }
+                    button {
+                        class: "secondary",
+                        onclick: move |_| step.set(OnboardingStep::Handle),
+                        "Continue Onboarding"
+                    }
+                    Link { class: "secondary", to: Route::Login, "Open Login" }
+                    Link { class: "secondary", to: Route::Settings, "Open Settings" }
                 }
             }
 

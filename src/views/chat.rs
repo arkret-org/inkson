@@ -778,17 +778,17 @@ fn seed_discussion_timeline_facts() -> Vec<DiscussionTimelineFact> {
             detail: "reaction is scoped to the message event, not to the linked Discussion",
         },
         DiscussionTimelineFact {
-            kind: "cx.flow.track.member",
-            subject: "Linked discussion access",
-            state: "independent",
-            detail: "discussion readable, flow projection readable separately; locked discussions fail closed",
+            kind: "flow.discussion_space_ref",
+            subject: "Discussion access domain",
+            state: "visible",
+            detail: "track inherits the parent Space; only discussion_space_ref upgrades discussion into an independent child Space",
         },
     ]
 }
 
 fn timeline_state_class(state: &str) -> &'static str {
     match state {
-        "visible" | "independent" => "badge green",
+        "visible" => "badge green",
         "revised" => "badge blue",
         "tombstone" => "badge amber",
         _ => "badge",

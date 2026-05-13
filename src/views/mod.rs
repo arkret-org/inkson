@@ -22,7 +22,7 @@
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
 // | call               | desktop/call.html                 | crypto-media/webrtc-signaling                          | ephemeral signaling + cx.morph.create morph_type=call               |
 // | readiness          | (settings 内嵌)                   | overview/release-readiness, conformance/conformance-suite | (read-only)                                                      |
-// | product            | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
+// | setup              | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // 待新增 view（见 `_todos.md`）：
 // - onboarding   → desktop/onboarding.html        (拆出独立步进；T12)
@@ -58,7 +58,6 @@ pub mod kanban;
 pub mod login;
 pub mod notifications;
 pub mod onboarding;
-pub mod product;
 /// Round 23 (M6): invite-quarantine list + admin approve/reject buttons.
 /// (claude-design no dedicated page yet; lives at `/quarantine` and is
 /// linked from the Settings sidebar for admins.)
@@ -66,6 +65,7 @@ pub mod quarantine;
 pub mod readiness;
 pub mod recovery;
 pub mod settings;
+pub mod setup;
 pub mod space_admin;
 pub mod timeline;
 pub mod verify_device;
@@ -76,7 +76,7 @@ pub enum View {
     Dashboard,
     Timeline,
     Directory,
-    Product,
+    Setup,
     Settings,
     Devices,
     Readiness,

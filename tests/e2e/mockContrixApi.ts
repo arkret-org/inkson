@@ -1,11 +1,11 @@
 import type { Page, Route } from "@playwright/test";
 
 const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
-const PRODUCT_SPACE = "cx:space:01js0productflow000000000000";
+const SETUP_SPACE = "cx:space:01js0setupflow000000000000";
 
 export async function mockContrixApi(page: Page) {
-  let productSpaceDeleted = false;
-  let productMembers = ["did:web:alice.example", "did:web:bob.example"];
+  let setupSpaceDeleted = false;
+  let setupMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
   let submitCounter = 0;
 
@@ -200,12 +200,8 @@ export async function mockContrixApi(page: Page) {
       }
       let syncToken = "sx:e2e:event";
       if (body.kind === "cx.message.create") {
-        if (body.payload?.body === "persisted product flow message") {
-          syncToken = "sx:e2e:product";
-        } else {
-          messageCounter += 1;
-          syncToken = `sx:e2e:message-${messageCounter}`;
-        }
+        messageCounter += 1;
+        syncToken = `sx:e2e:message-${messageCounter}`;
       }
       return json(route, {
         event_id: body.event_id,
@@ -404,9 +400,9 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/spaces" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      productSpaceDeleted = false;
-      productMembers = ["did:web:alice.example", ...(body.invitees ?? [])];
-      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted), 201);
+      setupSpaceDeleted = false;
+      setupMembers = ["did:web:alice.example", ...(body.invitees ?? [])];
+      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted), 201);
     }
 
     if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+$/) && route.request().method() === "PATCH") {
@@ -486,22 +482,22 @@ export async function mockContrixApi(page: Page) {
       return json(route, { ok: true, epoch: 2, group_id: body.group_id });
     }
 
-    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}/members` && route.request().method() === "POST") {
+    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}/members` && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      if (!productMembers.includes(body.member)) {
-        productMembers.push(body.member);
+      if (!setupMembers.includes(body.member)) {
+        setupMembers.push(body.member);
       }
-      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
     }
 
-    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}/members/did:web:bob.example` && route.request().method() === "DELETE") {
-      productMembers = productMembers.filter((member) => member !== "did:web:bob.example");
-      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}/members/did:web:bob.example` && route.request().method() === "DELETE") {
+      setupMembers = setupMembers.filter((member) => member !== "did:web:bob.example");
+      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
     }
 
-    if (url.pathname === `/api/v1/spaces/${PRODUCT_SPACE}` && route.request().method() === "DELETE") {
-      productSpaceDeleted = true;
-      return json(route, spaceLifecycle(PRODUCT_SPACE, productMembers, productSpaceDeleted));
+    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}` && route.request().method() === "DELETE") {
+      setupSpaceDeleted = true;
+      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
     }
 
     if (url.pathname === "/api/v1/sync") {
@@ -563,7 +559,7 @@ export async function mockContrixApi(page: Page) {
             did: "did:web:org.contrix.example",
             handle: "contrix.example",
             name: "Contrix Labs",
-            description: "Protocol and product engineering for Contrix deployments.",
+            description: "Protocol and client engineering for Contrix deployments.",
             discoverability: "listed",
             profile_visibility: "public",
             directory_services: ["did:web:serverx.local"],

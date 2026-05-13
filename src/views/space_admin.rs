@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use serde_json::json;
 
 use crate::{
@@ -13,6 +14,7 @@ use crate::{
         did_key_verification_method, sign_unsigned_move,
     },
     operation::cx_ops,
+    routes::Route,
     views::{
         consent_demo::format_submit_response,
         helpers::{active_sync_token, authed_api, authed_api_with_sync},
@@ -212,6 +214,79 @@ struct InviteRecord {
     event_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SpaceAdminSection {
+    Overview,
+    Members,
+    Access,
+    Security,
+    Governance,
+    Federation,
+    Repair,
+}
+
+impl SpaceAdminSection {
+    fn from_slug(slug: Option<&str>) -> Self {
+        match slug.unwrap_or_default() {
+            "members" => Self::Members,
+            "access" => Self::Access,
+            "security" => Self::Security,
+            "governance" => Self::Governance,
+            "federation" => Self::Federation,
+            "repair" => Self::Repair,
+            _ => Self::Overview,
+        }
+    }
+
+    fn slug(self) -> Option<&'static str> {
+        match self {
+            Self::Overview => None,
+            Self::Members => Some("members"),
+            Self::Access => Some("access"),
+            Self::Security => Some("security"),
+            Self::Governance => Some("governance"),
+            Self::Federation => Some("federation"),
+            Self::Repair => Some("repair"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Members => "Members",
+            Self::Access => "Access",
+            Self::Security => "Security & MLS",
+            Self::Governance => "Governance",
+            Self::Federation => "Federation",
+            Self::Repair => "Repair & Danger",
+        }
+    }
+
+    fn summary(self) -> &'static str {
+        match self {
+            Self::Overview => "sectioned admin map",
+            Self::Members => "membership, invites, leave",
+            Self::Access => "metadata, join, history, discovery",
+            Self::Security => "MLS, capability grants, anchor visibility",
+            Self::Governance => "org policy and moderation surfaces",
+            Self::Federation => "trust bundles and partner boundaries",
+            Self::Repair => "conflicts, stalled moves, destructive actions",
+        }
+    }
+
+    fn all() -> [Self; 7] {
+        [
+            Self::Overview,
+            Self::Members,
+            Self::Access,
+            Self::Security,
+            Self::Governance,
+            Self::Federation,
+            Self::Repair,
+        ]
+    }
+}
+
 #[component]
 pub fn SpaceAdminPanel(
     base_url: String,
@@ -221,6 +296,7 @@ pub fn SpaceAdminPanel(
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
+    active_section: Option<String>,
 ) -> Element {
     let mut space_name = use_signal(|| String::new());
     let mut space_topic = use_signal(|| String::new());
@@ -321,9 +397,133 @@ pub fn SpaceAdminPanel(
     let space_pending_mls_binding = state_store
         .read()
         .space_has_pending_mls_binding(&selected_space);
+    let active_section = SpaceAdminSection::from_slug(active_section.as_deref());
+    let alert_count = usize::from(space_paused)
+        + usize::from(space_pending_mls_binding)
+        + usize::from(!bottom_cells.is_empty())
+        + usize::from(covered_frontier_alert);
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
+            div { class: "event", "data-testid": "space-admin-sections",
+                div { class: "event-head",
+                    span { "Space Admin" }
+                    span { "{active_section.label()} · {active_section.summary()}" }
+                }
+                div { class: "muted",
+                    "This admin surface is now split by responsibility. Daily membership work, Space policy, security state, governance, federation trust, and destructive repair flows no longer share one undifferentiated scroll page."
+                }
+                div { class: "actions",
+                    for section in SpaceAdminSection::all() {
+                        if let Some(slug) = section.slug() {
+                            Link {
+                                class: if active_section == section { "primary" } else { "secondary" },
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: slug.to_owned(),
+                                },
+                                "{section.label()}"
+                            }
+                        } else {
+                            Link {
+                                class: if active_section == section { "primary" } else { "secondary" },
+                                to: Route::SpaceAdmin {
+                                    space_id: selected_space.clone(),
+                                },
+                                "{section.label()}"
+                            }
+                        }
+                    }
+                }
+            }
+            if active_section == SpaceAdminSection::Overview {
+                div { class: "event", "data-testid": "space-admin-overview",
+                    div { class: "event-head",
+                        span { "Admin Map" }
+                        span { "{selected_space}" }
+                    }
+                    div { class: "metric-grid",
+                        div { class: "metric",
+                            strong { "Members" }
+                            span { "{members().len()} known" }
+                            div { class: "muted", "Invites, membership state machine, and leave flow." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "members".to_owned(),
+                                },
+                                "Open Members"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Access" }
+                            span { "{join_rule()} / {history_visibility()}" }
+                            div { class: "muted", "Metadata, join rule, history visibility, and discovery live together." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "access".to_owned(),
+                                },
+                                "Open Access"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Security & MLS" }
+                            span { "epoch {mls_epoch_label}" }
+                            div { class: "muted", "Capability grants, MLS health, anchor visibility, and audit-bound E2EE controls." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "security".to_owned(),
+                                },
+                                "Open Security"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Governance" }
+                            span { "policy / moderation" }
+                            div { class: "muted", "Organization-level governance and moderation policy stay out of the daily admin path." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "governance".to_owned(),
+                                },
+                                "Open Governance"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Federation" }
+                            span { "trust_bundle" }
+                            div { class: "muted", "Partner trust and service DID boundaries are isolated from Space-local settings." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "federation".to_owned(),
+                                },
+                                "Open Federation"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Repair & Danger" }
+                            span { "{alert_count} active alerts" }
+                            div { class: "muted", "Conflict repair, stalled Move diagnostics, and destructive actions are intentionally separated." }
+                            Link {
+                                class: "secondary",
+                                to: Route::SpaceAdminSection {
+                                    space_id: selected_space.clone(),
+                                    section: "repair".to_owned(),
+                                },
+                                "Open Repair"
+                            }
+                        }
+                    }
+                }
+            }
             // Round 23 (M4): Space-wide anchorer-paused banner. Fires
             // whenever any tracked Move for this Space has surfaced
             // `AnchorerPaused`. The Space cannot advance until ops
@@ -361,7 +561,7 @@ pub fn SpaceAdminPanel(
             // Round 23 (M4): Move submission tracker — pill list of
             // recent local writes with state badges. Clicking a failed
             // row reveals the reason inline.
-            if !move_submissions.is_empty() {
+            if active_section == SpaceAdminSection::Repair && !move_submissions.is_empty() {
                 div { class: "event", "data-testid": "move-submission-tracker",
                     div { class: "event-head",
                         span { "Recent Move submissions" }
@@ -426,7 +626,7 @@ pub fn SpaceAdminPanel(
             // Bottom=expose conflict banner — only rendered when at least
             // one cell in the projection has unresolved concurrent
             // candidates. P0 M5.
-            if !bottom_cells.is_empty() {
+            if active_section == SpaceAdminSection::Repair && !bottom_cells.is_empty() {
                 div { class: "event", "data-testid": "bottom-cells-banner",
                     div { class: "event-head",
                         span { "Concurrent candidates unresolved" }
@@ -588,153 +788,156 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            // Round 22: covered_frontier_lag alert banner. Mirrors
-            // sodmin's admin page banner but stays client-side — it
-            // reads the lag from the LocalAnchorView populated on
-            // /sync, compares to a user-configurable threshold (default
-            // 5, see DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only
-            // renders when soland has surfaced a lag AND it exceeds
-            // threshold. Operators see the same urgency cue here that
-            // sodmin shows on the dedicated covered_frontier page.
-            div { class: "event", "data-testid": "covered-frontier-threshold-row",
-                div { class: "event-head",
-                    span { "covered_frontier alert threshold" }
-                    span { "Round 22 (client-side)" }
-                }
-                div { class: "muted",
-                    "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
-                }
-                label { "Threshold (Moves)" }
-                input {
-                    "data-testid": "covered-frontier-threshold-input",
-                    r#type: "number",
-                    min: "0",
-                    value: "{covered_frontier_lag_threshold}",
-                    oninput: move |evt| {
-                        if let Ok(parsed) = evt.value().parse::<u64>() {
-                            covered_frontier_threshold.set(parsed);
-                        }
-                    },
-                }
-                div { class: "muted", "data-testid": "covered-frontier-lag-value",
-                    "current covered_frontier_lag: {covered_frontier_lag_label}"
-                }
-            }
-            if covered_frontier_alert {
-                div { class: "event", "data-testid": "covered-frontier-alert-banner",
+            if active_section == SpaceAdminSection::Security {
+                // Round 22: covered_frontier_lag alert banner. Mirrors
+                // sodmin's admin page banner but stays client-side — it
+                // reads the lag from the LocalAnchorView populated on
+                // /sync, compares to a user-configurable threshold (default
+                // 5, see DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only
+                // renders when soland has surfaced a lag AND it exceeds
+                // threshold. Operators see the same urgency cue here that
+                // sodmin shows on the dedicated covered_frontier page.
+                div { class: "event", "data-testid": "covered-frontier-threshold-row",
                     div { class: "event-head",
-                        span { "covered_frontier lag alert" }
-                        span { class: "badge red", "above threshold" }
+                        span { "covered_frontier alert threshold" }
+                        span { "Round 22 (client-side)" }
                     }
-                    div { class: "muted", "data-testid": "covered-frontier-alert-message",
-                        "Lag of {covered_frontier_lag_label} Moves is above the warn threshold {covered_frontier_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_frontier page."
+                    div { class: "muted",
+                        "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
                     }
-                }
-            }
-            // Round 21: MLS epoch + governance frontier read-only widget.
-            // Reads from the same LocalAnchorView the bottom-cells banner
-            // uses, so it costs no extra fetch — just surfaces two
-            // well-known cells (mls.epoch.v1, governance.covered_frontier.v1)
-            // for admin visibility into E2EE rotation status and governance
-            // gating without leaving the page.
-            div { class: "event", "data-testid": "mls-epoch-widget",
-                div { class: "event-head",
-                    span { "MLS epoch & governance frontier" }
-                    span { "cx.component.mls.epoch.v1 · governance.covered_frontier.v1" }
-                }
-                div { class: "muted",
-                    "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_frontier value Move acceptance gates against. Updates as soon as sync surfaces a new anchor view — no fetch button needed."
-                }
-                div { class: "muted", "data-testid": "mls-epoch-value",
-                    "MLS epoch: {mls_epoch_label}"
-                }
-                div { class: "muted", "data-testid": "governance-covered-frontier",
-                    "covered_frontier: {covered_frontier_label}"
-                }
-            }
-            // Anchor frontier debug — shows whether sync has surfaced a
-            // real Anchor view yet. When empty this matches the sentinel
-            // Move builders thread in.
-            div { class: "event", "data-testid": "anchor-frontier-debug",
-                div { class: "event-head",
-                    span { "Anchor frontier" }
-                    span { "leaves={anchor_view.leaves.len()}" }
-                }
-                div { class: "muted", "data-testid": "anchor-frontier-heads",
-                    "frontier: {anchor_frontier_label}"
-                }
-                div { class: "muted", "data-testid": "anchor-state-root",
-                    "state_root: {anchor_state_root_label}"
-                }
-            }
-            // Anchorer cell (read-only, P0 M4) — fetches from
-            // /api/admin/v1/spaces/{id}/anchorer; surfaces the
-            // recovery-anchorer mode (single_did / threshold / open_set /
-            // mixed) on this admin page. A separate agent is implementing
-            // the endpoint on soland; on 404 we fall back to a clear
-            // inline message.
-            div { class: "event", "data-testid": "anchorer-cell-card",
-                div { class: "event-head",
-                    span { "Anchorer cell" }
-                    span { "cx.component.anchorer.v1" }
-                }
-                div { class: "muted",
-                    "Recovery anchorer mode for this Space — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
-                }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "anchorer-cell-refresh",
-                        onclick: {
-                            let base = base_url.clone();
-                            let space = selected_space.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let space = space.clone();
-                                let api_token = token();
-                                spawn(async move {
-                                    let api = match authed_api(&base, api_token) {
-                                        Ok(api) => api,
-                                        Err(error) => {
-                                            anchorer_cell_status
-                                                .set(format!("API client unavailable: {error}"));
-                                            return;
-                                        }
-                                    };
-                                    match api.admin_anchorer_describe(&space).await {
-                                        Ok(value) => {
-                                            anchorer_cell_status.set("ok".to_owned());
-                                            anchorer_cell_value.set(value.to_string());
-                                        }
-                                        Err(error) => {
-                                            // 404 / not-implemented falls through here.
-                                            // Keep the message clear so the operator
-                                            // knows it's a missing endpoint, not bad
-                                            // data.
-                                            anchorer_cell_status.set(format!(
-                                                "anchorer endpoint unavailable ({error}); \
-                                                 expected /api/admin/v1/spaces/{{id}}/anchorer \
-                                                 (separate agent shipping)"
-                                            ));
-                                        }
-                                    }
-                                });
+                    label { "Threshold (Moves)" }
+                    input {
+                        "data-testid": "covered-frontier-threshold-input",
+                        r#type: "number",
+                        min: "0",
+                        value: "{covered_frontier_lag_threshold}",
+                        oninput: move |evt| {
+                            if let Ok(parsed) = evt.value().parse::<u64>() {
+                                covered_frontier_threshold.set(parsed);
                             }
                         },
-                        "Fetch anchorer cell"
+                    }
+                    div { class: "muted", "data-testid": "covered-frontier-lag-value",
+                        "current covered_frontier_lag: {covered_frontier_lag_label}"
                     }
                 }
-                if !anchorer_cell_status().is_empty() {
-                    div { class: "muted", "data-testid": "anchorer-cell-status",
-                        "{anchorer_cell_status}"
+                if covered_frontier_alert {
+                    div { class: "event", "data-testid": "covered-frontier-alert-banner",
+                        div { class: "event-head",
+                            span { "covered_frontier lag alert" }
+                            span { class: "badge red", "above threshold" }
+                        }
+                        div { class: "muted", "data-testid": "covered-frontier-alert-message",
+                            "Lag of {covered_frontier_lag_label} Moves is above the warn threshold {covered_frontier_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_frontier page."
+                        }
                     }
                 }
-                if !anchorer_cell_value().is_empty() {
-                    div { class: "muted", "data-testid": "anchorer-cell-value",
-                        "{anchorer_cell_value}"
+                // Round 21: MLS epoch + governance frontier read-only widget.
+                // Reads from the same LocalAnchorView the bottom-cells banner
+                // uses, so it costs no extra fetch — just surfaces two
+                // well-known cells (mls.epoch.v1, governance.covered_frontier.v1)
+                // for admin visibility into E2EE rotation status and governance
+                // gating without leaving the page.
+                div { class: "event", "data-testid": "mls-epoch-widget",
+                    div { class: "event-head",
+                        span { "MLS epoch & governance frontier" }
+                        span { "cx.component.mls.epoch.v1 · governance.covered_frontier.v1" }
+                    }
+                    div { class: "muted",
+                        "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_frontier value Move acceptance gates against. Updates as soon as sync surfaces a new anchor view — no fetch button needed."
+                    }
+                    div { class: "muted", "data-testid": "mls-epoch-value",
+                        "MLS epoch: {mls_epoch_label}"
+                    }
+                    div { class: "muted", "data-testid": "governance-covered-frontier",
+                        "covered_frontier: {covered_frontier_label}"
+                    }
+                }
+                // Anchor frontier debug — shows whether sync has surfaced a
+                // real Anchor view yet. When empty this matches the sentinel
+                // Move builders thread in.
+                div { class: "event", "data-testid": "anchor-frontier-debug",
+                    div { class: "event-head",
+                        span { "Anchor frontier" }
+                        span { "leaves={anchor_view.leaves.len()}" }
+                    }
+                    div { class: "muted", "data-testid": "anchor-frontier-heads",
+                        "frontier: {anchor_frontier_label}"
+                    }
+                    div { class: "muted", "data-testid": "anchor-state-root",
+                        "state_root: {anchor_state_root_label}"
+                    }
+                }
+                // Anchorer cell (read-only, P0 M4) — fetches from
+                // /api/admin/v1/spaces/{id}/anchorer; surfaces the
+                // recovery-anchorer mode (single_did / threshold / open_set /
+                // mixed) on this admin page. A separate agent is implementing
+                // the endpoint on soland; on 404 we fall back to a clear
+                // inline message.
+                div { class: "event", "data-testid": "anchorer-cell-card",
+                    div { class: "event-head",
+                        span { "Anchorer cell" }
+                        span { "cx.component.anchorer.v1" }
+                    }
+                    div { class: "muted",
+                        "Recovery anchorer mode for this Space — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "secondary",
+                            "data-testid": "anchorer-cell-refresh",
+                            onclick: {
+                                let base = base_url.clone();
+                                let space = selected_space.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let space = space.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        let api = match authed_api(&base, api_token) {
+                                            Ok(api) => api,
+                                            Err(error) => {
+                                                anchorer_cell_status
+                                                    .set(format!("API client unavailable: {error}"));
+                                                return;
+                                            }
+                                        };
+                                        match api.admin_anchorer_describe(&space).await {
+                                            Ok(value) => {
+                                                anchorer_cell_status.set("ok".to_owned());
+                                                anchorer_cell_value.set(value.to_string());
+                                            }
+                                            Err(error) => {
+                                                // 404 / not-implemented falls through here.
+                                                // Keep the message clear so the operator
+                                                // knows it's a missing endpoint, not bad
+                                                // data.
+                                                anchorer_cell_status.set(format!(
+                                                    "anchorer endpoint unavailable ({error}); \
+                                                     expected /api/admin/v1/spaces/{{id}}/anchorer \
+                                                     (separate agent shipping)"
+                                                ));
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                            "Fetch anchorer cell"
+                        }
+                    }
+                    if !anchorer_cell_status().is_empty() {
+                        div { class: "muted", "data-testid": "anchorer-cell-status",
+                            "{anchorer_cell_status}"
+                        }
+                    }
+                    if !anchorer_cell_value().is_empty() {
+                        div { class: "muted", "data-testid": "anchorer-cell-value",
+                            "{anchorer_cell_value}"
+                        }
                     }
                 }
             }
+            if active_section == SpaceAdminSection::Access {
             // Space metadata editor
             div { class: "event", "data-testid": "space-metadata",
                 div { class: "event-head", span { "Space Metadata" } span { "{selected_space}" } }
@@ -975,6 +1178,7 @@ pub fn SpaceAdminPanel(
                 }
             }
 
+            if active_section == SpaceAdminSection::Members {
             // Invite member
             div { class: "event", "data-testid": "invite-member",
                 div { class: "event-head", span { "Invite Member" } span { "" } }
@@ -1497,7 +1701,9 @@ pub fn SpaceAdminPanel(
                     " Listed in directory"
                 }
             }
+            }
 
+            if active_section == SpaceAdminSection::Security {
             // Audited E2EE assurance — crypto-media/audited-e2ee.md
             // Two profiles: cx.profile.attested_audit.e2ee.v1 (HW attestation forced)
             // and cx.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
@@ -1600,6 +1806,7 @@ pub fn SpaceAdminPanel(
                         "Leave"
                     }
                 }
+            }
             }
 
             // Capability grant explanation — claude-design desktop/space-admin.html
@@ -1912,7 +2119,9 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
+            }
 
+            if active_section == SpaceAdminSection::Governance {
             // Organization governance — identity/identity-did.md §6 + content-moderation
             // Organization 作为 Principal（不是 Space）。一个 Space 可以由多个 organization
             // 共同治理，Space 的 organization 关系通过 cx.space.organization event 维护。
@@ -1989,7 +2198,9 @@ pub fn SpaceAdminPanel(
                     span { class: "muted", "→ reducer 输出 cx.policy.action（deny/quarantine/require_review）" }
                 }
             }
+            }
 
+            if active_section == SpaceAdminSection::Federation {
             // Trust bundle import — claude-design desktop/space-admin.html
             // sync/federation.md + sync/sovereign-deployment.md
             div { class: "event", "data-testid": "trust-bundle-panel",
@@ -2028,8 +2239,10 @@ pub fn SpaceAdminPanel(
                     button { class: "secondary", "data-testid": "trust-bundle-revoke-button", "Revoke federation_in (partner)" }
                 }
             }
+            }
 
             // Danger zone
+            if active_section == SpaceAdminSection::Repair {
             div { class: "event", "data-testid": "danger-zone",
                 div { class: "event-head", span { "Danger Zone" } span { "destructive actions" } }
                 div { class: "actions",
@@ -2196,6 +2409,7 @@ pub fn SpaceAdminPanel(
                         }
                     }
                 }
+            }
             }
 
             if !status_msg().is_empty() {

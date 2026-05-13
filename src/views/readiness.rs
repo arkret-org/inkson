@@ -52,7 +52,7 @@ pub fn ReadinessPanel(
             div { class: "event", "data-testid": "release-summary",
                 div { class: "event-head", span { "Release readiness" } span { "{blocked_count} blockers" } }
                 div { class: "space-title", "Not production-ready" }
-                div { class: "muted", "Basic server-backed product flows exist in the client. Production release is still blocked by DID proof challenges, production auth, verification, recovery, privacy, retention, web crypto storage, and release engineering." }
+                div { class: "muted", "Basic server-backed setup and collaboration flows exist in the client. Production release is still blocked by DID proof challenges, production auth, verification, recovery, privacy, retention, web crypto storage, and release engineering." }
             }
             div { class: "event", "data-testid": "server-describe-readiness",
                 div { class: "event-head", span { "Server describe" } span { "{server_probe_status}" } }

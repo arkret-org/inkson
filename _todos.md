@@ -1,176 +1,139 @@
-# Claude Design Alignment Todos
+# 界面整改任务清单
 
-Primary reference:
-- `claude-design/desktop/home.html`
-- `claude-design/desktop/settings.html`
-- `claude-design/desktop/directory.html`
-- `claude-design/styles.css`
+来源：`_report.md`  
+目标：把当前 UI 从“演示页 / 协议工具页拼盘”收敛到符合 `contrix-spec` 的 Space / View / Place / Flow 信息架构。
 
-Secondary reference:
-- `D:\Works\contrix-dev\sodmin` may be referenced for icon/component style only.
+## P0
 
-Protocol rules to preserve:
-- `Contrix` is the product/protocol brand.
-- `Acme Inc.` is the current Organization Principal.
-- Principal Server is a delegated service boundary, not the Organization itself.
-- Space navigation may show Acme-backed grouping, but child Spaces keep independent policy, membership, history, and E2EE boundary.
-- Avoid the vague `External` label; use controlled cross-organization collaboration with explicit federation/security labels.
+### [x] T01 重构全局导航模型
+对应报告：R01、R02、R03  
+优先级：P0  
+目标文件：`src/app.rs`、`src/routes.rs`、必要时新增空间壳层组件文件  
+整改要求：将当前把 `Timeline`、`Kanban`、`Chat`、`Files` 当作并列产品模块的导航方式，改为“Space 为一级上下文，View/renderer 为二级切换”。桌面侧边栏和移动端菜单都必须遵守同一模型。  
+验收标准：
+1. 顶级主导航不再把 `Kanban`、`Chat`、`Files` 作为与 `Space` 并列的一线入口。
+2. 空间入口进入的是“该 Space 的默认视图”或“最近使用视图”，而不是硬编码进入 Timeline。
+3. 同一 Space 内切换 board/list/chat/document 时不丢失当前 Space 上下文。
+4. 桌面导航与移动导航的一级信息架构一致，只允许密度不同，不允许语义不同。
 
-## Implementation Tasks
-- [x] Re-read `claude-design` desktop HTML and shared stylesheet as the source design.
-- [x] Re-read current Dioxus shell, dashboard, right panel, and existing selector contracts.
-- [x] Load `claude-design/styles.css` into the app and add only compatibility overrides needed by the live Dioxus views.
-- [x] Replace the live root chrome with the design稿 structure: `.app.three-col`, canonical `.sidebar`, `.workspace`, `.workspace-header`, `.workspace-body`, `.right-panel`.
-- [x] Rewrite the left sidebar to match `claude-design`: Contrix logo area, Organization context, Principal Server context, Search/Directory, Personal, Acme-backed Spaces, Controlled cross-org, Personal Spaces, footer identity.
-- [x] Keep live route/test affordances reachable: Timeline, Kanban, Chat, Audit, Settings, Devices, Readiness, Product/Create, server connect controls.
-- [x] Rewrite the Dashboard content to use design稿 primitives: `.spread`, `.metric-grid`, `.callout`, `.surface`, `.m-list-item`, `.tbl`, `.settings-row`.
-- [x] Reduce explanatory copy in Dashboard and shell; keep only protocol-critical labels and warnings.
-- [x] Bring the right panel visually under the design稿 `.right-panel` model without changing its data/test contract.
-- [x] Run `cargo fmt --check`.
-- [x] Run `cargo check`.
-- [x] Browser-verify desktop home/settings and mobile shell behavior if the local app can be served.
+### [x] T02 引入 Space 内 View 切换壳层
+对应报告：R01、R02  
+优先级：P0  
+目标文件：`src/app.rs`、`src/routes.rs`、`src/views/timeline.rs`、`src/views/kanban.rs`、`src/views/chat.rs`、`src/views/document.rs`  
+整改要求：为 Space 页面增加统一的 view shell。Timeline、board、chat、document 都应成为同一 Space 下的不同 projection / renderer，而不是四套平行页面心智。  
+验收标准：
+1. 每个 Space 至少有一个明确的默认视图来源。
+2. 视图切换器显示的是 View/renderer，而不是“切换到另一个产品”。
+3. Space breadcrumb、标题、返回路径始终以 Space 为主，而不是以 renderer 名称为主。
+4. `/timeline/:space_id`、`/kanban/:space_id`、`/chat/:space_id`、`/document/:space_id` 的语义被统一，避免继续强化错误心智。
 
-Verification notes:
-- `cargo check` passed.
-- `rustfmt --edition 2024 --check src\app.rs src\views\dashboard.rs` passed.
-- Full `cargo fmt --check` was executed, but it is blocked by pre-existing newline style issues in `src/api.rs`, `src/capability.rs`, `src/coauth.rs`, `src/discovery.rs`, and `tests/serverx_contract.rs`.
-- Playwright affected smoke passed: `settings can update account`, `mobile viewport`, and `visual smoke`.
+### [x] T03 清理错误的 Track / Discussion 文案
+对应报告：R09  
+优先级：P0  
+目标文件：`src/views/chat.rs`  
+整改要求：删除或改写所有把 Track 说成独立 membership / access 域的内容，尤其是 `cx.flow.track.member` 一类已过时表述。Discussion 独立访问域只能通过 `discussion_space_ref` 解释。  
+验收标准：
+1. 页面内不再出现 `cx.flow.track.member`、`locked discussions fail closed` 这类过时模型文案。
+2. Track 统一被描述为展示 / 时间线分段标识。
+3. 需要独立访问域时，页面只使用 child Space / `discussion_space_ref` 说明。
+4. 同页所有说明文案彼此一致，不再出现“上半页正确、下半页过时”的冲突。
 
-# Auth Registration And Recovery Todos
+### [x] T04 补齐或收束所有保留路由的入口策略
+对应报告：R03  
+优先级：P0  
+目标文件：`src/app.rs`、`src/routes.rs`  
+整改要求：对 `Recovery`、`Applets`、`Onboarding`、`Quarantine`、`VerifyDevice`、`Call` 等保留路由，逐一决定其入口位置。要么纳入合理菜单/上下文入口，要么明确降为仅深链入口并在代码上避免误导性主路由暴露。  
+验收标准：
+1. 每个保留 route 都有明确的入口策略文档化。
+2. 不再存在“已注册主路由但在 UI 中几乎不可达”的灰色页面。
+3. 主导航只保留高频、稳定、用户可理解的入口。
+4. 管理型、恢复型、安装型、一次性流程型入口与常用协作入口分层展示。
 
-Primary boundary decision:
-- `soland` remains the pure Principal Server and embedded `did:webvh` provider.
-- `coauth` owns account registration, email verification, optional password setup, lost-password/account recovery, notification settings, and the trusted call into soland's embedded webvh registration endpoint.
-- `yougen` owns client-side routing, form state, local key generation, and showing the returned `did:webvh` / key metadata to the user.
+## P1
 
-## Implementation Tasks
-- [x] Fix `/login` and `/register` auth card centering after the `claude-design` stylesheet is loaded.
-- [x] Replace email-or-DID registration entry with two explicit paths: bind an existing DID, or create a new soland-backed `did:webvh`.
-- [x] Keep existing DID registration DID-first; do not require a username before DID control proof.
-- [x] For new `did:webvh`, collect username first, then email, then verification code; allow dev/test deployments to bypass actual email delivery.
-- [x] Keep email delivery bypass out of the user UI; coauth config decides whether dev/test email is skipped.
-- [x] Generate separate client key material for the DID Document controller key and the `did:webvh` update key; send only public multibase keys through coauth to soland.
-- [x] Add a post-registration account backup download containing account metadata, DID metadata, public keys, and both locally generated private seeds.
-- [x] Split the soland embedded `did:webvh` key model: DID authentication/assertion uses the DID controller key, while `did:webvh` `updateKeys[0]` uses a separate update key.
-- [x] Add the password step after email verification; make password optional only when coauth reports a passwordless/passkey-capable policy.
-- [x] Surface registration completion with `did:webvh`, key id, key log head, document/log URLs, and clear local-key ownership wording.
-- [x] Add lost-password/account recovery entry points; account recovery accepts email and routes through coauth.
-- [x] Add yougen API types/methods for the coauth registration/recovery contract and update Playwright mocks.
-- [x] Check whether coauth already stores email/recovery settings in its own DB/config; add or adjust config for test email bypass if missing.
-- [x] Check soland's embedded webvh provider stays business-logic-free; only adjust describe/register metadata if needed.
-- [x] Align the browser flow with the spec boundary: discover `auth_metadata.auth_server_url` from the Principal Server, then call coauth for registration and recovery.
-- [x] Make soland advertise the public Auth / Account Server URL without adding password, email, or lost-account business endpoints to soland.
-- [x] Split local HTTPS proxying so `local.host` serves soland and `auth.local.host` serves coauth, with dev CORS on both origins.
-- [x] Shorten soland embedded `did:webvh` names so the DID path is `webvh:{local_id}` instead of the internal API route path.
-- [x] Replace simplified embedded `did:webvh` SCID generation with spec-style SCID derived from the preliminary log entry containing `{SCID}` placeholders.
-- [x] Add embedded `did:webvh` entry-hash generation and a real log-entry proof signed by the update key supplied by the client.
-- [x] Apply the same two-key controller/update model and spec-style webvh log generation to `starid` if it owns a webvh provider implementation.
-- [x] Run `cargo fmt --check`, `cargo check`, and targeted Playwright auth/registration tests.
+### [x] T05 拆分并重命名遗留 `Product` 页面
+对应报告：R04  
+优先级：P1  
+目标文件：`src/routes.rs`、`src/app.rs`、`src/views/setup.rs`  
+整改要求：当前遗留 `Product` 页面同时包含 Account、Contacts、Space lifecycle、Message persistence，且导航标题叫 `Create Space`。必须拆成单一职责页面，并让路由名、菜单名、页面名一致。  
+验收标准：
+1. “Create Space” 只负责建空间，或改名为更准确的聚合入口。
+2. Account / login 流程回到登录、Onboarding 或 Settings。
+3. Contacts / handle / actor 相关能力回到 Directory 或独立 People 页面。
+4. Message persistence / commit / sync token 之类开发运维内容移出普通业务页。
 
-Verification notes:
-- `cargo check` passed in `yougen`.
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
-- `cargo fmt --check` passed in `yougen` with existing rustfmt config warnings about nightly-only options.
-- `cargo fmt --check` passed in `coauth`.
-- `cargo check -p coauth-backend -p coauth-config -p coauth-data` passed in `coauth` with existing warnings.
-- `cargo check -p coauth-backend` passed after the two-key finish contract change.
-- `cargo test -p coauth-config loads_registration_email_delivery_bypass_from_env --lib` passed.
-- `cargo check` passed in `soland` with existing warnings.
-- `cargo test --test http_api server_describe_advertises_auth_server_url_when_configured` passed in `soland`.
-- `CARGO_TARGET_DIR=%TEMP%\soland-codex-target cargo test --test http_api embedded_webvh_provider_registers_and_serves_identity` passed in `soland`; this verifies separate DID/update public keys and rejects reused key material.
-- `cargo test embedded_webvh_provider_registers_and_serves_identity --test http_api -- --nocapture` passed in `soland`; this verifies SCID-from-placeholder-log, multibase entry hash, and client-signed update-key log proof.
-- `cargo check -p coauth-backend` passed after forwarding `webvh_version_time` and `webvh_proof`.
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen` after adding client-side webvh log proof signing.
-- `cargo test -p starid webvh -- --nocapture` passed after switching SCID and entry hashes to base58btc sha2-256 multihash.
-- `cargo test -p starid production_mode --test http_api -- --nocapture` passed, including a production create test with a valid client-signed inception proof.
-- `cargo fmt --check` passed in `soland`, `coauth`, `starid`, and `yougen`; the rustfmt config still emits existing nightly-only option warnings.
-- Local dev services were restarted on `127.0.0.1:4527`, `127.0.0.1:7080`, and `127.0.0.1:8698`; health checks returned 200.
-- Playwright opened `http://127.0.0.1:4527/register`; no build-failed overlay or console errors were present.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page|registration"`; this now verifies the downloaded account backup JSON contains separate public/private DID controller and update keys.
-- Caddy was reloaded from `D:\Works\contrix-dev\soland\Caddyfile`; `OPTIONS https://auth.local.host/api/v1/auth/register/webvh/start` returns 204 with CORS headers.
-- Live local services were rebuilt/restarted on `127.0.0.1:8698` and `127.0.0.1:7080`; a direct coauth webvh registration returned separate DID controller and update keys.
+### [x] T06 重新划分 Settings
+对应报告：R05  
+优先级：P1  
+目标文件：`src/views/settings.rs`、`src/app.rs`  
+整改要求：Settings 应主要承载 actor-private 偏好、账号上下文、设备与通知配置；`Release gates` / build diagnostics / 审计类内容应迁出到 `Readiness` 或独立 diagnostics 面。  
+验收标准：
+1. Settings 目录树只保留“用户会持续回访的配置项”。
+2. `Diagnostics` 不再与 Theme、Privacy、Push 并列。
+3. actor-private 偏好分组清晰，例如 UI state、语言、私有过滤、本地显示偏好。
+4. 与 Space 共享事实无关的个人偏好不再和管理/调试面混在一起。
 
-# Server-First OIDC Login Todos
+### [x] T07 重新定义 Dashboard 的职责
+对应报告：R06  
+优先级：P1  
+目标文件：`src/views/dashboard.rs`  
+整改要求：Dashboard 应回答“现在我该去哪里、该处理什么”，而不是把 Workspace diagnostics、Protocol health、Inbox、Recent Spaces、Recent Flows 全部并排堆在首页。  
+验收标准：
+1. 首页首屏以最近空间、待办、未读、继续工作入口为主。
+2. `Workspace State`、`Protocol Health` 迁到次级运维面或折叠在非主路径。
+3. 首页 CTA 与主导航模型一致，不再继续强化遗留 `Product` 这个过载入口。
+4. 用户第一次进入首页时可以直接理解“协作入口”与“协议诊断入口”的差异。
 
-Boundary decision:
-- `yougen` should first choose the Principal Server, like Matrix Element choosing a homeserver.
-- The actual account/password UI belongs to `coauth` and is reached through the coauth OIDC authorization page discovered from the Principal Server.
-- `yougen` registration may keep client-side key generation/backup locally, because DID private keys must not be generated by or disclosed to coauth/soland.
+### [x] T08 拆分 Space Admin
+对应报告：R08  
+优先级：P1  
+目标文件：`src/views/space_admin.rs`、`src/routes.rs`、`src/app.rs`  
+整改要求：把当前单页上的成员管理、Invite、Join Policy、History Visibility、Discovery、MLS、Capability grant/revoke、Moderation、Federation、Conflict repair、Danger Zone 拆成明确子页或分组。  
+验收标准：
+1. 日常管理员任务与低频危险运维任务分开。
+2. Space 级配置、Organization 级治理、Federation 信任、协议修复工具不再混在同一滚动页面。
+3. 支持通过 `/space/:space_id/admin/:section` 或等价方式进入具体管理子面。
+4. 任一子页的标题都能明确说明其责任边界。
 
-## Implementation Tasks
-- [x] Remove the Account/Login hint input from `yougen` sign-in.
-- [x] Start login by resolving `auth_metadata.auth_server_url` from the Principal Server, then inspect coauth OIDC metadata.
-- [x] Redirect the browser to coauth `/authorize` with PKCE and no `login_hint`.
-- [x] Make coauth OIDC bridge/exchange accept an omitted `login_hint`; infer the user from the fulfilled coauth browser session.
-- [x] Add a dev static OIDC client for yougen in coauth config so `/authorize` accepts loopback callback URLs.
-- [x] Verify coauth `/login`, `/register`, OIDC discovery, and an `/authorize` redirect target open normally.
-- [x] Update Playwright mocks/tests for the server-first login shape.
-- [x] Build and serve the coauth frontend assets so coauth `/login` does not 404 on `coauth-frontend.js`.
-- [x] Serve a coauth favicon so browser default `/favicon.ico` requests do not show as 404.
-- [x] Make coauth's SPA shell CSP-safe: inject config as inert JSON, allow Dioxus WASM compilation, and remove external Google Fonts.
-- [x] Make coauth backend pick the newest hashed frontend entrypoint when multiple Dioxus build outputs exist.
-- [x] Preserve OIDC callback query parameters in yougen even when the Dioxus router normalizes `/auth/callback?code=...&state=...` to `/auth/callback`.
-- [x] Remove yougen's local account registration/recovery page and direct coauth registration helpers; account creation and lost-account flows now live behind the coauth OIDC UI.
-- [x] Accept coauth's current OIDC exchange viewer response shape (`principal_id`) and remove the historical Matrix viewer id from yougen's response model.
-- [x] Normalize legacy principal bridge paths in yougen and make soland advertise `/api/v1/auth/session-grant/exchange` instead of a non-fetchable `legacy:` URI.
-- [x] Replace yougen's old `dev_yougen` device id with protocol `cx:device:<uuidv7>` ids; sanitize persisted legacy ids and clear stale tokens.
-- [x] Bind coauth-issued principal session grants to the same protocol device id via `urn:contrix:client:device:<device_id>`.
-- [x] Provision the coauth user DID into soland during OIDC exchange before returning a principal session grant.
-- [x] Attach the coauth session-grant introspection proof when yougen exchanges the grant with soland.
+### [x] T09 收敛 Directory 的职责边界
+对应报告：R07  
+优先级：P1  
+目标文件：`src/views/directory.rs`、`src/views/applets.rs`、必要时新增独立页面  
+整改要求：Directory 保留“目录发现 / 实体查找”职责；`Applets`、`Protocol Objects`、可能的调试型对象浏览器从统一检索页拆出。  
+验收标准：
+1. `Spaces`、`Organizations`、`Actors`、`Handles` 仍可共存，但语义说明清楚。
+2. `Applets` 不再只是 Directory 的一个普通 tab，而是有自己明确的产品/工具定位。
+3. `Objects` 若保留，必须改为开发者/诊断语义，不与普通目录查询混淆。
+4. 页面文案继续坚持 discoverability、join_rule、history_visibility 三轴独立。
 
-Verification notes:
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
-- `cargo check -p coauth-backend` passed in `coauth` with existing warnings.
-- `coauth config sync` was run from `config.dev.yaml`; the running coauth service was then rebuilt and restarted.
-- Live services are listening on `127.0.0.1:4527` for yougen and `127.0.0.1:7080` for coauth.
-- `https://auth.local.host/.well-known/openid-configuration`, `/login`, `/register`, `https://local.host/api/v1/server/describe`, and `https://auth.local.host/api/v1/server/describe` all returned 200.
-- A direct `/authorize` probe with the yougen static client returned 303 instead of 400/502.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page|registration"`.
-- Built coauth frontend with `dx build -p coauth-frontend --release`, copied the output to `D:\Works\contrix-dev\coauth\dist`, and restarted coauth.
-- Updated coauth `just dev` and `just backend` to ensure frontend assets exist before starting the backend.
-- `https://auth.local.host/login?...` now references `/assets/coauth-frontend-dxhc43fada7b0f3bf77.js`; that script returns 200.
-- `https://auth.local.host/favicon.ico` returns 200 with an SVG favicon response.
-- A headless browser run through real `/authorize -> /login` reported no failed requests and no 4xx responses.
-- `https://auth.local.host/login` now returns CSP `script-src 'self' 'wasm-unsafe-eval'`; the server config is injected through `<script id="coauth-app-config" type="application/json">`, with no executable `window.APP_CONFIG` inline script.
-- Browser verification through real `/authorize -> /login` loaded `/assets/coauth-frontend-dxh46786a4822a265c.js`, `/assets/coauth-frontend_bg-dxh651736119b7fdd34.wasm`, and `/assets/main-dxh60c5d01dec76bc9.css` with 200 responses; current console had no errors or warnings.
-- Browser resource inspection showed no `fonts.googleapis.com`, `fonts.gstatic.com`, or other external font requests.
-- Direct browser verification against `http://127.0.0.1:8080/auth/callback?code=test-code&state=test-state` confirmed Dioxus still strips the address-bar query, but yougen now falls back to the initial navigation entry; the failure advances to the expected missing-scaffold state instead of `Could not read callback URL`.
-- Yougen `/login` no longer renders local `Create account` or `Lost password or account` buttons; the OIDC destination page is responsible for those actions.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page delegates"`.
-- The latest live coauth authorization grants were fulfilled and exchanged, confirming the callback reached `/api/v1/auth/oidc/exchange`; the failure was yougen-side response decoding.
-- `cargo test login_response_accepts_current_coauth_viewer_shape --lib` passed.
-- `cargo test endpoint_join_accepts_legacy_bridge_paths --lib` and `cargo test endpoint_join_keeps_api_paths_under_base_url --lib` passed.
-- `cargo check` passed in `soland` with existing warnings after updating the principal bridge descriptor.
-- `cargo test config::tests:: --lib` passed in `yougen`; this verifies protocol device id defaults and legacy device id replacement.
-- `cargo test -p coauth-backend oidc_bridge::tests` passed in `coauth`; this verifies coauth device id validation and session-grant device scope binding.
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
-- `cargo check -p coauth-backend` passed in `coauth` with existing warnings.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page delegates|settings can update"`.
-- `cargo test -p coauth-backend oidc_bridge::tests` passed after adding soland account provisioning during OIDC exchange.
-- `cargo check -p coauth-backend` passed in `coauth` with existing warnings.
-- `cargo build -p coauth --features cedar` passed after stopping the old locked `coauth.exe`.
-- The rebuilt coauth service is listening on `127.0.0.1:7080`; `http://127.0.0.1:7080/health` returned 200.
-- A direct smoke POST to `https://local.host/api/v1/account/register` returned 201, confirming the Caddy-facing soland registration path is reachable.
-- `cargo test session_grant_ --lib` passed in `yougen`; this verifies session-grant proof signing and PKCS#8 PEM private-key decoding.
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen` after adding the proof exchange path.
-- Live Playwright smoke passed through `yougen -> coauth login -> consent -> /auth/callback -> soland session-grant exchange`; soland returned 200 with a bearer session and yougen navigated to `/`.
+## P2
 
-# Client Shell Navigation Todos
+### [x] T10 清理导航中的空分组和重复入口
+对应报告：R03、R10  
+优先级：P2  
+目标文件：`src/app.rs`  
+整改要求：去掉长期为空的 `Cross-organization`、`Personal Spaces` 占位，或改为真正可工作的懒加载分组；同时清理 `Search / Directory` 与 `Directory` 的重复表达。  
+验收标准：
+1. 主导航不再长期展示“空壳分组”。
+2. 相同功能不再用两套名称并列出现。
+3. 占位分组若必须存在，必须带明确触发条件和进入路径。
 
-Boundary decision:
-- The authenticated shell should not route principal identity context back to the OIDC login screen.
-- Principal Server controls in the shell are for probing/refreshing server metadata and sync state; account authentication remains the coauth OIDC flow.
+### [x] T11 统一标签、标题和 breadcrumb 词汇
+对应报告：R01、R04、R10  
+优先级：P2  
+目标文件：`src/app.rs`、`src/routes.rs`、相关 view 文件  
+整改要求：统一使用 spec 认可的对象词汇，如 Space、View、Place、Discussion、Document；避免把 renderer 名称包装成独立产品名。  
+验收标准：
+1. `route_label()` 与页面主标题不再制造错误对象边界。
+2. `Kanban`、`Chat`、`Files` 这类名称若继续存在，必须明确是 view/renderer，而不是一级产品。
+3. 用户从标题和 breadcrumb 就能理解自己处于“哪个 Space 的哪个视图”。
 
-## Implementation Tasks
-- [x] Change the left Principal context row so it opens settings instead of `/login`.
-- [x] Rename/clarify the shell `Connect` action so it reads as a server refresh/probe action, not an account login action.
-- [x] Add desktop collapse controls for the left navigation and right context panel.
-- [x] Add a shell-level light/night theme toggle and persist the choice.
-- [x] Run formatting/build checks and a targeted shell UI smoke.
-
-Verification notes:
-- `cargo fmt --check` passed in `yougen` with existing rustfmt config warnings about nightly-only options.
-- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
-- Browser/Playwright shell smoke against `http://127.0.0.1:8080/` passed: Principal href is `/settings/server`, action text is `Refresh`, both collapse controls exist, and theme toggles light/night.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "right panel shows"`.
-- A broader two-test smoke (`bootstrap login and sync|right panel shows`) still has one unrelated failure: the bootstrap test expects the right panel Push metric to show `cx:push:e2e`, while the current app state reports `Not registered` unless the push registration flow runs.
+### [x] T12 建立一轮 IA 回归检查
+对应报告：全量  
+优先级：P2  
+目标文件：`_report.md`、`_todos.md`、必要时新增内部检查文档  
+整改要求：在本轮重构完成后，按 contrix-spec 再做一次专门的 IA 审查，确认没有把 renderer、track、Place、Organization、Federation 等边界重新混淆。  
+验收标准：
+1. 所有 P0 / P1 项完成后有一次书面复查。
+2. 复查结论明确标注“仍不符 / 基本符合 / 符合”。
+3. 后续新增页面进入主导航前，必须先过同一检查清单。

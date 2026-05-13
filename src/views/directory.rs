@@ -1,16 +1,16 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use serde_json::Value;
 
-use crate::{models::*, views::helpers::authed_api};
+use crate::{models::*, routes::Route, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
-    Objects,
+    ProtocolObjects,
     Spaces,
     Organizations,
     Actors,
     Handles,
-    Applets,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -36,9 +36,10 @@ pub fn DirectoryPanel(
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
     let mut handle_result = use_signal(|| Option::<ResolveHandleResponse>::None);
+    let mut contact_target_did = use_signal(|| "did:web:bob.example".to_owned());
+    let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
+    let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
     let mut pagination = use_signal(PaginationState::default);
-    let mut applet_results = use_signal(Vec::<Value>::new);
-    let mut applet_status = use_signal(|| String::new());
     let base_url_key = base_url.clone();
 
     rsx! {
@@ -46,12 +47,12 @@ pub fn DirectoryPanel(
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
                 button {
-                    class: if active_tab() == DirectoryTab::Objects { "primary" } else { "secondary" },
+                    class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
                     "data-testid": "tab-objects",
                     role: "tab",
-                    "aria-selected": if active_tab() == DirectoryTab::Objects { "true" } else { "false" },
-                    onclick: move |_| active_tab.set(DirectoryTab::Objects),
-                    "Objects"
+                    "aria-selected": if active_tab() == DirectoryTab::ProtocolObjects { "true" } else { "false" },
+                    onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
+                    "Protocol Objects"
                 }
                 button {
                     class: if active_tab() == DirectoryTab::Spaces { "primary" } else { "secondary" },
@@ -84,14 +85,6 @@ pub fn DirectoryPanel(
                     "aria-selected": if active_tab() == DirectoryTab::Handles { "true" } else { "false" },
                     onclick: move |_| active_tab.set(DirectoryTab::Handles),
                     "Handles"
-                }
-                button {
-                    class: if active_tab() == DirectoryTab::Applets { "primary" } else { "secondary" },
-                    "data-testid": "tab-applets",
-                    role: "tab",
-                    "aria-selected": if active_tab() == DirectoryTab::Applets { "true" } else { "false" },
-                    onclick: move |_| active_tab.set(DirectoryTab::Applets),
-                    "Applets"
                 }
             }
 
@@ -150,16 +143,159 @@ pub fn DirectoryPanel(
                 }
             }
 
+            div { class: "event", "data-testid": "directory-surface-map",
+                div { class: "event-head",
+                    span { "Directory scope" }
+                    span { "entity discovery only" }
+                }
+                div { class: "muted",
+                    "Directory stays focused on spaces, organizations, actors, handles, and protocol-level lookups. Applets and agents now live in their own tool surface so runtime tooling does not share the same primary discovery entrypoint."
+                }
+                div { class: "actions",
+                    Link {
+                        class: "secondary",
+                        to: Route::Applets,
+                        "Open Applets & Agents"
+                    }
+                    button {
+                        class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
+                        onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
+                        "Developer Object Lookup"
+                    }
+                }
+            }
+
+            div { class: "event", "data-testid": "directory-contact-tools",
+                div { class: "event-head",
+                    span { "Relationship tools" }
+                    span { "actors / handles context" }
+                }
+                div { class: "muted",
+                    "Contact and actor relationship actions now live with directory lookups instead of the setup page. Search for a DID or handle here, then issue the relationship operation against that actor."
+                }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "contact-target-did-input",
+                        value: "{contact_target_did}",
+                        placeholder: "Target DID",
+                        oninput: move |event| contact_target_did.set(event.value())
+                    }
+                    input {
+                        "data-testid": "contact-requester-did-input",
+                        value: "{contact_requester_did}",
+                        placeholder: "Requester DID",
+                        oninput: move |event| contact_requester_did.set(event.value())
+                    }
+                    div { class: "muted", "{contact_state}" }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "request-contact-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                let target = contact_target_did();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.request_contact(&target).await {
+                                            Ok(contact) => contact_state.set(format!("request {} -> {} {}", contact.requester, contact.target, contact.status)),
+                                            Err(error) => contact_state.set(format!("request failed: {error}")),
+                                        },
+                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "Request"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "accept-contact-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                let requester = contact_requester_did();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.respond_contact(&requester, "accept").await {
+                                            Ok(contact) => contact_state.set(format!("respond {} -> {} {}", contact.requester, contact.target, contact.status)),
+                                            Err(error) => contact_state.set(format!("accept failed: {error}")),
+                                        },
+                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "Accept"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "reject-contact-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                let requester = contact_requester_did();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.respond_contact(&requester, "reject").await {
+                                            Ok(contact) => contact_state.set(format!("respond {} -> {} {}", contact.requester, contact.target, contact.status)),
+                                            Err(error) => contact_state.set(format!("reject failed: {error}")),
+                                        },
+                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "Reject"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "list-contacts-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.contacts().await {
+                                            Ok(result) => {
+                                                let summary = result
+                                                    .contacts
+                                                    .iter()
+                                                    .map(|contact| format!("{} -> {} {}", contact.requester, contact.target, contact.status))
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ");
+                                                contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
+                                            }
+                                            Err(error) => contact_state.set(format!("list failed: {error}")),
+                                        },
+                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    }
+                                });
+                            }
+                        },
+                        "List"
+                    }
+                }
+            }
+
             div { class: "event directory-search-card",
                 div { class: "event-head",
                     span { "Directory" }
                     span { match active_tab() {
-                        DirectoryTab::Objects => "objects",
+                        DirectoryTab::ProtocolObjects => "developer objects",
                         DirectoryTab::Spaces => "spaces",
                         DirectoryTab::Organizations => "organizations",
                         DirectoryTab::Actors => "actors",
                         DirectoryTab::Handles => "handles",
-                        DirectoryTab::Applets => "applets",
                     }}
                 }
                 div { class: "search",
@@ -167,20 +303,18 @@ pub fn DirectoryPanel(
                         "data-testid": "directory-search-input",
                         value: "{query}",
                         "aria-label": match active_tab() {
-                            DirectoryTab::Objects => "Search protocol objects",
+                            DirectoryTab::ProtocolObjects => "Search protocol objects for developer diagnostics",
                             DirectoryTab::Spaces => "Search spaces",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Resolve handle",
-                            DirectoryTab::Applets => "Discover applets",
                         },
                         placeholder: match active_tab() {
-                            DirectoryTab::Objects => "Search Cards, Discussions, Actors, Spaces",
+                            DirectoryTab::ProtocolObjects => "Search Cards, Discussions, Actors, Spaces (diagnostic lookup)",
                             DirectoryTab::Spaces => "Search spaces",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Enter handle (e.g. alice.example)",
-                            DirectoryTab::Applets => "Enter applet DID",
                         },
                         oninput: move |event| query.set(event.value()),
                         onkeydown: move |event| {
@@ -195,9 +329,9 @@ pub fn DirectoryPanel(
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
                                         match tab {
-                                            DirectoryTab::Objects => {
+                                            DirectoryTab::ProtocolObjects => {
                                                 object_results.set(protocol_object_results(&q));
-                                                status.set("loaded protocol object projection results".to_owned());
+                                                status.set("loaded protocol object diagnostic results".to_owned());
                                             }
                                             DirectoryTab::Spaces => {
                                                 match api.search_spaces(&q, None).await {
@@ -234,19 +368,6 @@ pub fn DirectoryPanel(
                                                     Err(error) => status.set(format!("resolve failed: {error}")),
                                                 }
                                             }
-                                            DirectoryTab::Applets => {
-                                                match api.applet_describe(&q).await {
-                                                    Ok(applet) => {
-                                                        let value = serde_json::to_value(&applet).unwrap_or_default();
-                                                        applet_results.set(vec![value]);
-                                                        applet_status.set(format!("found applet {}", applet.name));
-                                                    }
-                                                    Err(error) => {
-                                                        applet_results.set(Vec::new());
-                                                        applet_status.set(format!("applet lookup failed: {error}"));
-                                                    }
-                                                }
-                                            }
                                         }
                                     }
                                 });
@@ -270,9 +391,9 @@ pub fn DirectoryPanel(
                                     spawn(async move {
                                         if let Ok(api) = authed_api(&base, api_token) {
                                             match tab {
-                                                DirectoryTab::Objects => {
+                                                DirectoryTab::ProtocolObjects => {
                                                     object_results.set(protocol_object_results(&q));
-                                                    status.set("loaded protocol object projection results".to_owned());
+                                                    status.set("loaded protocol object diagnostic results".to_owned());
                                                 }
                                                 DirectoryTab::Spaces => {
                                                     match api.search_spaces(&q, None).await {
@@ -307,19 +428,6 @@ pub fn DirectoryPanel(
                                                     match api.resolve_handle(&q).await {
                                                         Ok(resolved) => handle_result.set(Some(resolved)),
                                                         Err(error) => status.set(format!("resolve failed: {error}")),
-                                                    }
-                                                }
-                                                DirectoryTab::Applets => {
-                                                    match api.applet_describe(&q).await {
-                                                        Ok(applet) => {
-                                                            let value = serde_json::to_value(&applet).unwrap_or_default();
-                                                            applet_results.set(vec![value]);
-                                                            applet_status.set(format!("found applet {}", applet.name));
-                                                        }
-                                                        Err(error) => {
-                                                            applet_results.set(Vec::new());
-                                                            applet_status.set(format!("applet lookup failed: {error}"));
-                                                        }
                                                     }
                                                 }
                                             }
@@ -359,7 +467,16 @@ pub fn DirectoryPanel(
                 }
             }
 
-            if active_tab() == DirectoryTab::Objects {
+            if active_tab() == DirectoryTab::ProtocolObjects {
+                div { class: "event", "data-testid": "protocol-objects-banner",
+                    div { class: "event-head",
+                        span { "Developer object lookup" }
+                        span { "diagnostic projection" }
+                    }
+                    div { class: "muted",
+                        "These results are for protocol debugging and model inspection. They are not the normal end-user directory surface."
+                    }
+                }
                 div { class: "event", "data-testid": "protocol-object-results",
                     div { class: "event-head", span { "Protocol Objects" } span { "{object_results().len()} result(s)" } }
                     if object_results().is_empty() {
@@ -382,9 +499,10 @@ pub fn DirectoryPanel(
                         div { class: "space-title", "{space.name}" }
                         div { class: "muted", "{space.description.clone().unwrap_or_default()}" }
                         div { class: "actions",
-                            button {
+                            Link {
                                 class: "primary",
                                 "data-testid": "open-space-button",
+                                to: Route::Space { space_id: space.space_id.clone() },
                                 onclick: {
                                     let id = space.space_id.clone();
                                     move |_| {
@@ -646,93 +764,6 @@ pub fn DirectoryPanel(
                     div { class: "event",
                         div { class: "event-head", span { "Handles" } span { "lookup" } }
                         div { class: "muted", "Enter a handle above and click Search to resolve it." }
-                    }
-                }
-            }
-
-            // Applets tab results
-            if active_tab() == DirectoryTab::Applets {
-                if !applet_status().is_empty() {
-                    div { class: "muted", "data-testid": "applet-status", "{applet_status}" }
-                }
-                for applet in applet_results() {
-                    div { class: "event", "data-testid": "applet-result",
-                        div { class: "event-head",
-                            span { "applet" }
-                            span { "{value_str(&applet, \"applet_did\", \"-\")}" }
-                        }
-                        div { class: "space-title", "{value_str(&applet, \"name\", \"unknown\")}" }
-                        div { class: "muted", "Version: {value_str(&applet, \"version\", \"?\")}" }
-                        {
-                            let caps = value_vec(&applet, "capabilities");
-                            if !caps.is_empty() {
-                                rsx! {
-                                    div { class: "muted", "Capabilities: {caps.join(\", \")}" }
-                                }
-                            } else {
-                                rsx! { div {} }
-                            }
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "applet-ping-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let did = value_str(&applet, "applet_did", "");
-                                    move |_| {
-                                        let base = base.clone();
-                                        let did = did.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.applet_ping(&did).await {
-                                                    Ok(ping) => applet_status.set(format!(
-                                                        "ping ok, latency: {}ms",
-                                                        ping.latency_ms.unwrap_or(0)
-                                                    )),
-                                                    Err(e) => applet_status.set(format!("ping failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Ping"
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "applet-metadata-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let did = value_str(&applet, "applet_did", "");
-                                    move |_| {
-                                        let base = base.clone();
-                                        let did = did.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.applet_protocol_metadata(&did).await {
-                                                    Ok(meta) => applet_status.set(format!(
-                                                        "protocol v{}, {} operations, {} schemas",
-                                                        meta.protocol_version,
-                                                        meta.supported_operations.len(),
-                                                        meta.supported_schemas.len()
-                                                    )),
-                                                    Err(e) => applet_status.set(format!("metadata failed: {e}")),
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Metadata"
-                            }
-                        }
-                    }
-                }
-                if applet_results().is_empty() && applet_status().is_empty() {
-                    div { class: "event",
-                        div { class: "event-head", span { "Applets" } span { "discovery" } }
-                        div { class: "muted", "Enter an applet DID above and click Search to discover it." }
                     }
                 }
             }
