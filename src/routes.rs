@@ -16,9 +16,6 @@ pub enum Route {
     #[route("/auth/callback", crate::app::RouterView)]
     AuthCallback,
 
-    #[route("/register", crate::app::RouterView)]
-    Register,
-
     #[route("/timeline", crate::app::RouterView)]
     Timeline,
 
@@ -131,7 +128,6 @@ impl Route {
         match self {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
-            Route::Register => View::Register,
             Route::Timeline | Route::TimelineSpace { .. } => View::Timeline,
             Route::Directory => View::Directory,
             Route::Product => View::Product,
@@ -180,7 +176,6 @@ impl From<View> for Route {
         match view {
             View::Dashboard => Route::Dashboard,
             View::Login => Route::Login,
-            View::Register => Route::Register,
             View::Timeline => Route::Timeline,
             View::Directory => Route::Directory,
             View::Product => Route::Product,
@@ -214,7 +209,6 @@ mod tests {
         let routes = vec![
             Route::Dashboard,
             Route::Login,
-            Route::Register,
             Route::Timeline,
             Route::Directory,
             Route::Product,

@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::{
     api::ContrixApi,
     components::RightPanel,
-    config::LocalConfigStore,
+    config::{LocalConfigStore, normalize_device_id},
     conformance::{
         PROFILE_CHAT_ONLY_CLIENT, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT,
         PROFILE_KANBAN_ONLY_CLIENT, PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
@@ -650,6 +650,139 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --right-pane-w: 340px;
 }
 
+:root,
+[data-theme="light"] {
+  --bg: #f6eee7;
+  --bg-elev: #ece2d9;
+  --surface: rgba(255, 250, 245, 0.94);
+  --surface-2: #f6efe8;
+  --surface-3: #efe5dc;
+  --surface-inv: #18212f;
+  --hover: rgba(47, 39, 35, 0.04);
+  --hover-strong: rgba(47, 39, 35, 0.07);
+
+  --border: #e6d9cf;
+  --border-strong: #d8c7bb;
+  --border-faint: #f1e8df;
+
+  --text: #2f2723;
+  --text-2: #6f625a;
+  --text-3: #9b8c84;
+  --text-on-accent: #fffaf6;
+  --text-inv: #f8f2ee;
+
+  --accent: #d97706;
+  --accent-strong: #b96505;
+  --accent-soft: #fff4e6;
+  --accent-2: #c65b72;
+  --accent-ink: #7f3f02;
+
+  --success: #317d6a;
+  --success-soft: #e5f3ee;
+  --success-ink: #1f5d4f;
+  --warning: #b97824;
+  --warning-soft: #fff4e1;
+  --warning-ink: #7a4f15;
+  --danger: #c44c2d;
+  --danger-soft: #fce7e2;
+  --danger-ink: #8c331b;
+  --info: #586fcb;
+  --info-soft: #edf0ff;
+  --info-ink: #33479d;
+  --neutral-soft: #f1e9e2;
+
+  --proto-bg: #18141a;
+  --proto-fg: #efe8e1;
+  --proto-meta: #b6a49a;
+  --proto-accent: #f1c37d;
+
+  --shadow-xs: 0 1px 1px rgba(58, 41, 30, 0.05);
+  --shadow-sm: 0 1px 2px rgba(58, 41, 30, 0.06), 0 1px 1px rgba(58, 41, 30, 0.04);
+  --shadow-md: 0 8px 22px rgba(79, 57, 40, 0.10), 0 1px 2px rgba(58, 41, 30, 0.05);
+  --shadow-lg: 0 24px 56px rgba(79, 57, 40, 0.14);
+  --ring: 0 0 0 3px rgba(217, 119, 6, 0.18);
+
+  --page-glow-a: rgba(245, 158, 11, 0.10);
+  --page-glow-b: rgba(198, 91, 114, 0.08);
+  --page-glow-c: rgba(88, 111, 203, 0.07);
+
+  --nav-bg: #161c28;
+  --nav-bg-2: #202a39;
+  --nav-soft: rgba(255, 255, 255, 0.05);
+  --nav-border: rgba(217, 119, 6, 0.18);
+  --nav-text: #f8f2ee;
+  --nav-muted: #cbbab1;
+  --nav-label: #a89389;
+  --nav-input-bg: rgba(10, 15, 25, 0.42);
+  --nav-input-border: rgba(203, 186, 177, 0.18);
+}
+
+[data-theme="dark"] {
+  --bg: #101722;
+  --bg-elev: #223041;
+  --surface: rgba(27, 36, 48, 0.94);
+  --surface-2: #202b39;
+  --surface-3: #283546;
+  --surface-inv: #fffaf6;
+  --hover: rgba(255, 255, 255, 0.04);
+  --hover-strong: rgba(255, 255, 255, 0.08);
+
+  --border: #3a4454;
+  --border-strong: #4b586b;
+  --border-faint: #202938;
+
+  --text: #f8f2ee;
+  --text-2: #cbbab1;
+  --text-3: #a89389;
+  --text-on-accent: #2c170b;
+  --text-inv: #1c1e25;
+
+  --accent: #f59e0b;
+  --accent-strong: #f7ae3a;
+  --accent-soft: rgba(245, 158, 11, 0.12);
+  --accent-2: #fb7185;
+  --accent-ink: #fde7ba;
+
+  --success: #7bc9b5;
+  --success-soft: rgba(123, 201, 181, 0.16);
+  --success-ink: #d7f5ec;
+  --warning: #f0be78;
+  --warning-soft: rgba(240, 190, 120, 0.16);
+  --warning-ink: #fae7c2;
+  --danger: #ff7a59;
+  --danger-soft: rgba(255, 122, 89, 0.16);
+  --danger-ink: #ffd6cd;
+  --info: #a7b7ff;
+  --info-soft: rgba(167, 183, 255, 0.16);
+  --info-ink: #dce4ff;
+  --neutral-soft: #1f2a38;
+
+  --proto-bg: #0f1218;
+  --proto-fg: #f1e8e2;
+  --proto-meta: #b7a49c;
+  --proto-accent: #f2c98b;
+
+  --shadow-xs: 0 1px 1px rgba(4, 8, 14, 0.38);
+  --shadow-sm: 0 1px 2px rgba(4, 8, 14, 0.42);
+  --shadow-md: 0 10px 24px rgba(4, 8, 14, 0.32), 0 1px 2px rgba(4, 8, 14, 0.40);
+  --shadow-lg: 0 28px 64px rgba(4, 8, 14, 0.42);
+  --ring: 0 0 0 3px rgba(245, 158, 11, 0.26);
+
+  --page-glow-a: rgba(245, 158, 11, 0.14);
+  --page-glow-b: rgba(251, 113, 133, 0.12);
+  --page-glow-c: rgba(123, 201, 181, 0.08);
+
+  --nav-bg: #111827;
+  --nav-bg-2: #1a2230;
+  --nav-soft: rgba(255, 255, 255, 0.04);
+  --nav-border: rgba(245, 158, 11, 0.18);
+  --nav-text: #f8f2ee;
+  --nav-muted: #cbbab1;
+  --nav-label: #a89389;
+  --nav-input-bg: rgba(8, 12, 20, 0.56);
+  --nav-input-border: rgba(168, 147, 137, 0.18);
+}
+
 .auth-shell {
   width: 100vw;
   min-height: 100vh;
@@ -658,7 +791,13 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   place-items: center;
   padding: 24px;
   box-sizing: border-box;
-  background: var(--bg);
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 16% 18%, var(--page-glow-a), transparent 28%),
+    radial-gradient(circle at 84% 12%, var(--page-glow-b), transparent 26%),
+    radial-gradient(circle at 50% 0%, var(--page-glow-c), transparent 22%),
+    linear-gradient(145deg, var(--bg), var(--bg-elev));
 }
 
 .auth-card {
@@ -667,12 +806,37 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   margin: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 34%),
+    radial-gradient(circle at bottom left, color-mix(in srgb, var(--accent) 12%, transparent), transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white), var(--surface));
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
 }
 
 .auth-panel {
   padding: 28px;
+}
+
+.auth-logo {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.auth-brand h1 {
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+
+.auth-brand p,
+.auth-status {
+  color: var(--text-3);
+}
+
+.auth-form label {
+  color: var(--text-2);
 }
 
 .auth-form {
@@ -864,9 +1028,10 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   border-color: transparent;
   color: var(--text-on-accent);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .secondary {
@@ -874,7 +1039,9 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--text);
 }
 
-.primary:hover { background: var(--accent-strong); }
+.primary:hover {
+  background: linear-gradient(135deg, var(--accent-strong) 0%, color-mix(in srgb, var(--accent-2) 92%, white) 100%);
+}
 .secondary:hover { background: var(--surface-2); }
 
 .badge.green,
@@ -1065,6 +1232,211 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
 .right-panel .event {
   padding: 10px;
+}
+
+.shell.app {
+  background:
+    radial-gradient(circle at 12% 0%, var(--page-glow-a), transparent 24%),
+    radial-gradient(circle at 88% 10%, var(--page-glow-b), transparent 24%),
+    linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
+}
+
+.shell.app.theme-light,
+.shell.app.theme-night {
+  color-scheme: light dark;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, var(--nav-bg), var(--nav-bg-2));
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-border);
+}
+
+.brand::before,
+.avatar.bot,
+.avatar.agent {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+}
+
+.brand::before {
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.brand-subtitle,
+.context-label,
+.nav-section-title {
+  color: var(--nav-label);
+}
+
+.context-title,
+.nav-title {
+  color: var(--nav-text);
+}
+
+.context-meta,
+.nav-meta,
+.sidebar .space-meta,
+.sidebar .muted,
+.mobile-status .muted {
+  color: var(--nav-muted);
+}
+
+.sidebar-context {
+  border-color: var(--nav-border);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 22%, transparent), transparent 42%),
+    var(--nav-soft);
+}
+
+.status,
+.space-button,
+.nav-item {
+  border-color: color-mix(in srgb, var(--nav-border) 74%, rgba(255, 255, 255, 0.06));
+}
+
+.space-button,
+.nav-item {
+  color: var(--nav-text);
+  background: var(--nav-soft);
+}
+
+.server-connect input {
+  border-color: var(--nav-input-border);
+  background: var(--nav-input-bg);
+  color: var(--nav-text);
+}
+
+.space-button.active,
+.nav-item:hover,
+.nav-item.active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
+    var(--nav-soft);
+}
+
+.nav-item.cross-org,
+.home-space-card.cross-org {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
+    var(--nav-soft);
+}
+
+.topbar {
+  border-color: color-mix(in srgb, var(--border) 86%, var(--accent) 14%);
+  background: color-mix(in srgb, var(--surface) 94%, white);
+}
+
+.home-hero,
+.directory-axis-card,
+.settings-header-card {
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+    radial-gradient(circle at 90% 10%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 30%),
+    var(--surface);
+}
+
+.home-space-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white), color-mix(in srgb, var(--surface-2) 92%, var(--accent) 8%));
+}
+
+.nested-card,
+.settings-page-chip {
+  background: color-mix(in srgb, var(--surface-2) 92%, white);
+}
+
+.badge-info,
+.badge.blue {
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+
+.badge.amber,
+.badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.badge.red,
+.badge-error {
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+
+.badge.green,
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+
+.tab.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--accent-2));
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .auth-shell.theme-system,
+  .shell.theme-system {
+    --bg: #101722;
+    --bg-elev: #223041;
+    --surface: rgba(27, 36, 48, 0.94);
+    --surface-2: #202b39;
+    --surface-3: #283546;
+    --surface-inv: #fffaf6;
+    --hover: rgba(255, 255, 255, 0.04);
+    --hover-strong: rgba(255, 255, 255, 0.08);
+    --border: #3a4454;
+    --border-strong: #4b586b;
+    --border-faint: #202938;
+    --text: #f8f2ee;
+    --text-2: #cbbab1;
+    --text-3: #a89389;
+    --text-on-accent: #2c170b;
+    --text-inv: #1c1e25;
+    --accent: #f59e0b;
+    --accent-strong: #f7ae3a;
+    --accent-soft: rgba(245, 158, 11, 0.12);
+    --accent-2: #fb7185;
+    --accent-ink: #fde7ba;
+    --success: #7bc9b5;
+    --success-soft: rgba(123, 201, 181, 0.16);
+    --success-ink: #d7f5ec;
+    --warning: #f0be78;
+    --warning-soft: rgba(240, 190, 120, 0.16);
+    --warning-ink: #fae7c2;
+    --danger: #ff7a59;
+    --danger-soft: rgba(255, 122, 89, 0.16);
+    --danger-ink: #ffd6cd;
+    --info: #a7b7ff;
+    --info-soft: rgba(167, 183, 255, 0.16);
+    --info-ink: #dce4ff;
+    --neutral-soft: #1f2a38;
+    --proto-bg: #0f1218;
+    --proto-fg: #f1e8e2;
+    --proto-meta: #b7a49c;
+    --proto-accent: #f2c98b;
+    --shadow-xs: 0 1px 1px rgba(4, 8, 14, 0.38);
+    --shadow-sm: 0 1px 2px rgba(4, 8, 14, 0.42);
+    --shadow-md: 0 10px 24px rgba(4, 8, 14, 0.32), 0 1px 2px rgba(4, 8, 14, 0.40);
+    --shadow-lg: 0 28px 64px rgba(4, 8, 14, 0.42);
+    --ring: 0 0 0 3px rgba(245, 158, 11, 0.26);
+    --page-glow-a: rgba(245, 158, 11, 0.14);
+    --page-glow-b: rgba(251, 113, 133, 0.12);
+    --page-glow-c: rgba(123, 201, 181, 0.08);
+    --nav-bg: #111827;
+    --nav-bg-2: #1a2230;
+    --nav-soft: rgba(255, 255, 255, 0.04);
+    --nav-border: rgba(245, 158, 11, 0.18);
+    --nav-text: #f8f2ee;
+    --nav-muted: #cbbab1;
+    --nav-label: #a89389;
+    --nav-input-bg: rgba(8, 12, 20, 0.56);
+    --nav-input-border: rgba(168, 147, 137, 0.18);
+    color-scheme: dark;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -1316,7 +1688,7 @@ pub fn RouterView() -> Element {
             ""
         }
     );
-    let is_auth_route = matches!(&route, Route::Login | Route::AuthCallback | Route::Register);
+    let is_auth_route = matches!(&route, Route::Login | Route::AuthCallback);
     if !has_session || is_auth_route {
         let auth_class = format!(
             "auth-shell {}{}",
@@ -1333,8 +1705,6 @@ pub fn RouterView() -> Element {
         );
         let login_navigator = navigator.clone();
         let callback_navigator = navigator.clone();
-        let register_navigator = navigator.clone();
-        let recovery_navigator = navigator.clone();
 
         return rsx! {
             style { "{STYLE}" }
@@ -1350,28 +1720,6 @@ pub fn RouterView() -> Element {
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
                     match &route {
-                        Route::Register => rsx! {
-                            crate::views::register::RegisterPanel {
-                                base_url,
-                                account_did,
-                                device_id,
-                                config_store,
-                                state_store,
-                                initial_recovery: false,
-                                on_register: move |_| { let _ = register_navigator.push(Route::Login); },
-                            }
-                        },
-                        Route::Recovery => rsx! {
-                            crate::views::register::RegisterPanel {
-                                base_url,
-                                account_did,
-                                device_id,
-                                config_store,
-                                state_store,
-                                initial_recovery: true,
-                                on_register: move |_| { let _ = recovery_navigator.push(Route::Login); },
-                            }
-                        },
                         Route::AuthCallback => rsx! {
                             crate::views::login::LoginPanel {
                                 base_url,
@@ -1821,17 +2169,6 @@ pub fn RouterView() -> Element {
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
                     },
-                    Route::Register => rsx! {
-                        crate::views::register::RegisterPanel {
-                            base_url,
-                            account_did,
-                            device_id,
-                            config_store,
-                            state_store,
-                            initial_recovery: false,
-                            on_register: move |_| { let _ = navigator.push(Route::Login); },
-                        }
-                    },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {
                             base_url: base_url(),
@@ -2131,7 +2468,6 @@ fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
-        Route::Register => "Register",
         Route::Timeline | Route::TimelineSpace { .. } => "Timeline",
         Route::Directory => "Directory",
         Route::Product => "Create Space",
@@ -2172,6 +2508,7 @@ struct ConnectContext {
 }
 
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
+    let device = normalize_device_id(&device);
     spawn(async move {
         let mut status = ctx.status;
         let mut sync_cursor = ctx.sync_cursor;

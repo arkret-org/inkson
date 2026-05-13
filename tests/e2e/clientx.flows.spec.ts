@@ -1,12 +1,25 @@
-import fs from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
 test.beforeEach(async ({ page }, testInfo) => {
   await mockContrixApi(page);
-  if (testInfo.title.startsWith("login page") || testInfo.title.startsWith("registration ")) {
+  if (testInfo.title.startsWith("login page")) {
     return;
   }
+  await page.addInitScript(() => {
+    if (localStorage.getItem("yougen.config.v1")) {
+      return;
+    }
+    localStorage.setItem(
+      "yougen.config.v1",
+      JSON.stringify({
+        server_url: "https://local.host",
+        account_did: "did:web:alice.example",
+        device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+        session_token: "sx:e2e-token",
+      }),
+    );
+  });
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
 });
@@ -37,202 +50,49 @@ test("right panel shows space hierarchy without implicit cascade", async ({ page
   await expect(page.getByTestId("space-hierarchy-children-empty")).toContainText("No hierarchy children");
 });
 
-test("login page exposes account creation and recovery entry points", async ({ page }) => {
+test("login page delegates account lifecycle to coauth OIDC", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
   await expect(page.getByTestId("login-server-url")).toHaveValue("https://local.host");
   await expect(page.getByTestId("login-account-hint")).toHaveCount(0);
   await expect(page.getByTestId("start-server-login-button")).toBeVisible();
 
-  await page.getByTestId("create-account-link").click();
-  await expect(page.getByTestId("register-panel")).toBeVisible();
+  await expect(page.getByTestId("create-account-link")).toHaveCount(0);
+  await expect(page.getByTestId("forgot-account-link")).toHaveCount(0);
 
-  await page.goto("/login", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("forgot-account-link").click();
-  await expect(page.getByTestId("register-panel")).toBeVisible();
-  await expect(page.getByTestId("recovery-email-input")).toBeVisible();
-
-  await page.goto("/login", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("start-server-login-button").click();
-  await page.waitForURL(/https:\/\/auth\.local\.host\/authorize.*/);
+  await Promise.all([
+    page.waitForURL(/https:\/\/auth\.local\.host\/authorize.*/, { waitUntil: "domcontentloaded" }),
+    page.getByTestId("start-server-login-button").click(),
+  ]);
   const authorizeUrl = new URL(page.url());
   expect(authorizeUrl.searchParams.get("client_id")).toBe("01GFWR28C4KNE04WG3HKXB7C9R");
   expect(authorizeUrl.searchParams.get("login_hint")).toBeNull();
   expect(authorizeUrl.searchParams.get("redirect_uri")).toMatch(/\/auth\/callback$/);
   await expect(page.getByText("coauth")).toBeVisible();
-});
-
-test("registration creates a new soland-backed did:webvh account", async ({ page }, testInfo) => {
-  await page.goto("/register", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("register-panel")).toBeVisible();
-  await page.getByTestId("register-path-new-webvh").click();
-  await page.getByTestId("register-username-input").fill("new-alice");
-  const startRequest = page.waitForRequest("https://auth.local.host/api/v1/auth/register/webvh/start");
-  await page.getByTestId("next-to-email").click();
-  expect((await startRequest).postDataJSON().principal_server_url).toBe("https://local.host");
-  await expect(page.getByTestId("register-status")).toContainText("soland.embedded");
-
-  await page.getByTestId("register-email-input").fill("alice@example.com");
-  await expect(page.getByTestId("skip-email-delivery-toggle")).toHaveCount(0);
-  await page.getByTestId("send-verification-code-button").click();
-  await expect(page.getByTestId("register-status")).toContainText("Test code: 123456");
-
-  await page.getByTestId("register-verification-code").fill("123456");
-  await page.getByTestId("verify-email-button").click();
-  await expect(page.getByTestId("register-status")).toContainText("Email verified");
-
-  await page.getByTestId("register-password-input").fill("correct horse battery staple");
-  await page.getByTestId("register-password-confirm").fill("correct horse battery staple");
-  const finishRequest = page.waitForRequest("https://auth.local.host/api/v1/auth/register/webvh/reg-webvh-1/finish");
-  await page.getByTestId("complete-webvh-registration-button").click();
-  const finishBody = await finishRequest.then((request) => request.postDataJSON());
-  expect(finishBody.did_public_key_multibase).toMatch(/^z/);
-  expect(finishBody.update_public_key_multibase).toMatch(/^z/);
-  expect(finishBody.did_public_key_multibase).not.toBe(finishBody.update_public_key_multibase);
-  expect(finishBody.did_key_id).toBe("did-key-1");
-  expect(finishBody.update_key_id).toBe("update-key-1");
-  expect(finishBody.webvh_version_time).toMatch(/Z$/);
-  expect(finishBody.webvh_proof).toMatchObject({
-    type: "DataIntegrityProof",
-    cryptosuite: "eddsa-jcs-2022",
-    proofPurpose: "authentication",
-  });
-  expect(finishBody.webvh_proof.verificationMethod).toContain(finishBody.update_public_key_multibase);
-  expect(finishBody.webvh_proof.proofValue).toMatch(/^z/);
-
-  await expect(page.getByTestId("registration-complete")).toContainText("Account registered successfully");
-  await expect(page.getByTestId("registered-did-webvh")).toContainText(
-    "did:webvh:zmock:local.host:webvh:new-alice",
-  );
-  await expect(page.getByTestId("register-did-key-id")).toContainText("#did-key-1");
-  await expect(page.getByTestId("register-update-key-id")).toContainText("#update-key-1");
-  await expect(page.getByTestId("register-key-log-head")).toContainText("1-zmockhead");
-  await page.getByTestId("register-private-key-details").click();
-  await expect(page.getByTestId("register-did-private-key-seed")).toHaveText(/[0-9a-f]{64}/);
-  await expect(page.getByTestId("register-update-private-key-seed")).toHaveText(/[0-9a-f]{64}/);
-
-  const downloadPromise = page.waitForEvent("download");
-  await page.getByTestId("download-account-backup").click();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("contrix-account-backup-new-alice.json");
-  const backupPath = testInfo.outputPath(download.suggestedFilename());
-  await download.saveAs(backupPath);
-  const backup = JSON.parse(await fs.readFile(backupPath, "utf8"));
-  expect(backup.kind).toBe("cx.yougen.account_backup.v1");
-  expect(backup.account).toMatchObject({
-    username: "new-alice",
-    email: "alice@example.com",
-    did: "did:webvh:zmock:local.host:webvh:new-alice",
-    device_id: "dev_yougen",
-    principal_server_url: "https://local.host",
-    auth_server_url: "https://auth.local.host/",
-  });
-  expect(backup.did_webvh).toMatchObject({
-    provider_id: "soland.embedded",
-    did_key_id: "did:webvh:zmock:local.host:webvh:new-alice#did-key-1",
-    update_key_id: "did:webvh:zmock:local.host:webvh:new-alice#update-key-1",
-    same_key_for_controller_and_update: false,
-    key_log_head: "1-zmockhead",
-  });
-  expect(backup.key_model).toMatchObject({
-    model: "separate_did_controller_and_webvh_update_keys",
-    current_did_private_key: "did:webvh:zmock:local.host:webvh:new-alice#did-key-1",
-    webvh_update_private_key: "did:webvh:zmock:local.host:webvh:new-alice#update-key-1",
-    same_key_material: false,
-  });
-  expect(backup.public_keys[0]).toMatchObject({
-    kind: "did_document_controller_key",
-    algorithm: "Ed25519",
-    key_id: "did:webvh:zmock:local.host:webvh:new-alice#did-key-1",
-    public_key_multibase: finishBody.did_public_key_multibase,
-  });
-  expect(backup.public_keys[0].roles).toEqual(
-    expect.arrayContaining([
-      "did_document.verificationMethod",
-      "did_document.authentication",
-      "did_document.assertionMethod",
-    ]),
-  );
-  expect(backup.public_keys[1]).toMatchObject({
-    kind: "did_webvh_update_key",
-    algorithm: "Ed25519",
-    key_id: "did:webvh:zmock:local.host:webvh:new-alice#update-key-1",
-    public_key_multibase: finishBody.update_public_key_multibase,
-  });
-  expect(backup.public_keys[1].roles).toEqual(
-    expect.arrayContaining([
-      "did_webvh.inception",
-      "did_webvh.updateKeys[0]",
-    ]),
-  );
-  expect(backup.private_keys[0]).toMatchObject({
-    kind: "did_document_controller_key_seed",
-    algorithm: "Ed25519",
-    key_id: "did:webvh:zmock:local.host:webvh:new-alice#did-key-1",
-    encoding: "hex",
-  });
-  expect(backup.private_keys[0].roles).toEqual(
-    expect.arrayContaining([
-      "did_document.verificationMethod",
-      "did_document.authentication",
-      "did_document.assertionMethod",
-    ]),
-  );
-  expect(backup.private_keys[0].seed_hex).toMatch(/^[0-9a-f]{64}$/);
-  expect(backup.private_keys[1]).toMatchObject({
-    kind: "did_webvh_update_key_seed",
-    algorithm: "Ed25519",
-    key_id: "did:webvh:zmock:local.host:webvh:new-alice#update-key-1",
-    encoding: "hex",
-  });
-  expect(backup.private_keys[1].roles).toEqual(
-    expect.arrayContaining([
-      "did_webvh.inception",
-      "did_webvh.updateKeys[0]",
-    ]),
-  );
-  expect(backup.private_keys[1].seed_hex).toMatch(/^[0-9a-f]{64}$/);
-  expect(backup.private_keys[0].seed_hex).not.toBe(backup.private_keys[1].seed_hex);
-  expect(backup.excluded_secrets).toContain("account_password");
-});
-
-test("registration can bind an existing DID and start account recovery", async ({ page }) => {
-  await page.goto("/register", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("register-path-existing-did").click();
-  await page.getByTestId("existing-did-input").fill("did:web:team.example");
-  const existingRequest = page.waitForRequest("https://auth.local.host/api/v1/auth/register/did/start");
-  await page.getByTestId("start-existing-did-registration-button").click();
-  const existingBody = await existingRequest.then((request) => request.postDataJSON());
-  expect(existingBody.did).toBe("did:web:team.example");
-  expect(existingBody.username).toBeUndefined();
-  await expect(page.getByTestId("existing-did-proof")).toContainText("did%3Aweb%3Ateam.example");
-
-  await expect(page.getByTestId("register-recovery-link")).toHaveCount(0);
-  await page.goto("/recovery", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("recovery-email-input").fill("team@example.com");
-  const recoveryRequest = page.waitForRequest("https://auth.local.host/api/v1/auth/recovery/start");
-  await page.getByTestId("start-recovery-button").click();
-  expect((await recoveryRequest).postDataJSON()).toEqual({ email: "team@example.com" });
-  await expect(page.getByTestId("recovery-status")).toContainText("flow-recovery-e2e");
+  await expect(page.getByText("Create account")).toBeVisible();
+  await expect(page.getByText("Lost password or account")).toBeVisible();
 });
 
 test("settings can update account and device before session bootstrap", async ({ page }) => {
+  const deviceId = "cx:device:01964137-0000-7000-8000-0000000000b0";
   await page.getByTestId("settings-nav-button").click();
   await expect(page.getByTestId("settings-panel")).toBeVisible();
 
   await page.getByTestId("settings-account-did-input").fill("did:web:bob.example");
-  await page.getByTestId("settings-device-id-input").fill("dev_bob_1");
+  await page.getByTestId("settings-device-id-input").fill(deviceId);
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   await page.getByTestId("settings-nav-button").click();
   await expect(page.getByTestId("settings-account-did-input")).toHaveValue("did:web:bob.example");
-  await expect(page.getByTestId("settings-device-id-input")).toHaveValue("dev_bob_1");
+  await expect(page.getByTestId("settings-device-id-input")).toHaveValue(deviceId);
 
   await page.getByTestId("connect-button").click();
 
-  await expect(page.getByTestId("session-panel")).toContainText("session dev_bob_1");
+  await expect(page.getByTestId("session-panel")).toContainText(
+    `session token loaded for ${deviceId}`,
+  );
   await expect(page.getByTestId("right-panel")).toContainText("did:web:bob.example");
-  await expect(page.getByTestId("right-panel")).toContainText("dev_bob_1");
+  await expect(page.getByTestId("right-panel")).toContainText(deviceId);
 });
 
 test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
@@ -677,7 +537,7 @@ test("devices panel reflects key queue push and crypto state after bootstrap", a
   await expect(page.getByTestId("device-verification-workbench")).toContainText("SAS");
   await expect(page.getByTestId("device-summary")).toContainText("Queue1");
   await expect(page.getByTestId("device-summary")).toContainText("Pushcx:push:e2e");
-  await expect(page.getByTestId("device-summary")).toContainText("Cryptosession dev_yougen");
+  await expect(page.getByTestId("device-summary")).toContainText("Cryptosession cx:device:");
   await page.getByTestId("revoke-impact-button").click();
   await expect(page.getByTestId("device-summary")).toContainText("Revocation will require MLS remove proposal");
 });
@@ -709,7 +569,6 @@ test("visual smoke renders core product pages on desktop and mobile", async ({ p
   await page.getByTestId("connect-button").click();
   for (const [route, testId] of [
     ["/", "dashboard-panel"],
-    ["/register", "register-panel"],
     ["/kanban", "kanban-panel"],
     ["/chat", "chat-panel"],
     ["/settings", "settings-panel"],

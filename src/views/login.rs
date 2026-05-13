@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use dioxus_router::Link;
 
 use crate::{
     api::ContrixApi,
@@ -10,8 +9,7 @@ use crate::{
         extract_error_from_callback, extract_state_from_callback, open_oidc_authorize_url,
         persist_oidc_scaffold, resolve_principal_auth_server_url, restore_oidc_scaffold,
     },
-    config::LocalConfigStore,
-    routes::Route,
+    config::{LocalConfigStore, normalize_device_id},
     views::helpers::persist_config,
 };
 
@@ -105,11 +103,12 @@ pub fn LoginPanel(
                     disabled: is_busy(),
                     onclick: move |_| {
                         let principal = base_url();
-                        let device = device_id();
+                        let device = normalize_device_id(&device_id());
+                        device_id.set(device.clone());
                         is_busy.set(true);
                         auth_status.set("Opening server sign-in...".to_owned());
                         spawn(async move {
-                            match start_oidc_flow(&principal, device.trim(), false).await {
+                            match start_oidc_flow(&principal, device.trim()).await {
                                 Ok(()) => {
                                     persist_config(
                                         config_store,
@@ -129,20 +128,6 @@ pub fn LoginPanel(
                     if is_busy() { "Working..." } else { "Continue" }
                 }
 
-                Link {
-                    class: "secondary auth-secondary",
-                    "data-testid": "create-account-link",
-                    to: Route::Register,
-                    "Create account"
-                }
-
-                Link {
-                    class: "secondary auth-secondary",
-                    "data-testid": "forgot-account-link",
-                    to: Route::Recovery,
-                    "Lost password or account"
-                }
-
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
                 }
@@ -154,7 +139,6 @@ pub fn LoginPanel(
 pub(crate) async fn start_oidc_flow(
     principal_server_url: &str,
     device_id: &str,
-    signup: bool,
 ) -> Result<(), String> {
     let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
         .await
@@ -165,13 +149,8 @@ pub(crate) async fn start_oidc_flow(
         .inspect_topology()
         .await
         .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let mut bundle = build_oidc_scaffold_bundle(&topology, principal_server_url, "", device_id)
+    let bundle = build_oidc_scaffold_bundle(&topology, principal_server_url, "", device_id)
         .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
-
-    if signup {
-        bundle.authorize_url = signup_authorize_url(&bundle.authorize_url)
-            .map_err(|error| format!("Registration URL preparation failed: {error}"))?;
-    }
 
     persist_oidc_scaffold(
         &bundle,
@@ -236,6 +215,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
     if device.trim().is_empty() {
         return Err("No device identifier is available for this session.".to_owned());
     }
+    let device = normalize_device_id(&device);
     let plan = build_oidc_code_exchange_plan(&topology, &principal_server_url, actor_hint, &device)
         .map_err(|error| format!("Sign-in exchange preparation failed: {error}"))?;
     let token_endpoint = topology
@@ -317,12 +297,4 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         device_id: session.device_id,
         access_token: session.access_token,
     })
-}
-
-fn signup_authorize_url(authorize_url: &str) -> anyhow::Result<String> {
-    let mut url = url::Url::parse(authorize_url)?;
-    if !url.query_pairs().any(|(key, _)| key == "prompt") {
-        url.query_pairs_mut().append_pair("prompt", "create");
-    }
-    Ok(url.to_string())
 }

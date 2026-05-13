@@ -8,7 +8,6 @@
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorized                            |
-// | register           | desktop/onboarding.html (拆分中)  | identity/identity-did, identity-handles                | cx.actor.profile.update, cx.identity.recovery (initial)            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
 // | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
@@ -66,7 +65,6 @@ pub mod product;
 pub mod quarantine;
 pub mod readiness;
 pub mod recovery;
-pub mod register;
 pub mod settings;
 pub mod space_admin;
 pub mod timeline;
@@ -75,7 +73,6 @@ pub mod verify_device;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {
     Login,
-    Register,
     Dashboard,
     Timeline,
     Directory,
@@ -104,7 +101,7 @@ pub enum View {
     /// (claude-design `desktop/applets.html`, extensions/applet-integration.md)
     Applets,
     /// Onboarding 步进器 — 4 步引导（DID method / Handle / Device / Recovery）。
-    /// 与 Register 互补：register 是详细向导，onboarding 是轻量步进入口。
+    /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity setup surface.
     /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
     Onboarding,
     /// Round 23 (M6): invite-quarantine list. Admins see all entries

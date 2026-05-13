@@ -1,10 +1,8 @@
 //! Onboarding 步进器 — claude-design `desktop/onboarding.html`.
 //!
-//! 与 `views/register.rs` 不同：
-//! - `/register` 是详细的注册向导（包含 DID method 选择、handle、profile、proof、recovery 全流程，
-//!   面向"我要新建一个 Contrix 账号"的场景）。
-//! - `/onboarding` 是轻量步进器，把同一组步骤拆成 4 个独立 step view，每步只暴露最少必要决策，
-//!   面向"已有 DID 但希望按引导走完一遍"或"邀请链接落地后的承接页"。
+//! Account creation and account recovery are owned by coauth's OIDC pages.
+//! `/onboarding` is a signed-in identity setup surface that breaks the local
+//! DID/device/recovery decisions into four small steps.
 //!
 //! 协议依据：
 //! - `identity/identity-did.md` §3 — v1 core 默认 principal DID method = `did:web`
@@ -70,7 +68,7 @@ pub fn OnboardingPanel(base_url: String, token: Signal<String>) -> Element {
                     span { "step {step().index()} / 4 · {step().label()}" }
                 }
                 div { class: "muted",
-                    "建立可恢复身份。每步对应一组 canonical event；本页是步进入口，详细注册见 /register。"
+                    "建立可恢复身份。每步对应一组 canonical event；账号注册与找回在 coauth 登录流程中完成。"
                 }
                 div { class: "actions", "data-testid": "onboarding-progress", role: "tablist",
                     for s in [OnboardingStep::DidMethod, OnboardingStep::Handle, OnboardingStep::Device, OnboardingStep::Recovery] {

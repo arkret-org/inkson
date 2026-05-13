@@ -8,7 +8,6 @@ export async function mockContrixApi(page: Page) {
   let productMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
   let submitCounter = 0;
-  let webvhUsername = "new-alice";
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -29,7 +28,7 @@ export async function mockContrixApi(page: Page) {
       return route.fulfill({
         status: 200,
         contentType: "text/html",
-        body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p></main>",
+        body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p><a href=\"/register\">Create account</a><a href=\"/recovery\">Lost password or account</a></main>",
       });
     }
     if (!url.pathname.startsWith("/api/v1/")) {
@@ -377,91 +376,6 @@ export async function mockContrixApi(page: Page) {
         access_token: "sx_playwright_refreshed",
         token_type: "Bearer",
         expires_at: "2026-04-28T13:00:00Z",
-      });
-    }
-
-    if (url.pathname === "/api/v1/auth/register/webvh/start" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      webvhUsername = body.username ?? "new-alice";
-      return json(route, {
-        status: "success",
-        registration_id: "reg-webvh-1",
-        next_step: "email",
-        provider_id: "soland.embedded",
-        email_verification_bypass_allowed: true,
-      });
-    }
-
-    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/email" && route.request().method() === "POST") {
-      return json(route, {
-        status: "sent",
-        next_step: "verify_email",
-        delivery: "skipped",
-        dev_code: "123456",
-      });
-    }
-
-    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/verify-email" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      if (body.code !== "123456") {
-        return json(route, { status: "error", error: "invalid verification code" }, 400);
-      }
-      return json(route, {
-        status: "success",
-        next_step: "password",
-      });
-    }
-
-    if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/finish" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      const did = `did:webvh:zmock:local.host:webvh:${webvhUsername}`;
-      return json(route, {
-        status: "success",
-        username: webvhUsername,
-        did,
-        did_key_id: `${did}#did-key-1`,
-        update_key_id: `${did}#update-key-1`,
-        did_public_key_multibase: body.did_public_key_multibase,
-        update_public_key_multibase: body.update_public_key_multibase,
-        key_log_head: "1-zmockhead",
-        document_url: `https://local.host/webvh/${webvhUsername}/did.json`,
-        log_url: `https://local.host/webvh/${webvhUsername}/did.jsonl`,
-        provider_id: "soland.embedded",
-        did_document: {
-          id: did,
-          verificationMethod: [{
-            id: `${did}#did-key-1`,
-            type: "Multikey",
-            controller: did,
-            publicKeyMultibase: body.did_public_key_multibase,
-          }],
-          authentication: [`${did}#did-key-1`],
-          assertionMethod: [`${did}#did-key-1`],
-        },
-        did_log: [{
-          versionId: "1-zmockhead",
-          versionTime: body.webvh_version_time,
-          parameters: { updateKeys: [body.update_public_key_multibase] },
-          proof: [body.webvh_proof],
-        }],
-      }, 201);
-    }
-
-    if (url.pathname === "/api/v1/auth/register/did/start" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        status: "proof_required",
-        did: body.did,
-        proof_url: `https://local.host/auth/register/did/proof?did=${encodeURIComponent(body.did)}`,
-        next_step: "did_proof",
-      });
-    }
-
-    if (url.pathname === "/api/v1/auth/recovery/start" && route.request().method() === "POST") {
-      return json(route, {
-        status: "success",
-        id: "recovery-e2e",
-        flow_session_id: "flow-recovery-e2e",
       });
     }
 

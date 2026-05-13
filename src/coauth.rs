@@ -55,7 +55,8 @@ pub struct CoauthViewerInfo {
     pub username: String,
     pub did: String,
     pub handle: String,
-    pub mxid: String,
+    #[serde(default)]
+    pub principal_id: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
 }
@@ -82,97 +83,6 @@ pub struct CoauthSessionGrantInfo {
 pub struct CoauthPrincipalServerInfo {
     pub name: String,
     pub endpoint: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthWebvhRegistrationStartResponse {
-    pub status: String,
-    #[serde(default)]
-    pub registration_id: Option<String>,
-    #[serde(default)]
-    pub next_step: Option<String>,
-    #[serde(default)]
-    pub provider_id: Option<String>,
-    #[serde(default)]
-    pub email_verification_bypass_allowed: bool,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthWebvhEmailResponse {
-    pub status: String,
-    #[serde(default)]
-    pub next_step: Option<String>,
-    #[serde(default)]
-    pub delivery: Option<String>,
-    #[serde(default)]
-    pub dev_code: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthWebvhVerifyResponse {
-    pub status: String,
-    #[serde(default)]
-    pub next_step: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthWebvhFinishResponse {
-    pub status: String,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub username: Option<String>,
-    pub did: String,
-    #[serde(default)]
-    pub did_key_id: Option<String>,
-    #[serde(default)]
-    pub update_key_id: Option<String>,
-    #[serde(default)]
-    pub did_public_key_multibase: Option<String>,
-    #[serde(default)]
-    pub update_public_key_multibase: Option<String>,
-    #[serde(default)]
-    pub key_log_head: Option<String>,
-    #[serde(default)]
-    pub document_url: Option<String>,
-    #[serde(default)]
-    pub log_url: Option<String>,
-    #[serde(default)]
-    pub provider_id: Option<String>,
-    #[serde(default)]
-    pub did_document: Value,
-    #[serde(default)]
-    pub did_log: Vec<Value>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthExistingDidRegistrationResponse {
-    pub status: String,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub did: Option<String>,
-    #[serde(default)]
-    pub proof_url: Option<String>,
-    #[serde(default)]
-    pub next_step: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct CoauthRecoveryStartResponse {
-    pub status: String,
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub flow_session_id: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -553,117 +463,6 @@ impl CoauthApi {
         self.post_json(
             &format!("api/admin/v1/invite-quarantine/{invite_id}/resolve"),
             body,
-        )
-        .await
-    }
-
-    pub async fn password_login(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> anyhow::Result<CoauthLoginResponse> {
-        self.post_json(
-            "api/v1/auth/login",
-            json!({
-                "username": username,
-                "password": password,
-            }),
-        )
-        .await
-    }
-
-    pub async fn start_webvh_registration(
-        &self,
-        username: &str,
-        principal_server_url: &str,
-    ) -> anyhow::Result<CoauthWebvhRegistrationStartResponse> {
-        self.post_json(
-            "api/v1/auth/register/webvh/start",
-            json!({
-                "username": username,
-                "principal_server_url": principal_server_url,
-            }),
-        )
-        .await
-    }
-
-    pub async fn send_webvh_registration_email(
-        &self,
-        registration_id: &str,
-        email: &str,
-    ) -> anyhow::Result<CoauthWebvhEmailResponse> {
-        self.post_json(
-            &format!("api/v1/auth/register/webvh/{registration_id}/email"),
-            json!({
-                "email": email,
-            }),
-        )
-        .await
-    }
-
-    pub async fn verify_webvh_registration_email(
-        &self,
-        registration_id: &str,
-        code: &str,
-    ) -> anyhow::Result<CoauthWebvhVerifyResponse> {
-        self.post_json(
-            &format!("api/v1/auth/register/webvh/{registration_id}/verify-email"),
-            json!({ "code": code }),
-        )
-        .await
-    }
-
-    pub async fn finish_webvh_registration(
-        &self,
-        registration_id: &str,
-        did_public_key_multibase: &str,
-        update_public_key_multibase: &str,
-        did_key_id: &str,
-        update_key_id: &str,
-        webvh_version_time: &str,
-        webvh_proof: Value,
-        device_id: &str,
-        password: &str,
-        password_confirm: &str,
-    ) -> anyhow::Result<CoauthWebvhFinishResponse> {
-        self.post_json(
-            &format!("api/v1/auth/register/webvh/{registration_id}/finish"),
-            json!({
-                "did_public_key_multibase": did_public_key_multibase,
-                "update_public_key_multibase": update_public_key_multibase,
-                "did_key_id": did_key_id,
-                "update_key_id": update_key_id,
-                "webvh_version_time": webvh_version_time,
-                "webvh_proof": webvh_proof,
-                "device_id": device_id,
-                "password": password,
-                "password_confirm": password_confirm,
-            }),
-        )
-        .await
-    }
-
-    pub async fn bind_existing_did_registration(
-        &self,
-        did: &str,
-        device_id: &str,
-    ) -> anyhow::Result<CoauthExistingDidRegistrationResponse> {
-        self.post_json(
-            "api/v1/auth/register/did/start",
-            json!({
-                "did": did,
-                "device_id": device_id,
-            }),
-        )
-        .await
-    }
-
-    pub async fn start_recovery(&self, email: &str) -> anyhow::Result<CoauthRecoveryStartResponse> {
-        self.post_json(
-            "api/v1/auth/recovery/start",
-            json!({
-                "email": email,
-            }),
         )
         .await
     }
@@ -1305,16 +1104,52 @@ pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
         .location()
         .href()
         .map_err(|error| anyhow::anyhow!("failed to read browser location: {error:?}"))?;
-    let parsed = Url::parse(&href)?;
-    if parsed.query().is_none() {
-        anyhow::bail!("current browser location does not contain callback query parameters");
-    }
-    Ok(href)
+    callback_url_with_query(&href, browser_initial_navigation_url(&window).as_deref())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
     anyhow::bail!("current browser callback capture is only available in wasm/web builds")
+}
+
+fn callback_url_with_query(
+    current_href: &str,
+    initial_navigation_href: Option<&str>,
+) -> anyhow::Result<String> {
+    let current = Url::parse(current_href)?;
+    if current.query().is_some() {
+        return Ok(current_href.to_owned());
+    }
+
+    if let Some(initial_navigation_href) = initial_navigation_href {
+        let initial = Url::parse(initial_navigation_href)?;
+        if initial.query().is_some() && same_callback_location(&current, &initial) {
+            return Ok(initial_navigation_href.to_owned());
+        }
+    }
+
+    anyhow::bail!("current browser location does not contain callback query parameters")
+}
+
+fn same_callback_location(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+        && left.path() == right.path()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn browser_initial_navigation_url(window: &web_sys::Window) -> Option<String> {
+    use wasm_bindgen::JsCast as _;
+
+    let performance = js_sys::Reflect::get(window, &"performance".into()).ok()?;
+    let get_entries = js_sys::Reflect::get(&performance, &"getEntriesByType".into()).ok()?;
+    let get_entries = get_entries.dyn_ref::<js_sys::Function>()?;
+    let entries = get_entries.call1(&performance, &"navigation".into()).ok()?;
+    let first = js_sys::Array::from(&entries).get(0);
+    js_sys::Reflect::get(&first, &"name".into())
+        .ok()
+        .and_then(|value| value.as_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1402,60 +1237,6 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
     Ok(())
-}
-
-pub fn summarize_password_login_bridge(
-    login: &CoauthLoginResponse,
-    registration_id: Option<&str>,
-    register_request_preview: &str,
-) -> String {
-    let viewer = login
-        .viewer
-        .as_ref()
-        .map(|viewer| {
-            format!(
-                "viewer={} did={} handle={} mxid={}",
-                viewer.username, viewer.did, viewer.handle, viewer.mxid
-            )
-        })
-        .unwrap_or_else(|| "viewer=unknown".to_owned());
-    let grant = login
-        .session_grant
-        .as_ref()
-        .map(|grant| {
-            let scopes = if grant.scopes.is_empty() {
-                "missing".to_owned()
-            } else {
-                grant.scopes.join(",")
-            };
-            let audience = grant.audience.as_deref().unwrap_or("missing");
-            let principal_server = grant
-                .principal_server
-                .as_ref()
-                .map(|server| format!("{}@{}", server.name, server.endpoint))
-                .unwrap_or_else(|| "missing".to_owned());
-            format!(
-                "grant_kind={} grant_expires={} audience={} scopes={} principal_server={} session_key_present={} private_key_pem_present={}",
-                grant.kind.as_deref().unwrap_or("missing"),
-                grant.expires_at,
-                audience,
-                scopes,
-                principal_server,
-                !grant.session_public_key.is_empty(),
-                !grant.session_private_key_pem.is_empty(),
-            )
-        })
-        .unwrap_or_else(|| "grant=missing".to_owned());
-    let registration_id = registration_id.unwrap_or("missing");
-    let warnings = if login.warnings.is_empty() {
-        "warnings=none".to_owned()
-    } else {
-        format!("warnings={}", login.warnings.join(" | "))
-    };
-
-    format!(
-        "{viewer}\n{grant}\n{warnings}\npush_registration_id={registration_id}\nrequest_preview:\n{register_request_preview}\n\nTODO: replace scaffold bridge with real passkey/OIDC code exchange and coauth-issued audience-specific session grant refresh."
-    )
 }
 
 fn build_authorize_url_preview(
@@ -1682,6 +1463,40 @@ mod tests {
         assert_ne!(a, b, "RNG must not return the same value twice in a row");
     }
 
+    #[test]
+    fn login_response_accepts_current_coauth_viewer_shape() {
+        let response: CoauthLoginResponse = serde_json::from_value(json!({
+            "status": "success",
+            "viewer": {
+                "id": "user:01K",
+                "username": "ca",
+                "did": "did:web:auth.local.host:u:ca",
+                "handle": "ca@auth.local.host",
+                "principal_id": "@ca:auth.local.host",
+                "display_name": null
+            },
+            "session_grant": {
+                "kind": "principal_session",
+                "id": "grant-1",
+                "grant_jwt": "eyJ.mock.jwt",
+                "session_public_key": "mock-public",
+                "session_private_key_pem": "-----BEGIN PRIVATE KEY-----\\nmock\\n-----END PRIVATE KEY-----",
+                "expires_at": "2026-05-13T04:00:00Z",
+                "audience": "https://local.host/api",
+                "scopes": ["urn:contrix:principal-server:session.bind"],
+                "principal_server": {
+                    "name": "local",
+                    "endpoint": "https://local.host"
+                }
+            },
+            "warnings": []
+        }))
+        .unwrap();
+
+        let viewer = response.viewer.unwrap();
+        assert_eq!(viewer.principal_id.as_deref(), Some("@ca:auth.local.host"));
+    }
+
     /// S256 challenge for a known verifier matches the RFC 7636 Appendix B
     /// test vector — confirms we hash the right bytes and base64-encode
     /// without padding.
@@ -1842,6 +1657,45 @@ mod tests {
         assert!(result.is_err(), "javascript: scheme MUST be rejected");
         let result = open_oidc_authorize_url("file:///etc/passwd");
         assert!(result.is_err(), "file: scheme MUST be rejected");
+    }
+
+    #[test]
+    fn callback_url_uses_current_href_when_query_is_present() {
+        let callback = callback_url_with_query(
+            "http://127.0.0.1:8080/auth/callback?code=c&state=s",
+            Some("http://127.0.0.1:8080/auth/callback?code=old&state=old"),
+        )
+        .unwrap();
+        assert_eq!(
+            callback,
+            "http://127.0.0.1:8080/auth/callback?code=c&state=s"
+        );
+    }
+
+    #[test]
+    fn callback_url_falls_back_to_initial_navigation_after_router_strips_query() {
+        let callback = callback_url_with_query(
+            "http://127.0.0.1:8080/auth/callback",
+            Some("http://127.0.0.1:8080/auth/callback?code=c&state=s"),
+        )
+        .unwrap();
+        assert_eq!(
+            callback,
+            "http://127.0.0.1:8080/auth/callback?code=c&state=s"
+        );
+    }
+
+    #[test]
+    fn callback_url_rejects_initial_navigation_from_different_location() {
+        let err = callback_url_with_query(
+            "http://127.0.0.1:8080/auth/callback",
+            Some("http://127.0.0.1:8080/other?code=c&state=s"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not contain callback query parameters")
+        );
     }
 
     /// State and nonce tokens for the same input MUST diverge. The previous

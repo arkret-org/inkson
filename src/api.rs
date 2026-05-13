@@ -429,6 +429,7 @@ impl ContrixApi {
     }
 
     pub fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
+        let path = normalize_endpoint_path(path);
         Ok(self.base_url.join(path.trim_start_matches('/'))?)
     }
 
@@ -2090,6 +2091,11 @@ fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
         })
 }
 
+fn normalize_endpoint_path(path: &str) -> &str {
+    let trimmed = path.trim();
+    trimmed.strip_prefix("legacy:").unwrap_or(trimmed)
+}
+
 pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescription> {
     Ok(serde_json::from_value(value)?)
 }
@@ -2121,6 +2127,17 @@ mod tests {
         assert_eq!(
             api.endpoint("/api/v1/server/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/api/v1/server/describe"
+        );
+    }
+
+    #[test]
+    fn endpoint_join_accepts_legacy_bridge_paths() {
+        let api = ContrixApi::new("http://127.0.0.1:8787/").unwrap();
+        assert_eq!(
+            api.endpoint("legacy:/api/v1/auth/session-grant/exchange")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8787/api/v1/auth/session-grant/exchange"
         );
     }
 

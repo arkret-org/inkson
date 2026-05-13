@@ -410,8 +410,7 @@ pub fn SettingsPanel(
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
                             strong { "Web localStorage Limit" }
-                            span { class: "badge", "data-testid": "risk-badge",
-                                style: "background: #e67e22; color: white; padding: 2px 8px; border-radius: 4px;",
+                            span { class: "badge badge-warning", "data-testid": "risk-badge",
                                 "Warning"
                             }
                         }
@@ -420,8 +419,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "No Encryption at Rest" }
-                            span { class: "badge",
-                                style: "background: #e74c3c; color: white; padding: 2px 8px; border-radius: 4px;",
+                            span { class: "badge badge-error",
                                 "Critical"
                             }
                         }
@@ -430,8 +428,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "No Cross-Tab Sync" }
-                            span { class: "badge",
-                                style: "background: #f39c12; color: white; padding: 2px 8px; border-radius: 4px;",
+                            span { class: "badge badge-info",
                                 "Info"
                             }
                         }
@@ -441,8 +438,7 @@ pub fn SettingsPanel(
                     } else {
                         div { class: "metric",
                             strong { "Filesystem Storage" }
-                            span { class: "badge",
-                                style: "background: #27ae60; color: white; padding: 2px 8px; border-radius: 4px;",
+                            span { class: "badge badge-success",
                                 "OK"
                             }
                         }

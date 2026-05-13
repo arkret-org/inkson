@@ -7,9 +7,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::operation::uuid_v7;
+use contrix_sdk::DeviceId;
+
 const DEFAULT_SERVER_URL: &str = "https://local.host";
 const DEFAULT_ACCOUNT_DID: &str = "";
-const DEFAULT_DEVICE_ID: &str = "dev_yougen";
+const DEVICE_ID_PREFIX: &str = "cx:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
 
@@ -26,7 +29,7 @@ impl Default for ClientConfig {
         Self {
             server_url: DEFAULT_SERVER_URL.to_owned(),
             account_did: DEFAULT_ACCOUNT_DID.to_owned(),
-            device_id: DEFAULT_DEVICE_ID.to_owned(),
+            device_id: new_device_id(),
             session_token: String::new(),
         }
     }
@@ -45,7 +48,37 @@ impl ClientConfig {
             device_id: device_id.into(),
             session_token: session_token.into(),
         }
+        .normalized()
     }
+
+    fn normalized(mut self) -> Self {
+        let current = self.device_id.trim().to_owned();
+        if is_valid_device_id(&current) {
+            self.device_id = current;
+            return self;
+        }
+
+        self.device_id = new_device_id();
+        self.session_token.clear();
+        self
+    }
+}
+
+pub fn new_device_id() -> String {
+    format!("{DEVICE_ID_PREFIX}{}", uuid_v7())
+}
+
+pub fn normalize_device_id(device_id: &str) -> String {
+    let trimmed = device_id.trim();
+    if is_valid_device_id(trimmed) {
+        trimmed.to_owned()
+    } else {
+        new_device_id()
+    }
+}
+
+pub fn is_valid_device_id(device_id: &str) -> bool {
+    DeviceId::new(device_id.to_owned()).is_ok()
 }
 
 pub fn validate_server_url(server_url: &str) -> anyhow::Result<Url> {
@@ -91,6 +124,7 @@ impl LocalConfigStore {
             .clone()
             .or_else(|| self.read_persisted_config())
             .unwrap_or_default()
+            .normalized()
     }
 
     pub fn save(&mut self, config: ClientConfig) {
@@ -194,7 +228,8 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.server_url, "https://local.host");
         assert!(config.account_did.is_empty());
-        assert_eq!(config.device_id, "dev_yougen");
+        assert!(config.device_id.starts_with("cx:device:"));
+        assert!(is_valid_device_id(&config.device_id));
         assert!(config.session_token.is_empty());
     }
 
@@ -237,7 +272,7 @@ mod tests {
         store.save_fields(
             "http://serverx.local".to_owned(),
             "did:web:bob.example".to_owned(),
-            "dev_bob".to_owned(),
+            "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
             "sx_token".to_owned(),
         );
 
@@ -246,7 +281,7 @@ mod tests {
             ClientConfig::from_fields(
                 "http://serverx.local",
                 "did:web:bob.example",
-                "dev_bob",
+                "cx:device:01964137-0000-7000-8000-000000000001",
                 "sx_token",
             )
         );
@@ -260,7 +295,7 @@ mod tests {
         writer.save_fields(
             "http://persisted.local".to_owned(),
             "did:web:persisted.example".to_owned(),
-            "dev_persisted".to_owned(),
+            "cx:device:01964137-0000-7000-8000-000000000002".to_owned(),
             "sx_persisted".to_owned(),
         );
 
@@ -270,10 +305,26 @@ mod tests {
             ClientConfig::from_fields(
                 "http://persisted.local",
                 "did:web:persisted.example",
-                "dev_persisted",
+                "cx:device:01964137-0000-7000-8000-000000000002",
                 "sx_persisted",
             )
         );
+    }
+
+    #[test]
+    fn persisted_legacy_device_id_is_replaced_and_token_cleared() {
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "dev_yougen",
+            "old_token",
+        );
+
+        assert_eq!(config.server_url, "https://local.host");
+        assert_eq!(config.account_did, "did:web:alice.example");
+        assert!(is_valid_device_id(&config.device_id));
+        assert_ne!(config.device_id, "dev_yougen");
+        assert!(config.session_token.is_empty());
     }
 
     fn temp_config_path(name: &str) -> PathBuf {
