@@ -533,6 +533,82 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.setup-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 12px;
+  align-items: start;
+}
+.setup-column {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.setup-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-form-grid textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+.setup-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.setup-field label {
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+  font-weight: 700;
+}
+.setup-field-span-2 {
+  grid-column: 1 / -1;
+}
+.setup-axis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-summary-list {
+  display: grid;
+  gap: 10px;
+}
+.setup-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.setup-summary-row strong {
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+}
+.setup-summary-row span {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.setup-summary-row-stack {
+  display: grid;
+  gap: 8px;
+}
+.setup-summary-row-stack span {
+  text-align: left;
+}
+.setup-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setup-action-grid {
+  display: grid;
+  gap: 8px;
+}
+.setup-action-grid .primary,
+.setup-action-grid .secondary {
+  width: 100%;
+}
 .settings-card-span-2 {
   grid-column: 1 / -1;
 }
@@ -542,6 +618,16 @@ body {
   .home-card-list.compact { grid-template-columns: 1fr; }
   .settings-shell,
   .settings-card-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 1100px) {
+  .setup-shell,
+  .setup-form-grid,
+  .setup-axis-grid {
+    grid-template-columns: 1fr;
+  }
+  .setup-field-span-2 {
+    grid-column: auto;
+  }
 }
 
 /* Contrix design implementation layer. */
@@ -1177,6 +1263,28 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .workspace-header .actions .btn.icon {
   width: 34px;
   min-width: 34px;
+}
+
+.topbar-inbox-link {
+  position: relative;
+}
+
+.topbar-inbox-link .ui-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.topbar-inbox-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 2px solid var(--surface);
+  background: #2563eb;
+  box-sizing: border-box;
+  pointer-events: none;
 }
 
 .workspace-header .actions .pill {
@@ -2142,6 +2250,22 @@ pub fn App() -> Element {
 }
 
 #[component]
+fn RouteRedirect(to: Route) -> Element {
+    let navigator = use_navigator();
+    use_effect(move || {
+        let _ = navigator.replace(to.clone());
+    });
+
+    rsx! {
+        div { class: "timeline",
+            div { class: "event",
+                div { class: "muted", "Redirecting..." }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
@@ -2342,6 +2466,11 @@ pub fn RouterView() -> Element {
     let route_title = resolved_space_surface
         .map(SpaceSurface::title)
         .unwrap_or_else(|| route_label(&route));
+    let document_title = if matches!(&route, Route::Dashboard) {
+        "Yougen | Contrix".to_owned()
+    } else {
+        format!("{route_title} | Yougen | Contrix")
+    };
     let shell_class = format!(
         "shell app {}{}{}{}",
         match active_theme.as_str() {
@@ -2387,6 +2516,7 @@ pub fn RouterView() -> Element {
             style { "{STYLE}" }
             style { "{CLAUDE_STYLE}" }
             style { "{CLAUDE_APP_OVERRIDES}" }
+            document::Title { "{document_title}" }
             main {
                 class: auth_class,
                 "dir": direction_attr,
@@ -2431,6 +2561,7 @@ pub fn RouterView() -> Element {
         style { "{STYLE}" }
         style { "{CLAUDE_STYLE}" }
         style { "{CLAUDE_APP_OVERRIDES}" }
+        document::Title { "{document_title}" }
         div {
             class: shell_class,
             style: "{sidebar_style}",
@@ -2474,7 +2605,15 @@ pub fn RouterView() -> Element {
                     },
                     UiIcon { name: theme_toggle_icon }
                 }
-                Link { class: "secondary", to: Route::Notifications, "Inbox" }
+                Link {
+                    class: "btn icon sm ghost topbar-inbox-link",
+                    "data-testid": "mobile-topbar-inbox-button",
+                    to: Route::Notifications,
+                    title: "Inbox",
+                    "aria-label": "Inbox",
+                    UiIcon { name: "inbox" }
+                    span { class: "topbar-inbox-badge", "aria-hidden": "true" }
+                }
             }
             nav {
                 class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
@@ -2513,10 +2652,8 @@ pub fn RouterView() -> Element {
                         "Refresh"
                     }
                 }
-                div { class: "muted", "Workspace" }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Home" }
-                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
-                Link { class: "secondary", "data-testid": "mobile-notifications-nav-button", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
+                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Search" }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
                 if !spaces().is_empty() {
                     div { class: "muted", "Spaces" }
@@ -2536,17 +2673,6 @@ pub fn RouterView() -> Element {
                         }
                     }
                 }
-                div { class: "muted", "Setup & recovery" }
-                Link { class: "secondary", to: Route::Onboarding, onclick: move |_| mobile_nav_open.set(false), "Onboarding" }
-                Link { class: "secondary", to: Route::VerifyDevice, onclick: move |_| mobile_nav_open.set(false), "Verify Device" }
-                Link { class: "secondary", to: Route::Recovery, onclick: move |_| mobile_nav_open.set(false), "Recovery" }
-                Link { class: "secondary", to: Route::Applets, onclick: move |_| mobile_nav_open.set(false), "Applets & Agents" }
-                Link { class: "secondary", to: Route::Quarantine, onclick: move |_| mobile_nav_open.set(false), "Invite Quarantine" }
-                div { class: "muted", "Tools" }
-                Link { class: "secondary", to: Route::Devices, onclick: move |_| mobile_nav_open.set(false), "Devices" }
-                Link { class: "secondary", to: Route::Call, onclick: move |_| mobile_nav_open.set(false), "Call" }
-                Link { class: "secondary", to: Route::Audit, onclick: move |_| mobile_nav_open.set(false), "Audit" }
-                Link { class: "secondary", to: Route::Readiness, onclick: move |_| mobile_nav_open.set(false), "Readiness" }
             }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
                 div {
@@ -2728,23 +2854,9 @@ pub fn RouterView() -> Element {
                 }
 
                 div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Workspace" }
                     Link { class: "sidebar-nav-item", to: Route::Dashboard,
                         span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
                         span { class: "grow", "Home" }
-                    }
-                    Link { class: "sidebar-nav-item", "data-testid": "notifications-nav-button", to: Route::Notifications,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "inbox" } }
-                        span { class: "grow", "Inbox" }
-                        span { class: "badge", "0" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::Directory,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                        span { class: "grow", "Directory" }
-                    }
-                    Link { class: "sidebar-nav-item", "data-testid": "settings-nav-button", to: Route::Settings,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "settings" } }
-                        span { class: "grow", "Settings" }
                     }
                 }
 
@@ -2773,52 +2885,6 @@ pub fn RouterView() -> Element {
                                 span { class: "pill muted xs", "Space" }
                             }
                         }
-                    }
-                }
-
-                div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Setup & recovery" }
-                    Link { class: "sidebar-nav-item", to: Route::Onboarding,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
-                        span { class: "grow", "Onboarding" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::VerifyDevice,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
-                        span { class: "grow", "Verify Device" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::Recovery,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "archive" } }
-                        span { class: "grow", "Recovery" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::Applets,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "server" } }
-                        span { class: "grow", "Applets & Agents" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::Quarantine,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "inbox" } }
-                        span { class: "grow", "Invite Quarantine" }
-                    }
-                }
-
-                div { class: "sidebar-nav-group",
-                    h4 { class: "sidebar-nav-group-title", "Tools" }
-                    Link { class: "sidebar-nav-item", "data-testid": "devices-nav-button", to: Route::Devices,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "monitor" } }
-                        span { class: "grow", "Devices" }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::Call,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "phone" } }
-                        span { class: "grow", "Call" }
-                    }
-                    if full_ready {
-                        Link { class: "sidebar-nav-item", "aria-label": "Audit", to: Route::Audit,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "activity" } }
-                            span { class: "grow", "Audit" }
-                        }
-                    }
-                    Link { class: "sidebar-nav-item", "data-testid": "readiness-nav-button", to: Route::Readiness,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
-                        span { class: "grow", "Readiness" }
                     }
                 }
 
@@ -2886,7 +2952,7 @@ pub fn RouterView() -> Element {
                             input {
                                 "data-testid": "global-search-input",
                                 value: "{global_query}",
-                                placeholder: "Search spaces, flows, people, applets...",
+                                placeholder: "Search spaces, flows, people...",
                                 oninput: move |event| global_query.set(event.value()),
                                 onkeydown: move |event| {
                                     if event.key().to_string() == "Enter" && !global_query().trim().is_empty() {
@@ -2906,10 +2972,13 @@ pub fn RouterView() -> Element {
                             }
                         }
                         Link {
-                            class: "btn sm",
+                            class: "btn icon sm ghost topbar-inbox-link",
                             "data-testid": "topbar-inbox-button",
                             to: Route::Notifications,
-                            "Inbox"
+                            title: "Inbox",
+                            "aria-label": "Inbox",
+                            UiIcon { name: "inbox" }
+                            span { class: "topbar-inbox-badge", "aria-hidden": "true" }
                         }
                         Link {
                             class: "btn sm primary",
@@ -3081,20 +3150,6 @@ pub fn RouterView() -> Element {
                                             onclick: move |_| account_menu_open.set(false),
                                             UiIcon { name: "settings" }
                                             "Settings"
-                                        }
-                                        Link {
-                                            class: "btn sm ghost",
-                                            to: Route::Devices,
-                                            onclick: move |_| account_menu_open.set(false),
-                                            UiIcon { name: "monitor" }
-                                            "Devices"
-                                        }
-                                        Link {
-                                            class: "btn sm ghost",
-                                            to: Route::Readiness,
-                                            onclick: move |_| account_menu_open.set(false),
-                                            UiIcon { name: "check" }
-                                            "Readiness"
                                         }
                                     }
                                 }
@@ -3293,30 +3348,11 @@ pub fn RouterView() -> Element {
                             push_ready,
                         }
                     },
-                    Route::Devices => {
-                        if e2ee_ready {
-                            rsx! {
-                                crate::views::devices::DevicesPanel {
-                                    base_url: base_url(),
-                                    token,
-                                    device_id: device_id(),
-                                    device_queue: device_queue(),
-                                    push_state,
-                                    state_store,
-                                    crypto_state,
-                                    push_ready,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "e2ee_client" } }
-                        }
+                    Route::Devices => rsx! {
+                        RouteRedirect { to: Route::SettingsSection { section: "encryption".to_owned() } }
                     },
                     Route::Readiness => rsx! {
-                        crate::views::readiness::ReadinessPanel {
-                            status,
-                            server_description: active_server_description.clone(),
-                            server_probe_status: server_probe_status(),
-                        }
+                        RouteRedirect { to: Route::SettingsSection { section: "release".to_owned() } }
                     },
                     Route::VerifyDevice => {
                         if e2ee_ready {
@@ -3352,17 +3388,8 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
-                    Route::Audit => {
-                        if full_ready {
-                            rsx! {
-                                crate::views::audit::AuditPanel {
-                                    base_url: base_url(),
-                                    token,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
+                    Route::Audit => rsx! {
+                        RouteRedirect { to: Route::SettingsSection { section: "release".to_owned() } }
                     },
                     Route::Kanban | Route::KanbanSpace { .. } => {
                         if let Some(sid) = route.space_id() {
@@ -3429,10 +3456,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Call => rsx! {
-                        crate::views::call::CallPanel {
-                            base_url: base_url(),
-                            token,
-                        }
+                        RouteRedirect { to: Route::Dashboard }
                     },
                     Route::Recovery => rsx! {
                         crate::views::recovery::RecoveryPanel {
@@ -3441,10 +3465,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Applets => rsx! {
-                        crate::views::applets::AppletsPanel {
-                            base_url: base_url(),
-                            token,
-                        }
+                        RouteRedirect { to: Route::SettingsSection { section: "mimi".to_owned() } }
                     },
                     Route::Onboarding => rsx! {
                         crate::views::onboarding::OnboardingPanel {
@@ -3725,10 +3746,10 @@ fn route_label(route: &Route) -> &'static str {
         Route::Login | Route::AuthCallback => "Login",
         Route::Space { .. } => "Space",
         Route::Timeline | Route::TimelineSpace { .. } => "Timeline View",
-        Route::Directory => "Directory",
+        Route::Directory => "Search",
         Route::Setup => "Workspace Setup",
         Route::SetupSection { section } => match section.as_str() {
-            "spaces" => "Space Setup",
+            "spaces" => "New Space",
             _ => "Workspace Setup",
         },
         Route::Settings | Route::SettingsSection { .. } => "Settings",

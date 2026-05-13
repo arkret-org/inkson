@@ -43,7 +43,7 @@ pub fn DirectoryPanel(
     let base_url_key = base_url.clone();
 
     rsx! {
-        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Directory search",
+        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search workspace",
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
                 button {
@@ -90,7 +90,7 @@ pub fn DirectoryPanel(
 
             div { class: "event directory-axis-card", "data-testid": "directory-three-axes-banner",
                 div { class: "event-head",
-                    span { "Directory Policy Axes" }
+                    span { "Search Policy Axes" }
                     span { "independent decisions" }
                 }
                 div { class: "metric-grid",
@@ -145,18 +145,13 @@ pub fn DirectoryPanel(
 
             div { class: "event", "data-testid": "directory-surface-map",
                 div { class: "event-head",
-                    span { "Directory scope" }
+                    span { "Search scope" }
                     span { "entity discovery only" }
                 }
                 div { class: "muted",
-                    "Directory stays focused on spaces, organizations, actors, handles, and protocol-level lookups. Applets and agents now live in their own tool surface so runtime tooling does not share the same primary discovery entrypoint."
+                    "Search stays focused on spaces, organizations, actors, handles, and protocol-level lookups. The old directory shortcut has been folded into the global search entrypoint."
                 }
                 div { class: "actions",
-                    Link {
-                        class: "secondary",
-                        to: Route::Applets,
-                        "Open Applets & Agents"
-                    }
                     button {
                         class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
                         onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
@@ -289,7 +284,7 @@ pub fn DirectoryPanel(
 
             div { class: "event directory-search-card",
                 div { class: "event-head",
-                    span { "Directory" }
+                    span { "Search" }
                     span { match active_tab() {
                         DirectoryTab::ProtocolObjects => "developer objects",
                         DirectoryTab::Spaces => "spaces",

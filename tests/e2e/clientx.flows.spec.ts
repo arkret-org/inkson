@@ -19,6 +19,11 @@ async function refreshServer(page: import("@playwright/test").Page) {
   await latestTestId(page, "connect-button").click();
 }
 
+async function openSettings(page: import("@playwright/test").Page) {
+  await latestTestId(page, "account-menu-button").click();
+  await latestTestId(page, "account-menu-settings").click();
+}
+
 async function writeLocalConfig(
   page: import("@playwright/test").Page,
   overrides: Partial<{
@@ -128,7 +133,7 @@ test("workspace header collapses and sidebar edge resizes the menu", async ({ pa
 });
 
 test("topbar breadcrumbs avoid duplicated route and server context", async ({ page }) => {
-  await page.getByTestId("settings-nav-button").click();
+  await openSettings(page);
   await expect(page.getByTestId("topbar-crumbs")).toContainText("Settings");
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Settings / Settings");
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
@@ -197,7 +202,7 @@ test("session refresh canonicalizes stale account DID in settings", async ({ pag
 });
 
 test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
-  await page.getByTestId("settings-nav-button").click();
+  await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();
   await expect(page.getByTestId("language-settings")).toBeVisible();
   await page.getByTestId("theme-night").click();
@@ -215,7 +220,7 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
 
-  await page.getByTestId("settings-nav-button").click();
+  await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();
   await page.getByTestId("language-en").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
@@ -252,7 +257,7 @@ test("kanban queues Move submissions and replays through move API", async ({ pag
 });
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
-  await page.getByTestId("settings-nav-button").click();
+  await openSettings(page);
   await page.getByTestId("settings-nav-item-mimi").click();
   await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-protocol-06");
@@ -330,7 +335,7 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
-  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
+  await expect(page.getByTestId("directory-result").first()).toContainText("Contrix Demo Space");
 
   await page.getByTestId("tab-objects").click();
   await page.getByTestId("directory-search-input").fill("launch");
@@ -351,7 +356,7 @@ test("directory search resolve and space selection flow works", async ({ page })
 
 test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
   await refreshServer(page);
-  await page.getByTestId("notifications-nav-button").first().click();
+  await page.getByTestId("topbar-inbox-button").click();
 
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
@@ -360,13 +365,13 @@ test("notifications are derived from index projections and respect per-space mut
   await page.getByTestId("mute-space-button").first().click();
   await expect(page.getByTestId("notifications-muted-empty")).toContainText("hidden by archive, type, or per-space mute rules");
 
-  await page.getByTestId("settings-nav-button").click();
+  await openSettings(page);
   await page.getByTestId("settings-nav-item-push").click();
   await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
   await page.getByTestId("settings-unmute-space").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
-  await page.getByTestId("notifications-nav-button").first().click();
+  await page.getByTestId("topbar-inbox-button").click();
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 
@@ -603,45 +608,27 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("archived");
 });
 
-test("audit page refreshes event frontier metadata", async ({ page }) => {
-  await page.getByRole("link", { name: "Audit" }).click();
-  await expect(page.getByTestId("audit-panel")).toBeVisible();
-  await expect(page.getByTestId("event-envelope-audit")).toContainText("actor_seq");
-  await expect(page.getByTestId("event-envelope-audit")).toContainText("refs");
-
-  await page.getByTestId("refresh-audit-button").click();
-  await expect(page.getByTestId("audit-status")).toContainText("loaded");
-  await expect(page.getByTestId("batch-display")).toContainText("cx:snapshot:");
-  await expect(page.getByTestId("event-envelope-audit")).toContainText("cx:snapshot:");
+test("legacy audit route now resolves to operational settings", async ({ page }) => {
+  await page.goto("/audit", { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(/\/settings\/release$/);
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+  await expect(page.getByTestId("release-moved-banner")).toContainText("Operational status");
 });
 
-test("audit capability explanation shows grants constraints and frontier reason", async ({ page }) => {
-  await page.getByRole("link", { name: "Audit" }).click();
-  await expect(page.getByTestId("capability-explanation")).toBeVisible();
-
-  await page.getByTestId("load-capabilities-button").click();
-  await expect(page.getByTestId("capability-decision")).toContainText("allowed");
-  await expect(page.getByTestId("capability-frontier")).toContainText("cx:statehash:e2e");
-  await expect(page.getByTestId("capability-reason")).toContainText("frontier_current");
-  await expect(page.getByTestId("capability-grant-row")).toContainText("cx:grant:e2e");
-  await expect(page.getByTestId("capability-resource-selectors")).toContainText("space:cx:space");
-  await expect(page.getByTestId("capability-constraints")).toContainText("temporal");
-  await expect(page.getByTestId("capability-allowed-facets")).toContainText("renderable, stateful");
-  await expect(page.getByTestId("capability-delegation-chain")).toContainText("cx:grant:root");
+test("legacy applets route now resolves to integrations settings", async ({ page }) => {
+  await page.goto("/applets", { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(/\/settings\/mimi$/);
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+  await expect(page.getByTestId("settings-nav-item-mimi")).toBeVisible();
+  await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
 });
 
-test("devices panel reflects key queue push and crypto state after bootstrap", async ({ page }) => {
+test("legacy devices route now resolves to security and recovery settings", async ({ page }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
-
-  await page.getByTestId("devices-nav-button").click();
-  await expect(page.getByTestId("devices-panel")).toBeVisible();
-  await expect(page.getByTestId("device-verification-workbench")).toContainText("SAS");
-  await expect(page.getByTestId("device-summary")).toContainText("Queue1");
-  await expect(page.getByTestId("device-summary")).toContainText("Pushcx:push:e2e");
-  await expect(page.getByTestId("device-summary")).toContainText("Cryptosession cx:device:");
-  await page.getByTestId("revoke-impact-button").click();
-  await expect(page.getByTestId("device-summary")).toContainText("Revocation will require MLS remove proposal");
+  await page.goto("/devices", { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(/\/settings\/encryption$/);
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+  await expect(page.getByTestId("settings-setup-recovery-hub")).toContainText("Verify Device");
 });
 
 test("invalid server URL surfaces an error state", async ({ page }) => {
@@ -660,13 +647,10 @@ test("insecure remote http endpoint is rejected before connect", async ({ page }
   await expect(page.getByTestId("status-label")).toContainText("HTTPS is required for non-local servers");
 });
 
-test("call panel loads server ICE configuration", async ({ page }) => {
+test("legacy call route now redirects to home", async ({ page }) => {
   await page.goto("/call", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("refresh-ice-config").click();
-
-  await expect(page.getByTestId("ice-config")).toContainText("stun:stun.serverx.local:3478");
-  await expect(page.getByTestId("ice-config")).toContainText("turn:turn.serverx.local:3478?transport=udp");
-  await expect(page.getByTestId("ice-ttl")).toContainText("600s");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
 });
 
 test("visual smoke renders core client pages on desktop and mobile", async ({ page }) => {
@@ -690,20 +674,10 @@ test("visual smoke renders core client pages on desktop and mobile", async ({ pa
   expect(mobileShot.length).toBeGreaterThan(10_000);
 });
 
-test("release readiness panel keeps production blockers visible", async ({ page }) => {
-  await page.getByTestId("readiness-nav-button").click();
-
-  await expect(page.getByTestId("readiness-panel")).toBeVisible();
-  await expect(page.getByTestId("release-summary")).toContainText("Not production-ready");
-  await expect(page.getByTestId("server-describe-readiness")).toContainText("did:web:serverx.local");
-  await expect(page.getByTestId("local-profile-support")).toContainText("minimal_client");
-  await expect(page.getByTestId("profile-readiness")).toContainText("chat_only_client");
-  await expect(page.getByTestId("profile-readiness")).toContainText("ready");
-  await expect(page.getByTestId("readiness-panel")).toContainText("Production registration");
-  await expect(page.getByTestId("readiness-panel")).toContainText("Create space");
-  await expect(page.getByTestId("readiness-panel")).toContainText("Invite, add, remove, and kick members");
-  await expect(page.getByTestId("readiness-panel")).toContainText("Leave, archive, and delete space");
-
-  await page.getByTestId("blocked-workflow-button").first().click();
-  await expect(page.getByTestId("status-label")).toContainText("Blocked:");
+test("legacy readiness route now resolves to operational settings", async ({ page }) => {
+  await page.goto("/readiness", { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(/\/settings\/release$/);
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+  await expect(page.getByTestId("release-moved-banner")).toContainText("tracked blockers");
+  await expect(page.getByTestId("release-moved-banner")).toContainText("settings-owned surface");
 });

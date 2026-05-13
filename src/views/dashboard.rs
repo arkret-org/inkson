@@ -35,7 +35,7 @@ pub fn DashboardPanel(
                         if has_session { "Continue work" } else { "No active session" }
                     }
                     div { class: "muted f-12",
-                        if has_session { "Pick a Space, clear inbox, or browse the directory. Diagnostics stay below in a separate operations surface." } else { "Connect a Principal Server, then sign in to load spaces, inbox, and collaboration views." }
+                        if has_session { "Pick a Space, clear inbox, or jump into search. Operational details stay lightweight and out of the main navigation." } else { "Connect a Principal Server, then sign in to load spaces, inbox, and collaboration views." }
                     }
                 }
                 div { class: "row gap-6 wrap",
@@ -53,7 +53,7 @@ pub fn DashboardPanel(
                         to: Route::Directory,
                         onclick: move |_| view.set(super::View::Directory),
                         UiIcon { name: "search" }
-                        "Browse Directory"
+                        "Open Search"
                     }
                     Link {
                         class: "btn sm ghost",
@@ -81,7 +81,7 @@ pub fn DashboardPanel(
                     onclick: move |_| view.set(super::View::Directory),
                     div { class: "lbl", "Spaces" }
                     div { class: "val", "{spaces().len()}" }
-                    div { class: "delta", if has_session { "Browse or join a Space" } else { "Sign in to load spaces" } }
+                    div { class: "delta", if has_session { "Search or join a Space" } else { "Sign in to load spaces" } }
                 }
                 if let Some(space) = active_space.as_ref() {
                     Link {
@@ -249,9 +249,9 @@ pub fn DashboardPanel(
 
                     div { class: "surface", "data-testid": "operations-surface",
                         div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
-                            strong { "Operations & Diagnostics" }
+                            strong { "Client Status" }
                             span { style: "margin-left: auto;",
-                                HelpTip { text: "Operational status stays separate from collaboration entry points. Use this surface for sync, device, and release diagnostics." }
+                                HelpTip { text: "Operational status stays visible, but separate tool pages are no longer promoted in the main navigation." }
                             }
                         }
                         div { class: "settings-row",
@@ -278,24 +278,10 @@ pub fn DashboardPanel(
                         div { class: "actions", style: "padding: 12px 16px 0;",
                             Link {
                                 class: "secondary",
-                                to: Route::Devices,
-                                onclick: move |_| view.set(super::View::Devices),
-                                UiIcon { name: "monitor" }
-                                "Devices"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::Readiness,
-                                onclick: move |_| view.set(super::View::Readiness),
-                                UiIcon { name: "check" }
-                                "Readiness"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::Audit,
-                                onclick: move |_| view.set(super::View::Audit),
-                                UiIcon { name: "activity" }
-                                "Audit"
+                                to: Route::SettingsSection { section: "release".to_owned() },
+                                onclick: move |_| view.set(super::View::Settings),
+                                UiIcon { name: "settings" }
+                                "Operational Settings"
                             }
                             button {
                                 class: "btn icon sm ghost",

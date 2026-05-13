@@ -62,8 +62,9 @@ pub enum JoinRule {
     Public,
     Knock,
     KnockRestricted,
-    InviteOnly,
+    Invite,
     Restricted,
+    Closed,
 }
 
 impl JoinRule {
@@ -72,8 +73,9 @@ impl JoinRule {
             Self::Public => "public",
             Self::Knock => "knock",
             Self::KnockRestricted => "knock_restricted",
-            Self::InviteOnly => "invite_only",
+            Self::Invite => "invite",
             Self::Restricted => "restricted",
+            Self::Closed => "closed",
         }
     }
 
@@ -82,17 +84,20 @@ impl JoinRule {
             Self::Public => "badge green",
             Self::Knock | Self::KnockRestricted => "badge blue",
             Self::Restricted => "badge amber",
-            Self::InviteOnly => "badge",
+            Self::Invite => "badge",
+            Self::Closed => "badge red",
         }
     }
 
     pub fn from_str_loose(value: &str) -> Self {
         match value {
-            "public" => Self::Public,
+            "public" | "open" => Self::Public,
             "knock" => Self::Knock,
+            "request" => Self::Knock,
             "knock_restricted" => Self::KnockRestricted,
             "restricted" => Self::Restricted,
-            _ => Self::InviteOnly,
+            "closed" => Self::Closed,
+            _ => Self::Invite,
         }
     }
 }
@@ -101,35 +106,39 @@ impl JoinRule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryVisibility {
     WorldReadable,
-    SharedHistory,
+    Shared,
     Invited,
     Joined,
+    Restricted,
 }
 
 impl HistoryVisibility {
     pub fn label(self) -> &'static str {
         match self {
             Self::WorldReadable => "world_readable",
-            Self::SharedHistory => "shared_history",
+            Self::Shared => "shared",
             Self::Invited => "invited",
             Self::Joined => "joined",
+            Self::Restricted => "restricted",
         }
     }
 
     pub fn class_name(self) -> &'static str {
         match self {
             Self::WorldReadable => "badge green",
-            Self::SharedHistory => "badge blue",
+            Self::Shared => "badge blue",
             Self::Invited => "badge amber",
             Self::Joined => "badge",
+            Self::Restricted => "badge red",
         }
     }
 
     pub fn from_str_loose(value: &str) -> Self {
         match value {
             "world_readable" => Self::WorldReadable,
-            "shared_history" => Self::SharedHistory,
+            "shared" | "shared_history" => Self::Shared,
             "invited" => Self::Invited,
+            "restricted" => Self::Restricted,
             _ => Self::Joined,
         }
     }
@@ -188,9 +197,10 @@ mod tests {
     }
 
     #[test]
-    fn join_rule_loose_parse_falls_back_to_invite_only() {
-        assert_eq!(JoinRule::from_str_loose("garbage"), JoinRule::InviteOnly);
+    fn join_rule_loose_parse_falls_back_to_invite() {
+        assert_eq!(JoinRule::from_str_loose("garbage"), JoinRule::Invite);
         assert_eq!(JoinRule::from_str_loose("knock"), JoinRule::Knock);
+        assert_eq!(JoinRule::from_str_loose("open"), JoinRule::Public);
     }
 
     #[test]
@@ -203,5 +213,6 @@ mod tests {
             HistoryVisibility::from_str_loose("world_readable"),
             HistoryVisibility::WorldReadable
         );
+        assert_eq!(HistoryVisibility::from_str_loose("shared"), HistoryVisibility::Shared);
     }
 }

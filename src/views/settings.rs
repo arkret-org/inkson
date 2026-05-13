@@ -115,11 +115,11 @@ impl SettingsSection {
             Self::Server => "Account & server",
             Self::Storage => "Data & sync",
             Self::Encryption => "Security & recovery",
-            Self::Mimi => "Integrations & agents",
-            Self::Push => "Notifications",
+            Self::Mimi => "Integrations",
+            Self::Push => "Inbox & notifications",
             Self::Privacy => "Privacy & sharing",
             Self::Theme => "Appearance & locale",
-            Self::Release => "Diagnostics",
+            Self::Release => "Operational status",
         }
     }
 
@@ -129,10 +129,10 @@ impl SettingsSection {
             Self::Storage => "Persistence",
             Self::Encryption => "Security",
             Self::Mimi => "Integrations",
-            Self::Push => "Delivery",
+            Self::Push => "Inbox",
             Self::Privacy => "Privacy",
             Self::Theme => "Preferences",
-            Self::Release => "Diagnostics",
+            Self::Release => "Operations",
         }
     }
 
@@ -147,7 +147,7 @@ impl SettingsSection {
             Self::Encryption => {
                 "Device trust, recovery posture, MLS defaults, and key backup workflows."
             }
-            Self::Mimi => "Connected applets, agent sessions, and MIMI interoperability controls.",
+            Self::Mimi => "Connected services and MIMI interoperability controls.",
             Self::Push => "Push registration, routing state, and per-Space delivery controls.",
             Self::Privacy => {
                 "Actor-private preferences, disclosure policy, and selective sharing rules."
@@ -155,9 +155,7 @@ impl SettingsSection {
             Self::Theme => {
                 "Theme, locale, and client-facing defaults that stay private to this actor."
             }
-            Self::Release => {
-                "Release gates, workflow blockers, and advanced diagnostics for the current build."
-            }
+            Self::Release => "Client health, sync posture, and operational status in one place.",
         }
     }
 }
@@ -290,7 +288,49 @@ pub fn SettingsPanel(
                                 span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
                             }
                             if active_section == SettingsSection::Release {
-                                span { class: "badge amber", "Moved to Readiness" }
+                                span { class: "badge amber", "Primary nav simplified" }
+                            }
+                        }
+                    }
+
+                    div { class: "event", "data-testid": "settings-setup-recovery-hub",
+                        div { class: "event-head",
+                            span { "Setup & recovery" }
+                            span { "moved under settings" }
+                        }
+                        div { class: "muted",
+                            "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary workspace navigation."
+                        }
+                        div { class: "actions",
+                            Link {
+                                class: "secondary",
+                                to: Route::Onboarding,
+                                UiIcon { name: "check" }
+                                "Onboarding"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::VerifyDevice,
+                                UiIcon { name: "check" }
+                                "Verify Device"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::Recovery,
+                                UiIcon { name: "archive" }
+                                "Recovery"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::Quarantine,
+                                UiIcon { name: "inbox" }
+                                "Invite Quarantine"
+                            }
+                            Link {
+                                class: "secondary",
+                                to: Route::SettingsSection { section: SettingsSection::Mimi.slug().to_owned() },
+                                UiIcon { name: "server" }
+                                "Integrations"
                             }
                         }
                     }
@@ -1320,25 +1360,15 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "release-moved-banner",
                                 div { class: "event-head",
-                                    span { "Diagnostics moved" }
-                                    span { "{blocked_count} blockers" }
+                                    span { "Operational status" }
+                                    span { "{blocked_count} tracked blockers" }
                                 }
                                 div { class: "muted",
-                                    "Release gates and advanced build diagnostics no longer live in the everyday Settings tree. Use Readiness for release blocking work and Audit for protocol investigation."
+                                    "The separate tools area has been removed from primary navigation. Keep release blockers, sync posture, and investigations summarized here so operational context stays adjacent to account settings."
                                 }
                                 div { class: "actions",
-                                    Link {
-                                        class: "primary",
-                                        to: Route::Readiness,
-                                        UiIcon { name: "check" }
-                                        "Open Readiness"
-                                    }
-                                    Link {
-                                        class: "secondary",
-                                        to: Route::Audit,
-                                        UiIcon { name: "activity" }
-                                        "Open Audit"
-                                    }
+                                    span { class: "badge amber", "{blocked_count} blockers" }
+                                    span { class: "badge blue", "settings-owned surface" }
                                 }
                             }
                         }
