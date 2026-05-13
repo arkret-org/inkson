@@ -1,9 +1,11 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use serde_json::Value;
 
 use crate::{
     components::{HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
+    routes::Route,
     views::helpers::authed_api,
 };
 
@@ -60,12 +62,6 @@ pub fn NotificationsPanel(
     }
 
     let local_state = state_store.read().load();
-    let muted_spaces = local_state
-        .muted_spaces
-        .iter()
-        .filter_map(|(space_id, muted)| muted.then_some(space_id.clone()))
-        .collect::<Vec<_>>();
-
     let mut visible_notifications = notifications()
         .into_iter()
         .filter(|notification| {
@@ -107,7 +103,7 @@ pub fn NotificationsPanel(
                 div { class: "event-head",
                     span { "Notifications" }
                     div { class: "section-tools",
-                        HelpTip { text: "Inbox items are derived from sync account data and filtered by local mute rules. Push only wakes the client; notification bodies are resolved locally." }
+                        HelpTip { text: "Notifications are derived from sync account data and filtered by local mute rules. Push only wakes the client; notification bodies are resolved locally." }
                         span { "{unread_visible} unread / {server_unread()} server" }
                     }
                 }
@@ -303,55 +299,20 @@ pub fn NotificationsPanel(
                 }
             }
 
-            div { class: "event", "data-testid": "notification-rules",
+            div { class: "event", "data-testid": "notifications-settings-hint",
                 div { class: "event-head",
-                    span { "Notification Rules" }
-                    HelpTip { text: "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
+                    span { "Notification settings" }
+                    span { "managed in Settings" }
                 }
-
-                div { class: "metric-grid",
-                    {render_kind_toggle("mention", "Mention notifications", state_store, status_msg)}
-                    {render_kind_toggle("reaction", "Reaction notifications", state_store, status_msg)}
-                    {render_kind_toggle("invite", "Invite notifications", state_store, status_msg)}
-                    {render_kind_toggle("message", "Message notifications", state_store, status_msg)}
+                div { class: "muted",
+                    "Notification rules, muted spaces, and push delivery preferences now live in Settings."
                 }
-
-                div { class: "event", "data-testid": "muted-spaces-panel",
-                    div { class: "event-head",
-                        span { "Muted Spaces" }
-                        span { "{muted_spaces.len()}" }
-                    }
-                    if muted_spaces.is_empty() {
-                        div { class: "muted", "No spaces are muted." }
-                    } else {
-                        for space_id in muted_spaces {
-                            div { class: "actions", "data-testid": "muted-space-row",
-                                span { "{space_id}" }
-                                button {
-                                    class: "btn icon sm ghost",
-                                    "data-testid": "unmute-space-button",
-                                    title: "Unmute space",
-                                    "aria-label": "Unmute space",
-                                    onclick: {
-                                        let space_id = space_id.clone();
-                                        move |_| {
-                                            state_store.write().set_space_muted(space_id.clone(), false);
-                                            status_msg.set(format!("Unmuted notifications for {space_id}."));
-                                        }
-                                    },
-                                    UiIcon { name: "bell" }
-                                }
-                            }
-                        }
-                        button {
-                            class: "btn sm ghost",
-                            "data-testid": "clear-muted-spaces",
-                            onclick: move |_| {
-                                state_store.write().clear_muted_spaces();
-                                status_msg.set("Cleared all muted spaces.".to_owned());
-                            },
-                            "Clear All"
-                        }
+                div { class: "actions",
+                    Link {
+                        class: "secondary",
+                        to: Route::SettingsSection { section: "notifications".to_owned() },
+                        UiIcon { name: "settings" }
+                        "Open settings"
                     }
                 }
             }
@@ -450,36 +411,6 @@ fn notification_from_value(
         archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
         timestamp,
         action_label: Some(default_notification_action(&kind).to_owned()),
-    }
-}
-
-fn render_kind_toggle(
-    kind: &'static str,
-    label: &'static str,
-    mut state_store: Signal<LocalStateStore>,
-    mut status_msg: Signal<String>,
-) -> Element {
-    let enabled = state_store.read().notification_kind_enabled(kind);
-    rsx! {
-        div { class: "metric",
-            strong { "{label}" }
-            label {
-                input {
-                    r#type: "checkbox",
-                    checked: enabled,
-                    onchange: move |event| {
-                        let enabled = event.value() == "true";
-                        state_store.write().set_notification_kind_enabled(kind, enabled);
-                        status_msg.set(format!(
-                            "{} {}.",
-                            label,
-                            if enabled { "enabled" } else { "muted" }
-                        ));
-                    },
-                }
-                if enabled { " Enabled" } else { " Muted" }
-            }
-        }
     }
 }
 

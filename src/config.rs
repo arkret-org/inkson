@@ -11,6 +11,8 @@ use crate::operation::uuid_v7;
 use contrix_sdk::DeviceId;
 
 const DEFAULT_SERVER_URL: &str = "https://local.host";
+const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
+const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEFAULT_ACCOUNT_DID: &str = "";
 const DEVICE_ID_PREFIX: &str = "cx:device:";
 #[cfg(target_arch = "wasm32")]
@@ -52,6 +54,7 @@ impl ClientConfig {
     }
 
     fn normalized(mut self) -> Self {
+        self.server_url = normalize_server_url(&self.server_url);
         let current = self.device_id.trim().to_owned();
         if is_valid_device_id(&current) {
             self.device_id = current;
@@ -75,6 +78,38 @@ pub fn normalize_device_id(device_id: &str) -> String {
     } else {
         new_device_id()
     }
+}
+
+pub fn normalize_server_url(server_url: &str) -> String {
+    let trimmed = server_url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Ok(url) = Url::parse(trimmed) else {
+        return trimmed.to_owned();
+    };
+    let Some(host) = url.host_str() else {
+        return trimmed.to_owned();
+    };
+    let path = url.path().trim_end_matches('/');
+    let is_root_path = path.is_empty();
+    let has_no_suffix = url.query().is_none() && url.fragment().is_none();
+
+    if has_no_suffix
+        && is_root_path
+        && url.scheme() == "http"
+        && url.port_or_known_default() == Some(LOCAL_PROXY_SERVER_PORT)
+        && matches!(host, "127.0.0.1" | "localhost" | "::1")
+    {
+        return LOCAL_PROXY_SERVER_URL.to_owned();
+    }
+
+    if has_no_suffix && is_root_path && url.scheme() == "https" && host == "local.host" {
+        return LOCAL_PROXY_SERVER_URL.to_owned();
+    }
+
+    trimmed.to_owned()
 }
 
 pub fn is_valid_device_id(device_id: &str) -> bool {
@@ -325,6 +360,22 @@ mod tests {
         assert!(is_valid_device_id(&config.device_id));
         assert_ne!(config.device_id, "dev_yougen");
         assert!(config.session_token.is_empty());
+    }
+
+    #[test]
+    fn canonicalizes_known_local_proxy_aliases() {
+        assert_eq!(
+            normalize_server_url("https://local.host/"),
+            "https://local.host"
+        );
+        assert_eq!(
+            normalize_server_url("http://127.0.0.1:8787/"),
+            "https://local.host"
+        );
+        assert_eq!(
+            ClientConfig::from_fields("http://localhost:8787", "", new_device_id(), "").server_url,
+            "https://local.host"
+        );
     }
 
     fn temp_config_path(name: &str) -> PathBuf {

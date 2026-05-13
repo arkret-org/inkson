@@ -11,7 +11,7 @@ use crate::{
         resolve_principal_auth_server_url, restore_oidc_scaffold,
         session_grant_signing_key_from_pem,
     },
-    config::{LocalConfigStore, normalize_device_id},
+    config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     views::helpers::persist_config,
 };
 
@@ -54,13 +54,14 @@ pub fn LoginPanel(
         let result = finish_oidc_callback(device_id()).await;
         match result {
             Ok(completed) => {
-                base_url.set(completed.principal_server_url.clone());
+                let principal_server_url = normalize_server_url(&completed.principal_server_url);
+                base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
                 device_id.set(completed.device_id.clone());
                 token.set(completed.access_token.clone());
                 persist_config(
                     config_store,
-                    completed.principal_server_url,
+                    principal_server_url,
                     completed.actor,
                     completed.device_id,
                     completed.access_token,
@@ -92,7 +93,7 @@ pub fn LoginPanel(
                     value: "{base_url}",
                     disabled: is_busy(),
                     oninput: move |event| {
-                        let value = event.value();
+                        let value = normalize_server_url(&event.value());
                         base_url.set(value.clone());
                         token.set(String::new());
                         persist_config(config_store, value, account_did(), device_id(), String::new());

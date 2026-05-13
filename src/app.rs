@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::{
     api::ContrixApi,
     components::UiIcon,
-    config::{LocalConfigStore, normalize_device_id},
+    config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     conformance::{
         PROFILE_CHAT_ONLY_CLIENT, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT,
         PROFILE_KANBAN_ONLY_CLIENT, PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
@@ -20,6 +20,11 @@ use crate::{
 };
 
 const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
+const UI_PREFERENCES_SCOPE: &str = "ui.browser";
+const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
+const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
+const MIN_SIDEBAR_WIDTH: f64 = 220.0;
+const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
 const STYLE: &str = r#"
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #eef3ed; color: #162018; }
@@ -653,7 +658,6 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   margin-left: 44px;
-  text-transform: uppercase;
 }
 .sidebar-context {
   display: grid;
@@ -676,7 +680,6 @@ body {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 .context-title {
   color: #f8fafc;
@@ -715,7 +718,6 @@ body {
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 .shell.rtl .context-row,
 .shell.rtl .server-actions,
@@ -1114,7 +1116,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
   display: flex;
   align-items: center;
 }
@@ -1265,16 +1266,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   min-width: 34px;
 }
 
-.topbar-inbox-link {
+.topbar-notifications-link {
   position: relative;
 }
 
-.topbar-inbox-link .ui-icon {
+.topbar-notifications-link .ui-icon {
   width: 17px;
   height: 17px;
 }
 
-.topbar-inbox-badge {
+.topbar-notifications-badge {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -1430,7 +1431,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .server-switch-title .v,
@@ -1748,7 +1748,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .account-menu__row strong {
   color: var(--text-3);
   font-size: 11px;
-  text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
@@ -1771,7 +1770,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .account-menu__actions {
@@ -1876,7 +1874,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--text-3);
   font-size: 11px;
   letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .space-title,
@@ -1951,7 +1948,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 
 .shell.app {
@@ -2270,6 +2266,7 @@ pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
+    let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_locale = initial_state_store
         .load_private_data(&initial_config.account_did, "locale")
         .map(|code| Locale::from_code(&code))
@@ -2334,7 +2331,7 @@ pub fn RouterView() -> Element {
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut sidebar_collapsed = use_signal(|| false);
-    let mut sidebar_width = use_signal(|| 272.0_f64);
+    let mut sidebar_width = use_signal(move || initial_sidebar_width);
     let mut sidebar_resizing = use_signal(|| false);
     let mut server_menu_open = use_signal(|| false);
     let mut account_menu_open = use_signal(|| false);
@@ -2359,7 +2356,8 @@ pub fn RouterView() -> Element {
 
     let active_server_description = server_description();
     let has_session = !token().trim().is_empty();
-    let active_server_label = active_server_description
+    let active_server_label = normalize_server_url(&base_url());
+    let active_server_detail = active_server_description
         .as_ref()
         .map(|description| {
             format!(
@@ -2367,10 +2365,6 @@ pub fn RouterView() -> Element {
                 description.service_type, description.protocol_version
             )
         })
-        .unwrap_or_else(|| base_url());
-    let active_server_detail = active_server_description
-        .as_ref()
-        .map(|description| description.service_did.clone())
         .unwrap_or_else(|| {
             if base_url().trim().is_empty() {
                 "No principal server selected".to_owned()
@@ -2573,12 +2567,24 @@ pub fn RouterView() -> Element {
             "data-testid": "client-shell",
             onmousemove: move |event| {
                 if sidebar_resizing() && !sidebar_collapsed() {
-                    let next_width = event.client_coordinates().x.max(220.0).min(420.0);
+                    let next_width = clamp_sidebar_width(event.client_coordinates().x);
                     sidebar_width.set(next_width);
                 }
             },
-            onmouseup: move |_| sidebar_resizing.set(false),
-            onmouseleave: move |_| sidebar_resizing.set(false),
+            onmouseup: move |_| {
+                if sidebar_resizing() {
+                    let mut store = state_store.write();
+                    save_sidebar_width_preference(&mut store, sidebar_width());
+                }
+                sidebar_resizing.set(false);
+            },
+            onmouseleave: move |_| {
+                if sidebar_resizing() {
+                    let mut store = state_store.write();
+                    save_sidebar_width_preference(&mut store, sidebar_width());
+                }
+                sidebar_resizing.set(false);
+            },
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",
@@ -2606,13 +2612,13 @@ pub fn RouterView() -> Element {
                     UiIcon { name: theme_toggle_icon }
                 }
                 Link {
-                    class: "btn icon sm ghost topbar-inbox-link",
-                    "data-testid": "mobile-topbar-inbox-button",
+                    class: "btn icon sm ghost topbar-notifications-link",
+                    "data-testid": "mobile-topbar-notifications-button",
                     to: Route::Notifications,
-                    title: "Inbox",
-                    "aria-label": "Inbox",
+                    title: "Notifications",
+                    "aria-label": "Notifications",
                     UiIcon { name: "inbox" }
-                    span { class: "topbar-inbox-badge", "aria-hidden": "true" }
+                    span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                 }
             }
             nav {
@@ -2842,17 +2848,6 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-nav-group sidebar-nav-group--quick",
-                    Link {
-                        class: "sidebar-nav-item",
-                        "data-testid": "directory-nav-button",
-                        to: Route::Directory,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                        span { class: "grow", "Search" }
-                        span { class: "kbd-tag", "⌘K" }
-                    }
-                }
-
                 div { class: "sidebar-nav-group",
                     Link { class: "sidebar-nav-item", to: Route::Dashboard,
                         span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
@@ -2896,11 +2891,15 @@ pub fn RouterView() -> Element {
                     "data-testid": "sidebar-resize-shield",
                     onmousemove: move |event| {
                         if !sidebar_collapsed() {
-                            let next_width = event.client_coordinates().x.max(220.0).min(420.0);
+                            let next_width = clamp_sidebar_width(event.client_coordinates().x);
                             sidebar_width.set(next_width);
                         }
                     },
-                    onmouseup: move |_| sidebar_resizing.set(false),
+                    onmouseup: move |_| {
+                        let mut store = state_store.write();
+                        save_sidebar_width_preference(&mut store, sidebar_width());
+                        sidebar_resizing.set(false);
+                    },
                 }
             }
 
@@ -2972,13 +2971,13 @@ pub fn RouterView() -> Element {
                             }
                         }
                         Link {
-                            class: "btn icon sm ghost topbar-inbox-link",
-                            "data-testid": "topbar-inbox-button",
+                            class: "btn icon sm ghost topbar-notifications-link",
+                            "data-testid": "topbar-notifications-button",
                             to: Route::Notifications,
-                            title: "Inbox",
-                            "aria-label": "Inbox",
+                            title: "Notifications",
+                            "aria-label": "Notifications",
                             UiIcon { name: "inbox" }
-                            span { class: "topbar-inbox-badge", "aria-hidden": "true" }
+                            span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
                         Link {
                             class: "btn sm primary",
@@ -3769,7 +3768,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Audit => "Audit",
         Route::Kanban | Route::KanbanSpace { .. } => "Board View",
         Route::Chat | Route::ChatSpace { .. } => "Discussion View",
-        Route::Notifications => "Inbox",
+        Route::Notifications => "Notifications",
         Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
@@ -3780,7 +3779,10 @@ fn route_label(route: &Route) -> &'static str {
 }
 
 fn server_key(server_url: &str) -> String {
-    server_url.trim().trim_end_matches('/').to_ascii_lowercase()
+    normalize_server_url(server_url)
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
 }
 
 fn same_server_url(left: &str, right: &str) -> bool {
@@ -3790,18 +3792,17 @@ fn same_server_url(left: &str, right: &str) -> bool {
 fn server_options_for(current_server_url: &str) -> Vec<String> {
     let mut options: Vec<String> = Vec::new();
     for url in [
-        current_server_url.trim(),
-        "https://local.host/",
-        "http://127.0.0.1:8787/",
+        normalize_server_url(current_server_url),
+        normalize_server_url("https://local.host/"),
     ] {
         if url.is_empty()
             || options
                 .iter()
-                .any(|existing| same_server_url(existing, url))
+                .any(|existing| same_server_url(existing, &url))
         {
             continue;
         }
-        options.push(url.to_owned());
+        options.push(url);
     }
     options
 }
@@ -3828,6 +3829,7 @@ struct ServerSelectionContext {
 }
 
 fn select_server(server_url: String, ctx: ServerSelectionContext) {
+    let server_url = normalize_server_url(&server_url);
     let mut base_url = ctx.base_url;
     let mut sync_cursor = ctx.sync_cursor;
     let mut selected_space = ctx.selected_space;
@@ -3861,6 +3863,26 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
         (ctx.account_did)(),
         (ctx.device_id)(),
         (ctx.token)(),
+    );
+}
+
+fn clamp_sidebar_width(width: f64) -> f64 {
+    width.max(MIN_SIDEBAR_WIDTH).min(MAX_SIDEBAR_WIDTH)
+}
+
+fn load_sidebar_width_preference(state_store: &LocalStateStore) -> f64 {
+    state_store
+        .load_private_data(UI_PREFERENCES_SCOPE, SIDEBAR_WIDTH_PREFERENCE_KEY)
+        .and_then(|value| value.parse::<f64>().ok())
+        .map(clamp_sidebar_width)
+        .unwrap_or(DEFAULT_SIDEBAR_WIDTH)
+}
+
+fn save_sidebar_width_preference(state_store: &mut LocalStateStore, width: f64) {
+    state_store.save_private_data(
+        UI_PREFERENCES_SCOPE,
+        SIDEBAR_WIDTH_PREFERENCE_KEY,
+        format!("{:.0}", clamp_sidebar_width(width)),
     );
 }
 

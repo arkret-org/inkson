@@ -8,7 +8,7 @@
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorized                            |
-// | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + inbox)                |
+// | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
@@ -85,7 +85,7 @@ pub enum View {
     Audit,
     Kanban,
     Chat,
-    /// Inbox / Notifications. Per `models/object-model-core.md` §1 (after Round 7),
+    /// Notifications. Per `models/object-model-core.md` §1 (after Round 7),
     /// `notification` is a *derived* projection — NOT a canonical wire object.
     /// The only canonical events feeding this view are `cx.read.marker`,
     /// `cx.receipt.read`, `@-mention` extractions, plus capability/grant

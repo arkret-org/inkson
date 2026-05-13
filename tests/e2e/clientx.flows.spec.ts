@@ -126,10 +126,27 @@ test("workspace header collapses and sidebar edge resizes the menu", async ({ pa
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
     .toBeGreaterThan((initialBox?.width ?? 0) + 40);
+  const resizedWidth = (await sidebar.boundingBox())?.width ?? 0;
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect.poll(async () => (await page.getByTestId("sidebar").boundingBox())?.width ?? 0).toBeGreaterThan(300);
+  const reloadedWidth = (await page.getByTestId("sidebar").boundingBox())?.width ?? 0;
+  expect(Math.abs(reloadedWidth - resizedWidth)).toBeLessThan(16);
 
   await toggle.click();
   await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(100);
   await expect(resizeHandle).toBeHidden();
+});
+
+test("loopback proxy server aliases are normalized to local.host", async ({ page }) => {
+  await writeLocalConfig(page, { server_url: "http://127.0.0.1:8787/" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+
+  await openServerSwitcher(page);
+  await expect(latestTestId(page, "server-url-input")).toHaveValue("https://local.host");
+  await expect(page.getByTestId("topbar-crumbs")).toContainText("https://local.host");
 });
 
 test("topbar breadcrumbs avoid duplicated route and server context", async ({ page }) => {
@@ -319,7 +336,8 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
 });
 
 test("directory search resolve and space selection flow works", async ({ page }) => {
-  await page.getByTestId("directory-nav-button").click();
+  await page.getByTestId("global-search-input").fill("demo");
+  await page.getByTestId("global-search-input").press("Enter");
   await expect(page.getByTestId("directory-panel")).toBeVisible();
 
   await page.getByTestId("directory-search-input").fill("demo");
@@ -356,7 +374,7 @@ test("directory search resolve and space selection flow works", async ({ page })
 
 test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
   await refreshServer(page);
-  await page.getByTestId("topbar-inbox-button").click();
+  await page.getByTestId("topbar-notifications-button").click();
 
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
@@ -366,12 +384,12 @@ test("notifications are derived from index projections and respect per-space mut
   await expect(page.getByTestId("notifications-muted-empty")).toContainText("hidden by archive, type, or per-space mute rules");
 
   await openSettings(page);
-  await page.getByTestId("settings-nav-item-push").click();
-  await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
-  await page.getByTestId("settings-unmute-space").click();
+  await page.getByTestId("settings-nav-item-notifications").click();
+  await expect(page.getByTestId("notifications-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
+  await page.getByTestId("notifications-settings-unmute-space").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
-  await page.getByTestId("topbar-inbox-button").click();
+  await page.getByTestId("topbar-notifications-button").click();
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 

@@ -71,13 +71,43 @@ fn push_read_receipt_account_data(
     });
 }
 
+fn render_notification_kind_toggle(
+    kind: &'static str,
+    label: &'static str,
+    mut state_store: Signal<LocalStateStore>,
+    mut status: Signal<String>,
+) -> Element {
+    let enabled = state_store.read().notification_kind_enabled(kind);
+    rsx! {
+        div { class: "metric",
+            strong { "{label}" }
+            label {
+                input {
+                    r#type: "checkbox",
+                    checked: enabled,
+                    onchange: move |event| {
+                        let enabled = event.value() == "true";
+                        state_store.write().set_notification_kind_enabled(kind, enabled);
+                        status.set(format!(
+                            "{} {}.",
+                            label,
+                            if enabled { "enabled" } else { "muted" }
+                        ));
+                    },
+                }
+                if enabled { " Enabled" } else { " Muted" }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
     Server,
     Storage,
     Encryption,
     Mimi,
-    Push,
+    Notifications,
     Privacy,
     Theme,
     Release,
@@ -89,7 +119,7 @@ impl SettingsSection {
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
             "mimi" => Self::Mimi,
-            "push" => Self::Push,
+            "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
             "theme" => Self::Theme,
             "release" => Self::Release,
@@ -103,7 +133,7 @@ impl SettingsSection {
             Self::Storage => "storage",
             Self::Encryption => "encryption",
             Self::Mimi => "mimi",
-            Self::Push => "push",
+            Self::Notifications => "notifications",
             Self::Privacy => "privacy",
             Self::Theme => "theme",
             Self::Release => "release",
@@ -116,7 +146,7 @@ impl SettingsSection {
             Self::Storage => "Data & sync",
             Self::Encryption => "Security & recovery",
             Self::Mimi => "Integrations",
-            Self::Push => "Inbox & notifications",
+            Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
             Self::Theme => "Appearance & locale",
             Self::Release => "Operational status",
@@ -129,7 +159,7 @@ impl SettingsSection {
             Self::Storage => "Persistence",
             Self::Encryption => "Security",
             Self::Mimi => "Integrations",
-            Self::Push => "Inbox",
+            Self::Notifications => "Notifications",
             Self::Privacy => "Privacy",
             Self::Theme => "Preferences",
             Self::Release => "Operations",
@@ -148,7 +178,9 @@ impl SettingsSection {
                 "Device trust, recovery posture, MLS defaults, and key backup workflows."
             }
             Self::Mimi => "Connected services and MIMI interoperability controls.",
-            Self::Push => "Push registration, routing state, and per-Space delivery controls.",
+            Self::Notifications => {
+                "Notification rules, push registration, routing state, and per-Space delivery controls."
+            }
             Self::Privacy => {
                 "Actor-private preferences, disclosure policy, and selective sharing rules."
             }
@@ -163,7 +195,7 @@ impl SettingsSection {
 const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
 const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[SettingsSection::Encryption];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] =
-    &[SettingsSection::Push, SettingsSection::Privacy];
+    &[SettingsSection::Notifications, SettingsSection::Privacy];
 const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
     &[SettingsSection::Theme, SettingsSection::Storage];
 const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
@@ -179,8 +211,8 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         SETTINGS_SECURITY_GROUP,
     ),
     (
-        "Delivery & privacy",
-        "Push behavior and actor-private disclosure controls.",
+        "Notifications & privacy",
+        "Notification delivery behavior and actor-private disclosure controls.",
         SETTINGS_DELIVERY_GROUP,
     ),
     (
@@ -284,7 +316,7 @@ pub fn SettingsPanel(
                             if active_section == SettingsSection::Encryption {
                                 span { class: "badge amber", "{crypto_state}" }
                             }
-                            if active_section == SettingsSection::Push {
+                            if active_section == SettingsSection::Notifications {
                                 span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
                             }
                             if active_section == SettingsSection::Release {
@@ -774,11 +806,21 @@ pub fn SettingsPanel(
                         }
                     }
 
-                    // ── Push notification settings ───────────────────────
-                    if active_section == SettingsSection::Push {
+                    // ── Notification settings ────────────────────────────
+                    if active_section == SettingsSection::Notifications {
                         div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "notification-rules-settings",
+                    div { class: "event-head", span { "Notification rules" } span { "this client only" } }
+                    div { class: "muted", "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
+                    div { class: "metric-grid",
+                        {render_notification_kind_toggle("mention", "Mention notifications", state_store, status)}
+                        {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
+                        {render_notification_kind_toggle("invite", "Invite notifications", state_store, status)}
+                        {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
+                    }
+                }
                             div { class: "event", "data-testid": "push-settings",
-                    div { class: "event-head", span { "Push Notifications" } span { "configure" } }
+                    div { class: "event-head", span { "Push delivery" } span { "configure" } }
                     div { class: "muted", "Push notification preferences and gateway registration." }
                     div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
                     div { class: "actions",
@@ -861,7 +903,7 @@ pub fn SettingsPanel(
                             "Unregister Push"
                         }
                     }
-                    div { class: "event", "data-testid": "push-mute-summary",
+                    div { class: "event", "data-testid": "notifications-mute-summary",
                         div { class: "event-head",
                             span { "Per-space mute rules" }
                             span { "{muted_spaces.len()} muted" }
@@ -874,12 +916,12 @@ pub fn SettingsPanel(
                                     span { "{space_id}" }
                                     button {
                                         class: "secondary",
-                                        "data-testid": "settings-unmute-space",
+                                        "data-testid": "notifications-settings-unmute-space",
                                         onclick: {
                                             let space_id = space_id.clone();
                                             move |_| {
                                                 state_store.write().set_space_muted(space_id.clone(), false);
-                                                status.set(format!("Unmuted {space_id} from push preferences"));
+                                                status.set(format!("Unmuted {space_id} from notification preferences"));
                                             }
                                         },
                                         "Unmute"
@@ -888,7 +930,7 @@ pub fn SettingsPanel(
                             }
                             button {
                                 class: "secondary",
-                                "data-testid": "settings-clear-muted-spaces",
+                                "data-testid": "notifications-settings-clear-muted-spaces",
                                 onclick: move |_| {
                                     state_store.write().clear_muted_spaces();
                                     status.set("Cleared all per-space mute rules".to_owned());

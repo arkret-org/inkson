@@ -29,41 +29,8 @@ pub fn DashboardPanel(
         .or_else(|| spaces().first().cloned());
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
-            div { class: "spread mb-24", "data-testid": "dashboard-hero",
-                div {
-                    h1 { style: "font-size: 22px; margin: 0 0 4px; letter-spacing: 0;",
-                        if has_session { "Continue work" } else { "No active session" }
-                    }
-                    div { class: "muted f-12",
-                        if has_session { "Pick a Space, clear inbox, or jump into search. Operational details stay lightweight and out of the main navigation." } else { "Connect a Principal Server, then sign in to load spaces, inbox, and collaboration views." }
-                    }
-                }
-                div { class: "row gap-6 wrap",
-                    Link {
-                        class: "btn sm primary",
-                        "data-testid": "quick-open-inbox",
-                        to: Route::Notifications,
-                        onclick: move |_| view.set(super::View::Notifications),
-                        UiIcon { name: "inbox" }
-                        "Open Inbox"
-                    }
-                    Link {
-                        class: "btn sm",
-                        "data-testid": "quick-browse-directory",
-                        to: Route::Directory,
-                        onclick: move |_| view.set(super::View::Directory),
-                        UiIcon { name: "search" }
-                        "Open Search"
-                    }
-                    Link {
-                        class: "btn sm ghost",
-                        "data-testid": "quick-workspace-setup",
-                        to: Route::Setup,
-                        onclick: move |_| view.set(super::View::Setup),
-                        UiIcon { name: "plus" }
-                        "Workspace Setup"
-                    }
-                }
+            div { class: "mb-24", "data-testid": "dashboard-hero",
+                h1 { style: "font-size: 22px; margin: 0; letter-spacing: 0;", "Home" }
             }
 
             div { class: "metric-grid mb-24", "data-testid": "dashboard-metrics",
@@ -71,7 +38,7 @@ pub fn DashboardPanel(
                     class: "metric",
                     to: Route::Notifications,
                     onclick: move |_| view.set(super::View::Notifications),
-                    div { class: "lbl", "Inbox" }
+                    div { class: "lbl", "Notifications" }
                     div { class: "val", "0" }
                     div { class: "delta", if has_session { "Unread and approvals" } else { "Sign in required" } }
                 }
@@ -108,9 +75,9 @@ pub fn DashboardPanel(
                                 view.set(super::View::Timeline);
                             }
                         },
-                        div { class: "lbl", "Continue" }
+                        div { class: "lbl", "Space id" }
                         div { class: "val mono", style: "font-size: 14px;", "{space.space_id}" }
-                        div { class: "delta", "Open the last active Space view" }
+                        div { class: "delta", "Current space identifier" }
                     }
                 } else {
                     Link {
@@ -222,17 +189,17 @@ pub fn DashboardPanel(
                 }
 
                 div { class: "stack",
-                    div { class: "surface", "data-testid": "pinned-inbox",
+                    div { class: "surface", "data-testid": "pinned-notifications",
                         div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
-                            strong { "Needs Attention" }
+                            strong { "Notifications" }
                             Link {
                                 class: "btn icon sm ghost",
-                                "data-testid": "pinned-inbox-open",
+                                "data-testid": "pinned-notifications-open",
                                 to: Route::Notifications,
                                 onclick: move |_| view.set(super::View::Notifications),
                                 style: "margin-left: auto;",
-                                title: "Open inbox",
-                                "aria-label": "Open inbox",
+                                title: "Open notifications",
+                                "aria-label": "Open notifications",
                                 UiIcon { name: "inbox" }
                             }
                         }
@@ -240,8 +207,8 @@ pub fn DashboardPanel(
                             div { class: "m-list-item",
                                 span { class: "avatar xs", "0" }
                                 span { class: "grow",
-                                    span { class: "title f-13", if has_session { "No inbox items loaded" } else { "Sign in to load inbox" } }
-                                    span { class: "sub", "Unread, approvals, and notifications appear here" }
+                                    span { class: "title f-13", if has_session { "No notifications loaded" } else { "Sign in to load notifications" } }
+                                    span { class: "sub", "Unread items, approvals, and alerts appear here" }
                                 }
                             }
                         }

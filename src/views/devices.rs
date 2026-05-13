@@ -343,7 +343,7 @@ pub fn DevicesPanel(
             // To-device message inbox
             div { class: "event", "data-testid": "to-device-inbox",
                 div { class: "event-head", span { "To-Device Messages" } span { "{to_device_messages().len()} pending" } }
-                div { class: "muted", "Inbox accepts cx.schema.device_message.v1 scaffolds and live /api/v1/device_messages fetches." }
+                div { class: "muted", "Notifications accept cx.schema.device_message.v1 scaffolds and live /api/v1/device_messages fetches." }
                 div { class: "actions",
                     button {
                         class: "secondary",
