@@ -10,7 +10,7 @@ use crate::{
     local_state::LocalStateStore,
     models::AccountDataSetOutcome,
     routes::Route,
-    views::helpers::{authed_api, persist_config},
+    views::helpers::authed_api,
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
 
@@ -136,19 +136,6 @@ impl SettingsSection {
         }
     }
 
-    fn nav_summary(self) -> &'static str {
-        match self {
-            Self::Server => "Profile, identity, principal context",
-            Self::Storage => "Sync, channels, export, local stores",
-            Self::Encryption => "Devices, recovery, keys, encryption",
-            Self::Mimi => "Authorized applets and agent sessions",
-            Self::Push => "Notification rules, routes, quiet hours",
-            Self::Privacy => "Disclosure, blocklist, read receipts",
-            Self::Theme => "Theme, language, accessibility, shortcuts",
-            Self::Release => "Activity, audit, advanced / dev",
-        }
-    }
-
     fn description(self) -> &'static str {
         match self {
             Self::Server => {
@@ -218,12 +205,12 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
 
 #[component]
 pub fn SettingsPanel(
-    mut base_url: Signal<String>,
-    mut account_did: Signal<String>,
-    mut device_id: Signal<String>,
+    base_url: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
     token: Signal<String>,
     crypto_state: String,
-    mut config_store: Signal<LocalConfigStore>,
+    config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     push_state: Signal<String>,
     mut locale: Signal<Locale>,
@@ -268,56 +255,24 @@ pub fn SettingsPanel(
     } else {
         "No authenticated device session".to_owned()
     };
-    let navigation_groups = SETTINGS_NAV_GROUPS.iter().copied();
-
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
             div { class: "settings-shell",
                 aside { class: "settings-sidebar-column",
-                    div { class: "settings-overview-card",
-                        div { class: "event-head",
-                            span { "Settings" }
-                            span { if has_session { "signed in" } else { "local only" } }
-                        }
-                        div { class: "settings-overview-list",
-                            div { class: "settings-overview-row",
-                                span { "Principal" }
-                                strong { "{principal_label}" }
-                            }
-                            div { class: "settings-overview-row",
-                                span { "Server" }
-                                strong { "{base_url}" }
-                            }
-                            div { class: "settings-overview-row",
-                                span { "Device" }
-                                strong { "{device_label}" }
-                            }
-                            div { class: "settings-overview-row",
-                                span { "Push" }
-                                strong { "{push_label}" }
-                            }
-                        }
-                    }
-                    for (group_title, group_copy, sections) in navigation_groups {
-                        div { class: "settings-nav-group",
-                            div { class: "settings-nav-group__head",
-                                div { class: "settings-nav-group__title-row",
-                                    h2 { "{group_title}" }
-                                    HelpTip { text: group_copy.to_owned() }
+                    for (group_index, (_, _, sections)) in SETTINGS_NAV_GROUPS.iter().copied().enumerate() {
+                        div { class: "settings-nav-cluster",
+                            for section in sections.iter().copied() {
+                                Link {
+                                    class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
+                                    "data-testid": "settings-nav-item-{section.slug()}",
+                                    "aria-current": if active_section == section { "page" } else { "false" },
+                                    to: Route::SettingsSection { section: section.slug().to_owned() },
+                                    strong { "{section.label()}" }
                                 }
                             }
-                            div { class: "settings-nav-list",
-                                for section in sections.iter().copied() {
-                                    Link {
-                                        class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
-                                        "data-testid": "settings-nav-item-{section.slug()}",
-                                        "aria-current": if active_section == section { "page" } else { "false" },
-                                        to: Route::SettingsSection { section: section.slug().to_owned() },
-                                        strong { "{section.label()}" }
-                                        span { "{section.nav_summary()}" }
-                                    }
-                                }
-                            }
+                        }
+                        if group_index + 1 < SETTINGS_NAV_GROUPS.len() {
+                            div { class: "settings-nav-divider", "aria-hidden": "true" }
                         }
                     }
                 }
@@ -402,40 +357,6 @@ pub fn SettingsPanel(
                                 }
                             }
 
-                            div { class: "event", "data-testid": "server-settings",
-                                div { class: "event-head", span { "Principal Server" } span { "client configuration" } }
-                                label { "Server URL" }
-                                input {
-                                    "data-testid": "settings-server-url-input",
-                                    value: "{base_url}",
-                                    oninput: move |event| {
-                                        let value = event.value();
-                                        base_url.set(value.clone());
-                                        token.set(String::new());
-                                        persist_config(config_store, value, account_did(), device_id(), String::new());
-                                    }
-                                }
-                                label { "Account DID" }
-                                input {
-                                    "data-testid": "settings-account-did-input",
-                                    value: "{account_did}",
-                                    oninput: move |event| {
-                                        let value = event.value();
-                                        account_did.set(value.clone());
-                                        persist_config(config_store, base_url(), value, device_id(), token());
-                                    }
-                                }
-                                label { "Device ID" }
-                                input {
-                                    "data-testid": "settings-device-id-input",
-                                    value: "{device_id}",
-                                    oninput: move |event| {
-                                        let value = event.value();
-                                        device_id.set(value.clone());
-                                        persist_config(config_store, base_url(), account_did(), value, token());
-                                    }
-                                }
-                            }
                         }
                     }
 

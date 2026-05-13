@@ -1,18 +1,52 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
+function latestTestId(page: import("@playwright/test").Page, testId: string) {
+  return page.getByTestId(testId).last();
+}
+
 async function openServerSwitcher(page: import("@playwright/test").Page) {
-  const menu = page.getByTestId("server-switch-menu");
+  const menu = latestTestId(page, "server-switch-menu");
   if (await menu.isVisible()) {
     return;
   }
-  await page.getByTestId("server-switch-button").click();
+  await latestTestId(page, "server-switch-button").click();
   await expect(menu).toBeVisible();
 }
 
 async function refreshServer(page: import("@playwright/test").Page) {
   await openServerSwitcher(page);
-  await page.getByTestId("connect-button").click();
+  await latestTestId(page, "connect-button").click();
+}
+
+async function writeLocalConfig(
+  page: import("@playwright/test").Page,
+  overrides: Partial<{
+    server_url: string;
+    account_did: string;
+    device_id: string;
+    session_token: string;
+  }>,
+) {
+  await page.evaluate((nextConfig) => {
+    const current = localStorage.getItem("yougen.config.v1");
+    const parsed = current ? JSON.parse(current) : {};
+    localStorage.setItem(
+      "yougen.config.v1",
+      JSON.stringify({
+        server_url: "https://local.host",
+        account_did: "did:web:alice.example",
+        device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+        session_token: "sx:e2e-token",
+        ...parsed,
+        ...nextConfig,
+      }),
+    );
+  }, overrides);
+}
+
+async function readLocalConfig(page: import("@playwright/test").Page) {
+  return page.evaluate(() => JSON.parse(localStorage.getItem("yougen.config.v1") ?? "{}"));
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -35,7 +69,7 @@ test.beforeEach(async ({ page }, testInfo) => {
     );
   });
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {
@@ -126,49 +160,40 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
 test("connect refresh canonicalizes stale account DID but preserves device override", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
   const deviceId = "cx:device:01964137-0000-7000-8000-0000000000b0";
-  await page.getByTestId("settings-nav-button").click();
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-
-  await page.getByTestId("settings-account-did-input").fill(staleDid);
-  await page.getByTestId("settings-device-id-input").fill(deviceId);
+  await writeLocalConfig(page, { account_did: staleDid, device_id: deviceId });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-  await page.getByTestId("settings-nav-button").click();
-  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(staleDid);
-  await expect(page.getByTestId("settings-device-id-input")).toHaveValue(deviceId);
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
   await refreshServer(page);
 
-  await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-session-crypto")).toContainText(
+  await latestTestId(page, "account-menu-button").click();
+  await expect(latestTestId(page, "account-menu-session-crypto")).toContainText(
     `session token loaded for ${deviceId}`,
   );
-  await expect(page.getByTestId("account-menu-did")).toContainText("did:web:alice.example");
-  await expect(page.getByTestId("account-menu-device")).toContainText(deviceId);
-  await expect(page.getByTestId("settings-account-did-input")).toHaveValue("did:web:alice.example");
-  await expect(page.getByTestId("settings-device-id-input")).toHaveValue(deviceId);
+  await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
+  await expect(latestTestId(page, "account-menu-device")).toContainText(deviceId);
+  await expect.poll(() => readLocalConfig(page)).toMatchObject({
+    account_did: "did:web:alice.example",
+    device_id: deviceId,
+  });
 });
 
 test("session refresh canonicalizes stale account DID in settings", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KREFRESH";
-  await page.getByTestId("settings-nav-button").click();
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-
-  await page.getByTestId("settings-account-did-input").fill(staleDid);
+  await writeLocalConfig(page, { account_did: staleDid });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-  await page.getByTestId("settings-nav-button").click();
-  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(staleDid);
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
-  await page.getByTestId("account-menu-button").click();
-  await page.getByTestId("account-menu-session-refresh").click();
-  await expect(page.getByTestId("account-menu-session-state")).toContainText(
+  await latestTestId(page, "account-menu-button").click();
+  await expect(latestTestId(page, "account-menu-did")).toContainText(staleDid);
+  await latestTestId(page, "account-menu-session-refresh").click();
+  await expect(latestTestId(page, "account-menu-session-state")).toContainText(
     "Session refresh ok: did:web:alice.example",
   );
-  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(
-    "did:web:alice.example",
-  );
-  await expect(page.getByTestId("account-menu-did")).toContainText("did:web:alice.example");
+  await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
+  await expect.poll(() => readLocalConfig(page)).toMatchObject({
+    account_did: "did:web:alice.example",
+  });
 });
 
 test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
@@ -349,7 +374,7 @@ test("product account space lifecycle and canonical message flow works", async (
   await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
-  await page.getByTestId("product-nav-button").click();
+  await page.getByTestId("topbar-create-button").click();
   await expect(page.getByTestId("product-panel")).toBeVisible();
 
   await page.getByTestId("register-account-button").click();
@@ -375,7 +400,7 @@ test("product account space lifecycle and canonical message flow works", async (
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
 
-  await page.getByTestId("product-nav-button").click();
+  await page.getByTestId("topbar-create-button").click();
   await page.getByTestId("remove-member-button").click();
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("removed; members");
   await page.getByTestId("delete-space-button").click();

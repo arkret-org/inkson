@@ -456,34 +456,6 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   margin: 4px 6px;
 }
 
-.sidebar-section { padding: 10px 6px; }
-.sidebar-section h4 {
-  margin: 6px 10px 4px;
-  font-size: 10px; color: var(--text-3); font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.07em;
-  display: flex; align-items: center;
-}
-.sidebar-section h4 .add {
-  margin-left: auto; cursor: pointer; color: var(--text-3); font-weight: 500;
-  width: 16px; height: 16px; border-radius: 4px;
-  display: grid; place-items: center;
-}
-.sidebar-section h4 .add:hover { background: var(--hover); color: var(--text); }
-
-.nav-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 10px; border-radius: 6px;
-  color: var(--text); font-size: 13px;
-  cursor: pointer;
-  user-select: none;
-}
-.nav-item:hover { background: var(--hover); }
-.nav-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
-.nav-item .icon { width: 16px; height: 16px; opacity: 0.7; display: inline-grid; place-items: center; font-size: 14px; }
-.nav-item.active .icon { opacity: 1; }
-.nav-item .badge { margin-left: auto; }
-.nav-item.dim { color: var(--text-3); }
-
 .sidebar-footer {
   margin-top: auto;
   padding: 10px 12px;

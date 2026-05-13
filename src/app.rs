@@ -454,17 +454,9 @@ body {
   display: grid;
   gap: 12px;
 }
-.settings-overview-card,
-.settings-nav-group {
+.settings-nav-cluster {
   display: grid;
-  gap: 10px;
-  border: 1px solid var(--surface-border, var(--cx-line));
-  border-radius: 18px;
-  padding: 14px;
-  background:
-    radial-gradient(circle at top left, rgba(43, 107, 79, 0.12), transparent 36%),
-    var(--surface, var(--cx-surface));
-  box-shadow: var(--cx-shadow-sm);
+  gap: 8px;
 }
 .settings-content-title {
   margin: 0;
@@ -472,83 +464,52 @@ body {
   line-height: 1.08;
   font-size: 26px;
 }
-.settings-overview-list {
-  display: grid;
-  gap: 8px;
-  padding-top: 4px;
-}
-.settings-overview-row {
-  display: grid;
-  gap: 2px;
-}
-.settings-overview-row span {
-  color: var(--text-3, var(--cx-muted));
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.settings-overview-row strong {
-  color: var(--text, var(--cx-ink));
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.settings-nav-group__head {
-  display: grid;
-  gap: 4px;
-}
-.settings-nav-group__head h2 {
-  margin: 0;
-}
-.settings-nav-group__title-row,
 .settings-content-title-row {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.settings-nav-group__title-row .help-tip,
 .settings-content-title-row .help-tip {
   flex: 0 0 auto;
-}
-.settings-nav-group__head h2 {
-  font-size: 13px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-3, var(--cx-muted));
 }
 .settings-nav-list {
   display: grid;
   gap: 8px;
 }
+.settings-nav-divider {
+  height: 1px;
+  margin: 2px 0 4px;
+  background: color-mix(in srgb, var(--border) 82%, transparent);
+}
 .settings-nav-item {
   display: grid;
   gap: 4px;
-  padding: 11px 12px;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.74);
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 0;
+  border-left: 2px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-width: 0 0 0 2px;
+  background: transparent;
   color: inherit;
   text-decoration: none;
-  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+  box-shadow: none;
+  transition: border-color 140ms ease, background-color 140ms ease, padding-left 140ms ease;
 }
 .settings-nav-item strong {
   color: var(--text, var(--cx-ink));
   font-size: 13px;
 }
-.settings-nav-item span {
-  color: var(--text-3, var(--cx-muted));
-  font-size: 12px;
-  line-height: 1.45;
-}
 .settings-nav-item:hover {
-  border-color: rgba(43, 107, 79, 0.18);
-  transform: translateY(-1px);
+  border-left-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 18%, transparent);
+  padding-left: 8px;
 }
 .settings-nav-item.active {
-  border-color: rgba(43, 107, 79, 0.36);
-  background: color-mix(in srgb, var(--cx-brand) 9%, var(--surface, var(--cx-surface)));
-  box-shadow: inset 0 0 0 1px rgba(43, 107, 79, 0.12);
+  border-left-color: color-mix(in srgb, var(--accent) 82%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 26%, transparent);
+  padding-left: 10px;
 }
 .settings-content-hero {
   padding: 16px 18px;
@@ -650,60 +611,6 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
-.nav-groups {
-  display: grid;
-  gap: 14px;
-  overflow: auto;
-  padding-right: 2px;
-}
-.nav-section {
-  display: grid;
-  gap: 7px;
-}
-.nav-section-title {
-  color: #8fa2b8;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.nav-item {
-  display: grid;
-  gap: 3px;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 10px 11px;
-  color: #e5edf7;
-  text-decoration: none;
-  background: rgba(255, 255, 255, 0.04);
-}
-.nav-item:hover,
-.nav-item.active {
-  border-color: rgba(113, 181, 143, 0.42);
-  background: rgba(43, 107, 79, 0.16);
-}
-.nav-item.cross-org {
-  border-color: rgba(165, 107, 19, 0.28);
-  background:
-    linear-gradient(135deg, rgba(58, 138, 103, 0.2), rgba(165, 107, 19, 0.1)),
-    rgba(255, 255, 255, 0.04);
-}
-.nav-title {
-  color: #f8fafc;
-  font-size: 14px;
-  font-weight: 800;
-}
-.nav-meta {
-  color: #b6c4d4;
-  font-size: 12px;
-  line-height: 1.35;
-}
-.nav-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 3px;
-}
 .sidebar-status {
   margin-top: 2px;
 }
@@ -716,7 +623,6 @@ body {
 }
 .shell.rtl .context-row,
 .shell.rtl .server-actions,
-.shell.rtl .nav-item,
 .shell.rtl .topbar {
   direction: rtl;
 }
@@ -1036,6 +942,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .sidebar {
+  --sidebar-item-size: 44px;
+  --sidebar-item-gap: 6px;
+  --sidebar-group-gap: 14px;
+  --sidebar-icon-track: 20px;
+  --sidebar-icon-size: 18px;
   background: var(--surface);
   color: var(--text);
   border-right: 1px solid var(--border);
@@ -1091,6 +1002,114 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--text-3);
 }
 
+.sidebar-nav-group {
+  display: grid;
+  gap: var(--sidebar-item-gap);
+  padding: 0 8px;
+}
+
+.sidebar-nav-group + .sidebar-nav-group {
+  margin-top: var(--sidebar-group-gap);
+}
+
+.sidebar-nav-group-title {
+  margin: 0 8px 2px;
+  color: var(--nav-label);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-nav-group-title .add {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+
+.sidebar-nav-group-title .add:hover {
+  background: var(--hover);
+  color: var(--nav-text);
+}
+
+.sidebar-nav-item {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid color-mix(in srgb, var(--nav-border) 74%, rgba(255, 255, 255, 0.06));
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  color: var(--nav-text);
+  background: var(--nav-soft);
+  text-decoration: none;
+  user-select: none;
+}
+
+.sidebar-nav-item:hover,
+.sidebar-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
+    var(--nav-soft);
+}
+
+.sidebar-nav-item.is-active {
+  color: var(--nav-text);
+}
+
+.sidebar-nav-item.is-dim {
+  color: var(--nav-muted);
+}
+
+.sidebar-nav-item.is-cross-org {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
+    var(--nav-soft);
+}
+
+.sidebar-nav-item .grow {
+  min-width: 0;
+}
+
+.sidebar-nav-item .badge,
+.sidebar-nav-item .pill,
+.sidebar-nav-item .kbd-tag {
+  justify-self: end;
+}
+
+.sidebar-nav-icon,
+.server-switch-button .server-switch-icon {
+  width: var(--sidebar-icon-track);
+  height: var(--sidebar-icon-track);
+  display: inline-grid;
+  place-items: center;
+  color: var(--nav-muted);
+}
+
+.sidebar-nav-item:hover .sidebar-nav-icon,
+.sidebar-nav-item.is-active .sidebar-nav-icon,
+.server-switch-button:hover .server-switch-icon,
+.server-switch-button[aria-expanded="true"] .server-switch-icon {
+  color: var(--nav-text);
+}
+
+.sidebar-nav-icon .ui-icon,
+.server-switch-button .server-switch-icon .ui-icon {
+  width: var(--sidebar-icon-size);
+  height: var(--sidebar-icon-size);
+  vertical-align: 0;
+}
+
 .sidebar-collapse-toggle,
 .panel-collapse-toggle,
 .theme-toggle-button {
@@ -1125,6 +1144,43 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .workspace-header .actions {
   align-items: center;
   gap: 8px;
+}
+
+.workspace-status {
+  min-width: 220px;
+  max-width: min(32vw, 340px);
+  padding: 8px 10px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.workspace-status__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-status__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.workspace-status__cursor {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-status__error {
+  color: var(--danger-ink);
+  font-size: 11px;
+  margin-top: 4px;
 }
 
 .workspace-header > .sidebar-collapse-toggle {
@@ -1165,13 +1221,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .shell.app.sidebar-collapsed .sidebar-header .brand {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  width: var(--sidebar-item-size);
+  height: var(--sidebar-item-size);
   justify-content: center;
 }
 
 .shell.app.sidebar-collapsed .sidebar-header .logo {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
 }
 
 .shell.app.sidebar-collapsed .sidebar-header .product-meta,
@@ -1182,11 +1241,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .shell.app.sidebar-collapsed .server-switch-title,
 .shell.app.sidebar-collapsed .server-switch-state,
 .shell.app.sidebar-collapsed .server-switch-menu,
-.shell.app.sidebar-collapsed .sidebar-section h4,
-.shell.app.sidebar-collapsed .nav-item .grow,
-.shell.app.sidebar-collapsed .nav-item .badge,
-.shell.app.sidebar-collapsed .nav-item .pill,
-.shell.app.sidebar-collapsed .nav-item .kbd-tag,
+.shell.app.sidebar-collapsed .sidebar-nav-group-title,
+.shell.app.sidebar-collapsed .sidebar-nav-item .grow,
+.shell.app.sidebar-collapsed .sidebar-nav-item .badge,
+.shell.app.sidebar-collapsed .sidebar-nav-item .pill,
+.shell.app.sidebar-collapsed .sidebar-nav-item .kbd-tag,
 .shell.app.sidebar-collapsed .sidebar-status {
   display: none;
 }
@@ -1197,54 +1256,40 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .shell.app.sidebar-collapsed .server-switch {
-  margin-inline: 8px;
+  margin-inline: 0;
+  padding: 0 10px;
+  display: grid;
+  justify-items: center;
 }
 
-.shell.app.sidebar-collapsed .server-switch-button {
-  width: 44px;
-  min-height: 44px;
+.shell.app.sidebar-collapsed .server-switch-button,
+.shell.app.sidebar-collapsed .sidebar-nav-item {
+  width: var(--sidebar-item-size);
+  height: var(--sidebar-item-size);
+  min-height: var(--sidebar-item-size);
   grid-template-columns: 1fr;
+  align-items: center;
   justify-items: center;
   padding: 0;
-}
-
-.shell.app.sidebar-collapsed .server-switch-icon .ui-icon {
-  width: 22px;
-  height: 22px;
-}
-
-.shell.app.sidebar-collapsed .context-line {
-  width: 44px;
-  min-height: 44px;
-  grid-template-columns: 1fr;
-  justify-items: center;
-  padding: 0;
+  gap: 0;
   margin-inline: auto;
 }
 
-.shell.app.sidebar-collapsed .context-sep {
-  margin: 4px 2px;
+.shell.app.sidebar-collapsed .server-switch-icon,
+.shell.app.sidebar-collapsed .sidebar-nav-icon {
+  width: var(--sidebar-icon-size);
+  height: var(--sidebar-icon-size);
 }
 
-.shell.app.sidebar-collapsed .sidebar-section {
-  padding: 6px 10px;
+.shell.app.sidebar-collapsed .server-switch-icon .ui-icon,
+.shell.app.sidebar-collapsed .sidebar-nav-icon .ui-icon {
+  width: var(--sidebar-icon-size);
+  height: var(--sidebar-icon-size);
 }
 
-.shell.app.sidebar-collapsed .nav-item {
-  width: 44px;
-  min-height: 44px;
-  justify-content: center;
-  padding: 0;
-  margin-inline: auto;
-}
-
-.shell.app.sidebar-collapsed .context-line .icon,
-.shell.app.sidebar-collapsed .nav-item .icon {
-  width: 22px;
-  height: 22px;
-  font-size: 18px;
-  line-height: 22px;
-  opacity: 0.96;
+.shell.app.sidebar-collapsed .sidebar-nav-group {
+  padding: 0 10px;
+  justify-items: center;
 }
 
 .cx-connect-section {
@@ -1261,9 +1306,9 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   border: 1px solid var(--nav-border);
   border-radius: 12px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 10px;
   color: var(--nav-text);
   background:
@@ -1859,17 +1904,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
 .brand-subtitle,
 .context-label,
-.nav-section-title {
+.sidebar-nav-group-title {
   color: var(--nav-label);
 }
 
 .context-title,
-.nav-title {
+.sidebar-nav-item {
   color: var(--nav-text);
 }
 
 .context-meta,
-.nav-meta,
 .sidebar .space-meta,
 .sidebar .muted,
 .mobile-status .muted {
@@ -1885,12 +1929,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
 .status,
 .space-button,
-.nav-item {
+.sidebar-nav-item {
   border-color: color-mix(in srgb, var(--nav-border) 74%, rgba(255, 255, 255, 0.06));
 }
 
 .space-button,
-.nav-item {
+.sidebar-nav-item {
   color: var(--nav-text);
   background: var(--nav-soft);
 }
@@ -1902,15 +1946,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .space-button.active,
-.nav-item:hover,
-.nav-item.active {
+.sidebar-nav-item:hover,
+.sidebar-nav-item.is-active {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
     var(--nav-soft);
 }
 
-.nav-item.cross-org,
+.sidebar-nav-item.is-cross-org,
 .home-space-card.cross-org {
   border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
   background:
@@ -2453,7 +2497,6 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Directory" }
                 Link { class: "secondary", "data-testid": "mobile-timeline-nav-button", to: Route::Timeline, onclick: move |_| mobile_nav_open.set(false), "Timeline" }
-                Link { class: "secondary", "data-testid": "mobile-product-nav-button", to: Route::Product, onclick: move |_| mobile_nav_open.set(false), "Create Space" }
                 Link { class: "secondary", "data-testid": "mobile-kanban-nav-button", to: Route::Kanban, onclick: move |_| mobile_nav_open.set(false), "Board" }
                 Link { class: "secondary", "data-testid": "mobile-chat-nav-button", to: Route::Chat, onclick: move |_| mobile_nav_open.set(false), "Discussions" }
                 Link { class: "secondary", "data-testid": "mobile-notifications-nav-button", to: Route::Notifications, onclick: move |_| mobile_nav_open.set(false), "Inbox" }
@@ -2627,83 +2670,83 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-section", style: "padding-bottom: 0;",
+                div { class: "sidebar-nav-group sidebar-nav-group--quick",
                     Link {
-                        class: "nav-item",
+                        class: "sidebar-nav-item",
                         "data-testid": "directory-nav-button",
                         to: Route::Directory,
-                        span { class: "icon", "⌕" }
+                        span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
                         span { class: "grow", "Search / Directory" }
                         span { class: "kbd-tag", "⌘K" }
                     }
                 }
 
-                div { class: "sidebar-section",
-                    h4 { "Personal" }
-                    Link { class: "nav-item", to: Route::Dashboard,
-                        span { class: "icon", "⌂" }
+                div { class: "sidebar-nav-group",
+                    h4 { class: "sidebar-nav-group-title", "Personal" }
+                    Link { class: "sidebar-nav-item", to: Route::Dashboard,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
                         span { class: "grow", "Home" }
                     }
-                    Link { class: "nav-item", "data-testid": "notifications-nav-button", to: Route::Notifications,
-                        span { class: "icon", "□" }
+                    Link { class: "sidebar-nav-item", "data-testid": "notifications-nav-button", to: Route::Notifications,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "inbox" } }
                         span { class: "grow", "Inbox" }
                         span { class: "badge", "0" }
                     }
-                    Link { class: "nav-item", to: Route::Directory,
-                        span { class: "icon", "⌕" }
+                    Link { class: "sidebar-nav-item", to: Route::Directory,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
                         span { class: "grow", "Directory" }
                     }
-                    Link { class: "nav-item", "data-testid": "settings-nav-button", to: Route::Settings,
-                        span { class: "icon", "⚙" }
+                    Link { class: "sidebar-nav-item", "data-testid": "settings-nav-button", to: Route::Settings,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "settings" } }
                         span { class: "grow", "Settings" }
                     }
                     if minimal_ready {
-                        Link { class: "nav-item dim", "aria-label": "Timeline", to: Route::Timeline,
-                            span { class: "icon", "≡" }
+                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Timeline", to: Route::Timeline,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "timeline" } }
                             span { class: "grow", "Timeline" }
                         }
                     }
                     if kanban_ready {
-                        Link { class: "nav-item dim", "aria-label": "Kanban", to: Route::Kanban,
-                            span { class: "icon", "▦" }
+                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Kanban", to: Route::Kanban,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "board" } }
                             span { class: "grow", "Kanban" }
                         }
                     }
                     if chat_ready {
-                        Link { class: "nav-item dim", "aria-label": "Chat", to: Route::Chat,
-                            span { class: "icon", "☰" }
+                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Chat", to: Route::Chat,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "message" } }
                             span { class: "grow", "Chat" }
                         }
                     }
                     if full_ready {
-                        Link { class: "nav-item dim", "aria-label": "Audit", to: Route::Audit,
-                            span { class: "icon", "⌁" }
+                        Link { class: "sidebar-nav-item is-dim", "aria-label": "Audit", to: Route::Audit,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "activity" } }
                             span { class: "grow", "Audit" }
                         }
                     }
                 }
 
-                div { class: "sidebar-section", "data-testid": "space-list",
-                    h4 {
+                div { class: "sidebar-nav-group", "data-testid": "space-list",
+                    h4 { class: "sidebar-nav-group-title",
                         span { "Spaces" }
                         Link { class: "add", to: Route::Product, "+" }
                     }
                     if spaces().is_empty() {
-                        div { class: "nav-item dim", "data-testid": "space-empty-state",
-                            span { class: "icon", "▣" }
+                        div { class: "sidebar-nav-item is-dim", "data-testid": "space-empty-state",
+                            span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                             span { class: "grow truncate", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
                         }
                     } else {
                         for space in spaces().into_iter().take(5) {
                             Link {
-                                class: if space.space_id == selected_space() { "nav-item active" } else { "nav-item" },
+                                class: if space.space_id == selected_space() { "sidebar-nav-item is-active" } else { "sidebar-nav-item" },
                                 "data-testid": "space-button",
                                 to: Route::TimelineSpace { space_id: space.space_id.clone() },
                                 onclick: {
                                     let id = space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
                                 },
-                                span { class: "icon", "▣" }
+                                span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                                 span { class: "grow truncate", "{space.name}" }
                                 span { class: "pill muted xs", "Space" }
                             }
@@ -2711,85 +2754,34 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-section",
-                    h4 { "Cross-organization" }
-                    div { class: "nav-item dim", "data-testid": "cross-org-empty-state",
-                        span { class: "icon", "◎" }
+                div { class: "sidebar-nav-group",
+                    h4 { class: "sidebar-nav-group-title", "Cross-organization" }
+                    div { class: "sidebar-nav-item is-dim", "data-testid": "cross-org-empty-state",
+                        span { class: "sidebar-nav-icon", UiIcon { name: "globe" } }
                         span { class: "grow truncate", "No cross-org spaces loaded" }
                     }
                 }
 
-                div { class: "sidebar-section",
-                    h4 {
+                div { class: "sidebar-nav-group",
+                    h4 { class: "sidebar-nav-group-title",
                         span { "Personal Spaces" }
                         Link { class: "add", to: Route::Product, "+" }
                     }
-                    div { class: "nav-item dim", "data-testid": "personal-spaces-empty-state",
-                        span { class: "icon", "□" }
+                    div { class: "sidebar-nav-item is-dim", "data-testid": "personal-spaces-empty-state",
+                        span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                         span { class: "grow truncate", "No personal spaces loaded" }
                     }
                 }
 
-                div { class: "sidebar-section",
-                    h4 { "Protocol Tools" }
-                    Link { class: "nav-item", "data-testid": "devices-nav-button", to: Route::Devices,
-                        span { class: "icon", "◇" }
+                div { class: "sidebar-nav-group",
+                    h4 { class: "sidebar-nav-group-title", "Protocol Tools" }
+                    Link { class: "sidebar-nav-item", "data-testid": "devices-nav-button", to: Route::Devices,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "monitor" } }
                         span { class: "grow", "Devices" }
                     }
-                    Link { class: "nav-item", "data-testid": "readiness-nav-button", to: Route::Readiness,
-                        span { class: "icon", "✓" }
+                    Link { class: "sidebar-nav-item", "data-testid": "readiness-nav-button", to: Route::Readiness,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "check" } }
                         span { class: "grow", "Readiness" }
-                    }
-                    Link { class: "nav-item", "data-testid": "product-nav-button", to: Route::Product,
-                        span { class: "icon", "+" }
-                        span { class: "grow", "Create Space" }
-                    }
-                }
-
-                div { class: "status sidebar-status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
-                    div { class: "space-title", "data-testid": "status-label", "{status}" }
-                    div { class: "muted mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
-                    div { class: "actions", style: "margin-top: 8px;",
-                        span {
-                            class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
-                            "data-testid": "network-state-badge",
-                            "{network_state}"
-                        }
-                        if network_state() != "online" {
-                            button {
-                                class: "secondary compact-button",
-                                "data-testid": "retry-connection-button",
-                                onclick: move |_| {
-                                    let base = base_url();
-                                    let actor = account_did();
-                                    let device = device_id();
-                                    connect(base, actor, device, ConnectContext {
-                                        status,
-                                        sync_cursor,
-                                        token,
-                                        account_did,
-                                        selected_space,
-                                        spaces,
-                                        timeline,
-                                        device_queue,
-                                        frontier_state,
-                                        crypto_state,
-                                        config_store,
-                                        state_store,
-                                        network_state,
-                                        last_error,
-                                        server_description,
-                                        server_probe_status,
-                                    });
-                                },
-                                "Retry"
-                            }
-                        }
-                    }
-                    if let Some(ref err) = last_error() {
-                        div { class: "muted", style: "color: var(--danger-ink); font-size: 11px; margin-top: 4px;", "data-testid": "last-error",
-                            "{err}"
-                        }
                     }
                 }
 
@@ -2864,6 +2856,54 @@ pub fn RouterView() -> Element {
                                 },
                             }
                             kbd { "⌘K" }
+                        }
+                        div { class: "status workspace-status", "data-testid": "connection-status", role: "status", "aria-live": "polite",
+                            div { class: "workspace-status__head",
+                                div { class: "space-title", "data-testid": "status-label", "{status}" }
+                                span {
+                                    class: if network_state() == "online" { "badge badge-success" } else if network_state() == "reconnecting" { "badge badge-warning" } else { "badge badge-error" },
+                                    "data-testid": "network-state-badge",
+                                    "{network_state}"
+                                }
+                            }
+                            div { class: "workspace-status__meta",
+                                div { class: "muted mono workspace-status__cursor", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
+                                if network_state() != "online" {
+                                    button {
+                                        class: "secondary compact-button",
+                                        "data-testid": "retry-connection-button",
+                                        onclick: move |_| {
+                                            let base = base_url();
+                                            let actor = account_did();
+                                            let device = device_id();
+                                            connect(base, actor, device, ConnectContext {
+                                                status,
+                                                sync_cursor,
+                                                token,
+                                                account_did,
+                                                selected_space,
+                                                spaces,
+                                                timeline,
+                                                device_queue,
+                                                frontier_state,
+                                                crypto_state,
+                                                config_store,
+                                                state_store,
+                                                network_state,
+                                                last_error,
+                                                server_description,
+                                                server_probe_status,
+                                            });
+                                        },
+                                        "Retry"
+                                    }
+                                }
+                            }
+                            if let Some(ref err) = last_error() {
+                                div { class: "muted workspace-status__error", "data-testid": "last-error",
+                                    "{err}"
+                                }
+                            }
                         }
                         Link {
                             class: "btn sm",

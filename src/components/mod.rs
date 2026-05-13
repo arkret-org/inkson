@@ -37,6 +37,7 @@ pub fn StatusBadge(status: String, kind: Option<String>) -> Element {
 pub fn UiIcon(name: String) -> Element {
     let path = match name.as_str() {
         "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",
+        "activity" => "M3 12h4l3 7 4-14 3 7h4",
         "bell" => "M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9m4 13a2 2 0 0 0 4 0",
         "board" => "M3 3h18v18H3V3Zm6 0v18m6-18v18M3 9h18",
         "check" => "M20 6 9 17l-5-5",
@@ -46,6 +47,12 @@ pub fn UiIcon(name: String) -> Element {
         "chevron-up" => "m18 15-6-6-6 6",
         "file" => "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6",
         "folder" => "M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+        "globe" => {
+            "M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20M4.93 4.93A16.1 16.1 0 0 0 19.07 19.07M19.07 4.93A16.1 16.1 0 0 1 4.93 19.07"
+        }
+        "home" => {
+            "M3 10.5 9.5 4a3 3 0 0 1 5 0L21 10.5M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"
+        }
         "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
         "menu" => "M4 6h16M4 12h16M4 18h16",
         "message" => "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z",
@@ -72,6 +79,7 @@ pub fn UiIcon(name: String) -> Element {
         "sun" => {
             "M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
         }
+        "timeline" => "M8 6h13M3 6h.01M8 12h13M3 12h.01M8 18h13M3 18h.01",
         "user" => "M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
         "x" => "M18 6 6 18M6 6l12 12",
         _ => "M12 5v14M5 12h14",
