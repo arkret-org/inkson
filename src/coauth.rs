@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::api::ContrixApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
@@ -129,7 +130,13 @@ pub struct CoauthWebvhFinishResponse {
     pub username: Option<String>,
     pub did: String,
     #[serde(default)]
-    pub key_id: Option<String>,
+    pub did_key_id: Option<String>,
+    #[serde(default)]
+    pub update_key_id: Option<String>,
+    #[serde(default)]
+    pub did_public_key_multibase: Option<String>,
+    #[serde(default)]
+    pub update_public_key_multibase: Option<String>,
     #[serde(default)]
     pub key_log_head: Option<String>,
     #[serde(default)]
@@ -584,13 +591,11 @@ impl CoauthApi {
         &self,
         registration_id: &str,
         email: &str,
-        skip_email_delivery: bool,
     ) -> anyhow::Result<CoauthWebvhEmailResponse> {
         self.post_json(
             &format!("api/v1/auth/register/webvh/{registration_id}/email"),
             json!({
                 "email": email,
-                "skip_email_delivery": skip_email_delivery,
             }),
         )
         .await
@@ -611,8 +616,12 @@ impl CoauthApi {
     pub async fn finish_webvh_registration(
         &self,
         registration_id: &str,
-        public_key_multibase: &str,
-        key_id: &str,
+        did_public_key_multibase: &str,
+        update_public_key_multibase: &str,
+        did_key_id: &str,
+        update_key_id: &str,
+        webvh_version_time: &str,
+        webvh_proof: Value,
         device_id: &str,
         password: &str,
         password_confirm: &str,
@@ -620,8 +629,12 @@ impl CoauthApi {
         self.post_json(
             &format!("api/v1/auth/register/webvh/{registration_id}/finish"),
             json!({
-                "public_key_multibase": public_key_multibase,
-                "key_id": key_id,
+                "did_public_key_multibase": did_public_key_multibase,
+                "update_public_key_multibase": update_public_key_multibase,
+                "did_key_id": did_key_id,
+                "update_key_id": update_key_id,
+                "webvh_version_time": webvh_version_time,
+                "webvh_proof": webvh_proof,
                 "device_id": device_id,
                 "password": password,
                 "password_confirm": password_confirm,
@@ -633,14 +646,12 @@ impl CoauthApi {
     pub async fn bind_existing_did_registration(
         &self,
         did: &str,
-        username: &str,
         device_id: &str,
     ) -> anyhow::Result<CoauthExistingDidRegistrationResponse> {
         self.post_json(
             "api/v1/auth/register/did/start",
             json!({
                 "did": did,
-                "username": username,
                 "device_id": device_id,
             }),
         )
@@ -832,6 +843,22 @@ impl CoauthApi {
     fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
         Ok(self.base_url.join(path.trim_start_matches('/'))?)
     }
+}
+
+pub async fn resolve_principal_auth_server_url(
+    principal_server_url: &str,
+) -> anyhow::Result<String> {
+    let principal = ContrixApi::new(principal_server_url)?;
+    let description = principal.describe().await?;
+    let auth_server_url = description
+        .auth_metadata
+        .get("auth_server_url")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("principal server did not publish auth_metadata.auth_server_url")
+        })?;
+    Ok(validate_server_url(auth_server_url)?.to_string())
 }
 
 pub fn active_oidc_redirect_uri() -> String {
@@ -1516,10 +1543,9 @@ fn resolve_oidc_client_id(
         .collect();
 
     if let Some(client) = candidates.iter().find(|client| {
-        client
-            .redirect_uris
-            .iter()
-            .any(|candidate_redirect_uri| candidate_redirect_uri == redirect_uri)
+        client.redirect_uris.iter().any(|candidate_redirect_uri| {
+            redirect_uri_matches_client(candidate_redirect_uri, redirect_uri)
+        })
     }) {
         return Ok(client.client_id.clone());
     }
@@ -1543,6 +1569,29 @@ fn resolve_oidc_client_id(
     anyhow::bail!(
         "coauth topology did not expose a usable public authorization_code client whose registered redirect_uris contain redirect_uri={redirect_uri}; available={available}"
     )
+}
+
+fn redirect_uri_matches_client(registered_redirect_uri: &str, actual_redirect_uri: &str) -> bool {
+    if registered_redirect_uri == actual_redirect_uri {
+        return true;
+    }
+
+    let Ok(registered) = Url::parse(registered_redirect_uri) else {
+        return false;
+    };
+    let Ok(actual) = Url::parse(actual_redirect_uri) else {
+        return false;
+    };
+    let actual_host = actual.host_str().unwrap_or_default();
+    if !matches!(actual_host, "localhost" | "127.0.0.1" | "::1") {
+        return false;
+    }
+    registered.scheme() == actual.scheme()
+        && registered.host_str() == actual.host_str()
+        && registered.path() == actual.path()
+        && registered.query() == actual.query()
+        && registered.fragment() == actual.fragment()
+        && registered.port().is_none()
 }
 
 fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {

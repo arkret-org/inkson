@@ -22,20 +22,20 @@ use crate::{
 const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 
 const STYLE: &str = r#"
-body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #f4f6f8; color: #18212f; }
+body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #eef3ed; color: #162018; }
 button, input, textarea { font: inherit; }
-.auth-shell { width: 100vw; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #eef3f8; box-sizing: border-box; }
+.auth-shell { width: 100vw; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #e7efe6; box-sizing: border-box; }
 .auth-shell.theme-night { background: #0f172a; color: #e5edf7; }
-.auth-card { width: min(420px, 100%); border: 1px solid #d7e0ea; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12); }
+.auth-card { width: min(420px, 100%); border: 1px solid #d2ddd2; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12); }
 .auth-shell.theme-night .auth-card { border-color: #2a3a52; background: #172033; }
 .auth-panel { display: grid; gap: 22px; padding: 28px; }
 .auth-brand { display: flex; align-items: center; gap: 12px; }
-.auth-logo { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: #1d4ed8; color: #fff; font-weight: 800; }
+.auth-logo { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: #1f5a41; color: #fff; font-weight: 800; }
 .auth-brand h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: 0; }
-.auth-brand p { margin: 3px 0 0; color: #64748b; font-size: 13px; }
+.auth-brand p { margin: 3px 0 0; color: #617065; font-size: 13px; }
 .auth-form { display: grid; gap: 10px; }
-.auth-form label { color: #475569; font-size: 13px; font-weight: 700; }
-.auth-form input { width: 100%; box-sizing: border-box; border: 1px solid #c5d1dd; border-radius: 6px; padding: 11px 12px; background: #fff; color: #142033; }
+.auth-form label { color: #4a5d51; font-size: 13px; font-weight: 700; }
+.auth-form input { width: 100%; box-sizing: border-box; border: 1px solid #c2d0c3; border-radius: 6px; padding: 11px 12px; background: #fff; color: #142018; }
 .auth-shell.theme-night .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
 .auth-primary, .auth-secondary { width: 100%; margin-top: 4px; }
 .auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
@@ -60,7 +60,7 @@ button, input, textarea { font: inherit; }
 .sidebar .space-meta, .sidebar .muted { color: #cbd5e1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
-.primary { background: #0b6bcb; color: white; }
+.primary { background: #1f6b4f; color: white; }
 .secondary { background: #e7edf3; color: #18212f; }
 a.primary, a.secondary { line-height: 1.5; }
 .main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
@@ -109,9 +109,12 @@ a.primary, a.secondary { line-height: 1.5; }
 .tab.active { background: white; border-bottom-color: white; font-weight: 600; }
 
 /* Accessibility: focus styles */
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid #0b6bcb;
-  outline-offset: 2px;
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: none;
 }
 
 /* High contrast mode */
@@ -161,67 +164,67 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Product theme layer: calm security-oriented palette shared by all views. */
 body {
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #eef3f8;
-  color: #142033;
+  background: #eef3ed;
+  color: #142018;
   letter-spacing: 0;
 }
 .shell {
-  --cx-bg: #eef3f8;
-  --cx-bg-soft: #f8fafc;
-  --cx-bg-end: #e7eef7;
+  --cx-bg: #edf3ee;
+  --cx-bg-soft: #f7faf7;
+  --cx-bg-end: #e0ebe2;
   --cx-surface: #ffffff;
   --cx-surface-raised: rgba(255, 255, 255, 0.94);
-  --cx-ink: #142033;
-  --cx-muted: #64748b;
-  --cx-line: #d7e0ea;
-  --cx-line-strong: #c5d1dd;
-  --cx-brand: #2563eb;
-  --cx-brand-strong: #1d4ed8;
-  --cx-teal: #0f766e;
-  --cx-green: #0f9f6e;
-  --cx-amber: #d97706;
-  --cx-red: #dc2626;
-  --cx-nav: #101827;
-  --cx-nav-soft: #172033;
+  --cx-ink: #142018;
+  --cx-muted: #627065;
+  --cx-line: #d6e1d7;
+  --cx-line-strong: #c0cec2;
+  --cx-brand: #2b6b4f;
+  --cx-brand-strong: #1f5a41;
+  --cx-teal: #3a8a67;
+  --cx-green: #4b946a;
+  --cx-amber: #a56b13;
+  --cx-red: #c64940;
+  --cx-nav: #0f1914;
+  --cx-nav-soft: #16241d;
   --cx-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
   --cx-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
   background: linear-gradient(135deg, var(--cx-bg) 0%, var(--cx-bg-soft) 64%, var(--cx-bg-end) 100%);
   color: var(--cx-ink);
 }
 .shell.theme-night {
-  --cx-bg: #0f172a;
-  --cx-bg-soft: #111827;
-  --cx-bg-end: #0b1220;
-  --cx-surface: #172033;
-  --cx-surface-raised: rgba(23, 32, 51, 0.94);
-  --cx-ink: #e5edf7;
-  --cx-muted: #9fb0c3;
-  --cx-line: #2a3a52;
-  --cx-line-strong: #3a4b63;
-  --cx-brand: #60a5fa;
-  --cx-brand-strong: #3b82f6;
-  --cx-teal: #2dd4bf;
-  --cx-nav: #080d17;
-  --cx-nav-soft: #111827;
+  --cx-bg: #0d1511;
+  --cx-bg-soft: #111b16;
+  --cx-bg-end: #09100d;
+  --cx-surface: #15211b;
+  --cx-surface-raised: rgba(21, 33, 27, 0.94);
+  --cx-ink: #e7f0ea;
+  --cx-muted: #9caea2;
+  --cx-line: #2b3d34;
+  --cx-line-strong: #3b5246;
+  --cx-brand: #71b58f;
+  --cx-brand-strong: #4f9870;
+  --cx-teal: #89d0ad;
+  --cx-nav: #08100c;
+  --cx-nav-soft: #0d1612;
   --cx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --cx-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
 }
 @media (prefers-color-scheme: dark) {
   .shell.theme-system {
-    --cx-bg: #0f172a;
-    --cx-bg-soft: #111827;
-    --cx-bg-end: #0b1220;
-    --cx-surface: #172033;
-    --cx-surface-raised: rgba(23, 32, 51, 0.94);
-    --cx-ink: #e5edf7;
-    --cx-muted: #9fb0c3;
-    --cx-line: #2a3a52;
-    --cx-line-strong: #3a4b63;
-    --cx-brand: #60a5fa;
-    --cx-brand-strong: #3b82f6;
-    --cx-teal: #2dd4bf;
-    --cx-nav: #080d17;
-    --cx-nav-soft: #111827;
+    --cx-bg: #0d1511;
+    --cx-bg-soft: #111b16;
+    --cx-bg-end: #09100d;
+    --cx-surface: #15211b;
+    --cx-surface-raised: rgba(21, 33, 27, 0.94);
+    --cx-ink: #e7f0ea;
+    --cx-muted: #9caea2;
+    --cx-line: #2b3d34;
+    --cx-line-strong: #3b5246;
+    --cx-brand: #71b58f;
+    --cx-brand-strong: #4f9870;
+    --cx-teal: #89d0ad;
+    --cx-nav: #08100c;
+    --cx-nav-soft: #0d1612;
     --cx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
     --cx-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
   }
@@ -248,7 +251,7 @@ body {
   place-items: center;
   color: #fff;
   background: linear-gradient(135deg, var(--cx-brand-strong), var(--cx-teal));
-  box-shadow: 0 12px 30px rgba(37, 99, 235, 0.24);
+  box-shadow: 0 12px 30px rgba(31, 107, 79, 0.24);
 }
 .status {
   border-color: #334155;
@@ -262,8 +265,8 @@ body {
   background: var(--cx-nav-soft);
 }
 .space-button.active {
-  border-color: rgba(96, 165, 250, 0.52);
-  background: rgba(37, 99, 235, 0.22);
+  border-color: rgba(113, 181, 143, 0.48);
+  background: rgba(43, 107, 79, 0.18);
 }
 .main {
   background: transparent;
@@ -322,13 +325,18 @@ body {
 }
 .search input:focus,
 .topbar-search input:focus,
+.auth-form input:focus,
 .settings input:focus,
 .workflow-form input:focus,
 .composer textarea:focus,
+.composer input:focus,
+.settings textarea:focus,
 .settings select:focus,
+.workflow-form textarea:focus,
 .workflow-form select:focus {
   border-color: var(--cx-brand);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  background: color-mix(in srgb, var(--cx-brand) 4%, var(--cx-surface));
+  box-shadow: none;
 }
 .primary,
 .secondary {
@@ -350,11 +358,11 @@ body {
   border-radius: 999px;
   font-weight: 700;
 }
-.badge-info { background: #eff6ff; color: #1d4ed8; }
+.badge-info { background: #e8f3ec; color: #1f5a41; }
 .badge-success { background: #eefbf5; color: #047857; }
 .badge-error { background: #fff1f2; color: #b91c1c; }
 .badge-warning { background: #fff8e5; color: #92400e; }
-.badge.blue { background: #eff6ff; color: #1d4ed8; }
+.badge.blue { background: #e8f3ec; color: #1f5a41; }
 .badge.amber { background: #fff8e5; color: #92400e; }
 .badge.red { background: #fff1f2; color: #b91c1c; }
 .badge.green { background: #ecfdf5; color: #047857; }
@@ -366,8 +374,8 @@ body {
 .home-hero {
   overflow: hidden;
   background:
-    radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.18), transparent 34%),
-    radial-gradient(circle at 90% 10%, rgba(15, 118, 110, 0.14), transparent 30%),
+    radial-gradient(circle at 12% 0%, rgba(43, 107, 79, 0.18), transparent 34%),
+    radial-gradient(circle at 90% 10%, rgba(165, 107, 19, 0.12), transparent 30%),
     var(--cx-surface);
 }
 .home-hero-title {
@@ -400,8 +408,8 @@ body {
   color: var(--cx-muted);
 }
 .home-space-card.cross-org {
-  border-color: rgba(15, 118, 110, 0.34);
-  background: linear-gradient(135deg, rgba(236, 253, 245, 0.92), rgba(239, 246, 255, 0.94));
+  border-color: rgba(58, 138, 103, 0.34);
+  background: linear-gradient(135deg, rgba(236, 247, 239, 0.94), rgba(248, 244, 232, 0.92));
 }
 .home-badges {
   display: flex;
@@ -414,7 +422,7 @@ body {
 }
 .directory-axis-card {
   background:
-    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.12), transparent 32%),
+    radial-gradient(circle at 100% 0%, rgba(43, 107, 79, 0.14), transparent 32%),
     var(--cx-surface);
 }
 .directory-search-card {
@@ -451,7 +459,7 @@ body {
   border-radius: 16px;
   padding: 14px;
   background:
-    radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 36%),
+    radial-gradient(circle at top left, rgba(43, 107, 79, 0.12), transparent 36%),
     var(--cx-surface);
   box-shadow: var(--cx-shadow-sm);
 }
@@ -517,7 +525,7 @@ body {
   border-radius: 18px;
   padding: 12px;
   background:
-    radial-gradient(circle at top right, rgba(37, 99, 235, 0.22), transparent 42%),
+    radial-gradient(circle at top right, rgba(43, 107, 79, 0.22), transparent 42%),
     rgba(255, 255, 255, 0.055);
 }
 .context-row {
@@ -591,13 +599,13 @@ body {
 }
 .nav-item:hover,
 .nav-item.active {
-  border-color: rgba(96, 165, 250, 0.44);
-  background: rgba(37, 99, 235, 0.18);
+  border-color: rgba(113, 181, 143, 0.42);
+  background: rgba(43, 107, 79, 0.16);
 }
 .nav-item.cross-org {
-  border-color: rgba(45, 212, 191, 0.34);
+  border-color: rgba(165, 107, 19, 0.28);
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.18), rgba(37, 99, 235, 0.1)),
+    linear-gradient(135deg, rgba(58, 138, 103, 0.2), rgba(165, 107, 19, 0.1)),
     rgba(255, 255, 255, 0.04);
 }
 .nav-title {
@@ -672,8 +680,27 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   gap: 10px;
 }
 
-.auth-form input {
+.auth-form input,
+.auth-form textarea,
+.auth-form select {
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.auth-form input:focus,
+.auth-form textarea:focus,
+.auth-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  box-shadow: none;
 }
 
 .auth-form .actions {
@@ -695,9 +722,9 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .auth-mode-button.active {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
 }
 
 .auth-result {
@@ -808,6 +835,14 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .cx-server-input {
   padding: 7px 9px;
   font-size: 12px;
+}
+
+.cx-server-input:focus,
+.server-connect input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  box-shadow: none;
 }
 
 .primary,

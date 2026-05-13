@@ -46,20 +46,62 @@ Primary boundary decision:
 ## Implementation Tasks
 - [x] Fix `/login` and `/register` auth card centering after the `claude-design` stylesheet is loaded.
 - [x] Replace email-or-DID registration entry with two explicit paths: bind an existing DID, or create a new soland-backed `did:webvh`.
+- [x] Keep existing DID registration DID-first; do not require a username before DID control proof.
 - [x] For new `did:webvh`, collect username first, then email, then verification code; allow dev/test deployments to bypass actual email delivery.
-- [x] Generate/prepare client key material for the webvh update key and send only the public multibase key through coauth to soland.
+- [x] Keep email delivery bypass out of the user UI; coauth config decides whether dev/test email is skipped.
+- [x] Generate separate client key material for the DID Document controller key and the `did:webvh` update key; send only public multibase keys through coauth to soland.
+- [x] Add a post-registration account backup download containing account metadata, DID metadata, public keys, and both locally generated private seeds.
+- [x] Split the soland embedded `did:webvh` key model: DID authentication/assertion uses the DID controller key, while `did:webvh` `updateKeys[0]` uses a separate update key.
 - [x] Add the password step after email verification; make password optional only when coauth reports a passwordless/passkey-capable policy.
 - [x] Surface registration completion with `did:webvh`, key id, key log head, document/log URLs, and clear local-key ownership wording.
 - [x] Add lost-password/account recovery entry points; account recovery accepts email and routes through coauth.
 - [x] Add yougen API types/methods for the coauth registration/recovery contract and update Playwright mocks.
 - [x] Check whether coauth already stores email/recovery settings in its own DB/config; add or adjust config for test email bypass if missing.
 - [x] Check soland's embedded webvh provider stays business-logic-free; only adjust describe/register metadata if needed.
+- [x] Align the browser flow with the spec boundary: discover `auth_metadata.auth_server_url` from the Principal Server, then call coauth for registration and recovery.
+- [x] Make soland advertise the public Auth / Account Server URL without adding password, email, or lost-account business endpoints to soland.
+- [x] Split local HTTPS proxying so `local.host` serves soland and `auth.local.host` serves coauth, with dev CORS on both origins.
+- [x] Shorten soland embedded `did:webvh` names so the DID path is `webvh:{local_id}` instead of the internal API route path.
+- [x] Replace simplified embedded `did:webvh` SCID generation with spec-style SCID derived from the preliminary log entry containing `{SCID}` placeholders.
+- [x] Add embedded `did:webvh` entry-hash generation and a real log-entry proof signed by the update key supplied by the client.
+- [x] Apply the same two-key controller/update model and spec-style webvh log generation to `starid` if it owns a webvh provider implementation.
 - [x] Run `cargo fmt --check`, `cargo check`, and targeted Playwright auth/registration tests.
 
 Verification notes:
 - `cargo check` passed in `yougen`.
-- `rustfmt --edition 2024 --check src\app.rs src\views\register.rs src\views\login.rs src\coauth.rs` passed; full `yougen` `cargo fmt --check` is still blocked by pre-existing newline style issues in `src\capability.rs`, `src\discovery.rs`, and `tests\serverx_contract.rs`.
+- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
+- `cargo fmt --check` passed in `yougen` with existing rustfmt config warnings about nightly-only options.
 - `cargo fmt --check` passed in `coauth`.
 - `cargo check -p coauth-backend -p coauth-config -p coauth-data` passed in `coauth` with existing warnings.
+- `cargo check -p coauth-backend` passed after the two-key finish contract change.
 - `cargo test -p coauth-config loads_registration_email_delivery_bypass_from_env --lib` passed.
-- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page|registration"`.
+- `cargo check` passed in `soland` with existing warnings.
+- `cargo test --test http_api server_describe_advertises_auth_server_url_when_configured` passed in `soland`.
+- `CARGO_TARGET_DIR=%TEMP%\soland-codex-target cargo test --test http_api embedded_webvh_provider_registers_and_serves_identity` passed in `soland`; this verifies separate DID/update public keys and rejects reused key material.
+- `cargo test embedded_webvh_provider_registers_and_serves_identity --test http_api -- --nocapture` passed in `soland`; this verifies SCID-from-placeholder-log, multibase entry hash, and client-signed update-key log proof.
+- `cargo check -p coauth-backend` passed after forwarding `webvh_version_time` and `webvh_proof`.
+- `cargo check --target wasm32-unknown-unknown` passed in `yougen` after adding client-side webvh log proof signing.
+- `cargo test -p starid webvh -- --nocapture` passed after switching SCID and entry hashes to base58btc sha2-256 multihash.
+- `cargo test -p starid production_mode --test http_api -- --nocapture` passed, including a production create test with a valid client-signed inception proof.
+- `cargo fmt --check` passed in `soland`, `coauth`, `starid`, and `yougen`; the rustfmt config still emits existing nightly-only option warnings.
+- Local dev services were restarted on `127.0.0.1:4527`, `127.0.0.1:7080`, and `127.0.0.1:8698`; health checks returned 200.
+- Playwright opened `http://127.0.0.1:4527/register`; no build-failed overlay or console errors were present.
+- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page|registration"`; this now verifies the downloaded account backup JSON contains separate public/private DID controller and update keys.
+- Caddy was reloaded from `D:\Works\contrix-dev\soland\Caddyfile`; `OPTIONS https://auth.local.host/api/v1/auth/register/webvh/start` returns 204 with CORS headers.
+- Live local services were rebuilt/restarted on `127.0.0.1:8698` and `127.0.0.1:7080`; a direct coauth webvh registration returned separate DID controller and update keys.
+
+# Server-First OIDC Login Todos
+
+Boundary decision:
+- `yougen` should first choose the Principal Server, like Matrix Element choosing a homeserver.
+- The actual account/password UI belongs to `coauth` and is reached through the coauth OIDC authorization page discovered from the Principal Server.
+- `yougen` registration may keep client-side key generation/backup locally, because DID private keys must not be generated by or disclosed to coauth/soland.
+
+## Implementation Tasks
+- [ ] Remove the Account/Login hint input from `yougen` sign-in.
+- [ ] Start login by resolving `auth_metadata.auth_server_url` from the Principal Server, then inspect coauth OIDC metadata.
+- [ ] Redirect the browser to coauth `/authorize` with PKCE and no `login_hint`.
+- [ ] Make coauth OIDC bridge/exchange accept an omitted `login_hint`; infer the user from the fulfilled coauth browser session.
+- [ ] Add a dev static OIDC client for yougen in coauth config so `/authorize` accepts loopback callback URLs.
+- [ ] Verify coauth `/login`, `/register`, OIDC discovery, and an `/authorize` redirect target open normally.
+- [ ] Update Playwright mocks/tests for the server-first login shape.

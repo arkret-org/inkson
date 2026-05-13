@@ -15,11 +15,56 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/health") {
       return json(route, { ok: true, service: "serverx", storage: "memory" });
     }
+    if (url.hostname === "auth.local.host" && url.pathname === "/.well-known/openid-configuration") {
+      return json(route, {
+        issuer: "https://auth.local.host/",
+        authorization_endpoint: "https://auth.local.host/authorize",
+        token_endpoint: "https://auth.local.host/oauth2/token",
+        userinfo_endpoint: "https://auth.local.host/oauth2/userinfo",
+        code_challenge_methods_supported: ["plain", "S256"],
+        scopes_supported: ["openid", "profile"],
+      });
+    }
+    if (url.hostname === "auth.local.host" && url.pathname === "/authorize") {
+      return route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p></main>",
+      });
+    }
     if (!url.pathname.startsWith("/api/v1/")) {
       return route.continue();
     }
 
     if (url.pathname === "/api/v1/server/describe") {
+      if (url.hostname === "auth.local.host") {
+        return json(route, {
+          service_did: "did:web:auth.local.host",
+          service_type: "auth_server",
+          protocol_version: "1.0",
+          auth_metadata: {
+            oauth_issuer: "https://auth.local.host/",
+            openid_configuration: "https://auth.local.host/.well-known/openid-configuration",
+            issuer_did: "did:web:auth.local.host",
+            supported_auth_methods: ["password", "oidc"],
+            supported_grant_types: ["authorization_code", "refresh_token"],
+            did_binding_methods: ["did_controller_key", "device_key"],
+            required_audience: "https://auth.local.host/api/v1",
+            session_grant_scope: "urn:contrix:principal-server:session.bind",
+            oidc_clients: [
+              {
+                id: "01GFWR28C4KNE04WG3HKXB7C9R",
+                client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
+                client_name: "Yougen Dev",
+                redirect_uris: ["http://127.0.0.1/auth/callback"],
+                grant_types: ["authorization_code", "refresh_token"],
+                token_endpoint_auth_method: "none",
+              },
+            ],
+          },
+          limits: {},
+        });
+      }
       return json(route, {
         service_did: "did:web:serverx.local",
         service_type: "principal_server",
@@ -83,7 +128,51 @@ export async function mockContrixApi(page: Page) {
         ],
         supported_schema_profiles: ["cx.schema.core.v1"],
         supported_reducer_profiles: ["cx.reducer.v1"],
+        auth_metadata: {
+          mode: "development",
+          supported_auth_methods: ["oauth2_bearer_introspection"],
+          auth_server_url: "https://auth.local.host",
+        },
         limits: { storage: "memory" },
+      });
+    }
+
+    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/auth/bridge/describe") {
+      return json(route, {
+        contract: "contrix.rest.auth_bridge.v1",
+        version: "2026-05-04-scaffold",
+        api_base_path: "/api/v1",
+        oauth: {
+          discovery_path: "/.well-known/openid-configuration",
+          browser_bridge_session_path: "/api/v1/auth/oidc/browser-bridge/session",
+          exchange_describe_path: "/api/v1/auth/oidc/exchange/describe",
+          exchange_path: "/api/v1/auth/oidc/exchange",
+          supported_flows: ["authorization_code_pkce_browser"],
+        },
+        contrix: {
+          login_path: "/api/v1/auth/login",
+          logout_path: "/api/v1/auth/logout",
+          providers_path: "/api/v1/auth/providers",
+          session_grants_path: "/api/v1/session-grants",
+          session_grants_introspect_path: "/api/v1/session-grants/introspect",
+          session_grant_scope: "urn:contrix:principal-server:session.bind",
+        },
+        todos: [],
+      });
+    }
+
+    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/integration/describe") {
+      return json(route, {
+        contract: "contrix.rest.integration_manifest.v1",
+        version: "2026-05-04-scaffold",
+        service: "coauth",
+        service_kind: "account_authority",
+        api_base_path: "/api/v1",
+        describe_path: "/api/v1/integration/describe",
+        dependencies: [],
+        surfaces: [],
+        examples: {},
+        todos: [],
       });
     }
 
@@ -304,12 +393,11 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/email" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
       return json(route, {
         status: "sent",
         next_step: "verify_email",
-        delivery: body.skip_email_delivery ? "skipped" : "email",
-        dev_code: body.skip_email_delivery ? "123456" : null,
+        delivery: "skipped",
+        dev_code: "123456",
       });
     }
 
@@ -326,26 +414,36 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/auth/register/webvh/reg-webvh-1/finish" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      const did = `did:webvh:zmock:${webvhUsername}`;
+      const did = `did:webvh:zmock:local.host:webvh:${webvhUsername}`;
       return json(route, {
         status: "success",
         username: webvhUsername,
         did,
-        key_id: `${did}#key-1`,
+        did_key_id: `${did}#did-key-1`,
+        update_key_id: `${did}#update-key-1`,
+        did_public_key_multibase: body.did_public_key_multibase,
+        update_public_key_multibase: body.update_public_key_multibase,
         key_log_head: "1-zmockhead",
-        document_url: `https://local.host/.well-known/did-webvh/${webvhUsername}/did.json`,
-        log_url: `https://local.host/.well-known/did-webvh/${webvhUsername}/did.jsonl`,
+        document_url: `https://local.host/webvh/${webvhUsername}/did.json`,
+        log_url: `https://local.host/webvh/${webvhUsername}/did.jsonl`,
         provider_id: "soland.embedded",
         did_document: {
           id: did,
           verificationMethod: [{
-            id: `${did}#key-1`,
+            id: `${did}#did-key-1`,
             type: "Multikey",
             controller: did,
-            publicKeyMultibase: body.public_key_multibase,
+            publicKeyMultibase: body.did_public_key_multibase,
           }],
+          authentication: [`${did}#did-key-1`],
+          assertionMethod: [`${did}#did-key-1`],
         },
-        did_log: [{ versionId: "1-zmockhead", parameters: { updateKeys: [body.public_key_multibase] } }],
+        did_log: [{
+          versionId: "1-zmockhead",
+          versionTime: body.webvh_version_time,
+          parameters: { updateKeys: [body.update_public_key_multibase] },
+          proof: [body.webvh_proof],
+        }],
       }, 201);
     }
 

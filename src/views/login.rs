@@ -8,7 +8,7 @@ use crate::{
         capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
         extract_authorization_code_from_callback, extract_error_description_from_callback,
         extract_error_from_callback, extract_state_from_callback, open_oidc_authorize_url,
-        persist_oidc_scaffold, restore_oidc_scaffold,
+        persist_oidc_scaffold, resolve_principal_auth_server_url, restore_oidc_scaffold,
     },
     config::LocalConfigStore,
     routes::Route,
@@ -34,7 +34,6 @@ pub fn LoginPanel(
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
 ) -> Element {
-    let mut login_hint = use_signal(move || account_did());
     let mut auth_status = use_signal(|| {
         if auto_capture_callback {
             "Completing sign in...".to_owned()
@@ -100,37 +99,22 @@ pub fn LoginPanel(
                     },
                 }
 
-                label { "Account" }
-                input {
-                    "data-testid": "login-account-hint",
-                    "aria-label": "Account",
-                    placeholder: "Email or DID",
-                    value: "{login_hint}",
-                    disabled: is_busy(),
-                    oninput: move |event| {
-                        let value = event.value();
-                        login_hint.set(value.clone());
-                        account_did.set(value);
-                    },
-                }
-
                 button {
                     class: "primary auth-primary",
                     "data-testid": "start-server-login-button",
                     disabled: is_busy(),
                     onclick: move |_| {
                         let principal = base_url();
-                        let actor = login_hint();
                         let device = device_id();
                         is_busy.set(true);
                         auth_status.set("Opening server sign-in...".to_owned());
                         spawn(async move {
-                            match start_oidc_flow(&principal, actor.trim(), device.trim(), false).await {
+                            match start_oidc_flow(&principal, device.trim(), false).await {
                                 Ok(()) => {
                                     persist_config(
                                         config_store,
                                         principal,
-                                        actor,
+                                        account_did(),
                                         device,
                                         String::new(),
                                     );
@@ -169,19 +153,20 @@ pub fn LoginPanel(
 
 pub(crate) async fn start_oidc_flow(
     principal_server_url: &str,
-    login_hint: &str,
     device_id: &str,
     signup: bool,
 ) -> Result<(), String> {
-    let coauth = CoauthApi::new(principal_server_url)
-        .map_err(|error| format!("Invalid server URL: {error}"))?;
+    let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
+        .await
+        .map_err(|error| format!("Server sign-in discovery failed: {error}"))?;
+    let coauth = CoauthApi::new(&auth_server_url)
+        .map_err(|error| format!("Invalid auth server URL: {error}"))?;
     let topology = coauth
         .inspect_topology()
         .await
         .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let mut bundle =
-        build_oidc_scaffold_bundle(&topology, principal_server_url, login_hint, device_id)
-            .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
+    let mut bundle = build_oidc_scaffold_bundle(&topology, principal_server_url, "", device_id)
+        .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
     if signup {
         bundle.authorize_url = signup_authorize_url(&bundle.authorize_url)
@@ -190,9 +175,9 @@ pub(crate) async fn start_oidc_flow(
 
     persist_oidc_scaffold(
         &bundle,
+        &auth_server_url,
         principal_server_url,
-        principal_server_url,
-        login_hint,
+        "",
         device_id,
     )
     .map_err(|error| format!("Could not save sign-in state: {error}"))?;
@@ -336,8 +321,8 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
 
 fn signup_authorize_url(authorize_url: &str) -> anyhow::Result<String> {
     let mut url = url::Url::parse(authorize_url)?;
-    if !url.query_pairs().any(|(key, _)| key == "screen_hint") {
-        url.query_pairs_mut().append_pair("screen_hint", "signup");
+    if !url.query_pairs().any(|(key, _)| key == "prompt") {
+        url.query_pairs_mut().append_pair("prompt", "create");
     }
     Ok(url.to_string())
 }
