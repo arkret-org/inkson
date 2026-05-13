@@ -23,7 +23,7 @@ url = "2.5.7"
 # pubkey32)>`). Production deploys integrate OS keychain / WebAuthn /
 # HSM via separate paths and only call `move_builder::sign_move_*` for
 # the canonical-bytes-to-JWS step.
-ed25519-dalek = "2.1.1"
+ed25519-dalek = { version = "2.1.1", features = ["pem", "pkcs8"] }
 bs58 = "0.5.1"
 tracing = "0.1"
 

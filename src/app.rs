@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::{
     api::ContrixApi,
-    components::RightPanel,
+    components::UiIcon,
     config::{LocalConfigStore, normalize_device_id},
     conformance::{
         PROFILE_CHAT_ONLY_CLIENT, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT,
@@ -74,9 +74,6 @@ a.primary, a.secondary { line-height: 1.5; }
 .composer { background: white; border-top: 1px solid #d8e0e8; padding: 14px; display: grid; gap: 10px; border-radius: 8px; }
 .composer textarea { min-height: 88px; resize: vertical; }
 .panel { border-left: 1px solid #d8e0e8; background: #fbfcfd; padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; min-width: 0; }
-.right-panel { overflow-x: hidden; pointer-events: none; }
-.right-panel a, .right-panel button, .right-panel input, .right-panel select, .right-panel textarea { pointer-events: auto; }
-.right-panel .muted, .right-panel .metric span, .right-panel .hierarchy-row { overflow-wrap: anywhere; }
 .section { display: grid; gap: 10px; }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .section h2 { margin: 0; font-size: 16px; }
@@ -90,12 +87,6 @@ a.primary, a.secondary { line-height: 1.5; }
 .mobile-shellbar, .mobile-drawer { display: none; }
 .mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #e2e8f0; }
 .mobile-status .muted { color: #cbd5e1; }
-.hierarchy-boundary-note { background: #f8fafc; }
-.hierarchy-list { display: grid; gap: 8px; }
-.hierarchy-row { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 10px; display: grid; gap: 8px; pointer-events: none; }
-.hierarchy-row__main { display: grid; gap: 3px; min-width: 0; }
-.hierarchy-row__main strong { overflow-wrap: anywhere; }
-.hierarchy-row__badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .settings, .workflow-form { display: grid; gap: 10px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .badge-info { background: #e7edf3; color: #18212f; }
@@ -291,8 +282,7 @@ body {
 }
 .event,
 .composer,
-.metric,
-.hierarchy-row {
+.metric {
   border-color: var(--cx-line);
   border-radius: 14px;
   background: var(--cx-surface);
@@ -452,45 +442,135 @@ body {
   background: var(--cx-brand);
   color: #fff;
 }
-.settings-header-card {
+.settings-shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.settings-sidebar-column,
+.settings-content-column,
+.settings-content-stack {
   display: grid;
   gap: 12px;
-  border: 1px solid var(--cx-line);
-  border-radius: 16px;
+}
+.settings-overview-card,
+.settings-nav-group {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--surface-border, var(--cx-line));
+  border-radius: 18px;
   padding: 14px;
   background:
     radial-gradient(circle at top left, rgba(43, 107, 79, 0.12), transparent 36%),
-    var(--cx-surface);
+    var(--surface, var(--cx-surface));
   box-shadow: var(--cx-shadow-sm);
 }
-.settings-section-tabs {
-  gap: 8px;
+.settings-content-title {
+  margin: 0;
+  color: var(--text, var(--cx-ink));
+  line-height: 1.08;
+  font-size: 26px;
 }
-.settings-page-grid {
+.settings-overview-list {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+  padding-top: 4px;
 }
-.settings-page-chip {
+.settings-overview-row {
   display: grid;
   gap: 2px;
-  border: 1px solid var(--cx-line);
-  border-radius: 12px;
-  padding: 8px 10px;
-  background: rgba(248, 250, 252, 0.76);
 }
-.settings-page-chip strong {
-  font-size: 12px;
-}
-.settings-page-chip span {
-  color: var(--cx-muted);
+.settings-overview-row span {
+  color: var(--text-3, var(--cx-muted));
   font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.settings-overview-row strong {
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.settings-nav-group__head {
+  display: grid;
+  gap: 4px;
+}
+.settings-nav-group__head h2 {
+  margin: 0;
+}
+.settings-nav-group__title-row,
+.settings-content-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-nav-group__title-row .help-tip,
+.settings-content-title-row .help-tip {
+  flex: 0 0 auto;
+}
+.settings-nav-group__head h2 {
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3, var(--cx-muted));
+}
+.settings-nav-list {
+  display: grid;
+  gap: 8px;
+}
+.settings-nav-item {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.74);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+.settings-nav-item strong {
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+}
+.settings-nav-item span {
+  color: var(--text-3, var(--cx-muted));
+  font-size: 12px;
+  line-height: 1.45;
+}
+.settings-nav-item:hover {
+  border-color: rgba(43, 107, 79, 0.18);
+  transform: translateY(-1px);
+}
+.settings-nav-item.active {
+  border-color: rgba(43, 107, 79, 0.36);
+  background: color-mix(in srgb, var(--cx-brand) 9%, var(--surface, var(--cx-surface)));
+  box-shadow: inset 0 0 0 1px rgba(43, 107, 79, 0.12);
+}
+.settings-content-hero {
+  padding: 16px 18px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(165, 107, 19, 0.12), transparent 26%),
+    radial-gradient(circle at 0 0, rgba(43, 107, 79, 0.14), transparent 34%),
+    var(--surface, var(--cx-surface));
+}
+.settings-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.settings-card-span-2 {
+  grid-column: 1 / -1;
 }
 @media (max-width: 900px) {
   .dashboard-layout { grid-template-columns: 1fr; }
   .board-grid { grid-template-columns: 1fr; }
   .home-card-list.compact { grid-template-columns: 1fr; }
-  .settings-page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-shell,
+  .settings-card-grid { grid-template-columns: 1fr; }
 }
 
 /* Contrix design implementation layer. */
@@ -647,7 +727,7 @@ const CLAUDE_STYLE: &str = include_str!("../claude-design/styles.css");
 const CLAUDE_APP_OVERRIDES: &str = r#"
 :root {
   --sidebar-w: 272px;
-  --right-pane-w: 340px;
+  --sidebar-collapsed-w: 72px;
 }
 
 :root,
@@ -717,7 +797,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --nav-input-border: rgba(203, 186, 177, 0.18);
 }
 
-[data-theme="dark"] {
+[data-theme="dark"],
+[data-theme="night"] {
   --bg: #101722;
   --bg-elev: #223041;
   --surface: rgba(27, 36, 48, 0.94);
@@ -923,21 +1004,30 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   height: 100vh;
   padding: 0;
   gap: 0;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   color: var(--text);
   background: var(--bg);
 }
 
 .shell.app.rtl {
   direction: rtl;
-  grid-template-columns: var(--right-pane-w) minmax(0, 1fr) var(--sidebar-w);
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
 }
 
-.shell.app.rtl .sidebar { grid-column: 3; }
-.shell.app.rtl .workspace { grid-column: 2; }
-.shell.app.rtl .right-panel {
-  grid-column: 1;
-  border-left: 0;
-  border-right: 1px solid var(--border);
+.shell.app.rtl .sidebar { grid-column: 2; }
+.shell.app.rtl .workspace { grid-column: 1; }
+
+.shell.app.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-collapsed-w) minmax(0, 1fr);
+}
+
+.shell.app.rtl.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-collapsed-w);
+}
+
+.shell.app.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .mobile-shellbar,
@@ -953,6 +1043,38 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   gap: 0;
   min-height: 0;
   overflow: auto;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  z-index: 30;
+  width: 10px;
+  cursor: col-resize;
+}
+
+.sidebar-resize-handle:hover,
+.shell.app.sidebar-resizing .sidebar-resize-handle {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.shell.rtl .sidebar-resize-handle {
+  right: auto;
+  left: 0;
+}
+
+.shell.app.sidebar-collapsed .sidebar-resize-handle {
+  display: none;
+}
+
+.sidebar-resize-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  cursor: col-resize;
+  background: transparent;
 }
 
 .sidebar-header .brand::before,
@@ -969,8 +1091,288 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--text-3);
 }
 
+.sidebar-collapse-toggle,
+.panel-collapse-toggle,
+.theme-toggle-button {
+  flex: 0 0 auto;
+}
+
+.theme-toggle-button {
+  min-width: 0;
+}
+
+.btn,
+.primary,
+.secondary {
+  min-height: 32px;
+}
+
+.btn.sm {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.btn.icon,
+.btn.icon.sm {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.workspace-header .actions {
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-header > .sidebar-collapse-toggle {
+  margin-inline-end: 4px;
+}
+
+.workspace-header .crumbs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workspace-header .actions .btn,
+.workspace-header .actions .pill {
+  height: 34px;
+}
+
+.workspace-header .actions .btn {
+  border-radius: 7px;
+}
+
+.workspace-header .actions .btn.icon {
+  width: 34px;
+  min-width: 34px;
+}
+
+.workspace-header .actions .pill {
+  display: inline-flex;
+  align-items: center;
+}
+
+.shell.app.sidebar-collapsed .sidebar {
+  overflow-x: hidden;
+}
+
+.shell.app.sidebar-collapsed .sidebar-header {
+  justify-content: center;
+  padding-inline: 8px;
+}
+
+.shell.app.sidebar-collapsed .sidebar-header .brand {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.shell.app.sidebar-collapsed .sidebar-header .logo {
+  width: 38px;
+  height: 38px;
+}
+
+.shell.app.sidebar-collapsed .sidebar-header .product-meta,
+.shell.app.sidebar-collapsed .sidebar-context .grow,
+.shell.app.sidebar-collapsed .sidebar-context .pill,
+.shell.app.sidebar-collapsed .sidebar-context .mini,
+.shell.app.sidebar-collapsed .cx-connect-section,
+.shell.app.sidebar-collapsed .server-switch-title,
+.shell.app.sidebar-collapsed .server-switch-state,
+.shell.app.sidebar-collapsed .server-switch-menu,
+.shell.app.sidebar-collapsed .sidebar-section h4,
+.shell.app.sidebar-collapsed .nav-item .grow,
+.shell.app.sidebar-collapsed .nav-item .badge,
+.shell.app.sidebar-collapsed .nav-item .pill,
+.shell.app.sidebar-collapsed .nav-item .kbd-tag,
+.shell.app.sidebar-collapsed .sidebar-status {
+  display: none;
+}
+
+.shell.app.sidebar-collapsed .sidebar-context {
+  margin-inline: 8px;
+  padding: 6px;
+}
+
+.shell.app.sidebar-collapsed .server-switch {
+  margin-inline: 8px;
+}
+
+.shell.app.sidebar-collapsed .server-switch-button {
+  width: 44px;
+  min-height: 44px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 0;
+}
+
+.shell.app.sidebar-collapsed .server-switch-icon .ui-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.shell.app.sidebar-collapsed .context-line {
+  width: 44px;
+  min-height: 44px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 0;
+  margin-inline: auto;
+}
+
+.shell.app.sidebar-collapsed .context-sep {
+  margin: 4px 2px;
+}
+
+.shell.app.sidebar-collapsed .sidebar-section {
+  padding: 6px 10px;
+}
+
+.shell.app.sidebar-collapsed .nav-item {
+  width: 44px;
+  min-height: 44px;
+  justify-content: center;
+  padding: 0;
+  margin-inline: auto;
+}
+
+.shell.app.sidebar-collapsed .context-line .icon,
+.shell.app.sidebar-collapsed .nav-item .icon {
+  width: 22px;
+  height: 22px;
+  font-size: 18px;
+  line-height: 22px;
+  opacity: 0.96;
+}
+
 .cx-connect-section {
   padding-top: 0;
+}
+
+.server-switch {
+  position: relative;
+  margin-inline: 8px;
+}
+
+.server-switch-button {
+  width: 100%;
+  border: 1px solid var(--nav-border);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  color: var(--nav-text);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+    var(--nav-soft);
+  text-align: start;
+  cursor: pointer;
+}
+
+.server-switch-button:hover,
+.server-switch-button[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 10%, transparent)),
+    var(--nav-soft);
+}
+
+.server-switch-button .server-switch-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--nav-muted);
+}
+
+.server-switch-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.server-switch-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.server-switch-title .k {
+  color: var(--nav-label);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.server-switch-title .v,
+.server-option-main {
+  overflow: hidden;
+  color: var(--nav-text);
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-switch-title .id,
+.server-option-meta {
+  overflow: hidden;
+  color: var(--nav-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-switch-menu {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--nav-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--nav-bg-2) 94%, black);
+  box-shadow: var(--shadow-md);
+}
+
+.server-option-list {
+  display: grid;
+  gap: 6px;
+}
+
+.server-option-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.server-option {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--nav-border) 60%, transparent);
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  color: var(--nav-text);
+  background: var(--nav-soft);
+  text-align: start;
+  cursor: pointer;
+}
+
+.server-option:hover,
+.server-option.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent) 13%, var(--nav-soft));
+}
+
+.server-switch-menu .server-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .cx-connect-form {
@@ -1043,6 +1445,216 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   background: linear-gradient(135deg, var(--accent-strong) 0%, color-mix(in srgb, var(--accent-2) 92%, white) 100%);
 }
 .secondary:hover { background: var(--surface-2); }
+
+.ui-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  vertical-align: -2px;
+}
+
+.section-tools,
+.icon-actions,
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.section-tools {
+  justify-content: flex-end;
+}
+
+.toolbar-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.help-tip {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+
+.help-tip:hover,
+.help-tip:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: none;
+}
+
+.segmented-control {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.segment {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 5px 9px;
+  min-width: 48px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.segment:last-child {
+  border-right: 0;
+}
+
+.segment.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.quick-nav--icons {
+  grid-template-columns: repeat(3, 32px);
+  justify-content: start;
+}
+
+.quick-nav--icons .quick-nav__item {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.notification-toolbar .event-head {
+  align-items: center;
+}
+
+.account-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.account-menu-button {
+  position: relative;
+}
+
+.account-menu-button .dot-online {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(420px, 92vw);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+
+.shell.rtl .account-menu {
+  right: auto;
+  left: 0;
+}
+
+.account-menu__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-menu__head .grow {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.account-menu__head .who {
+  display: block;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.account-menu__head .handle {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.account-menu__rows {
+  display: grid;
+  gap: 6px;
+}
+
+.account-menu__row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.account-menu__row strong {
+  color: var(--text-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.account-menu__row span {
+  overflow-wrap: anywhere;
+}
+
+.account-menu__section {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.account-menu__section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.account-menu__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
 
 .badge.green,
 .badge-success {
@@ -1199,39 +1811,21 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--danger-ink);
 }
 
-.panel.right-panel {
-  padding: 0;
-  gap: 0;
-  min-height: 0;
-  pointer-events: auto;
-}
-
-.right-panel .section {
-  padding: 14px 16px;
+.panel-toggle-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-  gap: 10px;
 }
 
-.right-panel .section h2 {
-  margin: 0;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.panel-toggle-label {
   color: var(--text-3);
-  font-weight: 600;
-}
-
-.right-panel .metric-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.right-panel .metric {
-  padding: 10px;
-  border-radius: var(--radius-sm);
-}
-
-.right-panel .event {
-  padding: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .shell.app {
@@ -1439,16 +2033,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   }
 }
 
-@media (max-width: 1180px) {
-  .shell.app.three-col {
-    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
-  }
-
-  .right-panel {
-    display: none;
-  }
-}
-
 @media (max-width: 860px) {
   .auth-shell {
     padding: 16px;
@@ -1468,8 +2052,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     grid-template-columns: 1fr;
   }
 
-  .shell.app,
-  .shell.app.three-col {
+  .shell.app {
     grid-template-columns: 1fr;
     height: 100vh;
   }
@@ -1555,12 +2138,12 @@ pub fn RouterView() -> Element {
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
         .unwrap_or_else(|| "system".to_owned());
     let config_store = use_signal(LocalConfigStore::default);
-    let state_store = use_signal(LocalStateStore::default);
-    let mut base_url = use_signal({
+    let mut state_store = use_signal(LocalStateStore::default);
+    let base_url = use_signal({
         let initial_config = initial_config.clone();
         move || initial_config.server_url
     });
-    let account_did = use_signal({
+    let mut account_did = use_signal({
         let initial_config = initial_config.clone();
         move || initial_config.account_did
     });
@@ -1572,8 +2155,8 @@ pub fn RouterView() -> Element {
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
-    let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let mut sync_cursor = use_signal({
+    let status = use_signal(|| ConnectionState::Offline.label().to_owned());
+    let sync_cursor = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
             initial_local_state
@@ -1583,8 +2166,8 @@ pub fn RouterView() -> Element {
         }
     });
     let mut selected_space = use_signal(String::new);
-    let mut spaces = use_signal(Vec::<SpacePreview>::new);
-    let mut timeline = use_signal(Vec::<TimelineEvent>::new);
+    let spaces = use_signal(Vec::<SpacePreview>::new);
+    let timeline = use_signal(Vec::<TimelineEvent>::new);
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
@@ -1600,15 +2183,21 @@ pub fn RouterView() -> Element {
         let initial_local_state = initial_local_state.clone();
         move || crate::push::push_status_label(initial_local_state.push_registration.as_ref())
     });
-    let repo_state = use_signal(|| "Not checked".to_owned());
+    let frontier_state = use_signal(|| "Not loaded".to_owned());
     let crypto_state = use_signal(|| "No authenticated session".to_owned());
-    let mut network_state = use_signal(|| "offline".to_owned());
+    let network_state = use_signal(|| "offline".to_owned());
     let last_error = use_signal(|| Option::<String>::None);
-    let mut server_description = use_signal(|| Option::<ServerDescription>::None);
-    let mut server_probe_status = use_signal(|| "server not probed".to_owned());
+    let server_description = use_signal(|| Option::<ServerDescription>::None);
+    let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
-    let theme = use_signal(move || initial_theme);
+    let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
+    let mut sidebar_collapsed = use_signal(|| false);
+    let mut sidebar_width = use_signal(|| 272.0_f64);
+    let mut sidebar_resizing = use_signal(|| false);
+    let mut server_menu_open = use_signal(|| false);
+    let mut account_menu_open = use_signal(|| false);
+    let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
 
     let active_server_description = server_description();
@@ -1640,8 +2229,15 @@ pub fn RouterView() -> Element {
     let account_detail = if has_session {
         format!("device {}", device_id())
     } else {
-        "Connect a server, then use Login".to_owned()
+        "Refresh server metadata, then sign in".to_owned()
     };
+    let account_did_value = account_did();
+    let device_id_value = device_id();
+    let frontier_label = frontier_state();
+    let push_label = push_state();
+    let crypto_label = crypto_state();
+    let account_session_label = account_session_state();
+    let queue_label = device_queue().to_string();
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
     let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_ONLY_CLIENT);
     let kanban_ready = profile_ready(
@@ -1665,10 +2261,18 @@ pub fn RouterView() -> Element {
     let direction_attr = active_direction.as_str();
     let locale_attr = active_locale.code();
     let active_theme = theme();
-    let design_theme = match active_theme.as_str() {
-        "night" => "dark",
-        "light" => "light",
-        _ => "light",
+    let sidebar_is_collapsed = sidebar_collapsed();
+    let sidebar_is_resizing = sidebar_resizing();
+    let server_menu_is_open = server_menu_open();
+    let server_options = server_options_for(&base_url());
+    let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
+    let theme_attr = active_theme.as_str();
+    let theme_is_night = active_theme == "night";
+    let theme_toggle_icon = if theme_is_night { "sun" } else { "moon" };
+    let theme_toggle_title = if theme_is_night {
+        "Switch to light theme"
+    } else {
+        "Switch to night theme"
     };
     let route_title = route_label(&route);
     let title = selected_preview
@@ -1676,7 +2280,7 @@ pub fn RouterView() -> Element {
         .map(|space| space.name.clone())
         .unwrap_or_else(|| route_title.to_owned());
     let shell_class = format!(
-        "shell app three-col {}{}",
+        "shell app {}{}{}{}",
         match active_theme.as_str() {
             "night" => "theme-night",
             "light" => "theme-light",
@@ -1684,6 +2288,16 @@ pub fn RouterView() -> Element {
         },
         if active_direction == TextDirection::Rtl {
             " rtl"
+        } else {
+            ""
+        },
+        if sidebar_is_collapsed {
+            " sidebar-collapsed"
+        } else {
+            ""
+        },
+        if sidebar_is_resizing {
+            " sidebar-resizing"
         } else {
             ""
         }
@@ -1716,7 +2330,7 @@ pub fn RouterView() -> Element {
                 "lang": locale_attr,
                 "data-direction": direction_attr,
                 "data-locale": locale_attr,
-                "data-theme": design_theme,
+                "data-theme": theme_attr,
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
                     match &route {
@@ -1756,20 +2370,47 @@ pub fn RouterView() -> Element {
         style { "{CLAUDE_APP_OVERRIDES}" }
         div {
             class: shell_class,
+            style: "{sidebar_style}",
             "dir": direction_attr,
             "lang": locale_attr,
             "data-direction": direction_attr,
             "data-locale": locale_attr,
-            "data-theme": design_theme,
+            "data-theme": theme_attr,
             "data-testid": "client-shell",
+            onmousemove: move |event| {
+                if sidebar_resizing() && !sidebar_collapsed() {
+                    let next_width = event.client_coordinates().x.max(220.0).min(420.0);
+                    sidebar_width.set(next_width);
+                }
+            },
+            onmouseup: move |_| sidebar_resizing.set(false),
+            onmouseleave: move |_| sidebar_resizing.set(false),
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
-                    class: "secondary",
+                    class: "btn icon sm ghost",
                     "data-testid": "mobile-nav-toggle",
+                    title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
+                    "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
                     onclick: move |_| mobile_nav_open.toggle(),
-                    if mobile_nav_open() { "Close" } else { "Menu" }
+                    if mobile_nav_open() {
+                        UiIcon { name: "x" }
+                    } else {
+                        UiIcon { name: "menu" }
+                    }
                 }
                 div { class: "brand", "Contrix" }
+                button {
+                    class: "btn icon sm ghost",
+                    "data-testid": "mobile-theme-toggle",
+                    title: "{theme_toggle_title}",
+                    "aria-label": "{theme_toggle_title}",
+                    onclick: move |_| {
+                        let next = if theme() == "night" { "light" } else { "night" }.to_owned();
+                        theme.set(next.clone());
+                        state_store.write().save_private_data(&account_did(), "theme", next);
+                    },
+                    UiIcon { name: theme_toggle_icon }
+                }
                 Link { class: "secondary", to: Route::Notifications, "Inbox" }
             }
             nav {
@@ -1781,6 +2422,8 @@ pub fn RouterView() -> Element {
                     button {
                         class: "primary",
                         "data-testid": "mobile-connect-button",
+                        title: "Refresh Principal Server metadata and sync state",
+                        "aria-label": "Refresh Principal Server metadata and sync state",
                         onclick: move |_| connect(
                             base_url(),
                             account_did(),
@@ -1789,10 +2432,12 @@ pub fn RouterView() -> Element {
                                 status,
                                 sync_cursor,
                                 token,
+                                account_did,
+                                selected_space,
                                 spaces,
                                 timeline,
                                 device_queue,
-                                repo_state,
+                                frontier_state,
                                 crypto_state,
                                 config_store,
                                 state_store,
@@ -1802,7 +2447,7 @@ pub fn RouterView() -> Element {
                                 server_probe_status,
                             },
                         ),
-                        "Connect"
+                        "Refresh"
                     }
                 }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Dashboard" }
@@ -1815,6 +2460,16 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
             }
             aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
+                div {
+                    class: "sidebar-resize-handle",
+                    "data-testid": "sidebar-resize-handle",
+                    title: "Drag to resize menu",
+                    "aria-hidden": "true",
+                    onmousedown: move |event| {
+                        event.prevent_default();
+                        sidebar_resizing.set(true);
+                    },
+                }
                 div { class: "sidebar-header",
                     Link { class: "brand", to: Route::Dashboard, "aria-label": "Contrix Home",
                         span { class: "logo", "⌘" }
@@ -1825,80 +2480,148 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-context", "data-testid": "principal-context", "aria-label": "Current principal server context",
-                    Link { class: "context-line", to: Route::SettingsSection { section: "services".to_owned() },
-                        span { class: "icon", "◌" }
-                        span { class: "grow truncate",
-                            span { class: "k", "Active Principal Server" }
+                div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current principal server context",
+                    button {
+                        class: "server-switch-button",
+                        "data-testid": "server-switch-button",
+                        title: "Switch Principal Server",
+                        "aria-label": "Switch Principal Server",
+                        "aria-expanded": if server_menu_is_open { "true" } else { "false" },
+                        onclick: move |_| {
+                            server_menu_open.toggle();
+                            account_menu_open.set(false);
+                        },
+                        span { class: "server-switch-icon",
+                            UiIcon { name: "server" }
+                        }
+                        span { class: "server-switch-title",
+                            span { class: "k", "Principal Server" }
                             span { class: "v", "{active_server_label}" }
                             span { class: "id mono", "{active_server_detail}" }
                         }
-                        span { class: "pill muted xs", if has_session { "session" } else { "no session" } }
-                    }
-                    div { class: "context-sep" }
-                    Link { class: "context-line", to: Route::Login,
-                        span { class: "icon", "◇" }
-                        span { class: "grow truncate",
-                            span { class: "k", "Principal" }
-                            span { class: "v", "{account_label}" }
-                            span { class: "id mono", "{account_detail}" }
-                        }
-                        span { class: "mini", "›" }
-                    }
-                }
-
-                div { class: "sidebar-section cx-connect-section",
-                    div { class: "cx-connect-form",
-                        input {
-                            class: "cx-server-input",
-                            "data-testid": "server-url-input",
-                            value: "{base_url}",
-                            "aria-label": "Principal Server URL",
-                            oninput: move |event| {
-                                let value = event.value();
-                                base_url.set(value.clone());
-                                token.set(String::new());
-                                sync_cursor.set("-".to_owned());
-                                spaces.set(Vec::new());
-                                timeline.set(Vec::new());
-                                server_description.set(None);
-                                server_probe_status.set("server not probed".to_owned());
-                                status.set(ConnectionState::Offline.label().to_owned());
-                                network_state.set("offline".to_owned());
-                                persist_config(config_store, value, account_did(), device_id(), String::new());
+                        span { class: "server-switch-state",
+                            span { class: "pill muted xs", if has_session { "session" } else { "no session" } }
+                            if server_menu_is_open {
+                                UiIcon { name: "chevron-up" }
+                            } else {
+                                UiIcon { name: "chevron-down" }
                             }
                         }
-                        div { class: "actions server-actions",
-                            button {
-                                class: "primary",
-                                "data-testid": "connect-button",
-                                onclick: move |_| connect(
-                                    base_url(),
-                                    account_did(),
-                                    device_id(),
-                                    ConnectContext {
-                                        status,
-                                        sync_cursor,
+                    }
+
+                    if server_menu_is_open && !sidebar_is_collapsed {
+                        div { class: "server-switch-menu", "data-testid": "server-switch-menu",
+                            div { class: "server-option-list", "aria-label": "Server choices",
+                                for option_url in server_options.clone() {
+                                    button {
+                                        class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
+                                        "data-testid": "server-option",
+                                        title: "Switch to {option_url}",
+                                        "aria-label": "Switch to {option_url}",
+                                        onclick: {
+                                            let option_url = option_url.clone();
+                                            move |_| {
+                                                select_server(option_url.clone(), ServerSelectionContext {
+                                                    base_url,
+                                                    token,
+                                                    sync_cursor,
+                                                    selected_space,
+                                                    spaces,
+                                                    timeline,
+                                                    device_queue,
+                                                    frontier_state,
+                                                    crypto_state,
+                                                    config_store,
+                                                    network_state,
+                                                    last_error,
+                                                    server_description,
+                                                    server_probe_status,
+                                                    status,
+                                                    account_did,
+                                                    device_id,
+                                                });
+                                                server_menu_open.set(false);
+                                            }
+                                        },
+                                        span { class: "server-option-text",
+                                            span { class: "server-option-main mono", "{option_url}" }
+                                            span { class: "server-option-meta", if same_server_url(&option_url, &base_url()) { "Current data home" } else { "Switch workspace scope" } }
+                                        }
+                                        if same_server_url(&option_url, &base_url()) {
+                                            span { class: "pill muted xs", "current" }
+                                        }
+                                    }
+                                }
+                            }
+                            input {
+                                class: "cx-server-input",
+                                "data-testid": "server-url-input",
+                                value: "{base_url}",
+                                "aria-label": "Custom Principal Server URL",
+                                oninput: move |event| {
+                                    select_server(event.value(), ServerSelectionContext {
+                                        base_url,
                                         token,
+                                        sync_cursor,
+                                        selected_space,
                                         spaces,
                                         timeline,
                                         device_queue,
-                                        repo_state,
+                                        frontier_state,
                                         crypto_state,
                                         config_store,
-                                        state_store,
                                         network_state,
                                         last_error,
                                         server_description,
                                         server_probe_status,
-                                    },
-                                ),
-                                "Connect"
+                                        status,
+                                        account_did,
+                                        device_id,
+                                    });
+                                }
                             }
-                            Link {
-                                class: "secondary",
-                                to: Route::SettingsSection { section: "services".to_owned() },
-                                "Services"
+                            div { class: "server-actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "connect-button",
+                                    title: "Refresh Principal Server metadata and sync state",
+                                    "aria-label": "Refresh Principal Server metadata and sync state",
+                                    onclick: move |_| {
+                                        server_menu_open.set(false);
+                                        connect(
+                                            base_url(),
+                                            account_did(),
+                                            device_id(),
+                                            ConnectContext {
+                                                status,
+                                                sync_cursor,
+                                                token,
+                                                account_did,
+                                                selected_space,
+                                                spaces,
+                                                timeline,
+                                                device_queue,
+                                                frontier_state,
+                                                crypto_state,
+                                                config_store,
+                                                state_store,
+                                                network_state,
+                                                last_error,
+                                                server_description,
+                                                server_probe_status,
+                                            },
+                                        );
+                                    },
+                                    UiIcon { name: "refresh" }
+                                    "Refresh"
+                                }
+                                Link {
+                                    class: "secondary",
+                                    to: Route::SettingsSection { section: "server".to_owned() },
+                                    onclick: move |_| server_menu_open.set(false),
+                                    UiIcon { name: "settings" }
+                                    "Services"
+                                }
                             }
                         }
                     }
@@ -1915,7 +2638,7 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-section", "data-testid": "space-list",
+                div { class: "sidebar-section",
                     h4 { "Personal" }
                     Link { class: "nav-item", to: Route::Dashboard,
                         span { class: "icon", "⌂" }
@@ -1960,7 +2683,7 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-section",
+                div { class: "sidebar-section", "data-testid": "space-list",
                     h4 {
                         span { "Spaces" }
                         Link { class: "add", to: Route::Product, "+" }
@@ -2044,10 +2767,12 @@ pub fn RouterView() -> Element {
                                         status,
                                         sync_cursor,
                                         token,
+                                        account_did,
+                                        selected_space,
                                         spaces,
                                         timeline,
                                         device_queue,
-                                        repo_state,
+                                        frontier_state,
                                         crypto_state,
                                         config_store,
                                         state_store,
@@ -2068,36 +2793,62 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                Link { class: "sidebar-footer", to: Route::Settings,
-                    span { class: "avatar", if has_session { "P" } else { "?" } }
-                    span { class: "grow",
-                        span { class: "who", "{account_label}" }
-                        span { class: "handle", "{account_detail}" }
-                    }
-                    if has_session {
-                        span { class: "dot-online", title: "online", style: "margin-right: 4px;" }
-                    } else {
-                        span { class: "pill muted xs", "offline" }
-                    }
-                    span { class: "btn icon sm ghost", "⚙" }
+            }
+
+            if sidebar_is_resizing {
+                div {
+                    class: "sidebar-resize-shield",
+                    "data-testid": "sidebar-resize-shield",
+                    onmousemove: move |event| {
+                        if !sidebar_collapsed() {
+                            let next_width = event.client_coordinates().x.max(220.0).min(420.0);
+                            sidebar_width.set(next_width);
+                        }
+                    },
+                    onmouseup: move |_| sidebar_resizing.set(false),
                 }
             }
 
             main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar workspace-header",
-                    div { class: "crumbs",
-                        Link { to: Route::SettingsSection { section: "services".to_owned() }, strong { "{active_server_label}" } }
+                    button {
+                        class: "btn icon sm ghost sidebar-collapse-toggle",
+                        "data-testid": "sidebar-collapse-toggle",
+                        title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                        "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                        onclick: move |_| sidebar_collapsed.toggle(),
+                        if sidebar_is_collapsed {
+                            UiIcon { name: "panel-left-open" }
+                        } else {
+                            UiIcon { name: "panel-left-close" }
+                        }
+                    }
+                    div { class: "crumbs", "data-testid": "topbar-crumbs",
+                        Link { to: Route::SettingsSection { section: "server".to_owned() }, strong { "{active_server_label}" } }
                         span { class: "crumb-tag", if has_session { "Session" } else { "Server" } }
                         span { class: "sep", "/" }
-                        span { "{route_title}" }
-                        span { class: "sep", "/" }
-                        span { class: "id", "data-testid": "space-title", "{title}" }
+                        span { class: "id", "data-testid": "space-title", "{route_title}" }
+                        if title != route_title {
+                            span { class: "sep", "/" }
+                            span { class: "id", "{title}" }
+                        }
                         if selected_preview.is_some() {
                             span { class: "id", "data-testid": "selected-space-id", "selected Space {selected_space}" }
                         }
-                        span { class: "id", "Principal Server {base_url}" }
                     }
                     div { class: "actions",
+                        button {
+                            class: "btn icon sm ghost theme-toggle-button",
+                            "data-testid": "theme-toggle",
+                            title: "{theme_toggle_title}",
+                            "aria-label": "{theme_toggle_title}",
+                            onclick: move |_| {
+                                let next = if theme() == "night" { "light" } else { "night" }.to_owned();
+                                theme.set(next.clone());
+                                state_store.write().save_private_data(&account_did(), "theme", next);
+                            },
+                            UiIcon { name: theme_toggle_icon }
+                        }
                         div { class: "search",
                             span { "⌕" }
                             input {
@@ -2124,26 +2875,194 @@ pub fn RouterView() -> Element {
                             class: "btn sm primary",
                             "data-testid": "topbar-create-button",
                             to: Route::Product,
-                            "+ Space"
+                            UiIcon { name: "plus" }
+                            "Space"
                         }
                         span { class: "pill muted xs", "data-testid": "topbar-members", "{spaces().len()} spaces" }
+                        div { class: "account-menu-wrap",
+                            button {
+                                class: "btn icon sm ghost account-menu-button",
+                                "data-testid": "account-menu-button",
+                                title: "Account menu",
+                                "aria-label": "Account menu",
+                                onclick: move |_| {
+                                    server_menu_open.set(false);
+                                    account_menu_open.toggle();
+                                },
+                                UiIcon { name: "user" }
+                                if has_session {
+                                    span { class: "dot-online", title: "online" }
+                                }
+                            }
+                            if account_menu_open() {
+                                div { class: "account-menu", "data-testid": "account-menu", role: "menu",
+                                    div { class: "account-menu__head",
+                                        span { class: "avatar", if has_session { "P" } else { "?" } }
+                                        span { class: "grow",
+                                            span { class: "who", "{account_label}" }
+                                            span { class: "handle", "{account_detail}" }
+                                        }
+                                    }
+                                    div { class: "account-menu__rows",
+                                        div { class: "account-menu__row",
+                                            strong { "DID" }
+                                            span { class: "mono", "data-testid": "account-menu-did", "{account_did_value}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Device" }
+                                            span { class: "mono", "data-testid": "account-menu-device", "{device_id_value}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Server" }
+                                            span { "{active_server_label}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Frontier" }
+                                            span { class: "mono", "data-testid": "account-menu-frontier", "{frontier_label}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Push" }
+                                            span { class: "mono", "data-testid": "account-menu-push", "{push_label}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Queue" }
+                                            span { class: "mono", "data-testid": "account-menu-queue", "{queue_label}" }
+                                        }
+                                        div { class: "account-menu__row",
+                                            strong { "Crypto" }
+                                            span { class: "mono", "data-testid": "account-menu-crypto", "{crypto_label}" }
+                                        }
+                                    }
+                                    div { class: "account-menu__section",
+                                        div { class: "account-menu__section-head",
+                                            span { "Session" }
+                                            span { "bearer" }
+                                        }
+                                        div { class: "account-menu__rows",
+                                            div { class: "account-menu__row",
+                                                strong { "Token" }
+                                                span { class: "mono", "data-testid": "account-menu-session-token", if has_session { "Token loaded" } else { "No authenticated session" } }
+                                            }
+                                            div { class: "account-menu__row",
+                                                strong { "Crypto" }
+                                                span { class: "mono", "data-testid": "account-menu-session-crypto", "{crypto_label}" }
+                                            }
+                                            div { class: "account-menu__row",
+                                                strong { "State" }
+                                                span { class: "mono", "data-testid": "account-menu-session-state", "{account_session_label}" }
+                                            }
+                                        }
+                                        div { class: "account-menu__actions",
+                                            button {
+                                                class: "btn sm ghost",
+                                                "data-testid": "account-menu-session-refresh",
+                                                disabled: !has_session,
+                                                onclick: {
+                                                    let base = base_url();
+                                                    move |_| {
+                                                        let base = base.clone();
+                                                        let api_token = token();
+                                                        let device = device_id();
+                                                        account_session_state.set("Refreshing session".to_owned());
+                                                        spawn(async move {
+                                                            match ContrixApi::new(&base) {
+                                                                Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
+                                                                    Ok(account) => {
+                                                                        let canonical_actor = account.did;
+                                                                        account_did.set(canonical_actor.clone());
+                                                                        persist_config(
+                                                                            config_store,
+                                                                            base.clone(),
+                                                                            canonical_actor.clone(),
+                                                                            device.clone(),
+                                                                            api_token,
+                                                                        );
+                                                                        account_session_state.set(format!(
+                                                                            "Session refresh ok: {}",
+                                                                            canonical_actor
+                                                                        ));
+                                                                    }
+                                                                    Err(error) => account_session_state.set(format!(
+                                                                        "Session refresh failed: {error}"
+                                                                    )),
+                                                                },
+                                                                Err(error) => account_session_state
+                                                                    .set(format!("Invalid server URL: {error}")),
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                "Refresh"
+                                            }
+                                            button {
+                                                class: "btn sm ghost",
+                                                "data-testid": "account-menu-session-logout",
+                                                disabled: !has_session,
+                                                onclick: move |_| {
+                                                    let base = base_url();
+                                                    let actor = account_did();
+                                                    let device = device_id();
+                                                    let api_token = token();
+                                                    account_session_state.set("Logging out".to_owned());
+                                                    spawn(async move {
+                                                        match ContrixApi::new(&base) {
+                                                            Ok(api) => match api.with_bearer(api_token).logout().await {
+                                                                Ok(response) => {
+                                                                    token.set(String::new());
+                                                                    persist_config(
+                                                                        config_store,
+                                                                        base,
+                                                                        actor,
+                                                                        device,
+                                                                        String::new(),
+                                                                    );
+                                                                    account_session_state.set(format!(
+                                                                        "Logout ok: revoked {}",
+                                                                        response.revoked
+                                                                    ));
+                                                                }
+                                                                Err(error) => account_session_state
+                                                                    .set(format!("Logout failed: {error}")),
+                                                            },
+                                                            Err(error) => account_session_state
+                                                                .set(format!("Invalid server URL: {error}")),
+                                                        }
+                                                    });
+                                                },
+                                                "Log out"
+                                            }
+                                        }
+                                    }
+                                    div { class: "account-menu__actions",
+                                        Link {
+                                            class: "btn sm",
+                                            "data-testid": "account-menu-settings",
+                                            to: Route::Settings,
+                                            onclick: move |_| account_menu_open.set(false),
+                                            UiIcon { name: "settings" }
+                                            "Settings"
+                                        }
+                                        Link {
+                                            class: "btn sm ghost",
+                                            to: Route::Devices,
+                                            onclick: move |_| account_menu_open.set(false),
+                                            UiIcon { name: "monitor" }
+                                            "Devices"
+                                        }
+                                        Link {
+                                            class: "btn sm ghost",
+                                            to: Route::Readiness,
+                                            onclick: move |_| account_menu_open.set(false),
+                                            UiIcon { name: "check" }
+                                            "Readiness"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 div { class: "workspace-body",
-                if cfg!(target_arch = "wasm32") {
-                    div { class: "event error-banner", "data-testid": "web-security-banner",
-                        div { class: "event-head",
-                            span { "Web Security Mode" }
-                            span { "non-production" }
-                        }
-                        div { class: "space-title",
-                            "Browser builds are running in compatibility mode, not production-secure E2EE."
-                        }
-                        div { class: "muted",
-                            "WebCrypto-backed keys, IndexedDB MLS state, and secure backup/recovery are not implemented yet. Treat browser encryption as development-only."
-                        }
-                    }
-                }
                 match route {
                     Route::Login => rsx! {
                         crate::views::login::LoginPanel {
@@ -2177,7 +3096,7 @@ pub fn RouterView() -> Element {
                             selected_space,
                             view,
                             device_queue: device_queue(),
-                            repo_state: repo_state(),
+                            frontier_state: frontier_state(),
                             sync_cursor: sync_cursor(),
                         }
                     },
@@ -2198,7 +3117,7 @@ pub fn RouterView() -> Element {
                                     state_store,
                                     crypto_state,
                                     sync_cursor,
-                                    repo_state,
+                                    frontier_state,
                                     base_url_sig: base_url,
                                 }
                             }
@@ -2229,7 +3148,7 @@ pub fn RouterView() -> Element {
                                     timeline,
                                     status,
                                     sync_cursor,
-                                    repo_state,
+                                    frontier_state,
                                     state_store,
                                 }
                             }
@@ -2303,7 +3222,7 @@ pub fn RouterView() -> Element {
                                     token,
                                     selected_space: selected_space(),
                                     sync_cursor,
-                                    repo_state,
+                                    frontier_state,
                                     state_store,
                                 }
                             }
@@ -2335,7 +3254,7 @@ pub fn RouterView() -> Element {
                                     account_did: account_did(),
                                     selected_space: selected_space(),
                                     sync_cursor,
-                                    repo_state,
+                                    frontier_state,
                                     state_store,
                                     event_write_ready,
                                 }
@@ -2356,7 +3275,7 @@ pub fn RouterView() -> Element {
                                     token,
                                     selected_space: selected_space(),
                                     sync_cursor,
-                                    repo_state,
+                                    frontier_state,
                                     state_store,
                                 }
                             }
@@ -2431,19 +3350,6 @@ pub fn RouterView() -> Element {
             }
             }
 
-            RightPanel {
-                base_url: base_url(),
-                token,
-                selected_space: selected_space(),
-                selected_preview: selected_preview.clone(),
-                spaces_count: spaces().len(),
-                device_queue: device_queue(),
-                repo_state: repo_state(),
-                push_state: push_state(),
-                account_did: account_did(),
-                device_id: device_id(),
-                crypto_state: crypto_state(),
-            }
         }
     }
 }
@@ -2489,15 +3395,102 @@ fn route_label(route: &Route) -> &'static str {
     }
 }
 
+fn server_key(server_url: &str) -> String {
+    server_url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn same_server_url(left: &str, right: &str) -> bool {
+    server_key(left) == server_key(right)
+}
+
+fn server_options_for(current_server_url: &str) -> Vec<String> {
+    let mut options: Vec<String> = Vec::new();
+    for url in [
+        current_server_url.trim(),
+        "https://local.host/",
+        "http://127.0.0.1:8787/",
+    ] {
+        if url.is_empty()
+            || options
+                .iter()
+                .any(|existing| same_server_url(existing, url))
+        {
+            continue;
+        }
+        options.push(url.to_owned());
+    }
+    options
+}
+
+#[derive(Clone, Copy)]
+struct ServerSelectionContext {
+    base_url: Signal<String>,
+    token: Signal<String>,
+    sync_cursor: Signal<String>,
+    selected_space: Signal<String>,
+    spaces: Signal<Vec<SpacePreview>>,
+    timeline: Signal<Vec<TimelineEvent>>,
+    device_queue: Signal<usize>,
+    frontier_state: Signal<String>,
+    crypto_state: Signal<String>,
+    config_store: Signal<LocalConfigStore>,
+    network_state: Signal<String>,
+    last_error: Signal<Option<String>>,
+    server_description: Signal<Option<ServerDescription>>,
+    server_probe_status: Signal<String>,
+    status: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+}
+
+fn select_server(server_url: String, ctx: ServerSelectionContext) {
+    let mut base_url = ctx.base_url;
+    let mut sync_cursor = ctx.sync_cursor;
+    let mut selected_space = ctx.selected_space;
+    let mut spaces = ctx.spaces;
+    let mut timeline = ctx.timeline;
+    let mut device_queue = ctx.device_queue;
+    let mut frontier_state = ctx.frontier_state;
+    let mut crypto_state = ctx.crypto_state;
+    let mut network_state = ctx.network_state;
+    let mut last_error = ctx.last_error;
+    let mut server_description = ctx.server_description;
+    let mut server_probe_status = ctx.server_probe_status;
+    let mut status = ctx.status;
+
+    base_url.set(server_url.clone());
+    sync_cursor.set("-".to_owned());
+    selected_space.set(String::new());
+    spaces.set(Vec::new());
+    timeline.set(Vec::new());
+    device_queue.set(0);
+    frontier_state.set("Not loaded".to_owned());
+    crypto_state.set("Refresh session for selected server".to_owned());
+    server_description.set(None);
+    server_probe_status.set("server not probed".to_owned());
+    status.set(ConnectionState::Offline.label().to_owned());
+    network_state.set("offline".to_owned());
+    last_error.set(None);
+    persist_config(
+        ctx.config_store,
+        server_url,
+        (ctx.account_did)(),
+        (ctx.device_id)(),
+        (ctx.token)(),
+    );
+}
+
 #[derive(Clone, Copy)]
 struct ConnectContext {
     status: Signal<String>,
     sync_cursor: Signal<String>,
     token: Signal<String>,
+    account_did: Signal<String>,
+    selected_space: Signal<String>,
     spaces: Signal<Vec<SpacePreview>>,
     timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
-    repo_state: Signal<String>,
+    frontier_state: Signal<String>,
     crypto_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
@@ -2513,10 +3506,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut status = ctx.status;
         let mut sync_cursor = ctx.sync_cursor;
         let token = ctx.token;
+        let mut account_did = ctx.account_did;
+        let mut selected_space = ctx.selected_space;
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
         let mut device_queue = ctx.device_queue;
-        let mut repo_state = ctx.repo_state;
+        let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
         let config_store = ctx.config_store;
         let mut state_store = ctx.state_store;
@@ -2562,7 +3557,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 let session_token = token();
                 if session_token.trim().is_empty() {
                     status.set(format!(
-                        "Connected: {} / {}; login required",
+                        "Refreshed: {} / {}; sign-in required",
                         description.service_type, description.protocol_version
                     ));
                     network_state.set("online".to_owned());
@@ -2582,10 +3577,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 }
 
                 let authed = api.clone().with_bearer(session_token.clone());
+                let canonical_actor = match authed.account_me().await {
+                    Ok(account) if !account.did.trim().is_empty() => account.did,
+                    _ => actor.clone(),
+                };
+                if canonical_actor != actor {
+                    account_did.set(canonical_actor.clone());
+                }
                 persist_config(
                     config_store,
                     base.clone(),
-                    actor.clone(),
+                    canonical_actor.clone(),
                     device.clone(),
                     session_token,
                 );
@@ -2596,7 +3598,16 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         status.set(ConnectionState::Empty.label().to_owned());
                         spaces.set(search.results);
                     }
-                    Ok(search) => spaces.set(search.results),
+                    Ok(search) => {
+                        let first_space =
+                            search.results.first().map(|space| space.space_id.clone());
+                        spaces.set(search.results);
+                        if selected_space().trim().is_empty() {
+                            if let Some(space_id) = first_space {
+                                selected_space.set(space_id);
+                            }
+                        }
+                    }
                     Err(error) => status.set(format!(
                         "{}: directory search failed: {error}",
                         ConnectionState::Reconnecting.label()
@@ -2619,7 +3630,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         }
                     }
                     let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
-                    {
+                    let first_synced_space = {
                         let mut current_spaces = spaces.write();
                         for preview in space_previews_from_sync_spaces(&sync.spaces) {
                             if let Some(existing) = current_spaces
@@ -2631,18 +3642,24 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 current_spaces.push(preview);
                             }
                         }
+                        current_spaces.first().map(|space| space.space_id.clone())
+                    };
+                    if selected_space().trim().is_empty() {
+                        if let Some(space_id) = first_synced_space {
+                            selected_space.set(space_id);
+                        }
                     }
                     timeline.set(synced_timeline);
                     device_queue.set(sync.to_device.len());
                     sync_cursor.set(sync.next_batch);
                 } else {
                     status.set(format!(
-                        "Connected: authenticated sync unavailable, showing cached/local state"
+                        "Refreshed: authenticated sync unavailable, showing cached/local state"
                     ));
                 }
                 if let Ok(events) = authed.events_describe().await {
                     if let Some(frontier) = frontier_label(&events.frontier) {
-                        repo_state.set(frontier);
+                        frontier_state.set(frontier);
                     }
                 }
             }

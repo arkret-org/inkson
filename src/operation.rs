@@ -1,7 +1,7 @@
 //! Minimal operation-envelope helpers for yougen's active write paths.
 //!
-//! Repo-commit and event-envelope helper paths were removed; active writes use
-//! the current operation/event surfaces directly.
+//! Legacy commit-envelope helper paths were removed; active writes use the
+//! current operation/event surfaces directly.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -928,10 +928,19 @@ pub fn build_session_grant_introspection_proof_bundle(
     })
 }
 
+/// Decode the ephemeral private key returned with a coauth
+/// `principal_session` grant. This key, not the long-lived local device key,
+/// signs the one-use introspection proof soland forwards back to coauth.
+pub fn session_grant_signing_key_from_pem(pem: &str) -> anyhow::Result<ed25519_dalek::SigningKey> {
+    use ed25519_dalek::pkcs8::DecodePrivateKey as _;
+
+    ed25519_dalek::SigningKey::from_pkcs8_pem(pem.trim())
+        .context("decode coauth session grant private key")
+}
+
 /// Round 24 (A2): build a session-grant introspection proof JWS. Signs
-/// the canonical claims with the local ed25519 device key (per the
-/// mission spec — production coauth flows register the device public
-/// key as `session_public_key` so this signature verifies upstream).
+/// the canonical claims with the ephemeral session-grant private key
+/// whose public half is stored by coauth as `session_public_key`.
 ///
 /// The `challenge` is freshly constructed by the caller, typically
 /// `format!("{ts}-{grant_id}")` where `ts` is the current Unix time.
@@ -1620,6 +1629,19 @@ mod tests {
         let header: Value = serde_json::from_slice(&header_bytes).unwrap();
         assert_eq!(header.get("alg").and_then(|v| v.as_str()), Some("EdDSA"));
         assert_eq!(header.get("typ").and_then(|v| v.as_str()), Some("JWT"));
+    }
+
+    #[test]
+    fn session_grant_private_key_pem_round_trips_to_signing_key() {
+        use ed25519_dalek::pkcs8::EncodePrivateKey as _;
+
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let pem = signing
+            .to_pkcs8_pem(Default::default())
+            .expect("encode pkcs8 pem");
+        let decoded = session_grant_signing_key_from_pem(&pem).expect("decode pkcs8 pem");
+
+        assert_eq!(decoded.to_bytes(), signing.to_bytes());
     }
 
     /// Empty inputs MUST be rejected — coauth's verifier treats blank

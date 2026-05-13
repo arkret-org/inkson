@@ -4,10 +4,12 @@ use crate::{
     api::ContrixApi,
     coauth::{
         CoauthApi, build_oidc_code_exchange_plan, build_oidc_scaffold_bundle,
-        capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-        extract_authorization_code_from_callback, extract_error_description_from_callback,
-        extract_error_from_callback, extract_state_from_callback, open_oidc_authorize_url,
-        persist_oidc_scaffold, resolve_principal_auth_server_url, restore_oidc_scaffold,
+        build_session_grant_introspection_proof_bundle, capture_current_browser_callback_url,
+        clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
+        extract_error_description_from_callback, extract_error_from_callback,
+        extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
+        resolve_principal_auth_server_url, restore_oidc_scaffold,
+        session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id},
     views::helpers::persist_config,
@@ -258,7 +260,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .session_grant
         .as_ref()
         .ok_or_else(|| "Server sign-in did not return a session grant.".to_owned())?;
-    let actor = login
+    let principal_did = login
         .viewer
         .as_ref()
         .map(|viewer| viewer.did.clone())
@@ -280,20 +282,49 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .auth_bridge_describe()
         .await
         .map_err(|error| format!("Principal auth bridge describe failed: {error}"))?;
+    let grant_id = grant
+        .id
+        .as_deref()
+        .ok_or_else(|| "Server sign-in did not return a session grant id.".to_owned())?;
+    let grant_audience = grant
+        .audience
+        .as_deref()
+        .ok_or_else(|| "Server sign-in did not return a session grant audience.".to_owned())?;
+    let session_grant_signing_key =
+        session_grant_signing_key_from_pem(&grant.session_private_key_pem).map_err(|error| {
+            format!("Server sign-in returned an invalid session grant key: {error}")
+        })?;
+    let proof = build_session_grant_introspection_proof_bundle(
+        grant_id,
+        &grant.grant_jwt,
+        grant_audience,
+        &session_grant_signing_key,
+    )
+    .map_err(|error| format!("Could not sign session grant proof: {error}"))?;
     let session = principal
-        .exchange_session_grant_at(
+        .exchange_session_grant_at_with_proof(
             &bridge.auth.session_grant_exchange_path,
             &grant.grant_jwt,
-            &actor,
+            &principal_did,
             &device,
+            Some(&proof),
         )
         .await
         .map_err(|error| format!("Principal session exchange failed: {error}"))?;
+    let actor = match principal
+        .clone()
+        .with_bearer(session.access_token.clone())
+        .account_me()
+        .await
+    {
+        Ok(account) if !account.did.trim().is_empty() => account.did,
+        _ => session.actor.clone(),
+    };
     let _ = clear_persisted_oidc_scaffold();
 
     Ok(CompletedLogin {
         principal_server_url: principal_target,
-        actor: session.actor,
+        actor,
         device_id: session.device_id,
         access_token: session.access_token,
     })

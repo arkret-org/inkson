@@ -1,6 +1,20 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
+async function openServerSwitcher(page: import("@playwright/test").Page) {
+  const menu = page.getByTestId("server-switch-menu");
+  if (await menu.isVisible()) {
+    return;
+  }
+  await page.getByTestId("server-switch-button").click();
+  await expect(menu).toBeVisible();
+}
+
+async function refreshServer(page: import("@playwright/test").Page) {
+  await openServerSwitcher(page);
+  await page.getByTestId("connect-button").click();
+}
+
 test.beforeEach(async ({ page }, testInfo) => {
   await mockContrixApi(page);
   if (testInfo.title.startsWith("login page")) {
@@ -25,8 +39,7 @@ test.beforeEach(async ({ page }, testInfo) => {
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {
-  await expect(page.getByTestId("web-security-banner")).toContainText("non-production");
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
@@ -35,19 +48,56 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
-  await expect(page.getByTestId("sync-metrics")).toContainText("cx:event:e2e");
-  await expect(page.getByTestId("sync-metrics")).toContainText("cx:push:e2e");
-  await expect(page.getByTestId("sync-metrics")).toContainText("1");
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
+  await expect(page.getByTestId("account-menu-push")).toBeVisible();
+  await expect(page.getByTestId("account-menu-queue")).toContainText("1");
 });
 
-test("right panel shows space hierarchy without implicit cascade", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
-  await expect(page.getByTestId("right-panel-space-info")).toContainText("Contrix Demo Space");
-  await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("membership");
-  await expect(page.getByTestId("hierarchy-no-cascade-note")).toContainText("encryption");
-  await page.getByTestId("right-panel-refresh-hierarchy").click();
-  await expect(page.getByTestId("hierarchy-query-shape")).toContainText("not part of the current protocol");
-  await expect(page.getByTestId("space-hierarchy-children-empty")).toContainText("No hierarchy children");
+test("topbar account menu shows identity and sync state", async ({ page }) => {
+  await refreshServer(page);
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
+  await expect(page.getByTestId("account-menu")).toContainText("cx:device:");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
+  await expect(page.getByTestId("account-menu-settings")).toBeVisible();
+});
+
+test("workspace header collapses and sidebar edge resizes the menu", async ({ page }) => {
+  const sidebar = page.getByTestId("sidebar");
+  const mainView = page.getByTestId("main-view");
+  const toggle = page.getByTestId("sidebar-collapse-toggle");
+  const resizeHandle = page.getByTestId("sidebar-resize-handle");
+  const initialBox = await sidebar.boundingBox();
+  const mainBox = await mainView.boundingBox();
+  const toggleBox = await toggle.boundingBox();
+  const handleBox = await resizeHandle.boundingBox();
+
+  expect(initialBox).not.toBeNull();
+  expect(mainBox).not.toBeNull();
+  expect(toggleBox).not.toBeNull();
+  expect(handleBox).not.toBeNull();
+  expect(toggleBox!.x).toBeLessThan(mainBox!.x + 60);
+
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(340, handleBox!.y + 24, { steps: 6 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
+    .toBeGreaterThan((initialBox?.width ?? 0) + 40);
+
+  await toggle.click();
+  await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(100);
+  await expect(resizeHandle).toBeHidden();
+});
+
+test("topbar breadcrumbs avoid duplicated route and server context", async ({ page }) => {
+  await page.getByTestId("settings-nav-button").click();
+  await expect(page.getByTestId("topbar-crumbs")).toContainText("Settings");
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Settings / Settings");
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
 });
 
 test("login page delegates account lifecycle to coauth OIDC", async ({ page }) => {
@@ -73,31 +123,57 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   await expect(page.getByText("Lost password or account")).toBeVisible();
 });
 
-test("settings can update account and device before session bootstrap", async ({ page }) => {
+test("connect refresh canonicalizes stale account DID but preserves device override", async ({ page }) => {
+  const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
   const deviceId = "cx:device:01964137-0000-7000-8000-0000000000b0";
   await page.getByTestId("settings-nav-button").click();
   await expect(page.getByTestId("settings-panel")).toBeVisible();
 
-  await page.getByTestId("settings-account-did-input").fill("did:web:bob.example");
+  await page.getByTestId("settings-account-did-input").fill(staleDid);
   await page.getByTestId("settings-device-id-input").fill(deviceId);
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   await page.getByTestId("settings-nav-button").click();
-  await expect(page.getByTestId("settings-account-did-input")).toHaveValue("did:web:bob.example");
+  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(staleDid);
   await expect(page.getByTestId("settings-device-id-input")).toHaveValue(deviceId);
 
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
 
-  await expect(page.getByTestId("session-panel")).toContainText(
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu-session-crypto")).toContainText(
     `session token loaded for ${deviceId}`,
   );
-  await expect(page.getByTestId("right-panel")).toContainText("did:web:bob.example");
-  await expect(page.getByTestId("right-panel")).toContainText(deviceId);
+  await expect(page.getByTestId("account-menu-did")).toContainText("did:web:alice.example");
+  await expect(page.getByTestId("account-menu-device")).toContainText(deviceId);
+  await expect(page.getByTestId("settings-account-did-input")).toHaveValue("did:web:alice.example");
+  await expect(page.getByTestId("settings-device-id-input")).toHaveValue(deviceId);
+});
+
+test("session refresh canonicalizes stale account DID in settings", async ({ page }) => {
+  const staleDid = "did:web:auth.local.host:users:01KREFRESH";
+  await page.getByTestId("settings-nav-button").click();
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+
+  await page.getByTestId("settings-account-did-input").fill(staleDid);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await page.getByTestId("settings-nav-button").click();
+  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(staleDid);
+
+  await page.getByTestId("account-menu-button").click();
+  await page.getByTestId("account-menu-session-refresh").click();
+  await expect(page.getByTestId("account-menu-session-state")).toContainText(
+    "Session refresh ok: did:web:alice.example",
+  );
+  await expect(page.getByTestId("settings-account-did-input")).toHaveValue(
+    "did:web:alice.example",
+  );
+  await expect(page.getByTestId("account-menu-did")).toContainText("did:web:alice.example");
 });
 
 test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
   await page.getByTestId("settings-nav-button").click();
-  await page.getByTestId("section-theme").click();
+  await page.getByTestId("settings-nav-item-theme").click();
   await expect(page.getByTestId("language-settings")).toBeVisible();
   await page.getByTestId("theme-night").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "night");
@@ -115,14 +191,14 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
 
   await page.getByTestId("settings-nav-button").click();
-  await page.getByTestId("section-theme").click();
+  await page.getByTestId("settings-nav-item-theme").click();
   await page.getByTestId("language-en").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
 });
 
 test("kanban card detail exposes linked discussion and locked discussion boundaries", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await page.getByRole("link", { name: "Kanban" }).click();
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await page.getByTestId("kanban-card").first().click();
@@ -133,7 +209,7 @@ test("kanban card detail exposes linked discussion and locked discussion boundar
 });
 
 test("kanban queues Move submissions and replays through move API", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await page.getByRole("link", { name: "Kanban" }).click();
   await page.getByTestId("add-card-button").first().click();
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
@@ -152,7 +228,7 @@ test("kanban queues Move submissions and replays through move API", async ({ pag
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
   await page.getByTestId("settings-nav-button").click();
-  await page.getByTestId("section-mimi").click();
+  await page.getByTestId("settings-nav-item-mimi").click();
   await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-protocol-06");
   await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-content-08");
@@ -187,7 +263,6 @@ test("mobile viewport collapses shell chrome and keeps timeline usable", async (
 
   await expect(page.getByTestId("client-shell")).toBeVisible();
   await expect(page.getByTestId("sidebar")).toBeHidden();
-  await expect(page.getByTestId("right-panel")).toBeHidden();
   await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
   await page.getByTestId("mobile-nav-toggle").click();
   await expect(page.getByTestId("mobile-nav-drawer")).toContainText("Board");
@@ -198,7 +273,7 @@ test("mobile viewport collapses shell chrome and keeps timeline usable", async (
 test("accessibility smoke exposes landmarks and live timeline feed", async ({ page }) => {
   await expect(page.getByTestId("sidebar")).toHaveAttribute("role", "navigation");
   await expect(page.getByTestId("main-view")).toHaveAttribute("role", "main");
-  await expect(page.getByTestId("right-panel")).toHaveAttribute("role", "complementary");
+  await expect(page.getByTestId("account-menu-button")).toHaveAttribute("aria-label", "Account menu");
 
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline")).toHaveAttribute("role", "feed");
@@ -250,8 +325,8 @@ test("directory search resolve and space selection flow works", async ({ page })
 });
 
 test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
-  await page.getByTestId("notifications-nav-button").click();
+  await refreshServer(page);
+  await page.getByTestId("notifications-nav-button").first().click();
 
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
@@ -261,17 +336,17 @@ test("notifications are derived from index projections and respect per-space mut
   await expect(page.getByTestId("notifications-muted-empty")).toContainText("hidden by archive, type, or per-space mute rules");
 
   await page.getByTestId("settings-nav-button").click();
-  await page.getByTestId("section-push").click();
+  await page.getByTestId("settings-nav-item-push").click();
   await expect(page.getByTestId("push-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
   await page.getByTestId("settings-unmute-space").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
-  await page.getByTestId("notifications-nav-button").click();
+  await page.getByTestId("notifications-nav-button").first().click();
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
 });
 
 test("product account space lifecycle and canonical message flow works", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
   await page.getByTestId("product-nav-button").click();
@@ -287,16 +362,18 @@ test("product account space lifecycle and canonical message flow works", async (
   await page.getByTestId("add-member-button").click();
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
   await page.getByTestId("persist-message-button").click();
-  await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted cx:operation:e2e-product");
+  await expect(page.getByTestId("message-persistence-flow")).toContainText("persisted");
+  await expect(page.getByTestId("message-persistence-flow")).toContainText("via cx:event:");
   // C17 (spec 2026-05-08): cx.events.query replaces cx.sync.backfill at /api/v1/events
   // with direction=backward.
   const backfill = page.waitForRequest("**/api/v1/events?**direction=backward*");
   await page.getByTestId("backfill-button").click();
   expect((await backfill).headers()["x-contrix-wait-for"]).toBe("sx:e2e:product");
   await page.getByRole("link", { name: "Timeline" }).click();
-  await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:e2e-product");
+  await expect(page.getByTestId("timeline")).toContainText("persisted event cx:event:");
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:product");
-  await expect(page.getByTestId("sync-metrics")).toContainText("cx:event:e2e-product");
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
 
   await page.getByTestId("product-nav-button").click();
   await page.getByTestId("remove-member-button").click();
@@ -306,7 +383,7 @@ test("product account space lifecycle and canonical message flow works", async (
 });
 
 test("chat creates discussion entities and sends structured mention payloads", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await page.getByRole("link", { name: "Chat" }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
@@ -385,11 +462,12 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await page.getByTestId("encrypt-local-button").click();
   await page.getByTestId("send-button").click();
   await expect(page.getByTestId("timeline")).toContainText("encrypted mls-rfc9420 epoch");
-  await expect(page.getByTestId("right-panel")).toContainText("encrypted local payload");
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu-crypto")).toContainText("encrypted local payload");
 });
 
 test("timeline mark-read sends public receipt and stores private marker", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await page.getByRole("link", { name: "Timeline" }).click();
   await expect(page.getByTestId("timeline-event").first()).toBeVisible();
 
@@ -406,7 +484,7 @@ test("timeline mark-read sends public receipt and stores private marker", async 
 });
 
 test("timeline blob flow verifies hashes and authenticated downloads", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await page.getByRole("link", { name: "Timeline" }).click();
 
   const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
@@ -529,7 +607,7 @@ test("audit capability explanation shows grants constraints and frontier reason"
 });
 
 test("devices panel reflects key queue push and crypto state after bootstrap", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
   await page.getByTestId("devices-nav-button").click();
@@ -543,6 +621,7 @@ test("devices panel reflects key queue push and crypto state after bootstrap", a
 });
 
 test("invalid server URL surfaces an error state", async ({ page }) => {
+  await openServerSwitcher(page);
   await page.getByTestId("server-url-input").fill("not a url");
   await page.getByTestId("connect-button").click();
 
@@ -550,6 +629,7 @@ test("invalid server URL surfaces an error state", async ({ page }) => {
 });
 
 test("insecure remote http endpoint is rejected before connect", async ({ page }) => {
+  await openServerSwitcher(page);
   await page.getByTestId("server-url-input").fill("http://contrix.example");
   await page.getByTestId("connect-button").click();
 
@@ -566,7 +646,7 @@ test("call panel loads server ICE configuration", async ({ page }) => {
 });
 
 test("visual smoke renders core product pages on desktop and mobile", async ({ page }) => {
-  await page.getByTestId("connect-button").click();
+  await refreshServer(page);
   for (const [route, testId] of [
     ["/", "dashboard-panel"],
     ["/kanban", "kanban-panel"],

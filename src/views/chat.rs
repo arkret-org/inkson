@@ -58,7 +58,7 @@ pub fn ChatPanel(
     token: Signal<String>,
     selected_space: String,
     sync_cursor: Signal<String>,
-    repo_state: Signal<String>,
+    frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut channels = use_signal(|| {
@@ -347,7 +347,7 @@ pub fn ChatPanel(
                                                         event_id: Some(submitted.event_id.clone()),
                                                     });
                                                     selected_channel.set(flow_id.clone());
-                                                    repo_state.set(submitted.event_id.clone());
+                                                    frontier_state.set(submitted.event_id.clone());
                                                     sync_cursor.set(submitted.sync_token.clone());
                                                     {
                                                         let mut store = state_store.write();
@@ -533,7 +533,7 @@ pub fn ChatPanel(
                                                     found.event_id = Some(resp.event_id.clone());
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
-                                                repo_state.set(resp.event_id.clone());
+                                                frontier_state.set(resp.event_id.clone());
                                                 status_msg.set(format!(
                                                     "message event accepted {}",
                                                     op.operation_id
@@ -698,7 +698,7 @@ pub fn ChatPanel(
                                                     );
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
-                                                repo_state.set(resp.event_id.clone());
+                                                frontier_state.set(resp.event_id.clone());
                                                 status_msg.set(format!(
                                                     "E2EE message event accepted {}",
                                                     msg_op.operation_id

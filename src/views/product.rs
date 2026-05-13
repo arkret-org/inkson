@@ -22,7 +22,7 @@ pub fn ProductPanel(
     mut timeline: Signal<Vec<TimelineEvent>>,
     mut status: Signal<String>,
     mut sync_cursor: Signal<String>,
-    mut repo_state: Signal<String>,
+    mut frontier_state: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut member_did = use_signal(|| "did:web:bob.example".to_owned());
@@ -546,7 +546,7 @@ pub fn ProductPanel(
                                                 match api.submit_operation_event(&op).await {
                                                 Ok(sent) => {
                                                     sync_cursor.set(sent.sync_token.clone());
-                                                    repo_state.set(sent.event_id.clone());
+                                                    frontier_state.set(sent.event_id.clone());
                                                     {
                                                         let mut store = state_store.write();
                                                         store.save_sync_cursor(sent.sync_token.clone());

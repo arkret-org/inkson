@@ -219,7 +219,7 @@ pub fn SpaceAdminPanel(
     token: Signal<String>,
     selected_space: String,
     sync_cursor: Signal<String>,
-    repo_state: Signal<String>,
+    frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut space_name = use_signal(|| String::new());
@@ -1030,7 +1030,7 @@ pub fn SpaceAdminPanel(
                                                                 operation_id: Some(op.operation_id.clone()),
                                                                 event_id: Some(submitted.event_id.clone()),
                                                             });
-                                                            repo_state.set(submitted.event_id.clone());
+                                                            frontier_state.set(submitted.event_id.clone());
                                                             sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
@@ -1379,7 +1379,7 @@ pub fn SpaceAdminPanel(
                                                                         row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
-                                                                repo_state.set(submitted.event_id.clone());
+                                                                frontier_state.set(submitted.event_id.clone());
                                                                 sync_cursor.set(submitted.sync_token.clone());
                                                                 {
                                                                     let mut store = state_store.write();
@@ -1447,7 +1447,7 @@ pub fn SpaceAdminPanel(
                                                                         row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
-                                                                repo_state.set(submitted.event_id.clone());
+                                                                frontier_state.set(submitted.event_id.clone());
                                                                 sync_cursor.set(submitted.sync_token.clone());
                                                                 {
                                                                     let mut store = state_store.write();
@@ -1944,44 +1944,6 @@ pub fn SpaceAdminPanel(
                         strong { "Sovereign DID policy" }
                         span { "cx.sovereign.did_policy" }
                         div { class: "muted", "高安全部署：限制可接受的 DID method / resolver trust" }
-                    }
-                }
-            }
-
-            // Space hierarchy — models/space-hierarchy.md
-            // 4 canonical events for parent/child + lifecycle:
-            //   cx.space.child  — 声明 child Space
-            //   cx.space.parent — 声明 parent Space（双向 declaration）
-            //   cx.space.upgrade — 升级 schema profile / reducer profile
-            //   cx.space.lifecycle.set — active / archived / suspended / draft 状态切换
-            div { class: "event", "data-testid": "space-hierarchy",
-                div { class: "event-head",
-                    span { "Space hierarchy & lifecycle" }
-                    span { "models/space-hierarchy.md" }
-                }
-                div { class: "muted",
-                    "Parent / child Space 关系可形成层级或图状组织。Child security-boundary Space 仍是独立边界 — 默认不级联 membership / capability / encryption。任何继承 MUST 由 child Space 显式声明。"
-                }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { "Child link" }
-                        span { "cx.space.child" }
-                        div { class: "muted", "声明子 Space" }
-                    }
-                    div { class: "metric",
-                        strong { "Parent link" }
-                        span { "cx.space.parent" }
-                        div { class: "muted", "声明父 Space" }
-                    }
-                    div { class: "metric",
-                        strong { "Schema upgrade" }
-                        span { "cx.space.upgrade" }
-                        div { class: "muted", "升级 reducer / schema profile（不破坏现有 frontier）" }
-                    }
-                    div { class: "metric",
-                        strong { "Lifecycle state" }
-                        span { "cx.space.lifecycle.set" }
-                        div { class: "muted", "active / archived / suspended / draft" }
                     }
                 }
             }

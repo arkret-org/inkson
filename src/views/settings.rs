@@ -1,12 +1,15 @@
 use dioxus::prelude::*;
+use dioxus_router::{Link, hooks::use_route};
 use serde_json::json;
 
 use crate::{
+    components::{HelpTip, UiIcon},
     config::LocalConfigStore,
     i18n::Locale,
     key_backup::build_key_backup_put_body,
     local_state::LocalStateStore,
     models::AccountDataSetOutcome,
+    routes::Route,
     views::helpers::{authed_api, persist_config},
     workflows::{WorkflowStage, blocked_release_workflows, production_release_workflows},
 };
@@ -80,6 +83,139 @@ enum SettingsSection {
     Release,
 }
 
+impl SettingsSection {
+    fn from_slug(slug: Option<&str>) -> Self {
+        match slug.unwrap_or("server") {
+            "storage" => Self::Storage,
+            "encryption" => Self::Encryption,
+            "mimi" => Self::Mimi,
+            "push" => Self::Push,
+            "privacy" => Self::Privacy,
+            "theme" => Self::Theme,
+            "release" => Self::Release,
+            _ => Self::Server,
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Server => "server",
+            Self::Storage => "storage",
+            Self::Encryption => "encryption",
+            Self::Mimi => "mimi",
+            Self::Push => "push",
+            Self::Privacy => "privacy",
+            Self::Theme => "theme",
+            Self::Release => "release",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Server => "Account & server",
+            Self::Storage => "Data & sync",
+            Self::Encryption => "Security & recovery",
+            Self::Mimi => "Integrations & agents",
+            Self::Push => "Notifications",
+            Self::Privacy => "Privacy & sharing",
+            Self::Theme => "Appearance & locale",
+            Self::Release => "Diagnostics",
+        }
+    }
+
+    fn eyebrow(self) -> &'static str {
+        match self {
+            Self::Server => "Account",
+            Self::Storage => "Persistence",
+            Self::Encryption => "Security",
+            Self::Mimi => "Integrations",
+            Self::Push => "Delivery",
+            Self::Privacy => "Privacy",
+            Self::Theme => "Preferences",
+            Self::Release => "Diagnostics",
+        }
+    }
+
+    fn nav_summary(self) -> &'static str {
+        match self {
+            Self::Server => "Profile, identity, principal context",
+            Self::Storage => "Sync, channels, export, local stores",
+            Self::Encryption => "Devices, recovery, keys, encryption",
+            Self::Mimi => "Authorized applets and agent sessions",
+            Self::Push => "Notification rules, routes, quiet hours",
+            Self::Privacy => "Disclosure, blocklist, read receipts",
+            Self::Theme => "Theme, language, accessibility, shortcuts",
+            Self::Release => "Activity, audit, advanced / dev",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Server => {
+                "Profile, identity, principal context, and delegated service configuration."
+            }
+            Self::Storage => {
+                "Persistence surfaces, sync channels, and export risk indicators for this client."
+            }
+            Self::Encryption => {
+                "Device trust, recovery posture, MLS defaults, and key backup workflows."
+            }
+            Self::Mimi => "Connected applets, agent sessions, and MIMI interoperability controls.",
+            Self::Push => "Push registration, routing state, and per-Space delivery controls.",
+            Self::Privacy => {
+                "Actor-private preferences, disclosure policy, and selective sharing rules."
+            }
+            Self::Theme => {
+                "Theme, locale, and client-facing defaults that stay private to this actor."
+            }
+            Self::Release => {
+                "Release gates, workflow blockers, and advanced diagnostics for the current build."
+            }
+        }
+    }
+}
+
+const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[SettingsSection::Encryption];
+const SETTINGS_DELIVERY_GROUP: &[SettingsSection] =
+    &[SettingsSection::Push, SettingsSection::Privacy];
+const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
+    &[SettingsSection::Theme, SettingsSection::Storage];
+const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
+const SETTINGS_DIAGNOSTICS_GROUP: &[SettingsSection] = &[SettingsSection::Release];
+const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
+    (
+        "Account",
+        "Principal identity, profile, and delegated service boundaries.",
+        SETTINGS_ACCOUNT_GROUP,
+    ),
+    (
+        "Security",
+        "Device identity, recovery, and local encryption posture.",
+        SETTINGS_SECURITY_GROUP,
+    ),
+    (
+        "Delivery & privacy",
+        "Push behavior and actor-private disclosure controls.",
+        SETTINGS_DELIVERY_GROUP,
+    ),
+    (
+        "Client",
+        "Appearance, locale, storage, and sync surfaces.",
+        SETTINGS_CLIENT_GROUP,
+    ),
+    (
+        "Integrations",
+        "Applets, agents, and interop-specific controls.",
+        SETTINGS_INTEGRATIONS_GROUP,
+    ),
+    (
+        "Diagnostics",
+        "Release gates, audit, and advanced build diagnostics.",
+        SETTINGS_DIAGNOSTICS_GROUP,
+    ),
+];
+
 #[component]
 pub fn SettingsPanel(
     mut base_url: Signal<String>,
@@ -95,7 +231,8 @@ pub fn SettingsPanel(
     status: Signal<String>,
     push_ready: bool,
 ) -> Element {
-    let mut active_section = use_signal(|| SettingsSection::Server);
+    let route = use_route::<Route>();
+    let active_section = SettingsSection::from_slug(route.settings_section());
     let mut presence_visible = use_signal(|| true);
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
@@ -112,7 +249,6 @@ pub fn SettingsPanel(
         use_signal(|| "cx:backup:01964137-0000-7000-8000-000000000000".to_owned());
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
-    let mut session_state = use_signal(|| "Session idle".to_owned());
     let workflows = production_release_workflows();
     let blocked_count = blocked_release_workflows().len();
     let muted_spaces = state_store.read().muted_spaces();
@@ -132,257 +268,181 @@ pub fn SettingsPanel(
     } else {
         "No authenticated device session".to_owned()
     };
-    let settings_pages = [
-        ("Profile", "Server"),
-        ("Identity", "Server"),
-        ("Disclosure policy", "Privacy"),
-        ("Account lifecycle", "Privacy"),
-        ("Devices & keys", "Encryption"),
-        ("Sessions", "Server"),
-        ("Recovery", "Encryption"),
-        ("Encryption", "Encryption"),
-        ("Notification rules", "Push"),
-        ("Push routes", "Push"),
-        ("Do not disturb", "Push"),
-        ("Personal blocklist", "Privacy"),
-        ("Read receipts", "Privacy"),
-        ("Theme / font", "Theme"),
-        ("Language & TZ", "Theme"),
-        ("Accessibility", "Theme"),
-        ("Shortcuts", "Theme"),
-        ("Bound services", "Server"),
-        ("Sync & channels", "Storage"),
-        ("Authorized applets", "MIMI"),
-        ("Agent sessions", "MIMI"),
-        ("Export", "Storage"),
-        ("My activity / audit", "Release"),
-        ("Advanced / Dev", "Release"),
-    ];
+    let navigation_groups = SETTINGS_NAV_GROUPS.iter().copied();
 
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
-            // Section selector
-            div { class: "settings-header-card",
-                div { class: "event-head",
-                    span { "Settings" }
-                    span { "Principal Server context" }
-                }
-                div { class: "settings-page-grid", "data-testid": "settings-page-map",
-                    for (name, section) in settings_pages {
-                        div { class: "settings-page-chip",
-                            strong { "{name}" }
-                            span { "{section}" }
+            div { class: "settings-shell",
+                aside { class: "settings-sidebar-column",
+                    div { class: "settings-overview-card",
+                        div { class: "event-head",
+                            span { "Settings" }
+                            span { if has_session { "signed in" } else { "local only" } }
+                        }
+                        div { class: "settings-overview-list",
+                            div { class: "settings-overview-row",
+                                span { "Principal" }
+                                strong { "{principal_label}" }
+                            }
+                            div { class: "settings-overview-row",
+                                span { "Server" }
+                                strong { "{base_url}" }
+                            }
+                            div { class: "settings-overview-row",
+                                span { "Device" }
+                                strong { "{device_label}" }
+                            }
+                            div { class: "settings-overview-row",
+                                span { "Push" }
+                                strong { "{push_label}" }
+                            }
                         }
                     }
-                }
-            }
-
-            div { class: "actions settings-section-tabs", "data-testid": "settings-sections",
-                button {
-                    class: if active_section() == SettingsSection::Server { "primary" } else { "secondary" },
-                    "data-testid": "section-server",
-                    onclick: move |_| active_section.set(SettingsSection::Server),
-                    "Server"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Storage { "primary" } else { "secondary" },
-                    "data-testid": "section-storage",
-                    onclick: move |_| active_section.set(SettingsSection::Storage),
-                    "Storage"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Encryption { "primary" } else { "secondary" },
-                    "data-testid": "section-encryption",
-                    onclick: move |_| active_section.set(SettingsSection::Encryption),
-                    "Encryption"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Mimi { "primary" } else { "secondary" },
-                    "data-testid": "section-mimi",
-                    onclick: move |_| active_section.set(SettingsSection::Mimi),
-                    "MIMI"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Push { "primary" } else { "secondary" },
-                    "data-testid": "section-push",
-                    onclick: move |_| active_section.set(SettingsSection::Push),
-                    "Push"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Privacy { "primary" } else { "secondary" },
-                    "data-testid": "section-privacy",
-                    onclick: move |_| active_section.set(SettingsSection::Privacy),
-                    "Privacy"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Theme { "primary" } else { "secondary" },
-                    "data-testid": "section-theme",
-                    onclick: move |_| active_section.set(SettingsSection::Theme),
-                    "Theme"
-                }
-                button {
-                    class: if active_section() == SettingsSection::Release { "primary" } else { "secondary" },
-                    "data-testid": "section-release",
-                    onclick: move |_| active_section.set(SettingsSection::Release),
-                    "Release"
-                }
-            }
-
-            // ── Server / Account settings ────────────────────────
-            if active_section() == SettingsSection::Server {
-                div { class: "event", "data-testid": "transport-invariant",
-                    div { class: "event-head",
-                        span { "Principal Context" }
-                        span { if has_session { "authenticated" } else { "not signed in" } }
-                    }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "Principal Server" }
-                            span { "{base_url}" }
-                            div { class: "muted", "delegated service boundary" }
-                        }
-                        div { class: "metric",
-                            strong { "Principal" }
-                            span { "{principal_label}" }
-                            div { class: "muted", if has_session { "signs Events; server cannot forge" } else { "loaded after server auth" } }
-                        }
-                        div { class: "metric",
-                            strong { "Device" }
-                            span { "{device_label}" }
-                            div { class: "muted", if has_session { "local client identity" } else { "not bound yet" } }
-                        }
-                        div { class: "metric",
-                            strong { "Organization" }
-                            span { "None selected" }
-                            div { class: "muted", "Organizations are principals, not servers" }
-                        }
-                    }
-                    div { class: "actions",
-                        span { class: "badge green", "HTTP/JSON" }
-                        span { class: "badge blue", "v1 core" }
-                    }
-                }
-
-                div { class: "event", "data-testid": "bound-services-settings",
-                    div { class: "event-head", span { "Bound Services" } span { "Principal Server delegated" } }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "soland" }
-                            span { "events, sync, projections" }
-                        }
-                        div { class: "metric",
-                            strong { "coauth" }
-                            span { "auth bridge / session grant" }
-                        }
-                        div { class: "metric",
-                            strong { "chime" }
-                            span { "push wakeups, redacted by default" }
-                        }
-                        div { class: "metric",
-                            strong { "applet runtime" }
-                            span { "capability-scoped extensions" }
-                        }
-                    }
-                }
-
-                div { class: "event", "data-testid": "server-settings",
-                    div { class: "event-head", span { "Principal Server" } span { "client configuration" } }
-                    label { "Server URL" }
-                    input {
-                        "data-testid": "settings-server-url-input",
-                        value: "{base_url}",
-                        oninput: move |event| {
-                            let value = event.value();
-                            base_url.set(value.clone());
-                            token.set(String::new());
-                            persist_config(config_store, value, account_did(), device_id(), String::new());
-                        }
-                    }
-                    label { "Account DID" }
-                    input {
-                        "data-testid": "settings-account-did-input",
-                        value: "{account_did}",
-                        oninput: move |event| {
-                            let value = event.value();
-                            account_did.set(value.clone());
-                            persist_config(config_store, base_url(), value, device_id(), token());
-                        }
-                    }
-                    label { "Device ID" }
-                    input {
-                        "data-testid": "settings-device-id-input",
-                        value: "{device_id}",
-                        oninput: move |event| {
-                            let value = event.value();
-                            device_id.set(value.clone());
-                            persist_config(config_store, base_url(), account_did(), value, token());
-                        }
-                    }
-                }
-                div { class: "event", "data-testid": "session-panel",
-                    div { class: "event-head", span { "Session" } span { "bearer" } }
-                    div { class: "muted", "data-testid": "session-token-state",
-                        if token().is_empty() { "No token" } else { "Token loaded" }
-                    }
-                    div { "data-testid": "session-crypto-state", "{crypto_state}" }
-                    div { "data-testid": "session-state", "{session_state}" }
-                    div { class: "actions",
-                        button {
-                            class: "secondary",
-                            "data-testid": "session-refresh-button",
-                            disabled: !has_session,
-                            onclick: {
-                                let base = base_url();
-                                move |_| {
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    session_state.set("refreshing session".to_owned());
-                                    spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.account_me().await {
-                                                Ok(account) => session_state.set(format!("session refresh ok: {}", account.did)),
-                                                Err(error) => session_state.set(format!("session refresh failed: {error}")),
-                                            },
-                                            Err(error) => session_state.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
+                    for (group_title, group_copy, sections) in navigation_groups {
+                        div { class: "settings-nav-group",
+                            div { class: "settings-nav-group__head",
+                                div { class: "settings-nav-group__title-row",
+                                    h2 { "{group_title}" }
+                                    HelpTip { text: group_copy.to_owned() }
                                 }
-                            },
-                            "Refresh"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "session-logout-button",
-                            disabled: !has_session,
-                            onclick: move |_| {
-                                let base = base_url();
-                                let actor = account_did();
-                                let device = device_id();
-                                let api_token = token();
-                                session_state.set("logging out".to_owned());
-                                spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.logout().await {
-                                            Ok(response) => {
-                                                token.set(String::new());
-                                                persist_config(config_store, base, actor, device, String::new());
-                                                session_state.set(format!("logout ok: revoked {}", response.revoked));
-                                            }
-                                            Err(error) => session_state.set(format!("logout failed: {error}")),
-                                        },
-                                        Err(error) => session_state.set(format!("invalid server URL: {error}")),
+                            }
+                            div { class: "settings-nav-list",
+                                for section in sections.iter().copied() {
+                                    Link {
+                                        class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
+                                        "data-testid": "settings-nav-item-{section.slug()}",
+                                        "aria-current": if active_section == section { "page" } else { "false" },
+                                        to: Route::SettingsSection { section: section.slug().to_owned() },
+                                        strong { "{section.label()}" }
+                                        span { "{section.nav_summary()}" }
                                     }
-                                });
-                            },
-                            "Log out"
+                                }
+                            }
                         }
                     }
                 }
-            }
+                section { class: "settings-content-column",
+                    div { class: "event settings-content-hero",
+                        div { class: "event-head",
+                            span { "{active_section.eyebrow()}" }
+                            span { if has_session { "authenticated" } else { "local state" } }
+                        }
+                        div { class: "settings-content-title-row",
+                            h2 { class: "settings-content-title", "{active_section.label()}" }
+                            HelpTip { text: active_section.description().to_owned() }
+                        }
+                        div { class: "actions",
+                            if active_section == SettingsSection::Server {
+                                span { class: "badge green", "Principal Server context" }
+                            }
+                            if active_section == SettingsSection::Encryption {
+                                span { class: "badge amber", "{crypto_state}" }
+                            }
+                            if active_section == SettingsSection::Push {
+                                span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
+                            }
+                        }
+                    }
 
-            // ── Storage section ──────────────────────────────────
-            if active_section() == SettingsSection::Storage {
-                div { class: "event", "data-testid": "storage-table",
+                    // ── Server / Account settings ────────────────────────
+                    if active_section == SettingsSection::Server {
+                        div { class: "settings-card-grid",
+                            div { class: "event settings-card-span-2", "data-testid": "transport-invariant",
+                                div { class: "event-head",
+                                    span { "Principal Context" }
+                                    span { if has_session { "authenticated" } else { "not signed in" } }
+                                }
+                                div { class: "metric-grid",
+                                    div { class: "metric",
+                                        strong { "Principal Server" }
+                                        span { "{base_url}" }
+                                        div { class: "muted", "delegated service boundary" }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Principal" }
+                                        span { "{principal_label}" }
+                                        div { class: "muted", if has_session { "signs Events; server cannot forge" } else { "loaded after server auth" } }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Device" }
+                                        span { "{device_label}" }
+                                        div { class: "muted", if has_session { "local client identity" } else { "not bound yet" } }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Organization" }
+                                        span { "None selected" }
+                                        div { class: "muted", "Organizations are principals, not servers" }
+                                    }
+                                }
+                                div { class: "actions",
+                                    span { class: "badge green", "HTTP/JSON" }
+                                    span { class: "badge blue", "v1 core" }
+                                }
+                            }
+
+                            div { class: "event", "data-testid": "bound-services-settings",
+                                div { class: "event-head", span { "Bound Services" } span { "Principal Server delegated" } }
+                                div { class: "metric-grid",
+                                    div { class: "metric",
+                                        strong { "soland" }
+                                        span { "events, sync, projections" }
+                                    }
+                                    div { class: "metric",
+                                        strong { "coauth" }
+                                        span { "auth bridge / session grant" }
+                                    }
+                                    div { class: "metric",
+                                        strong { "chime" }
+                                        span { "push wakeups, redacted by default" }
+                                    }
+                                    div { class: "metric",
+                                        strong { "applet runtime" }
+                                        span { "capability-scoped extensions" }
+                                    }
+                                }
+                            }
+
+                            div { class: "event", "data-testid": "server-settings",
+                                div { class: "event-head", span { "Principal Server" } span { "client configuration" } }
+                                label { "Server URL" }
+                                input {
+                                    "data-testid": "settings-server-url-input",
+                                    value: "{base_url}",
+                                    oninput: move |event| {
+                                        let value = event.value();
+                                        base_url.set(value.clone());
+                                        token.set(String::new());
+                                        persist_config(config_store, value, account_did(), device_id(), String::new());
+                                    }
+                                }
+                                label { "Account DID" }
+                                input {
+                                    "data-testid": "settings-account-did-input",
+                                    value: "{account_did}",
+                                    oninput: move |event| {
+                                        let value = event.value();
+                                        account_did.set(value.clone());
+                                        persist_config(config_store, base_url(), value, device_id(), token());
+                                    }
+                                }
+                                label { "Device ID" }
+                                input {
+                                    "data-testid": "settings-device-id-input",
+                                    value: "{device_id}",
+                                    oninput: move |event| {
+                                        let value = event.value();
+                                        device_id.set(value.clone());
+                                        persist_config(config_store, base_url(), account_did(), value, token());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Storage section ──────────────────────────────────
+                    if active_section == SettingsSection::Storage {
+                        div { class: "settings-card-grid",
+                            div { class: "event", "data-testid": "storage-table",
                     div { class: "event-head", span { "Local Stores" } span { "status" } }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -404,8 +464,8 @@ pub fn SettingsPanel(
                     }
                 }
 
-                // Storage risk indicators
-                div { class: "event", "data-testid": "storage-risks",
+                            // Storage risk indicators
+                            div { class: "event", "data-testid": "storage-risks",
                     div { class: "event-head", span { "Storage Risks" } span { "warnings" } }
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
@@ -447,11 +507,13 @@ pub fn SettingsPanel(
                         }
                     }
                 }
-            }
+                        }
+                    }
 
-            // ── Encryption settings ──────────────────────────────
-            if active_section() == SettingsSection::Encryption {
-                div { class: "event", "data-testid": "encryption-settings",
+                    // ── Encryption settings ──────────────────────────────
+                    if active_section == SettingsSection::Encryption {
+                        div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "encryption-settings",
                     div { class: "event-head", span { "Encryption" } span { "MLS / E2EE" } }
                     label { "MLS Group Policy" }
                     select {
@@ -557,11 +619,13 @@ pub fn SettingsPanel(
                     }
                     div { class: "muted", "Contract: cx.schema.key_backup.v1 over /api/v1/keys/backups/*." }
                 }
-            }
+                        }
+                    }
 
-            // ── MIMI interop facade ──────────────────────────────
-            if active_section() == SettingsSection::Mimi {
-                div { class: "event", "data-testid": "mimi-interop-panel",
+                    // ── MIMI interop facade ──────────────────────────────
+                    if active_section == SettingsSection::Mimi {
+                        div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "mimi-interop-panel",
                     div { class: "event-head", span { "MIMI Provider Facade" } span { "interop projection" } }
                     div { class: "muted", "Profile: cx.profile.mimi_interop.v1" }
                     div { class: "metric-grid", "data-testid": "mimi-draft-pinning",
@@ -750,11 +814,13 @@ pub fn SettingsPanel(
                         pre { "{mimi_receipt}" }
                     }
                 }
-            }
+                        }
+                    }
 
-            // ── Push notification settings ───────────────────────
-            if active_section() == SettingsSection::Push {
-                div { class: "event", "data-testid": "push-settings",
+                    // ── Push notification settings ───────────────────────
+                    if active_section == SettingsSection::Push {
+                        div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "push-settings",
                     div { class: "event-head", span { "Push Notifications" } span { "configure" } }
                     div { class: "muted", "Push notification preferences and gateway registration." }
                     div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
@@ -875,11 +941,13 @@ pub fn SettingsPanel(
                         }
                     }
                 }
-            }
+                        }
+                    }
 
-            // ── Privacy settings ─────────────────────────────────
-            if active_section() == SettingsSection::Privacy {
-                div { class: "event", "data-testid": "privacy-settings",
+                    // ── Privacy settings ─────────────────────────────────
+                    if active_section == SettingsSection::Privacy {
+                        div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "privacy-settings",
                     div { class: "event-head", span { "Privacy" } span { "visibility controls" } }
                     label {
                         input {
@@ -1134,7 +1202,7 @@ pub fn SettingsPanel(
                 //                                       claim presentation.
                 //   cx.identity.presentation_response — actor satisfies the request
                 //                                       with a verifiable presentation.
-                div { class: "event", "data-testid": "progressive-disclosure",
+                            div { class: "event", "data-testid": "progressive-disclosure",
                     div { class: "event-head",
                         span { "Progressive disclosure" }
                         span { "identity-handles §16" }
@@ -1173,43 +1241,36 @@ pub fn SettingsPanel(
 
                 // Personal blocklist — discovery/client-preferences.md
                 // Block 是 actor-private filter，不影响其它 actor 客户端。
-                div { class: "event", "data-testid": "personal-blocklist",
+                            div { class: "event", "data-testid": "personal-blocklist",
                     div { class: "event-head",
                         span { "Personal blocklist" }
-                        span { "actor-private filter" }
-                    }
-                    div { class: "muted",
-                        "本地屏蔽列表只影响你客户端的渲染。需要全 Space 拦截要走 Moderation policy。写入路径：cx.account.blocklist。"
+                        HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use cx.account.blocklist." }
                     }
                     div { class: "actions",
                         button { class: "secondary", "data-testid": "blocklist-edit", "编辑 blocklist" }
                         span { class: "badge", "2 个 actor 已屏蔽" }
                     }
                 }
-            }
 
-            // ── Move-flow PoC: Grant consent (C10.D 续 2026-05-09 十八轮) ────
-            // First user-facing button on the Move/Anchor pipeline. Builds a
-            // cx.consent.grant Move via move_builder, signs with a deterministic
-            // demo ed25519 key (TODO real-key-management), POSTs /api/v1/moves.
-            // Direct-event endpoints for messages / reactions / etc. stay in
-            // place per spec — only events that declare a `cell_family` move
-            // here.
-            if active_section() == SettingsSection::Privacy {
-                crate::views::consent_demo::ConsentGrantDemoCard {
-                    base_url,
-                    token,
-                    state_store,
-                }
-            }
+                        // ── Move-flow PoC: Grant consent (C10.D 续 2026-05-09 十八轮) ────
+                        // First user-facing button on the Move/Anchor pipeline. Builds a
+                        // cx.consent.grant Move via move_builder, signs with a deterministic
+                        // demo ed25519 key (TODO real-key-management), POSTs /api/v1/moves.
+                        // Direct-event endpoints for messages / reactions / etc. stay in
+                        // place per spec — only events that declare a `cell_family` move
+                        // here.
+                        crate::views::consent_demo::ConsentGrantDemoCard {
+                            base_url,
+                            token,
+                            state_store,
+                        }
 
-            // ── Account Data (actor-private View preferences) ─────
-            // models/views.md §2.6 + identity/account-lifecycle.md
-            // 共享 View 改 filter / sort / columns 写 cx.view.update（所有人可见）；
-            // 个人 View 偏好（折叠状态、临时 filter、列宽）写 cx.account_data.set
-            // 到 actor-private channel，不广播到 Space。
-            if active_section() == SettingsSection::Privacy {
-                div { class: "event", "data-testid": "account-data-prefs",
+                        // ── Account Data (actor-private View preferences) ─────
+                        // models/views.md §2.6 + identity/account-lifecycle.md
+                        // 共享 View 改 filter / sort / columns 写 cx.view.update（所有人可见）；
+                        // 个人 View 偏好（折叠状态、临时 filter、列宽）写 cx.account_data.set
+                        // 到 actor-private channel，不广播到 Space。
+                        div { class: "event", "data-testid": "account-data-prefs",
                     div { class: "event-head",
                         span { "Account Data (actor-private)" }
                         span { "cx.account_data.set" }
@@ -1244,42 +1305,50 @@ pub fn SettingsPanel(
                         button { class: "secondary", "data-testid": "account-data-clear", "清空 actor-private 偏好" }
                     }
                 }
-            }
+                        }
+                    }
 
-            // ── Theme selector ───────────────────────────────────
-            if active_section() == SettingsSection::Theme {
-                div { class: "event", "data-testid": "theme-settings",
+                    // ── Theme selector ───────────────────────────────────
+                    if active_section == SettingsSection::Theme {
+                        div { class: "settings-card-grid",
+                            div { class: "event", "data-testid": "theme-settings",
                     div { class: "event-head", span { "Theme" } span { "appearance" } }
                     div { class: "actions",
                         button {
-                            class: if theme() == "light" { "primary" } else { "secondary" },
+                            class: if theme() == "light" { "btn icon sm primary" } else { "btn icon sm ghost" },
                             "data-testid": "theme-light",
+                            title: "Light theme",
+                            "aria-label": "Light theme",
                             onclick: move |_| {
                                 theme.set("light".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "light");
                                 status.set("Theme set to light".to_owned());
                             },
-                            "Light"
+                            UiIcon { name: "sun" }
                         }
                         button {
-                            class: if theme() == "night" { "primary" } else { "secondary" },
+                            class: if theme() == "night" { "btn icon sm primary" } else { "btn icon sm ghost" },
                             "data-testid": "theme-night",
+                            title: "Night theme",
+                            "aria-label": "Night theme",
                             onclick: move |_| {
                                 theme.set("night".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "night");
                                 status.set("Theme set to night".to_owned());
                             },
-                            "Night"
+                            UiIcon { name: "moon" }
                         }
                         button {
-                            class: if theme() == "system" { "primary" } else { "secondary" },
+                            class: if theme() == "system" { "btn icon sm primary" } else { "btn icon sm ghost" },
                             "data-testid": "theme-system",
+                            title: "System theme",
+                            "aria-label": "System theme",
                             onclick: move |_| {
                                 theme.set("system".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "system");
                                 status.set("Theme set to system".to_owned());
                             },
-                            "System"
+                            UiIcon { name: "monitor" }
                         }
                     }
                     div { class: "muted", "Current: {theme}" }
@@ -1287,7 +1356,7 @@ pub fn SettingsPanel(
                         "Theme is actor-private account data. Shared board filters/layout still require an explicit shared View save."
                     }
                 }
-                div { class: "event", "data-testid": "language-settings",
+                            div { class: "event", "data-testid": "language-settings",
                     div { class: "event-head",
                         span { "Language" }
                         span { "data-testid": "text-direction", "{active_direction}" }
@@ -1326,11 +1395,13 @@ pub fn SettingsPanel(
                     }
                     div { class: "muted", "data-testid": "current-language", "Current: {active_locale_code}" }
                 }
-            }
+                        }
+                    }
 
-            // ── CI / Release gate status ─────────────────────────
-            if active_section() == SettingsSection::Release {
-                div { class: "event", "data-testid": "release-gate-status",
+                    // ── CI / Release gate status ─────────────────────────
+                    if active_section == SettingsSection::Release {
+                        div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "release-gate-status",
                     div { class: "event-head", span { "Release Gate" } span { "{blocked_count} blockers" } }
                     for workflow in &workflows {
                         div { class: "event", "data-testid": "workflow-row",
@@ -1358,8 +1429,11 @@ pub fn SettingsPanel(
                         }
                     }
                 }
-            }
+                        }
+                    }
 
+                }
+            }
         }
     }
 }

@@ -269,7 +269,7 @@ pub fn TimelinePanel(
     state_store: Signal<LocalStateStore>,
     crypto_state: Signal<String>,
     sync_cursor: Signal<String>,
-    repo_state: Signal<String>,
+    frontier_state: Signal<String>,
     base_url_sig: Signal<String>,
 ) -> Element {
     let mut show_reaction_picker = use_signal(|| Option::<usize>::None);
@@ -661,7 +661,7 @@ pub fn TimelinePanel(
                                                                             "status": updated.status,
                                                                         }),
                                                                     );
-                                                                    repo_state.set(updated.event_id.clone());
+                                                                    frontier_state.set(updated.event_id.clone());
                                                                     write_status.set(format!("revised {}", op.operation_id));
                                                                 }
                                                                 Err(error) => {
@@ -1220,7 +1220,7 @@ pub fn TimelinePanel(
                                                     );
                                                 }
                                                 sync_cursor.set(sent.sync_token.clone());
-                                                repo_state.set(sent.event_id.clone());
+                                                frontier_state.set(sent.event_id.clone());
                                                 {
                                                     let mut store = state_store.write();
                                                     store.save_sync_cursor(sent.sync_token.clone());

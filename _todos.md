@@ -115,6 +115,8 @@ Boundary decision:
 - [x] Normalize legacy principal bridge paths in yougen and make soland advertise `/api/v1/auth/session-grant/exchange` instead of a non-fetchable `legacy:` URI.
 - [x] Replace yougen's old `dev_yougen` device id with protocol `cx:device:<uuidv7>` ids; sanitize persisted legacy ids and clear stale tokens.
 - [x] Bind coauth-issued principal session grants to the same protocol device id via `urn:contrix:client:device:<device_id>`.
+- [x] Provision the coauth user DID into soland during OIDC exchange before returning a principal session grant.
+- [x] Attach the coauth session-grant introspection proof when yougen exchanges the grant with soland.
 
 Verification notes:
 - `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
@@ -144,3 +146,31 @@ Verification notes:
 - `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
 - `cargo check -p coauth-backend` passed in `coauth` with existing warnings.
 - Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "login page delegates|settings can update"`.
+- `cargo test -p coauth-backend oidc_bridge::tests` passed after adding soland account provisioning during OIDC exchange.
+- `cargo check -p coauth-backend` passed in `coauth` with existing warnings.
+- `cargo build -p coauth --features cedar` passed after stopping the old locked `coauth.exe`.
+- The rebuilt coauth service is listening on `127.0.0.1:7080`; `http://127.0.0.1:7080/health` returned 200.
+- A direct smoke POST to `https://local.host/api/v1/account/register` returned 201, confirming the Caddy-facing soland registration path is reachable.
+- `cargo test session_grant_ --lib` passed in `yougen`; this verifies session-grant proof signing and PKCS#8 PEM private-key decoding.
+- `cargo check --target wasm32-unknown-unknown` passed in `yougen` after adding the proof exchange path.
+- Live Playwright smoke passed through `yougen -> coauth login -> consent -> /auth/callback -> soland session-grant exchange`; soland returned 200 with a bearer session and yougen navigated to `/`.
+
+# Client Shell Navigation Todos
+
+Boundary decision:
+- The authenticated shell should not route principal identity context back to the OIDC login screen.
+- Principal Server controls in the shell are for probing/refreshing server metadata and sync state; account authentication remains the coauth OIDC flow.
+
+## Implementation Tasks
+- [x] Change the left Principal context row so it opens settings instead of `/login`.
+- [x] Rename/clarify the shell `Connect` action so it reads as a server refresh/probe action, not an account login action.
+- [x] Add desktop collapse controls for the left navigation and right context panel.
+- [x] Add a shell-level light/night theme toggle and persist the choice.
+- [x] Run formatting/build checks and a targeted shell UI smoke.
+
+Verification notes:
+- `cargo fmt --check` passed in `yougen` with existing rustfmt config warnings about nightly-only options.
+- `cargo check --target wasm32-unknown-unknown` passed in `yougen`.
+- Browser/Playwright shell smoke against `http://127.0.0.1:8080/` passed: Principal href is `/settings/server`, action text is `Refresh`, both collapse controls exist, and theme toggles light/night.
+- Playwright passed: `npx playwright test tests/e2e/clientx.flows.spec.ts -g "right panel shows"`.
+- A broader two-test smoke (`bootstrap login and sync|right panel shows`) still has one unrelated failure: the bootstrap test expects the right panel Push metric to show `cx:push:e2e`, while the current app state reports `Not registered` unless the push registration flow runs.

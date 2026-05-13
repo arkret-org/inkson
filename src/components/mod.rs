@@ -1,13 +1,11 @@
 use dioxus::prelude::*;
 
 pub mod permission_pill;
-pub mod right_panel;
 pub mod write_state;
 
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
-pub use right_panel::RightPanel;
 pub use write_state::{WriteState, WriteStateExplainer, WriteStatePill};
 
 // LazyLinkBadge is declared below.
@@ -32,6 +30,80 @@ pub fn StatusBadge(status: String, kind: Option<String>) -> Element {
     };
     rsx! {
         span { class: "{cls}", "{status}" }
+    }
+}
+
+#[component]
+pub fn UiIcon(name: String) -> Element {
+    let path = match name.as_str() {
+        "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",
+        "bell" => "M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9m4 13a2 2 0 0 0 4 0",
+        "board" => "M3 3h18v18H3V3Zm6 0v18m6-18v18M3 9h18",
+        "check" => "M20 6 9 17l-5-5",
+        "chevron-down" => "m6 9 6 6 6-6",
+        "chevron-left" => "m15 18-6-6 6-6",
+        "chevron-right" => "m9 18 6-6-6-6",
+        "chevron-up" => "m18 15-6-6-6 6",
+        "file" => "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6",
+        "folder" => "M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+        "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
+        "menu" => "M4 6h16M4 12h16M4 18h16",
+        "message" => "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z",
+        "moon" => "M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z",
+        "phone" => {
+            "M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.78.6 2.63a2 2 0 0 1-.45 2.11L8 9.71a16 16 0 0 0 6.29 6.29l1.25-1.25a2 2 0 0 1 2.11-.45c.85.28 1.73.48 2.63.6A2 2 0 0 1 22 16.92Z"
+        }
+        "plus" => "M12 5v14M5 12h14",
+        "panel-left-close" => {
+            "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6-2v18m6-6-3-3 3-3"
+        }
+        "panel-left-open" => {
+            "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6-2v18m3 6 3-3-3-3"
+        }
+        "refresh" => "M21 12a9 9 0 0 1-15.5 6.3L3 16m0 0v5h5M3 12A9 9 0 0 1 18.5 5.7L21 8m0 0V3h-5",
+        "search" => "m21 21-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z",
+        "server" => {
+            "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Zm0 0v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"
+        }
+        "settings" => {
+            "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.25.6.82 1 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"
+        }
+        "monitor" => "M3 4h18v12H3V4Zm7 16h4m-7 0h10",
+        "sun" => {
+            "M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
+        }
+        "user" => "M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
+        "x" => "M18 6 6 18M6 6l12 12",
+        _ => "M12 5v14M5 12h14",
+    };
+
+    rsx! {
+        svg {
+            class: "ui-icon",
+            "aria-hidden": "true",
+            width: "16",
+            height: "16",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "{path}" }
+        }
+    }
+}
+
+#[component]
+pub fn HelpTip(text: String) -> Element {
+    rsx! {
+        span {
+            class: "help-tip",
+            tabindex: "0",
+            title: "{text}",
+            "aria-label": "{text}",
+            "?"
+        }
     }
 }
 

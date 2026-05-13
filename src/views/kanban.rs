@@ -318,7 +318,7 @@ pub fn KanbanPanel(
     account_did: String,
     selected_space: String,
     sync_cursor: Signal<String>,
-    repo_state: Signal<String>,
+    frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
     event_write_ready: bool,
 ) -> Element {
@@ -485,7 +485,7 @@ pub fn KanbanPanel(
                 div { class: "metric-grid", "data-testid": "board-projection-model",
                     div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                    div { class: "metric", strong { "Frontier" } span { "{repo_state}" } div { class: "muted", "CAS moves rebase from latest projection" } }
+                    div { class: "metric", strong { "Frontier" } span { "{frontier_state}" } div { class: "muted", "CAS moves rebase from latest projection" } }
                     div { class: "metric", strong { "Write plane" } span { if event_write_ready { "cx.events.submit" } else { "queued local" } } div { class: "muted", "active writes use operation/event surfaces directly" } }
                 }
                 div { class: "workflow-form",

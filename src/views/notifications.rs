@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::{
+    components::{HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
     views::helpers::authed_api,
 };
@@ -102,37 +103,71 @@ pub fn NotificationsPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
-            // Privacy / projection banner — claude-design desktop/inbox.html
-            // discovery/push-notifications.md + crypto-media/device-lifecycle.md §5
-            div { class: "event", "data-testid": "inbox-protocol-banner",
-                div { class: "event-head",
-                    span { "Inbox 是 projection" }
-                    span { "Push gateway 默认脱敏唤醒" }
-                }
-                div { class: "muted",
-                    "本面板的所有条目都从 Event / Flow / Message / Relation / capability 派生。Push 仅发送 background_sync_needed 唤醒，正文在本机解密。每次进入卡片或讨论前都会重新做 Card 与 Room 两层独立的权限校验。屏蔽 actor 通过 cx.account.blocklist 写入 actor-private channel（不影响其它 actor）。"
-                }
-                div { class: "actions",
-                    span { class: "chip", "permission re-check" }
-                    span { class: "chip", "card vs room visibility" }
-                    span { class: "chip", "conflict pivot" }
-                    span { class: "chip", "push redacted" }
-                    span { class: "chip", "cx.account.blocklist" }
-                }
-            }
-
-            div { class: "event", role: "status", "aria-live": "polite",
+            div { class: "event notification-toolbar", role: "status", "aria-live": "polite",
                 div { class: "event-head",
                     span { "Notifications" }
-                    span { "{unread_visible} visible unread / {server_unread()} server unread" }
+                    div { class: "section-tools",
+                        HelpTip { text: "Inbox items are derived from sync account data and filtered by local mute rules. Push only wakes the client; notification bodies are resolved locally." }
+                        span { "{unread_visible} unread / {server_unread()} server" }
+                    }
                 }
-                div { class: "muted",
-                    "Derived from client sync account data and filtered by local mute rules."
-                }
-                div { class: "actions",
+                div { class: "toolbar-row",
+                    div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
+                        button {
+                            class: if group_by() == NotificationGroup::All { "segment active" } else { "segment" },
+                            onclick: move |_| group_by.set(NotificationGroup::All),
+                            "All"
+                        }
+                        button {
+                            class: if group_by() == NotificationGroup::BySpace { "segment active" } else { "segment" },
+                            onclick: move |_| group_by.set(NotificationGroup::BySpace),
+                            "Space"
+                        }
+                        button {
+                            class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
+                            onclick: move |_| group_by.set(NotificationGroup::ByType),
+                            "Type"
+                        }
+                        button {
+                            class: if group_by() == NotificationGroup::ByTime { "segment active" } else { "segment" },
+                            onclick: move |_| group_by.set(NotificationGroup::ByTime),
+                            "Time"
+                        }
+                    }
+                    div { class: "icon-actions",
+                        button {
+                            class: "btn icon sm ghost",
+                            "data-testid": "mark-all-read",
+                            title: "Mark all read",
+                            "aria-label": "Mark all read",
+                            onclick: move |_| {
+                                let ids = notifications().iter().map(|notification| notification.id.clone()).collect::<Vec<_>>();
+                                for notification in notifications.write().iter_mut() {
+                                    notification.read = true;
+                                }
+                                let mut store = state_store.write();
+                                for id in ids {
+                                    store.set_notification_read(id, true);
+                                }
+                                status_msg.set("All visible notifications marked read locally.".to_owned());
+                            },
+                            UiIcon { name: "check" }
+                        }
+                        button {
+                            class: "btn icon sm ghost",
+                            "data-testid": "toggle-archived",
+                            title: if show_archived() { "Hide archived" } else { "Show archived" },
+                            "aria-label": if show_archived() { "Hide archived" } else { "Show archived" },
+                            onclick: move |_| show_archived.set(!show_archived()),
+                            UiIcon { name: "archive" }
+                        }
+                    }
+                    div { class: "icon-actions",
                     button {
-                        class: "secondary",
+                        class: "btn icon sm ghost",
                         "data-testid": "refresh-notifications",
+                        title: "Refresh notifications",
+                        "aria-label": "Refresh notifications",
                         onclick: move |_| {
                             refresh_notifications(
                                 base_url.clone(),
@@ -143,51 +178,8 @@ pub fn NotificationsPanel(
                                 server_unread,
                             );
                         },
-                        "Refresh"
+                        UiIcon { name: "refresh" }
                     }
-                    button {
-                        class: if group_by() == NotificationGroup::All { "primary" } else { "secondary" },
-                        onclick: move |_| group_by.set(NotificationGroup::All),
-                        "All"
-                    }
-                    button {
-                        class: if group_by() == NotificationGroup::BySpace { "primary" } else { "secondary" },
-                        onclick: move |_| group_by.set(NotificationGroup::BySpace),
-                        "By Space"
-                    }
-                    button {
-                        class: if group_by() == NotificationGroup::ByType { "primary" } else { "secondary" },
-                        onclick: move |_| group_by.set(NotificationGroup::ByType),
-                        "By Type"
-                    }
-                    button {
-                        class: if group_by() == NotificationGroup::ByTime { "primary" } else { "secondary" },
-                        onclick: move |_| group_by.set(NotificationGroup::ByTime),
-                        "By Time"
-                    }
-                }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "mark-all-read",
-                        onclick: move |_| {
-                            let ids = notifications().iter().map(|notification| notification.id.clone()).collect::<Vec<_>>();
-                            for notification in notifications.write().iter_mut() {
-                                notification.read = true;
-                            }
-                            let mut store = state_store.write();
-                            for id in ids {
-                                store.set_notification_read(id, true);
-                            }
-                            status_msg.set("All visible notifications marked read locally.".to_owned());
-                        },
-                        "Mark All Read"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "toggle-archived",
-                        onclick: move |_| show_archived.set(!show_archived()),
-                        if show_archived() { "Hide Archived" } else { "Show Archived" }
                     }
                 }
                 if !status_msg().is_empty() {
@@ -215,8 +207,10 @@ pub fn NotificationsPanel(
                     div { class: "actions",
                         if !notification.read {
                             button {
-                                class: "secondary",
+                                class: "btn icon sm ghost",
                                 "data-testid": "mark-read-button",
+                                title: "Mark read",
+                                "aria-label": "Mark read",
                                 onclick: {
                                     let notification_id = notification.id.clone();
                                     move |_| {
@@ -226,12 +220,14 @@ pub fn NotificationsPanel(
                                         state_store.write().set_notification_read(notification_id.clone(), true);
                                     }
                                 },
-                                "Mark Read"
+                                UiIcon { name: "check" }
                             }
                         } else {
                             button {
-                                class: "secondary",
+                                class: "btn icon sm ghost",
                                 "data-testid": "mark-unread-button",
+                                title: "Mark unread",
+                                "aria-label": "Mark unread",
                                 onclick: {
                                     let notification_id = notification.id.clone();
                                     move |_| {
@@ -241,13 +237,15 @@ pub fn NotificationsPanel(
                                         state_store.write().set_notification_read(notification_id.clone(), false);
                                     }
                                 },
-                                "Mark Unread"
+                                UiIcon { name: "bell" }
                             }
                         }
                         if !notification.archived {
                             button {
-                                class: "secondary",
+                                class: "btn icon sm ghost",
                                 "data-testid": "archive-button",
+                                title: "Archive",
+                                "aria-label": "Archive",
                                 onclick: {
                                     let notification_id = notification.id.clone();
                                     move |_| {
@@ -257,13 +255,15 @@ pub fn NotificationsPanel(
                                         state_store.write().set_notification_archived(notification_id.clone(), true);
                                     }
                                 },
-                                "Archive"
+                                UiIcon { name: "archive" }
                             }
                         }
                         if !notification.space_id.is_empty() {
                             button {
-                                class: "secondary",
+                                class: "btn icon sm ghost",
                                 "data-testid": "mute-space-button",
+                                title: "Mute this space",
+                                "aria-label": "Mute this space",
                                 onclick: {
                                     let space_id = notification.space_id.clone();
                                     move |_| {
@@ -271,7 +271,7 @@ pub fn NotificationsPanel(
                                         status_msg.set(format!("Muted notifications for {space_id}."));
                                     }
                                 },
-                                "Mute Space"
+                                UiIcon { name: "bell" }
                             }
                         }
                         if let Some(ref action) = notification.action_label {
@@ -303,46 +303,11 @@ pub fn NotificationsPanel(
                 }
             }
 
-            div { class: "event", "data-testid": "bulk-actions",
-                div { class: "event-head", span { "Bulk Actions" } span { "" } }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "archive-all-read",
-                        onclick: move |_| {
-                            let ids = notifications()
-                                .iter()
-                                .filter(|notification| notification.read)
-                                .map(|notification| notification.id.clone())
-                                .collect::<Vec<_>>();
-                            for notification in notifications.write().iter_mut() {
-                                if notification.read {
-                                    notification.archived = true;
-                                }
-                            }
-                            let mut store = state_store.write();
-                            for id in ids {
-                                store.set_notification_archived(id, true);
-                            }
-                            status_msg.set("Archived all read notifications locally.".to_owned());
-                        },
-                        "Archive All Read"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "delete-archived",
-                        onclick: move |_| {
-                            notifications.write().retain(|notification| !notification.archived);
-                            status_msg.set("Archived notifications hidden from the local panel.".to_owned());
-                        },
-                        "Delete Archived"
-                    }
-                }
-            }
-
             div { class: "event", "data-testid": "notification-rules",
-                div { class: "event-head", span { "Notification Rules" } span { "" } }
-                div { class: "muted", "Configure per-space and per-type notification muting." }
+                div { class: "event-head",
+                    span { "Notification Rules" }
+                    HelpTip { text: "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
+                }
 
                 div { class: "metric-grid",
                     {render_kind_toggle("mention", "Mention notifications", state_store, status_msg)}
@@ -363,8 +328,10 @@ pub fn NotificationsPanel(
                             div { class: "actions", "data-testid": "muted-space-row",
                                 span { "{space_id}" }
                                 button {
-                                    class: "secondary",
+                                    class: "btn icon sm ghost",
                                     "data-testid": "unmute-space-button",
+                                    title: "Unmute space",
+                                    "aria-label": "Unmute space",
                                     onclick: {
                                         let space_id = space_id.clone();
                                         move |_| {
@@ -372,12 +339,12 @@ pub fn NotificationsPanel(
                                             status_msg.set(format!("Unmuted notifications for {space_id}."));
                                         }
                                     },
-                                    "Unmute"
+                                    UiIcon { name: "bell" }
                                 }
                             }
                         }
                         button {
-                            class: "secondary",
+                            class: "btn sm ghost",
                             "data-testid": "clear-muted-spaces",
                             onclick: move |_| {
                                 state_store.write().clear_muted_spaces();
