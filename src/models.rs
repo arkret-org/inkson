@@ -262,6 +262,10 @@ pub struct SpacePreview {
     pub tags: std::collections::BTreeSet<String>,
     pub public: bool,
     pub category: Option<String>,
+    #[serde(default)]
+    pub parent_space_id: Option<String>,
+    #[serde(default)]
+    pub child_space_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

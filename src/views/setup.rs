@@ -3,8 +3,7 @@ use dioxus_router::Link;
 use serde_json::json;
 
 use crate::{
-    components::PermissionPillRow, models::SpacePreview, routes::Route,
-    views::helpers::authed_api,
+    components::PermissionPillRow, models::SpacePreview, routes::Route, views::helpers::authed_api,
 };
 
 const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
@@ -101,13 +100,6 @@ const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
     ),
 ];
 
-const CREATE_LOCKED_FIELDS: [(&str, &str); 4] = [
-    ("security_class", "standard"),
-    ("encryption_profile", "mls_rfc9420"),
-    ("anchor_profile", "single_did"),
-    ("hash_profile", "sha256"),
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
@@ -144,11 +136,64 @@ impl SetupSection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NewSpaceStep {
+    Basics,
+    Boundary,
+    Seed,
+}
+
+const NEW_SPACE_STEPS: [NewSpaceStep; 3] = [
+    NewSpaceStep::Basics,
+    NewSpaceStep::Boundary,
+    NewSpaceStep::Seed,
+];
+
+impl NewSpaceStep {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Basics => "Basics",
+            Self::Boundary => "Boundary",
+            Self::Seed => "Seed",
+        }
+    }
+
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::Basics => "name and intent",
+            Self::Boundary => "three policy axes",
+            Self::Seed => "initial members and create",
+        }
+    }
+
+    fn number(self) -> &'static str {
+        match self {
+            Self::Basics => "1",
+            Self::Boundary => "2",
+            Self::Seed => "3",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Basics => Self::Boundary,
+            Self::Boundary | Self::Seed => Self::Seed,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Basics | Self::Boundary => Self::Basics,
+            Self::Seed => Self::Boundary,
+        }
+    }
+}
+
 fn discoverability_is_publicish(value: &str) -> bool {
     matches!(value, "public" | "listed")
 }
 
-fn parse_seed_members(seed_members: &str, fallback_member: &str) -> Vec<String> {
+fn parse_seed_members(seed_members: &str) -> Vec<String> {
     let mut members = Vec::new();
 
     let push_unique = |value: &str, members: &mut Vec<String>| {
@@ -160,10 +205,6 @@ fn parse_seed_members(seed_members: &str, fallback_member: &str) -> Vec<String> 
 
     for candidate in seed_members.split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';')) {
         push_unique(candidate, &mut members);
-    }
-
-    if members.is_empty() {
-        push_unique(fallback_member, &mut members);
     }
 
     members
@@ -192,8 +233,7 @@ fn policy_combination_hint(
         ));
     }
 
-    if matches!(discoverability, "invite_only" | "secret")
-        && history_visibility == "world_readable"
+    if matches!(discoverability, "invite_only" | "secret") && history_visibility == "world_readable"
     {
         return Some((
             "warning",
@@ -220,6 +260,8 @@ fn sync_space_preview(
         tags: Default::default(),
         public,
         category: Some("collaboration".to_owned()),
+        parent_space_id: None,
+        child_space_ids: Vec::new(),
     });
 }
 
@@ -235,34 +277,44 @@ pub fn SetupPanel(
     let active_section = SetupSection::from_slug(section.as_deref());
     let has_session = !token().trim().is_empty();
 
-    let mut member_did = use_signal(|| "did:web:bob.example".to_owned());
-    let mut seed_members = use_signal(|| "did:web:bob.example".to_owned());
-    let mut space_title = use_signal(|| "Setup Flow Space".to_owned());
-    let mut space_summary = use_signal(|| "Created from yougen workspace setup".to_owned());
+    let mut create_step = use_signal(|| NewSpaceStep::Basics);
+    let mut seed_members = use_signal(String::new);
+    let mut space_title = use_signal(String::new);
+    let mut space_summary = use_signal(String::new);
     let mut space_discoverability = use_signal(|| "listed".to_owned());
     let mut space_policy_join_rule = use_signal(|| "invite".to_owned());
     let mut space_policy_history_visibility = use_signal(|| "shared".to_owned());
-    let mut space_state = use_signal(|| "No space bootstrap operation yet".to_owned());
+    let mut space_state = use_signal(|| "Draft not created yet".to_owned());
+    let mut created_space_id = use_signal(String::new);
 
     let selected_space_id = selected_space();
+    let has_selected_space = !selected_space_id.trim().is_empty();
+    let active_create_step = create_step();
     let title_value = space_title();
     let summary_value = space_summary();
     let discoverability_value = space_discoverability();
     let join_rule_value = space_policy_join_rule();
     let history_visibility_value = space_policy_history_visibility();
-    let member_did_value = member_did();
     let seed_members_value = seed_members();
     let space_state_value = space_state();
-    let parsed_seed_members = parse_seed_members(&seed_members_value, &member_did_value);
+    let created_space_id_value = created_space_id();
+    let parsed_seed_members = parse_seed_members(&seed_members_value);
     let seed_member_count = parsed_seed_members.len();
-    let has_selected_space = !selected_space_id.trim().is_empty();
-    let can_create_space = has_session && !title_value.trim().is_empty();
-    let can_mutate_selected_space = has_session && has_selected_space;
+    let has_created_space = !created_space_id_value.trim().is_empty();
     let current_visibility_hint = policy_combination_hint(
         &discoverability_value,
         &join_rule_value,
         &history_visibility_value,
     );
+    let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
+    let basics_ready = !title_value.trim().is_empty();
+    let boundary_ready = !current_policy_error;
+    let can_advance_step = match active_create_step {
+        NewSpaceStep::Basics => basics_ready,
+        NewSpaceStep::Boundary => boundary_ready,
+        NewSpaceStep::Seed => basics_ready && boundary_ready,
+    };
+    let can_create_space = has_session && basics_ready && boundary_ready;
 
     rsx! {
         div { class: "timeline", "data-testid": "setup-panel",
@@ -271,23 +323,29 @@ pub fn SetupPanel(
                     span { "{active_section.title()}" }
                     span { "{active_section.subtitle()}" }
                 }
-                div { class: "muted",
-                    "Setup is no longer a protocol-tool dump. Identity bootstrap lives under Onboarding, people and discovery live under Search, and ongoing collaboration belongs inside a Space shell."
-                }
-                div { class: "actions",
-                    Link {
-                        class: if active_section == SetupSection::Overview { "primary" } else { "secondary" },
-                        to: Route::Setup,
-                        "Setup Map"
+                if active_section == SetupSection::Overview {
+                    div { class: "muted",
+                        "Setup is no longer a protocol-tool dump. Identity bootstrap, discovery, and ongoing Space administration have separate surfaces."
                     }
-                    Link {
-                        class: if active_section == SetupSection::Spaces { "primary" } else { "secondary" },
-                        to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
-                        "New Space"
+                    div { class: "actions",
+                        Link {
+                            class: "primary",
+                            to: Route::Setup,
+                            "Setup Map"
+                        }
+                        Link {
+                            class: "secondary",
+                            to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
+                            "New Space"
+                        }
+                        Link { class: "secondary", to: Route::Onboarding, "Onboarding" }
+                        Link { class: "secondary", to: Route::Directory, "Search" }
+                        Link { class: "secondary", to: Route::Settings, "Settings" }
                     }
-                    Link { class: "secondary", to: Route::Onboarding, "Onboarding" }
-                    Link { class: "secondary", to: Route::Directory, "Search" }
-                    Link { class: "secondary", to: Route::Settings, "Settings" }
+                } else {
+                    div { class: "muted",
+                        "Create exactly one Space bootstrap: name, boundary policy axes, and optional seed members."
+                    }
                 }
             }
 
@@ -363,16 +421,16 @@ pub fn SetupPanel(
             }
 
             if active_section == SetupSection::Spaces {
-                div { class: "setup-shell", "data-testid": "space-lifecycle-flow",
+                div { class: "setup-shell new-space-shell", "data-testid": "space-lifecycle-flow",
                     div { class: "setup-column",
-                        div { class: "event settings-content-hero", "data-testid": "space-setup-guide",
+                        div { class: "event new-space-hero", "data-testid": "space-setup-guide",
                             div { class: "event-head",
                                 span { "New Space" }
-                                span { "bootstrap only" }
+                                span { "bootstrap" }
                             }
-                            h2 { class: "settings-content-title", "Create a Space from boundary first, not from a protocol field dump." }
+                            h2 { class: "settings-content-title", "Create a Space" }
                             div { class: "muted",
-                                "The spec treats discoverability, join rule, and history visibility as three independent axes. This page edits those axes separately, then applies the result as a coherent bootstrap."
+                                "Spec boundary stays explicit: discoverability, join rule, and history visibility are independent decisions."
                             }
                             PermissionPillRow {
                                 discoverability: Some(discoverability_value.clone()),
@@ -381,183 +439,319 @@ pub fn SetupPanel(
                             }
                         }
 
-                        div { class: "event",
+                        div { class: "event new-space-stepper",
                             div { class: "event-head",
-                                span { "Basics" }
-                                span { "name / summary" }
+                                span { "Create steps" }
+                                span { "{active_create_step.number()} / 3" }
                             }
-                            div { class: "workflow-form setup-form-grid",
-                                div { class: "setup-field" ,
-                                    label { "Space title" }
-                                    input {
-                                        "data-testid": "space-title-input",
-                                        value: "{title_value}",
-                                        placeholder: "Engineering, Research, Design system...",
-                                        oninput: move |event| space_title.set(event.value())
-                                    }
-                                    div { class: "muted", "Human-facing title shown in Space lists and headers." }
-                                }
-                                div { class: "setup-field setup-field-span-2",
-                                    label { "Summary" }
-                                    textarea {
-                                        "data-testid": "space-summary-input",
-                                        value: "{summary_value}",
-                                        rows: "3",
-                                        placeholder: "What this Space is for, who it serves, and what should happen here.",
-                                        oninput: move |event| space_summary.set(event.value())
-                                    }
-                                    div { class: "muted", "Short, legible intent statement. This is not the place for policy internals." }
-                                }
-                            }
-                        }
-
-                        div { class: "event",
-                            div { class: "event-head",
-                                span { "Boundary" }
-                                span { "three independent axes" }
-                            }
-                            div { class: "muted",
-                                "The UI must not collapse these dimensions into a single privacy preset. Discovery, admission, and history are separate policy questions."
-                            }
-                            div { class: "setup-axis-grid",
-                                div { class: "metric directory-axis-card",
-                                    strong { "Discoverability" }
-                                    div { class: "workflow-form setup-field",
-                                        label { "Who can discover that this Space exists?" }
-                                        select {
-                                            "data-testid": "space-discoverability-input",
-                                            value: "{discoverability_value}",
-                                            onchange: move |event| space_discoverability.set(event.value()),
-                                            for (option_value, label, _) in DISCOVERABILITY_OPTIONS {
-                                                option {
-                                                    value: "{option_value}",
-                                                    selected: discoverability_value == option_value,
-                                                    "{label}"
-                                                }
-                                            }
-                                        }
-                                        div { class: "muted",
-                                            "{DISCOVERABILITY_OPTIONS.iter().find(|(value, _, _)| *value == discoverability_value).map(|(_, _, hint)| *hint).unwrap_or(\"Discovery posture is not set.\")}"
-                                        }
-                                    }
-                                }
-                                div { class: "metric directory-axis-card",
-                                    strong { "Join rule" }
-                                    div { class: "workflow-form setup-field",
-                                        label { "How does a principal become a member?" }
-                                        select {
-                                            "data-testid": "space-policy-join-rule-input",
-                                            value: "{join_rule_value}",
-                                            onchange: move |event| space_policy_join_rule.set(event.value()),
-                                            for (option_value, label, _) in JOIN_RULE_OPTIONS {
-                                                option {
-                                                    value: "{option_value}",
-                                                    selected: join_rule_value == option_value,
-                                                    "{label}"
-                                                }
-                                            }
-                                        }
-                                        div { class: "muted",
-                                            "{JOIN_RULE_OPTIONS.iter().find(|(value, _, _)| *value == join_rule_value).map(|(_, _, hint)| *hint).unwrap_or(\"Join path is not set.\")}"
-                                        }
-                                    }
-                                }
-                                div { class: "metric directory-axis-card",
-                                    strong { "History visibility" }
-                                    div { class: "workflow-form setup-field",
-                                        label { "What history can new members read?" }
-                                        select {
-                                            "data-testid": "space-policy-history-visibility-input",
-                                            value: "{history_visibility_value}",
-                                            onchange: move |event| space_policy_history_visibility.set(event.value()),
-                                            for (option_value, label, _) in HISTORY_VISIBILITY_OPTIONS {
-                                                option {
-                                                    value: "{option_value}",
-                                                    selected: history_visibility_value == option_value,
-                                                    "{label}"
-                                                }
-                                            }
-                                        }
-                                        div { class: "muted",
-                                            "{HISTORY_VISIBILITY_OPTIONS.iter().find(|(value, _, _)| *value == history_visibility_value).map(|(_, _, hint)| *hint).unwrap_or(\"History scope is not set.\")}"
+                            div { class: "setup-step-list",
+                                for step in NEW_SPACE_STEPS {
+                                    button {
+                                        class: if active_create_step == step { "primary" } else { "secondary" },
+                                        onclick: move |_| create_step.set(step),
+                                        span { class: "setup-step-index", "{step.number()}" }
+                                        span { class: "setup-step-label",
+                                            strong { "{step.label()}" }
+                                            small { "{step.subtitle()}" }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        if let Some((tone, heading, body)) = current_visibility_hint {
-                            div { class: if tone == "error" { "event error-banner" } else { "event" },
+                        if active_create_step == NewSpaceStep::Basics {
+                            div { class: "event",
                                 div { class: "event-head",
-                                    span { "{heading}" }
-                                    span { if tone == "error" { "policy_combination_invalid" } else { "needs review" } }
+                                    span { "Basics" }
+                                    span { "required title" }
                                 }
-                                div { class: "muted", "{body}" }
+                                div { class: "workflow-form setup-form-grid",
+                                    div { class: "setup-field",
+                                        label { "Space title" }
+                                        input {
+                                            "data-testid": "space-title-input",
+                                            value: "{title_value}",
+                                            placeholder: "Engineering, Research, Design system...",
+                                            oninput: move |event| space_title.set(event.value())
+                                        }
+                                    }
+                                    div { class: "setup-field setup-field-span-2",
+                                        label { "Summary" }
+                                        textarea {
+                                            "data-testid": "space-summary-input",
+                                            value: "{summary_value}",
+                                            rows: "3",
+                                            placeholder: "What this Space is for.",
+                                            oninput: move |event| space_summary.set(event.value())
+                                        }
+                                    }
+                                }
+                                div { class: "actions setup-nav-actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "new-space-next-button",
+                                        disabled: !can_advance_step,
+                                        onclick: move |_| create_step.set(active_create_step.next()),
+                                        "Next: Boundary"
+                                    }
+                                }
                             }
                         }
 
-                        div { class: "event",
-                            div { class: "event-head",
-                                span { "Seed members" }
-                                span { "bootstrap membership only" }
-                            }
-                            div { class: "workflow-form setup-form-grid",
-                                div { class: "setup-field setup-field-span-2",
-                                    label { "Initial members" }
-                                    textarea {
-                                        value: "{seed_members_value}",
-                                        rows: "4",
-                                        placeholder: "did:web:alice.example, did:web:bob.example",
-                                        oninput: move |event| seed_members.set(event.value())
-                                    }
-                                    div { class: "muted", "One DID per line or comma-separated. These are used when the Space is first created." }
+                        if active_create_step == NewSpaceStep::Boundary {
+                            div { class: "event",
+                                div { class: "event-head",
+                                    span { "Boundary" }
+                                    span { "three independent axes" }
                                 }
-                                div { class: "setup-field" ,
-                                    label { "Quick member target" }
-                                    input {
-                                        "data-testid": "member-did-input",
-                                        value: "{member_did_value}",
-                                        placeholder: "did:web:member.example",
-                                        oninput: move |event| member_did.set(event.value())
-                                    }
-                                    div { class: "muted", "Used by Add Member and Remove Member after the Space already exists." }
-                                }
-                                div { class: "setup-field" ,
-                                    label { "Seed preview" }
-                                    div { class: "setup-chip-wrap",
-                                        for member in parsed_seed_members.iter().take(6) {
-                                            span { class: "badge blue mono", "{member}" }
+                                div { class: "setup-axis-grid",
+                                    div { class: "metric directory-axis-card",
+                                        strong { "Discoverability" }
+                                        div { class: "workflow-form setup-field",
+                                            label { "Who can discover that this Space exists?" }
+                                            select {
+                                                "data-testid": "space-discoverability-input",
+                                                value: "{discoverability_value}",
+                                                onchange: move |event| space_discoverability.set(event.value()),
+                                                for (option_value, label, _) in DISCOVERABILITY_OPTIONS {
+                                                    option {
+                                                        value: "{option_value}",
+                                                        selected: discoverability_value == option_value,
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "muted",
+                                                "{DISCOVERABILITY_OPTIONS.iter().find(|(value, _, _)| *value == discoverability_value).map(|(_, _, hint)| *hint).unwrap_or(\"Discovery posture is not set.\")}"
+                                            }
                                         }
                                     }
-                                    div { class: "muted", "{seed_member_count} principal(s) will be included in the bootstrap request." }
+                                    div { class: "metric directory-axis-card",
+                                        strong { "Join rule" }
+                                        div { class: "workflow-form setup-field",
+                                            label { "How does a principal become a member?" }
+                                            select {
+                                                "data-testid": "space-policy-join-rule-input",
+                                                value: "{join_rule_value}",
+                                                onchange: move |event| space_policy_join_rule.set(event.value()),
+                                                for (option_value, label, _) in JOIN_RULE_OPTIONS {
+                                                    option {
+                                                        value: "{option_value}",
+                                                        selected: join_rule_value == option_value,
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "muted",
+                                                "{JOIN_RULE_OPTIONS.iter().find(|(value, _, _)| *value == join_rule_value).map(|(_, _, hint)| *hint).unwrap_or(\"Join path is not set.\")}"
+                                            }
+                                        }
+                                    }
+                                    div { class: "metric directory-axis-card",
+                                        strong { "History visibility" }
+                                        div { class: "workflow-form setup-field",
+                                            label { "What history can new members read?" }
+                                            select {
+                                                "data-testid": "space-policy-history-visibility-input",
+                                                value: "{history_visibility_value}",
+                                                onchange: move |event| space_policy_history_visibility.set(event.value()),
+                                                for (option_value, label, _) in HISTORY_VISIBILITY_OPTIONS {
+                                                    option {
+                                                        value: "{option_value}",
+                                                        selected: history_visibility_value == option_value,
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "muted",
+                                                "{HISTORY_VISIBILITY_OPTIONS.iter().find(|(value, _, _)| *value == history_visibility_value).map(|(_, _, hint)| *hint).unwrap_or(\"History scope is not set.\")}"
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some((tone, heading, body)) = current_visibility_hint {
+                                    div { class: if tone == "error" { "inline-error" } else { "inline-warn" },
+                                        span { class: "body",
+                                            strong { "{heading}" }
+                                            " {body}"
+                                        }
+                                    }
+                                }
+
+                                div { class: "actions setup-nav-actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "new-space-back-button",
+                                        onclick: move |_| create_step.set(active_create_step.previous()),
+                                        "Back"
+                                    }
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "new-space-next-button",
+                                        disabled: !can_advance_step,
+                                        onclick: move |_| create_step.set(active_create_step.next()),
+                                        "Next: Seed"
+                                    }
+                                }
+                            }
+                        }
+
+                        if active_create_step == NewSpaceStep::Seed {
+                            div { class: "event",
+                                div { class: "event-head",
+                                    span { "Seed members" }
+                                    span { "optional" }
+                                }
+                                div { class: "workflow-form setup-form-grid",
+                                    div { class: "setup-field setup-field-span-2",
+                                        label { "Initial members" }
+                                        textarea {
+                                            "data-testid": "seed-members-input",
+                                            value: "{seed_members_value}",
+                                            rows: "4",
+                                            placeholder: "did:web:alice.example\ndid:web:bob.example",
+                                            oninput: move |event| seed_members.set(event.value())
+                                        }
+                                        div { class: "muted", "One DID per line or comma-separated." }
+                                    }
+                                    div { class: "setup-field setup-field-span-2",
+                                        label { "Seed preview" }
+                                        if seed_member_count == 0 {
+                                            div { class: "muted", "No extra seed members." }
+                                        } else {
+                                            div { class: "setup-chip-wrap",
+                                                for member in parsed_seed_members.iter().take(8) {
+                                                    span { class: "badge blue mono", "{member}" }
+                                                }
+                                            }
+                                        }
+                                        div { class: "muted", "{seed_member_count} principal(s) will be included in the bootstrap request." }
+                                    }
+                                }
+                                div { class: "actions setup-nav-actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "new-space-back-button",
+                                        onclick: move |_| create_step.set(active_create_step.previous()),
+                                        "Back"
+                                    }
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "create-space-button",
+                                        disabled: !can_create_space,
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let api_token = token();
+                                                let base = base.clone();
+                                                let title = space_title();
+                                                let summary = space_summary();
+                                                let discoverability = space_discoverability();
+                                                let join_rule = space_policy_join_rule();
+                                                let history_visibility = space_policy_history_visibility();
+                                                let seed_text = seed_members();
+                                                spawn(async move {
+                                                    let invitees = parse_seed_members(&seed_text);
+                                                    let publicish = discoverability_is_publicish(&discoverability);
+                                                    match authed_api(&base, api_token) {
+                                                        Ok(api) => match api.create_space(&title, Some(&summary), publicish, invitees.clone()).await {
+                                                            Ok(space) => {
+                                                                selected_space.set(space.space_id.clone());
+                                                                created_space_id.set(space.space_id.clone());
+                                                                sync_space_preview(
+                                                                    &mut spaces.write(),
+                                                                    space.space_id.clone(),
+                                                                    title.clone(),
+                                                                    summary.clone(),
+                                                                    publicish,
+                                                                );
+
+                                                                let mut steps = vec![format!("created {}", space.space_id)];
+                                                                if invitees.is_empty() {
+                                                                    steps.push("seeded owner only".to_owned());
+                                                                } else {
+                                                                    steps.push(format!("seeded {} member(s)", invitees.len()));
+                                                                }
+
+                                                                match api.update_space(
+                                                                    &space.space_id,
+                                                                    json!({
+                                                                        "title": title,
+                                                                        "summary": summary,
+                                                                        "discoverability": discoverability,
+                                                                    }),
+                                                                ).await {
+                                                                    Ok(_) => steps.push(format!("discoverability {}", discoverability)),
+                                                                    Err(error) => steps.push(format!("discoverability sync failed: {error}")),
+                                                                }
+
+                                                                match api.set_space_policy(
+                                                                    &space.space_id,
+                                                                    &join_rule,
+                                                                    &history_visibility,
+                                                                ).await {
+                                                                    Ok(result) => steps.push(format!(
+                                                                        "policy {} / {}",
+                                                                        result.join_rule,
+                                                                        result.history_visibility
+                                                                    )),
+                                                                    Err(error) => steps.push(format!("policy sync failed: {error}")),
+                                                                }
+
+                                                                let message = steps.join(" · ");
+                                                                space_state.set(message.clone());
+                                                                status.set(message);
+                                                            }
+                                                            Err(error) => {
+                                                                let message = format!("create failed: {error}");
+                                                                space_state.set(message.clone());
+                                                                status.set(message);
+                                                            }
+                                                        },
+                                                        Err(error) => {
+                                                            let message = format!("invalid server URL: {error}");
+                                                            space_state.set(message.clone());
+                                                            status.set(message);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Create Space"
+                                    }
                                 }
                             }
                         }
                     }
 
-                    div { class: "setup-column",
+                    div { class: "setup-column setup-review-column",
                         div { class: "event",
                             div { class: "event-head",
-                                span { "Bootstrap summary" }
+                                span { "Review" }
                                 span { "current draft" }
                             }
                             div { class: "setup-summary-list",
                                 div { class: "setup-summary-row",
-                                    strong { "Draft title" }
-                                    span { if title_value.trim().is_empty() { "Untitled Space" } else { "{title_value}" } }
-                                }
-                                div { class: "setup-summary-row",
-                                    strong { "Selected Space" }
-                                    span { class: "mono", "data-testid": "selected-space-id",
-                                        if has_selected_space { "{selected_space_id}" } else { "not created yet" }
-                                    }
+                                    strong { "Title" }
+                                    span { if title_value.trim().is_empty() { "Required" } else { "{title_value}" } }
                                 }
                                 div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { "Policy draft" }
+                                    strong { "Policy" }
                                     PermissionPillRow {
                                         discoverability: Some(discoverability_value.clone()),
                                         join_rule: Some(join_rule_value.clone()),
                                         history_visibility: Some(history_visibility_value.clone()),
+                                    }
+                                }
+                                div { class: "setup-summary-row",
+                                    strong { "Seed members" }
+                                    span { "{seed_member_count}" }
+                                }
+                                div { class: "setup-summary-row",
+                                    strong { "Created Space" }
+                                    span { class: "mono", "data-testid": "selected-space-id",
+                                        if has_created_space { "{created_space_id_value}" } else { "not created yet" }
                                     }
                                 }
                                 div { class: "setup-summary-row setup-summary-row-stack",
@@ -566,357 +760,26 @@ pub fn SetupPanel(
                                 }
                             }
                         }
-
-                        div { class: "event",
-                            div { class: "event-head",
-                                span { "Actions" }
-                                span { "create / update / policy / members" }
-                            }
-                            div { class: "workflow-form setup-field",
-                                label { "Target space id" }
-                                input {
-                                    "data-testid": "selected-space-id-input",
-                                    value: "{selected_space_id}",
-                                    placeholder: "cx:space:...",
-                                    oninput: move |event| selected_space.set(event.value())
-                                }
-                                div { class: "muted", "After creation, this ID is reused for policy changes and member operations." }
-                            }
-                            div { class: "setup-action-grid",
-                                button {
-                                    class: "primary",
-                                    "data-testid": "create-space-button",
-                                    disabled: !can_create_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let title = space_title();
-                                            let summary = space_summary();
-                                            let discoverability = space_discoverability();
-                                            let join_rule = space_policy_join_rule();
-                                            let history_visibility = space_policy_history_visibility();
-                                            let seed_text = seed_members();
-                                            let fallback_member = member_did();
-                                            spawn(async move {
-                                                let invitees = parse_seed_members(&seed_text, &fallback_member);
-                                                let publicish = discoverability_is_publicish(&discoverability);
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.create_space(&title, Some(&summary), publicish, invitees.clone()).await {
-                                                        Ok(space) => {
-                                                            selected_space.set(space.space_id.clone());
-                                                            sync_space_preview(
-                                                                &mut spaces.write(),
-                                                                space.space_id.clone(),
-                                                                title.clone(),
-                                                                summary.clone(),
-                                                                publicish,
-                                                            );
-
-                                                            let mut steps = vec![
-                                                                format!("created {}", space.space_id),
-                                                                format!("seeded {} member(s)", invitees.len()),
-                                                            ];
-
-                                                            match api.update_space(
-                                                                &space.space_id,
-                                                                json!({
-                                                                    "title": title,
-                                                                    "summary": summary,
-                                                                    "discoverability": discoverability,
-                                                                }),
-                                                            ).await {
-                                                                Ok(_) => steps.push(format!("discoverability {}", discoverability)),
-                                                                Err(error) => steps.push(format!("discoverability sync failed: {error}")),
-                                                            }
-
-                                                            match api.set_space_policy(
-                                                                &space.space_id,
-                                                                &join_rule,
-                                                                &history_visibility,
-                                                            ).await {
-                                                                Ok(result) => steps.push(format!(
-                                                                    "policy {} / {}",
-                                                                    result.join_rule,
-                                                                    result.history_visibility
-                                                                )),
-                                                                Err(error) => steps.push(format!("policy sync failed: {error}")),
-                                                            }
-
-                                                            let message = steps.join(" · ");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("create failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Create Space"
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "update-space-button",
-                                    disabled: !can_mutate_selected_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let space = selected_space();
-                                            let title = space_title();
-                                            let summary = space_summary();
-                                            let discoverability = space_discoverability();
-                                            let publicish = discoverability_is_publicish(&discoverability);
-                                            spawn(async move {
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.update_space(
-                                                        &space,
-                                                        json!({
-                                                            "title": title,
-                                                            "summary": summary,
-                                                            "discoverability": discoverability,
-                                                        }),
-                                                    ).await {
-                                                        Ok(result) => {
-                                                            sync_space_preview(
-                                                                &mut spaces.write(),
-                                                                result.space_id.clone(),
-                                                                title,
-                                                                summary,
-                                                                publicish,
-                                                            );
-                                                            let message = format!(
-                                                                "updated {} · discoverability {}",
-                                                                result.space_id,
-                                                                discoverability
-                                                            );
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("update failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Update Space"
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "set-space-policy-button",
-                                    disabled: !can_mutate_selected_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let space = selected_space();
-                                            let join_rule = space_policy_join_rule();
-                                            let history_visibility = space_policy_history_visibility();
-                                            spawn(async move {
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.set_space_policy(&space, &join_rule, &history_visibility).await {
-                                                        Ok(result) => {
-                                                            let message = format!(
-                                                                "policy {} / {}",
-                                                                result.join_rule,
-                                                                result.history_visibility
-                                                            );
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("policy failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Apply Policy"
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "add-member-button",
-                                    disabled: !can_mutate_selected_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let space = selected_space();
-                                            let member = member_did();
-                                            spawn(async move {
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.add_space_member(&space, &member).await {
-                                                        Ok(result) => {
-                                                            let message = format!("members {}", result.members.len());
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("add member failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Add Member"
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "remove-member-button",
-                                    disabled: !can_mutate_selected_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let space = selected_space();
-                                            let member = member_did();
-                                            spawn(async move {
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.remove_space_member(&space, &member).await {
-                                                        Ok(result) => {
-                                                            let message = format!("removed; members {}", result.members.len());
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("remove member failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Remove Member"
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "delete-space-button",
-                                    disabled: !can_mutate_selected_space,
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let api_token = token();
-                                            let base = base.clone();
-                                            let space = selected_space();
-                                            spawn(async move {
-                                                match authed_api(&base, api_token) {
-                                                    Ok(api) => match api.delete_space(&space).await {
-                                                        Ok(result) => {
-                                                            spaces.write().retain(|preview| preview.space_id != result.space_id);
-                                                            selected_space.set(String::new());
-                                                            let message = format!("deleted {}", result.deleted);
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                        Err(error) => {
-                                                            let message = format!("delete failed: {error}");
-                                                            space_state.set(message.clone());
-                                                            status.set(message);
-                                                        }
-                                                    },
-                                                    Err(error) => {
-                                                        let message = format!("invalid server URL: {error}");
-                                                        space_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Delete Space"
-                                }
-                            }
-                        }
-
-                        div { class: "event",
-                            div { class: "event-head",
-                                span { "Create-locked fields" }
-                                span { "cannot change later" }
-                            }
-                            div { class: "setup-summary-list",
-                                for (field, value) in CREATE_LOCKED_FIELDS {
-                                    div { class: "setup-summary-row",
-                                        strong { "{field}" }
-                                        span { class: "badge", "{value}" }
-                                    }
-                                }
-                            }
-                            div { class: "muted",
-                                "These are shown here so New Space creation feels like a policy decision, not an opaque protocol blob."
-                            }
-                        }
                     }
                 }
 
-                div { class: "event", "data-testid": "space-setup-followup",
-                    div { class: "event-head",
-                        span { "After setup" }
-                        span { "enter the Space context" }
-                    }
-                    div { class: "muted",
-                        "Once the Space exists, move into the Space shell for timeline, board, discussion, document, and longer-lived admin work. This page is only for bootstrap."
-                    }
-                    div { class: "actions",
-                        if has_selected_space {
+                if has_created_space {
+                    div { class: "event", "data-testid": "space-setup-followup",
+                        div { class: "event-head",
+                            span { "Created" }
+                            span { "next context" }
+                        }
+                        div { class: "actions",
                             Link {
                                 class: "primary",
-                                to: Route::Space { space_id: selected_space_id.clone() },
-                                "Open Current Space"
+                                to: Route::Space { space_id: created_space_id_value.clone() },
+                                "Open Space"
                             }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdmin { space_id: selected_space_id.clone() },
+                                to: Route::SpaceAdmin { space_id: created_space_id_value.clone() },
                                 "Open Space Admin"
                             }
-                        } else {
-                            Link { class: "secondary", to: Route::Timeline, "Open global Timeline" }
                         }
                     }
                 }

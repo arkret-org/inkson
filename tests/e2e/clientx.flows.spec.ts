@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
+const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
+
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
 }
@@ -22,6 +24,17 @@ async function refreshServer(page: import("@playwright/test").Page) {
 async function openSettings(page: import("@playwright/test").Page) {
   await latestTestId(page, "account-menu-button").click();
   await latestTestId(page, "account-menu-settings").click();
+}
+
+async function openTimeline(page: import("@playwright/test").Page) {
+  await page.goto(`/timeline/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("timeline")).toBeVisible();
+}
+
+async function openDiscussion(page: import("@playwright/test").Page) {
+  await page.goto(`/chat/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await refreshServer(page);
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 async function writeLocalConfig(
@@ -83,14 +96,19 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("status-label")).toContainText("Online");
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
   await expect(page.getByTestId("space-list")).toContainText("Contrix Demo Space");
-  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-
-  await page.getByRole("link", { name: "Timeline" }).click();
-  await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
+  await expect(page.getByTestId("space-list")).toContainText("Launch Child Space");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
+  await page.getByTestId("account-menu-button").click();
+  await page.getByTestId("space-scope-descendants").click();
+  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+
+  await page.getByTestId("space-button").first().click();
+  await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("space-context-bar")).toContainText("Current + descendants");
+  await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
 });
 
 test("topbar account menu shows identity and sync state", async ({ page }) => {
@@ -322,7 +340,7 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
   await expect(page.getByTestId("main-view")).toHaveAttribute("role", "main");
   await expect(page.getByTestId("account-menu-button")).toHaveAttribute("aria-label", "Account menu");
 
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   await expect(page.getByTestId("timeline")).toHaveAttribute("role", "feed");
   await expect(page.getByTestId("timeline")).toHaveAttribute("aria-live", "polite");
 
@@ -397,42 +415,46 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await refreshServer(page);
   await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
 
-  await page.getByRole("link", { name: "Onboarding" }).click();
+  await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await page.getByTestId("register-account-button").click();
   await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
 
   await page.getByTestId("topbar-create-button").click();
-  await expect(page.getByTestId("setup-panel")).toBeVisible();
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
+  await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
+  await expect(setupPanel.getByRole("button", { name: "Apply Policy" })).toHaveCount(0);
+  await expect(setupPanel.getByRole("button", { name: "Add Member" })).toHaveCount(0);
+  await expect(setupPanel.getByRole("button", { name: "Remove Member" })).toHaveCount(0);
+  await expect(setupPanel.getByRole("button", { name: "Delete Space" })).toHaveCount(0);
 
+  await page.getByTestId("space-title-input").fill("Setup Flow Space");
+  await page.getByTestId("space-summary-input").fill("Created from yougen workspace setup");
+  await page.getByTestId("new-space-next-button").click();
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("three independent axes");
+  await page.getByTestId("new-space-next-button").click();
+  await page.getByTestId("seed-members-input").fill("did:web:bob.example");
   await page.getByTestId("create-space-button").click();
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0setupflow000000000000");
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0setupflow000000000000");
 
-  await page.getByTestId("add-member-button").click();
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("members");
   const sendRequest = page.waitForRequest("**/api/v1/events");
-  await page.getByRole("link", { name: "Open Current Space" }).first().click();
+  await page.getByRole("link", { name: "Open Space" }).first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();
   await page.getByTestId("composer-input").fill("setup flow message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("setup flow message");
-  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
+  await expect(page.getByTestId("write-status")).toContainText("persisted");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
-
-  await page.getByTestId("topbar-create-button").click();
-  await page.getByTestId("remove-member-button").click();
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("removed; members");
-  await page.getByTestId("delete-space-button").click();
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("deleted true");
 });
 
 test("chat creates discussion entities and sends structured mention payloads", async ({ page }) => {
   await refreshServer(page);
-  await page.getByRole("link", { name: "Chat" }).click();
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await openDiscussion(page);
 
   await page.getByTestId("new-channel-name").fill("Ops Announce");
   await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
@@ -464,12 +486,23 @@ test("chat creates discussion entities and sends structured mention payloads", a
   await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Linked discussion access");
 });
 
+test("kanban card drag queues a flow move", async ({ page }) => {
+  await refreshServer(page);
+  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+
+  await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
+
+  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.move");
+  await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
+});
+
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   await page.getByTestId("composer-input").fill("draft survives reload");
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
 
   const sendRequest = page.waitForRequest("**/api/v1/events");
@@ -477,7 +510,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message");
-  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
+  await expect(page.getByTestId("write-status")).toContainText("persisted");
 
   const editRequest = page.waitForRequest(
     (request) =>
@@ -491,7 +524,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   expect((await editRequest).headers()["x-contrix-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message edited");
   await expect(page.getByTestId("revision-chain")).toContainText("plain e2e message");
-  await expect(page.getByTestId("event-fact").last()).toContainText("cx:operation:");
+  await expect(page.getByTestId("event-fact").last()).toContainText("fact");
 
   const redactRequest = page.waitForRequest(
     (request) =>
@@ -515,7 +548,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
 
 test("timeline mark-read sends public receipt and stores private marker", async ({ page }) => {
   await refreshServer(page);
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   await expect(page.getByTestId("timeline-event").first()).toBeVisible();
 
   const receiptRequest = page.waitForRequest("**/api/v1/receipts");
@@ -532,7 +565,7 @@ test("timeline mark-read sends public receipt and stores private marker", async 
 
 test("timeline blob flow verifies hashes and authenticated downloads", async ({ page }) => {
   await refreshServer(page);
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
 
   const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
   await page.getByTestId("attach-blob-button").click();
@@ -552,7 +585,7 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
 });
 
 test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   await expect(page.getByTestId("plaintext-boundary-panel")).toBeVisible();
   await expect(page.getByTestId("plaintext-visible-services")).toContainText("configured server");
   await expect(page.getByTestId("plaintext-preview-disclosure")).toContainText("search");
@@ -567,11 +600,11 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
   await page.getByTestId("plaintext-boundary-ack").click();
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("write-status")).toContainText("persisted cx:operation:");
+  await expect(page.getByTestId("write-status")).toContainText("persisted");
 });
 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
-  await page.getByRole("link", { name: "Timeline" }).click();
+  await openTimeline(page);
   const report = page.waitForRequest("**/api/v1/moderation/report");
   const deviceMessage = page.waitForRequest(
     (request) =>

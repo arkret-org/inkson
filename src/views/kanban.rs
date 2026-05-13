@@ -54,6 +54,12 @@ struct LockedFlow {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct DraggedCard {
+    card_id: String,
+    from_column_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 enum DiscussionAccessState {
     Readable,
     External,
@@ -317,6 +323,7 @@ pub fn KanbanPanel(
     token: Signal<String>,
     account_did: String,
     selected_space: String,
+    selected_space_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -338,6 +345,7 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
+    let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if event_write_ready {
@@ -346,6 +354,12 @@ pub fn KanbanPanel(
             "Event write plane unavailable; board writes queue locally".to_owned()
         }
     });
+    let scope_count = selected_space_scope.len().max(1);
+    let scope_label = if scope_count > 1 {
+        format!("{scope_count} Spaces in scope")
+    } else {
+        "Current Space".to_owned()
+    };
 
     // T20 — auto-refresh-on-mount. The component renders SeedFallback
     // synchronously, then immediately fires a single async fetch against
@@ -392,14 +406,14 @@ pub fn KanbanPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "kanban-panel",
-            div { class: "event",
+            div { class: "event board-header",
                 div { class: "event-head",
                     span { "Launch Board" }
-                    span { "board workspace / {selected_space}" }
+                    span { "{scope_label} / writes to {selected_space}" }
                 }
-                div { class: "space-title", "Board/List/Card workbench" }
+                div { class: "space-title", "Board" }
                 div { class: "muted",
-                    "Projection uses Board -> List -> Flow(kind=\"card\") contains relations with explicit rank and position edges. Card visibility and discussion visibility stay independent."
+                    "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available."
                 }
                 div { class: "actions", "data-testid": "board-write-states",
                     for state in write_state_samples() {
@@ -579,6 +593,51 @@ pub fn KanbanPanel(
                     div {
                         class: "event board-column",
                         "data-testid": "kanban-column",
+                        ondragover: move |event| event.prevent_default(),
+                        ondrop: {
+                            let target_column_id = column.id.clone();
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |event| {
+                                event.prevent_default();
+                                let Some(dragged) = dragging_card() else {
+                                    return;
+                                };
+                                let moved = {
+                                    let mut cols = columns.write();
+                                    move_card_to_column(
+                                        &mut cols,
+                                        &dragged.card_id,
+                                        &dragged.from_column_id,
+                                        &target_column_id,
+                                    )
+                                };
+                                dragging_card.set(None);
+                                let Some(card) = moved else {
+                                    return;
+                                };
+                                let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
+                                let value = json!({
+                                    "kind": "flow.move",
+                                    "flow_id": card.id,
+                                    "from_list_id": dragged.from_column_id,
+                                    "list_id": target_column_id,
+                                    "rank": rank,
+                                    "container_ref": "cx:board:launch",
+                                });
+                                submit_kanban_move(
+                                    base.clone(),
+                                    token,
+                                    space.clone(),
+                                    dragged.card_id,
+                                    "cx.flow.move",
+                                    value,
+                                    state_store,
+                                    write_records,
+                                    board_status,
+                                );
+                            }
+                        },
                         div { class: "event-head",
                             span { class: "space-title", "{column.title}" }
                             span { "rank {column.rank} / {column.cards.len()}" }
@@ -588,6 +647,18 @@ pub fn KanbanPanel(
                             div {
                                 class: "event board-card",
                                 "data-testid": "kanban-card",
+                                draggable: "true",
+                                ondragstart: {
+                                    let card_id = card.id.clone();
+                                    let column_id = column.id.clone();
+                                    move |_| {
+                                        dragging_card.set(Some(DraggedCard {
+                                            card_id: card_id.clone(),
+                                            from_column_id: column_id.clone(),
+                                        }));
+                                    }
+                                },
+                                ondragend: move |_| dragging_card.set(None),
                                 onclick: {
                                     let c = card.clone();
                                     move |_| selected_card.set(Some(c.clone()))
@@ -1083,6 +1154,7 @@ fn replay_first_move(
     write_records.write().remove(idx);
     let kind: &'static str = match queued.kind.as_str() {
         "cx.list.create" => "cx.list.create",
+        "cx.flow.move" => "cx.flow.move",
         "cx.flow.position" => "cx.flow.position",
         _ => "cx.flow.create",
     };
@@ -1098,6 +1170,31 @@ fn replay_first_move(
         board_status,
     );
     let _ = &mut state_store; // keep mut binding for IDE / unused-warn coverage
+}
+
+fn move_card_to_column(
+    columns: &mut [KanbanColumn],
+    card_id: &str,
+    from_column_id: &str,
+    target_column_id: &str,
+) -> Option<KanbanCard> {
+    if from_column_id == target_column_id {
+        return None;
+    }
+    let source_idx = columns
+        .iter()
+        .position(|column| column.id == from_column_id)?;
+    let target_idx = columns
+        .iter()
+        .position(|column| column.id == target_column_id)?;
+    let card_idx = columns[source_idx]
+        .cards
+        .iter()
+        .position(|card| card.id == card_id)?;
+    let mut card = columns[source_idx].cards.remove(card_idx);
+    card.state = CardState::Queued;
+    columns[target_idx].cards.push(card.clone());
+    Some(card)
 }
 
 fn write_state_samples() -> Vec<CardState> {

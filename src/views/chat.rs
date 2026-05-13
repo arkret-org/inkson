@@ -12,6 +12,14 @@ use crate::{
     },
 };
 
+const CHAT_EMOJI_GRID: &[&str] = &[
+    "\u{1f44d}",
+    "\u{2764}\u{fe0f}",
+    "\u{1f389}",
+    "\u{1f440}",
+    "\u{1f680}",
+];
+
 #[derive(Clone, Debug, PartialEq)]
 struct ChannelEntity {
     flow_id: String,
@@ -33,11 +41,18 @@ struct ChannelEntity {
 
 #[derive(Clone, Debug, PartialEq)]
 struct ChatMessage {
+    space_id: String,
     id: String,
     sender: String,
     body: String,
     timestamp: String,
     flow_id: String,
+    reply_to: Option<String>,
+    reactions: Vec<(String, Vec<String>)>,
+    redacted: bool,
+    edited: bool,
+    revisions: Vec<String>,
+    pending: bool,
     mentions: Vec<StructuredMention>,
     operation_id: Option<String>,
     event_id: Option<String>,
@@ -51,12 +66,63 @@ struct DiscussionTimelineFact {
     detail: &'static str,
 }
 
+fn chat_message_revise_operation(
+    space_id: &str,
+    actor: &str,
+    event_id: &str,
+    body: &str,
+) -> crate::operation::OperationEnvelope {
+    OperationBuilder::new(space_id, actor, "cx.message.revise")
+        .target_ref(event_id)
+        .body(json!({
+            "body": body,
+            "content": {
+                "blocks": [{"kind": "text", "text": body}],
+                "body": body,
+            },
+            "target_event_id": event_id,
+        }))
+        .build("yougen")
+}
+
+fn chat_message_redact_operation(
+    space_id: &str,
+    actor: &str,
+    event_id: &str,
+    reason: &str,
+) -> crate::operation::OperationEnvelope {
+    OperationBuilder::new(space_id, actor, "cx.message.redact")
+        .target_ref(event_id)
+        .body(json!({
+            "reason": reason,
+            "target_event_id": event_id,
+        }))
+        .build("yougen")
+}
+
+fn chat_reaction_add_operation(
+    space_id: &str,
+    actor: &str,
+    event_id: &str,
+    key: &str,
+) -> crate::operation::OperationEnvelope {
+    OperationBuilder::new(space_id, actor, "cx.reaction.add")
+        .target_ref(event_id)
+        .body(json!({
+            "actor": actor,
+            "event_id": event_id,
+            "key": key,
+        }))
+        .build("yougen")
+}
+
 #[component]
 pub fn ChatPanel(
     base_url: String,
     account_did: String,
     token: Signal<String>,
     selected_space: String,
+    selected_space_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -112,6 +178,17 @@ pub fn ChatPanel(
     let mut new_channel_kind = use_signal(|| "discussion".to_owned());
     let mut new_channel_topic = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
+    let mut reply_to_message = use_signal(|| Option::<String>::None);
+    let mut editing_message = use_signal(|| Option::<String>::None);
+    let mut edit_draft = use_signal(String::new);
+    let mut redact_confirm = use_signal(|| Option::<String>::None);
+    let mut reaction_picker = use_signal(|| Option::<String>::None);
+    let scope_count = selected_space_scope.len().max(1);
+    let scope_label = if scope_count > 1 {
+        format!("{scope_count} Spaces")
+    } else {
+        "Current Space".to_owned()
+    };
 
     // Source the chat-relevant ephemeral kinds straight from the typed
     // classifier so a spec rescope (durable ↔ ephemeral) flips this banner
@@ -308,14 +385,23 @@ pub fn ChatPanel(
                                 let category = new_channel_kind();
                                 let topic = new_channel_topic().trim().to_owned();
                                 let flow_id = format!("cx:flow:{}", uuid_v8());
-                                let _rank = format!("r{}", chrono::Utc::now().timestamp_millis());
+                                let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                 let op = match cx_ops::discussion_flow_create(
                                     &space,
                                     &actor,
                                     &flow_id,
                                     &name,
                                 ) {
-                                    Ok(builder) => builder.build("yougen"),
+                                    Ok(builder) => {
+                                        let mut op = builder.build("yougen");
+                                        op.body["kind"] = json!(category.clone());
+                                        op.body["category"] = json!(category.clone());
+                                        op.body["rank"] = json!(rank.clone());
+                                        if !topic.is_empty() {
+                                            op.body["topic"] = json!(topic.clone());
+                                        }
+                                        op
+                                    }
                                     Err(error) => {
                                         status_msg.set(format!(
                                             "build flow.create failed: {error}"
@@ -363,7 +449,7 @@ pub fn ChatPanel(
                                                         );
                                                     }
                                                     status_msg.set(format!(
-                                                        "flow committed {}",
+                                                        "flow event accepted {}",
                                                         op.operation_id
                                                     ));
                                                     new_channel_name.set(String::new());
@@ -384,16 +470,31 @@ pub fn ChatPanel(
 
             div { class: "event", "data-testid": "message-list",
                 div { class: "event-head",
-                    span { "Discussion Messages" }
-                    span { "discussion: {selected_channel}" }
+                    span { "Messages" }
+                    span { "{scope_label} / {selected_channel}" }
                 }
-                for msg in messages().iter().filter(|msg| msg.flow_id == selected_channel()) {
-                    div { class: "event", "data-testid": "chat-message",
+                for msg in messages().iter().filter(|msg| {
+                    msg.flow_id == selected_channel()
+                        && (selected_space_scope.is_empty()
+                            || selected_space_scope.iter().any(|space| space == &msg.space_id))
+                }) {
+                    div { class: "event chat-message-row", "data-testid": "chat-message",
                         div { class: "event-head",
                             span { "{msg.sender}" }
-                            span { "{msg.timestamp}" }
+                            span {
+                                "{msg.timestamp}"
+                                if msg.pending { " · pending" }
+                                if msg.edited { " · edited" }
+                            }
                         }
-                        div { "{msg.body}" }
+                        if let Some(reply_to) = &msg.reply_to {
+                            div { class: "muted", "data-testid": "chat-reply-indicator", "Reply to {reply_to}" }
+                        }
+                        if msg.redacted {
+                            div { class: "muted", "data-testid": "chat-redacted-tombstone", "[Message redacted]" }
+                        } else {
+                            div { "{msg.body}" }
+                        }
                         if !msg.mentions.is_empty() {
                             div { class: "actions", "data-testid": "chat-mentions",
                                 for mention in &msg.mentions {
@@ -401,12 +502,242 @@ pub fn ChatPanel(
                                 }
                             }
                         }
+                        if !msg.reactions.is_empty() {
+                            div { class: "actions", "data-testid": "chat-reactions",
+                                for (emoji, senders) in &msg.reactions {
+                                    span { class: "badge", "{emoji} {senders.len()}" }
+                                }
+                            }
+                        }
                         if let Some(operation_id) = &msg.operation_id {
                             div { class: "muted", "message fact {operation_id}" }
                         }
+                        if !msg.revisions.is_empty() {
+                            div { class: "section", "data-testid": "chat-revision-chain",
+                                div { class: "muted", "Revisions ({msg.revisions.len()})" }
+                                for revision in &msg.revisions {
+                                    div { class: "muted", "{revision}" }
+                                }
+                            }
+                        }
+                        if !msg.redacted {
+                            div { class: "actions chat-message-actions",
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "chat-reply-button",
+                                    onclick: {
+                                        let msg_id = msg.id.clone();
+                                        move |_| reply_to_message.set(Some(msg_id.clone()))
+                                    },
+                                    "Reply"
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "chat-react-button",
+                                    onclick: {
+                                        let msg_id = msg.id.clone();
+                                        move |_| {
+                                            let current = reaction_picker();
+                                            reaction_picker.set(if current == Some(msg_id.clone()) { None } else { Some(msg_id.clone()) });
+                                        }
+                                    },
+                                    "React"
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "chat-edit-button",
+                                    onclick: {
+                                        let msg_id = msg.id.clone();
+                                        let body = msg.body.clone();
+                                        move |_| {
+                                            editing_message.set(Some(msg_id.clone()));
+                                            edit_draft.set(body.clone());
+                                        }
+                                    },
+                                    "Edit"
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "chat-redact-button",
+                                    onclick: {
+                                        let msg_id = msg.id.clone();
+                                        move |_| redact_confirm.set(Some(msg_id.clone()))
+                                    },
+                                    "Redact"
+                                }
+                            }
+                        }
+                        if reaction_picker() == Some(msg.id.clone()) {
+                            div { class: "actions", "data-testid": "chat-reaction-picker",
+                                for emoji in CHAT_EMOJI_GRID {
+                                    button {
+                                        class: "secondary",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let msg_id = msg.id.clone();
+                                            let emoji = emoji.to_string();
+                                            move |_| {
+                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                    if let Some((_, senders)) = found.reactions.iter_mut().find(|(key, _)| key == &emoji) {
+                                                        if !senders.iter().any(|sender| sender == &actor) {
+                                                            senders.push(actor.clone());
+                                                        }
+                                                    } else {
+                                                        found.reactions.push((emoji.clone(), vec![actor.clone()]));
+                                                    }
+                                                }
+                                                let base = base.clone();
+                                                let space = space.clone();
+                                                let actor = actor.clone();
+                                                let msg_id = msg_id.clone();
+                                                let emoji = emoji.clone();
+                                                let api_token = token();
+                                                let wait_for = active_sync_token(&sync_cursor());
+                                                spawn(async move {
+                                                    if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
+                                                        let op = chat_reaction_add_operation(&space, &actor, &msg_id, &emoji);
+                                                        let _ = api.submit_operation_event(&op).await;
+                                                    }
+                                                });
+                                                reaction_picker.set(None);
+                                            }
+                                        },
+                                        "{emoji}"
+                                    }
+                                }
+                            }
+                        }
+                        if editing_message() == Some(msg.id.clone()) {
+                            div { class: "composer compact-composer", "data-testid": "chat-edit-composer",
+                                textarea {
+                                    value: "{edit_draft}",
+                                    oninput: move |evt| edit_draft.set(evt.value()),
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "chat-save-edit-button",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let msg_id = msg.id.clone();
+                                            move |_| {
+                                                let content = edit_draft().trim().to_owned();
+                                                if content.is_empty() {
+                                                    status_msg.set("edit skipped: body is empty".to_owned());
+                                                    editing_message.set(None);
+                                                    return;
+                                                }
+                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                    found.revisions.push(found.body.clone());
+                                                    found.body = content.clone();
+                                                    found.edited = true;
+                                                    found.pending = true;
+                                                }
+                                                editing_message.set(None);
+                                                let base = base.clone();
+                                                let space = space.clone();
+                                                let actor = actor.clone();
+                                                let msg_id = msg_id.clone();
+                                                let api_token = token();
+                                                let wait_for = active_sync_token(&sync_cursor());
+                                                spawn(async move {
+                                                    match authed_api_with_sync(&base, api_token, wait_for) {
+                                                        Ok(api) => {
+                                                            let op = chat_message_revise_operation(&space, &actor, &msg_id, &content);
+                                                            match api.submit_operation_event(&op).await {
+                                                                Ok(resp) => {
+                                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                        found.operation_id = Some(op.operation_id.clone());
+                                                                        found.event_id = Some(resp.event_id.clone());
+                                                                        found.pending = false;
+                                                                    }
+                                                                    status_msg.set(format!("message revised {}", op.operation_id));
+                                                                }
+                                                                Err(error) => status_msg.set(format!("message revise failed: {error}")),
+                                                            }
+                                                        }
+                                                        Err(error) => status_msg.set(format!("invalid server URL: {error}")),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Save"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| editing_message.set(None),
+                                        "Cancel"
+                                    }
+                                }
+                            }
+                        }
+                        if redact_confirm() == Some(msg.id.clone()) {
+                            div { class: "event nested-card", "data-testid": "chat-redact-confirm",
+                                div { class: "event-head", span { "Redact message" } span { "{msg.id}" } }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "chat-confirm-redact-button",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let msg_id = msg.id.clone();
+                                            move |_| {
+                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                    found.redacted = true;
+                                                    found.body.clear();
+                                                    found.pending = true;
+                                                }
+                                                redact_confirm.set(None);
+                                                let base = base.clone();
+                                                let space = space.clone();
+                                                let actor = actor.clone();
+                                                let msg_id = msg_id.clone();
+                                                let api_token = token();
+                                                let wait_for = active_sync_token(&sync_cursor());
+                                                spawn(async move {
+                                                    match authed_api_with_sync(&base, api_token, wait_for) {
+                                                        Ok(api) => {
+                                                            let op = chat_message_redact_operation(&space, &actor, &msg_id, "user requested tombstone");
+                                                            match api.submit_operation_event(&op).await {
+                                                                Ok(resp) => {
+                                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                        found.operation_id = Some(op.operation_id.clone());
+                                                                        found.event_id = Some(resp.event_id.clone());
+                                                                        found.pending = false;
+                                                                    }
+                                                                    status_msg.set(format!("message redacted {}", op.operation_id));
+                                                                }
+                                                                Err(error) => status_msg.set(format!("message redact failed: {error}")),
+                                                            }
+                                                        }
+                                                        Err(error) => status_msg.set(format!("invalid server URL: {error}")),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Confirm"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| redact_confirm.set(None),
+                                        "Cancel"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                if messages().iter().all(|msg| msg.flow_id != selected_channel()) {
+                if messages().iter().all(|msg| {
+                    msg.flow_id != selected_channel()
+                        || (!selected_space_scope.is_empty()
+                            && !selected_space_scope.iter().any(|space| space == &msg.space_id))
+                }) {
                     div { class: "muted", "No messages in this discussion yet." }
                 }
             }
@@ -429,6 +760,16 @@ pub fn ChatPanel(
             }
 
             div { class: "composer", "data-testid": "chat-composer",
+                if let Some(reply_id) = reply_to_message() {
+                    div { class: "muted", "data-testid": "chat-reply-banner",
+                        "Replying to {reply_id}"
+                        button {
+                            class: "secondary",
+                            onclick: move |_| reply_to_message.set(None),
+                            "Cancel"
+                        }
+                    }
+                }
                 textarea {
                     "data-testid": "chat-input",
                     value: "{chat_draft}",
@@ -460,11 +801,18 @@ pub fn ChatPanel(
                                     return;
                                 };
                                 messages.write().push(ChatMessage {
+                                    space_id: space.clone(),
                                     id: local_id.clone(),
                                     sender: "yougen".to_owned(),
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     flow_id: channel.flow_id.clone(),
+                                    reply_to: reply_to_message(),
+                                    reactions: Vec::new(),
+                                    redacted: false,
+                                    edited: false,
+                                    revisions: Vec::new(),
+                                    pending: true,
                                     mentions: mentions.clone(),
                                     operation_id: None,
                                     event_id: None,
@@ -493,6 +841,8 @@ pub fn ChatPanel(
                                     "message_id": message_id,
                                     "mentions": mention_values,
                                     "mention_relations": mention_relations,
+                                    "reply_to": reply_to_message(),
+                                    "thread_id": reply_to_message(),
                                 });
                                 let op = OperationBuilder::new(
                                     &space,
@@ -531,6 +881,7 @@ pub fn ChatPanel(
                                                     found.id = resp.event_id.clone();
                                                     found.operation_id = Some(op.operation_id.clone());
                                                     found.event_id = Some(resp.event_id.clone());
+                                                    found.pending = false;
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
@@ -549,6 +900,7 @@ pub fn ChatPanel(
                                     }
                                 });
                                 chat_draft.set(String::new());
+                                reply_to_message.set(None);
                             }
                         },
                         "Send"

@@ -2,6 +2,8 @@ import type { Page, Route } from "@playwright/test";
 
 const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
 const SETUP_SPACE = "cx:space:01js0setupflow000000000000";
+const CHILD_SPACE = "cx:space:01launchchild0000000000000";
+const GRANDCHILD_SPACE = "cx:space:01launchdeep00000000000000";
 
 export async function mockContrixApi(page: Page) {
   let setupSpaceDeleted = false;
@@ -508,6 +510,30 @@ export async function mockContrixApi(page: Page) {
             summary: {
               title: "Contrix Demo Space",
               summary: "Shared demo Space served by mocked serverx",
+              child_space_ids: [CHILD_SPACE],
+            },
+            timeline: { events: [], limited: false },
+            state: [],
+            ephemeral: [],
+            unread: { notification_count: 0, highlight_count: 0 },
+          },
+          [CHILD_SPACE]: {
+            summary: {
+              title: "Launch Child Space",
+              summary: "Nested board and discussion scope",
+              parent_space_id: DEMO_SPACE,
+              child_space_ids: [GRANDCHILD_SPACE],
+            },
+            timeline: { events: [], limited: false },
+            state: [],
+            ephemeral: [],
+            unread: { notification_count: 0, highlight_count: 0 },
+          },
+          [GRANDCHILD_SPACE]: {
+            summary: {
+              title: "Launch Deep Space",
+              summary: "Grandchild scope fixture",
+              parent_space_id: CHILD_SPACE,
             },
             timeline: { events: [], limited: false },
             state: [],

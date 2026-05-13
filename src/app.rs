@@ -22,6 +22,7 @@ use crate::{
 const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
+const SPACE_SCOPE_PREFERENCE_KEY: &str = "layout.space.scope";
 const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
 const MIN_SIDEBAR_WIDTH: f64 = 220.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
@@ -441,9 +442,38 @@ body {
   gap: 12px;
   align-items: start;
 }
-.board-column { min-width: 0; }
-.board-card { cursor: pointer; }
+.board-header {
+  gap: 8px;
+}
+.board-column {
+  min-width: 0;
+  min-height: 220px;
+  padding: 10px;
+}
+.board-card {
+  cursor: grab;
+  padding: 10px 12px;
+}
+.board-card:active {
+  cursor: grabbing;
+}
+.board-card .event-head {
+  align-items: flex-start;
+}
 .card-detail-drawer { border-color: var(--cx-brand); }
+.chat-message-row {
+  padding: 10px 12px;
+  gap: 8px;
+}
+.chat-message-actions {
+  opacity: 0.86;
+}
+.compact-composer {
+  padding: 10px;
+}
+.compact-composer textarea {
+  min-height: 64px;
+}
 .tabs {
   gap: 6px;
 }
@@ -544,10 +574,57 @@ body {
   gap: 12px;
   align-items: start;
 }
+.new-space-shell {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+.new-space-hero {
+  padding: 18px;
+}
 .setup-column {
   display: grid;
   gap: 12px;
   align-content: start;
+}
+.setup-review-column {
+  position: sticky;
+  top: 12px;
+}
+.setup-step-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.setup-step-list button {
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+.setup-step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.setup-step-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.setup-step-label strong,
+.setup-step-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-step-label small {
+  color: inherit;
+  opacity: 0.72;
+  font-size: 11px;
+  font-weight: 600;
 }
 .setup-form-grid {
   display: grid;
@@ -614,6 +691,10 @@ body {
 .setup-action-grid .secondary {
   width: 100%;
 }
+.setup-nav-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
 .settings-card-span-2 {
   grid-column: 1 / -1;
 }
@@ -623,6 +704,7 @@ body {
   .home-card-list.compact { grid-template-columns: 1fr; }
   .settings-shell,
   .settings-card-grid { grid-template-columns: 1fr; }
+  .setup-review-column { position: static; }
 }
 @media (max-width: 1100px) {
   .setup-shell,
@@ -630,6 +712,7 @@ body {
   .setup-axis-grid {
     grid-template-columns: 1fr;
   }
+  .setup-step-list { grid-template-columns: 1fr; }
   .setup-field-span-2 {
     grid-column: auto;
   }
@@ -726,7 +809,7 @@ body {
 }
 "#;
 
-const CLAUDE_STYLE: &str = include_str!("../claude-design/styles.css");
+const CLAUDE_STYLE: &str = include_str!("styles/claude_design.css");
 
 const CLAUDE_APP_OVERRIDES: &str = r#"
 :root {
@@ -1172,6 +1255,34 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
     var(--nav-soft);
+}
+.sidebar-scope-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+.scope-chip {
+  min-height: 28px;
+  border: 1px solid var(--nav-input-border);
+  border-radius: 8px;
+  background: var(--nav-input-bg);
+  color: var(--nav-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.scope-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--nav-text);
+}
+.space-tree-item {
+  min-height: 36px;
+}
+.space-tree-item.is-scope-member:not(.is-active) {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--nav-border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--nav-soft));
 }
 
 .sidebar-nav-item .grow {
@@ -2261,12 +2372,404 @@ fn RouteRedirect(to: Route) -> Element {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpaceScopeMode {
+    Exact,
+    IncludeDescendants,
+}
+
+impl SpaceScopeMode {
+    fn includes_descendants(self) -> bool {
+        matches!(self, Self::IncludeDescendants)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exact => "Current Space only",
+            Self::IncludeDescendants => "Current + descendants",
+        }
+    }
+
+    fn preference_value(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::IncludeDescendants => "descendants",
+        }
+    }
+
+    fn from_preference(value: &str) -> Self {
+        match value {
+            "descendants" => Self::IncludeDescendants,
+            _ => Self::Exact,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct SpaceTreeItem {
+    space: SpacePreview,
+    depth: usize,
+    descendant_count: usize,
+}
+
+fn non_empty_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| non_empty_string(value.get(*key)))
+}
+
+fn string_array_field(value: &Value, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key))
+        .flat_map(|field| {
+            field
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
+    let summary = body.get("summary").unwrap_or(&Value::Null);
+    for container in [
+        summary,
+        body,
+        body.get("hierarchy").unwrap_or(&Value::Null),
+        body.get("relationships").unwrap_or(&Value::Null),
+    ] {
+        if let Some(parent) = string_field(
+            container,
+            &[
+                "parent_space_id",
+                "parent_id",
+                "parent",
+                "space_parent_id",
+                "root_space_id",
+            ],
+        )
+        .filter(|parent| parent != space_id)
+        {
+            return Some(parent);
+        }
+    }
+
+    body.get("state")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|event| {
+            let kind = event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)?;
+            if kind != "cx.space.parent" {
+                return None;
+            }
+            for container in [
+                event.get("payload").unwrap_or(&Value::Null),
+                event.get("content").unwrap_or(&Value::Null),
+                event,
+            ] {
+                if let Some(parent) = string_field(
+                    container,
+                    &["parent_space_id", "parent_id", "parent", "target_parent_id"],
+                )
+                .filter(|parent| parent != space_id)
+                {
+                    return Some(parent);
+                }
+            }
+            None
+        })
+}
+
+fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
+    let summary = body.get("summary").unwrap_or(&Value::Null);
+    let mut children = Vec::new();
+    for container in [
+        summary,
+        body,
+        body.get("hierarchy").unwrap_or(&Value::Null),
+        body.get("relationships").unwrap_or(&Value::Null),
+    ] {
+        children.extend(string_array_field(
+            container,
+            &[
+                "child_space_ids",
+                "children",
+                "child_ids",
+                "space_child_ids",
+            ],
+        ));
+    }
+
+    for event in body
+        .get("state")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("type"))
+            .and_then(Value::as_str);
+        if kind != Some("cx.space.child") {
+            continue;
+        }
+        for container in [
+            event.get("payload").unwrap_or(&Value::Null),
+            event.get("content").unwrap_or(&Value::Null),
+            event,
+        ] {
+            if let Some(child) = string_field(
+                container,
+                &["child_space_id", "child_id", "child", "space_id"],
+            ) {
+                children.push(child);
+            }
+        }
+    }
+
+    children
+        .into_iter()
+        .filter(|child| child != space_id)
+        .collect()
+}
+
+fn normalize_space_hierarchy(spaces: &mut [SpacePreview]) {
+    let known: BTreeSet<String> = spaces.iter().map(|space| space.space_id.clone()).collect();
+    let mut child_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for space in spaces.iter() {
+        if let Some(parent) = space
+            .parent_space_id
+            .as_ref()
+            .filter(|parent| known.contains(*parent) && *parent != &space.space_id)
+        {
+            child_map
+                .entry(parent.clone())
+                .or_default()
+                .insert(space.space_id.clone());
+        }
+
+        for child in space
+            .child_space_ids
+            .iter()
+            .filter(|child| known.contains(*child) && *child != &space.space_id)
+        {
+            child_map
+                .entry(space.space_id.clone())
+                .or_default()
+                .insert(child.clone());
+        }
+    }
+
+    for space in spaces.iter_mut() {
+        space.child_space_ids = child_map
+            .remove(&space.space_id)
+            .map(|children| children.into_iter().collect())
+            .unwrap_or_default();
+    }
+}
+
+fn descendant_space_ids(spaces: &[SpacePreview], root_space_id: &str) -> Vec<String> {
+    if root_space_id.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let known: BTreeSet<&str> = spaces.iter().map(|space| space.space_id.as_str()).collect();
+    let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for space in spaces {
+        if let Some(parent) = space
+            .parent_space_id
+            .as_deref()
+            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
+        {
+            child_map
+                .entry(parent)
+                .or_default()
+                .push(space.space_id.as_str());
+        }
+        for child in space
+            .child_space_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|child| known.contains(*child) && *child != space.space_id.as_str())
+        {
+            child_map
+                .entry(space.space_id.as_str())
+                .or_default()
+                .push(child);
+        }
+    }
+    for children in child_map.values_mut() {
+        children.sort_unstable();
+        children.dedup();
+    }
+    let mut result = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![root_space_id];
+    while let Some(space_id) = stack.pop() {
+        if !visited.insert(space_id.to_owned()) {
+            continue;
+        }
+        result.push(space_id.to_owned());
+        if let Some(children) = child_map.get(space_id) {
+            for child in children.iter().rev() {
+                stack.push(child);
+            }
+        }
+    }
+    result
+}
+
+fn scoped_space_ids(
+    spaces: &[SpacePreview],
+    root_space_id: &str,
+    scope_mode: SpaceScopeMode,
+) -> Vec<String> {
+    if root_space_id.trim().is_empty() {
+        Vec::new()
+    } else if scope_mode.includes_descendants() {
+        descendant_space_ids(spaces, root_space_id)
+    } else {
+        vec![root_space_id.to_owned()]
+    }
+}
+
+fn space_tree_items(spaces: &[SpacePreview]) -> Vec<SpaceTreeItem> {
+    let order: BTreeMap<&str, usize> = spaces
+        .iter()
+        .enumerate()
+        .map(|(idx, space)| (space.space_id.as_str(), idx))
+        .collect();
+    let known: BTreeSet<&str> = spaces.iter().map(|space| space.space_id.as_str()).collect();
+    let by_id: BTreeMap<&str, &SpacePreview> = spaces
+        .iter()
+        .map(|space| (space.space_id.as_str(), space))
+        .collect();
+    let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for space in spaces {
+        if let Some(parent) = space
+            .parent_space_id
+            .as_deref()
+            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
+        {
+            child_map
+                .entry(parent)
+                .or_default()
+                .push(space.space_id.as_str());
+        }
+        for child in space
+            .child_space_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|child| known.contains(*child) && *child != space.space_id.as_str())
+        {
+            child_map
+                .entry(space.space_id.as_str())
+                .or_default()
+                .push(child);
+        }
+    }
+    for children in child_map.values_mut() {
+        children.sort_by_key(|child| order.get(child).copied().unwrap_or(usize::MAX));
+        children.dedup();
+    }
+    let mut roots: Vec<&str> = spaces
+        .iter()
+        .filter(|space| {
+            space
+                .parent_space_id
+                .as_deref()
+                .map(|parent| !known.contains(parent))
+                .unwrap_or(true)
+        })
+        .map(|space| space.space_id.as_str())
+        .collect();
+    roots.sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
+
+    fn push_item<'a>(
+        id: &'a str,
+        depth: usize,
+        by_id: &BTreeMap<&'a str, &'a SpacePreview>,
+        child_map: &BTreeMap<&'a str, Vec<&'a str>>,
+        order: &BTreeMap<&'a str, usize>,
+        visited: &mut BTreeSet<String>,
+        items: &mut Vec<SpaceTreeItem>,
+    ) {
+        if !visited.insert(id.to_owned()) {
+            return;
+        }
+        let Some(space) = by_id.get(id).copied() else {
+            return;
+        };
+        items.push(SpaceTreeItem {
+            space: space.clone(),
+            depth,
+            descendant_count: descendant_space_ids(
+                &by_id.values().copied().cloned().collect::<Vec<_>>(),
+                id,
+            )
+            .len()
+            .saturating_sub(1),
+        });
+        let mut children: Vec<&str> = child_map.get(id).cloned().unwrap_or_default();
+        children.sort_by_key(|child| order.get(child).copied().unwrap_or(usize::MAX));
+        for child in children {
+            push_item(child, depth + 1, by_id, child_map, order, visited, items);
+        }
+    }
+
+    let mut items = Vec::new();
+    let mut visited = BTreeSet::new();
+    for root in roots {
+        push_item(
+            root,
+            0,
+            &by_id,
+            &child_map,
+            &order,
+            &mut visited,
+            &mut items,
+        );
+    }
+    for space in spaces {
+        if !visited.contains(&space.space_id) {
+            push_item(
+                &space.space_id,
+                0,
+                &by_id,
+                &child_map,
+                &order,
+                &mut visited,
+                &mut items,
+            );
+        }
+    }
+    items
+}
+
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
+    let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
         .load_private_data(&initial_config.account_did, "locale")
         .map(|code| Locale::from_code(&code))
@@ -2337,6 +2840,7 @@ pub fn RouterView() -> Element {
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
+    let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
 
     let routed_space_id = route.space_id().map(str::to_owned);
     let remembered_space_id = selected_space();
@@ -2435,10 +2939,26 @@ pub fn RouterView() -> Element {
         }
     }
 
-    let selected_preview = spaces()
+    let loaded_spaces = spaces();
+    let selected_preview = loaded_spaces
         .iter()
         .find(|space| context_space_id.as_deref() == Some(space.space_id.as_str()))
         .cloned();
+    let active_scope_mode = space_scope_mode();
+    let active_space_scope_ids =
+        scoped_space_ids(&loaded_spaces, &active_space_id, active_scope_mode);
+    let active_space_scope_set: BTreeSet<String> = active_space_scope_ids.iter().cloned().collect();
+    let active_space_scope_count = active_space_scope_ids.len();
+    let active_space_scope_label = if active_space_scope_count <= 1 {
+        active_scope_mode.label().to_owned()
+    } else {
+        format!(
+            "{} · {} Spaces",
+            active_scope_mode.label(),
+            active_space_scope_count
+        )
+    };
+    let space_tree = space_tree_items(&loaded_spaces);
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -2661,21 +3181,21 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Home" }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Search" }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
-                if !spaces().is_empty() {
+                if !loaded_spaces.is_empty() {
                     div { class: "muted", "Spaces" }
-                    for space in spaces().into_iter().take(4) {
+                    for item in space_tree.iter().take(6) {
                         Link {
                             class: "secondary",
                             "data-testid": "mobile-space-nav-button",
-                            to: Route::Space { space_id: space.space_id.clone() },
+                            to: Route::Space { space_id: item.space.space_id.clone() },
                             onclick: {
-                                let id = space.space_id.clone();
+                                let id = item.space.space_id.clone();
                                 move |_| {
                                     selected_space.set(id.clone());
                                     mobile_nav_open.set(false);
                                 }
                             },
-                            "{space.name}"
+                            "{item.space.name}"
                         }
                     }
                 }
@@ -2860,24 +3380,70 @@ pub fn RouterView() -> Element {
                         span { "Spaces" }
                         Link { class: "add", to: Route::SetupSection { section: "spaces".to_owned() }, "+" }
                     }
-                    if spaces().is_empty() {
+                    if !loaded_spaces.is_empty() && !sidebar_is_collapsed {
+                        div { class: "sidebar-scope-toggle", "data-testid": "space-scope-toggle", role: "group", "aria-label": "Space selection scope",
+                            button {
+                                class: if active_scope_mode == SpaceScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
+                                "data-testid": "space-scope-exact",
+                                title: "Select only the current Space",
+                                "aria-pressed": if active_scope_mode == SpaceScopeMode::Exact { "true" } else { "false" },
+                                onclick: move |_| {
+                                    space_scope_mode.set(SpaceScopeMode::Exact);
+                                    save_space_scope_preference(&mut state_store.write(), SpaceScopeMode::Exact);
+                                },
+                                "Only"
+                            }
+                            button {
+                                class: if active_scope_mode == SpaceScopeMode::IncludeDescendants { "scope-chip active" } else { "scope-chip" },
+                                "data-testid": "space-scope-descendants",
+                                title: "Select the current Space and all descendant Spaces",
+                                "aria-pressed": if active_scope_mode == SpaceScopeMode::IncludeDescendants { "true" } else { "false" },
+                                onclick: move |_| {
+                                    space_scope_mode.set(SpaceScopeMode::IncludeDescendants);
+                                    save_space_scope_preference(&mut state_store.write(), SpaceScopeMode::IncludeDescendants);
+                                },
+                                "Tree"
+                            }
+                        }
+                    }
+                    if loaded_spaces.is_empty() {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "space-empty-state",
                             span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                             span { class: "grow truncate", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
                         }
                     } else {
-                        for space in spaces().into_iter().take(5) {
+                        for item in space_tree.iter() {
+                            {
+                                let item_space = item.space.clone();
+                                let depth_px = item.depth * 14;
+                                let in_scope = active_space_scope_set.contains(&item_space.space_id);
+                                let is_active = effective_space_id.as_deref() == Some(item_space.space_id.as_str());
+                                let item_class = if is_active {
+                                    "sidebar-nav-item space-tree-item is-active"
+                                } else if in_scope {
+                                    "sidebar-nav-item space-tree-item is-scope-member"
+                                } else {
+                                    "sidebar-nav-item space-tree-item"
+                                };
+                                rsx! {
                             Link {
-                                class: if effective_space_id.as_deref() == Some(space.space_id.as_str()) { "sidebar-nav-item is-active" } else { "sidebar-nav-item" },
+                                class: "{item_class}",
                                 "data-testid": "space-button",
-                                to: Route::Space { space_id: space.space_id.clone() },
+                                style: "padding-left: calc(10px + {depth_px}px);",
+                                to: Route::Space { space_id: item_space.space_id.clone() },
                                 onclick: {
-                                    let id = space.space_id.clone();
+                                    let id = item_space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
                                 },
                                 span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
-                                span { class: "grow truncate", "{space.name}" }
-                                span { class: "pill muted xs", "Space" }
+                                span { class: "grow truncate", "{item_space.name}" }
+                                if item.descendant_count > 0 {
+                                    span { class: "pill muted xs", "{item.descendant_count}" }
+                                } else {
+                                    span { class: "pill muted xs", "Space" }
+                                }
+                            }
+                                }
                             }
                         }
                     }
@@ -3159,6 +3725,8 @@ pub fn RouterView() -> Element {
                 if route_uses_space_context && !active_space_id.is_empty() {
                     SpaceContextBar {
                         space_id: active_space_id.clone(),
+                        scope_label: active_space_scope_label.clone(),
+                        scope_count: active_space_scope_count,
                         current_surface: resolved_space_surface,
                         account_did: account_did(),
                         state_store,
@@ -3217,6 +3785,7 @@ pub fn RouterView() -> Element {
                                             device_id: device_id(),
                                             token,
                                             selected_space: active_space_id.clone(),
+                                            selected_space_scope: active_space_scope_ids.clone(),
                                             timeline,
                                             draft,
                                             state_store,
@@ -3238,6 +3807,7 @@ pub fn RouterView() -> Element {
                                             token,
                                             account_did: account_did(),
                                             selected_space: active_space_id.clone(),
+                                            selected_space_scope: active_space_scope_ids.clone(),
                                             sync_cursor,
                                             frontier_state,
                                             state_store,
@@ -3256,6 +3826,7 @@ pub fn RouterView() -> Element {
                                             account_did: account_did(),
                                             token,
                                             selected_space: active_space_id.clone(),
+                                            selected_space_scope: active_space_scope_ids.clone(),
                                             sync_cursor,
                                             frontier_state,
                                             state_store,
@@ -3282,7 +3853,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Timeline | Route::TimelineSpace { .. } => {
                         if let Some(sid) = route.space_id() {
-                            selected_space.set(sid.to_owned());
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
                         }
                         if minimal_ready {
                             rsx! {
@@ -3292,6 +3865,7 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_space: active_space_id.clone(),
+                                    selected_space_scope: active_space_scope_ids.clone(),
                                     timeline,
                                     draft,
                                     state_store,
@@ -3368,7 +3942,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => {
                         if let Some(sid) = route.space_id() {
-                            selected_space.set(sid.to_owned());
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
                         }
                         if full_ready {
                             rsx! {
@@ -3392,7 +3968,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Kanban | Route::KanbanSpace { .. } => {
                         if let Some(sid) = route.space_id() {
-                            selected_space.set(sid.to_owned());
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
                         }
                         if kanban_ready {
                             rsx! {
@@ -3401,6 +3979,7 @@ pub fn RouterView() -> Element {
                                     token,
                                     account_did: account_did(),
                                     selected_space: active_space_id.clone(),
+                                    selected_space_scope: active_space_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3413,7 +3992,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Chat | Route::ChatSpace { .. } => {
                         if let Some(sid) = route.space_id() {
-                            selected_space.set(sid.to_owned());
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
                         }
                         if chat_ready {
                             rsx! {
@@ -3422,6 +4003,7 @@ pub fn RouterView() -> Element {
                                     account_did: account_did(),
                                     token,
                                     selected_space: active_space_id.clone(),
+                                    selected_space_scope: active_space_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3440,7 +4022,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Document | Route::DocumentSpace { .. } => {
                         if let Some(sid) = route.space_id() {
-                            selected_space.set(sid.to_owned());
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
                         }
                         rsx! {
                             if full_ready {
@@ -3501,6 +4085,8 @@ pub fn RouterView() -> Element {
 #[component]
 fn SpaceContextBar(
     space_id: String,
+    scope_label: String,
+    scope_count: usize,
     current_surface: Option<SpaceSurface>,
     account_did: String,
     state_store: Signal<LocalStateStore>,
@@ -3513,7 +4099,7 @@ fn SpaceContextBar(
         div { class: "event", "data-testid": "space-context-bar",
             div { class: "event-head",
                 span { "Space views" }
-                span { "default entry follows your last selected view" }
+                span { "{scope_label}" }
             }
             div { class: "actions",
                 for surface in SpaceSurface::all() {
@@ -3553,7 +4139,11 @@ fn SpaceContextBar(
                 }
             }
             div { class: "muted",
-                "View preference is actor-private UI state. Board, discussion, and document stay inside the current Space instead of acting like separate products."
+                if scope_count > 1 {
+                    "Reads are scoped to the selected Space tree; writes still target the current Space unless a view asks for a child Space explicitly."
+                } else {
+                    "Reads and writes target this Space."
+                }
             }
         }
     }
@@ -3886,6 +4476,22 @@ fn save_sidebar_width_preference(state_store: &mut LocalStateStore, width: f64) 
     );
 }
 
+fn load_space_scope_preference(state_store: &LocalStateStore) -> SpaceScopeMode {
+    state_store
+        .load_private_data(UI_PREFERENCES_SCOPE, SPACE_SCOPE_PREFERENCE_KEY)
+        .as_deref()
+        .map(SpaceScopeMode::from_preference)
+        .unwrap_or(SpaceScopeMode::Exact)
+}
+
+fn save_space_scope_preference(state_store: &mut LocalStateStore, mode: SpaceScopeMode) {
+    state_store.save_private_data(
+        UI_PREFERENCES_SCOPE,
+        SPACE_SCOPE_PREFERENCE_KEY,
+        mode.preference_value(),
+    );
+}
+
 #[derive(Clone, Copy)]
 struct ConnectContext {
     status: Signal<String>,
@@ -4005,9 +4611,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         spaces.set(search.results);
                     }
                     Ok(search) => {
-                        let first_space =
-                            search.results.first().map(|space| space.space_id.clone());
-                        spaces.set(search.results);
+                        let mut results = search.results;
+                        normalize_space_hierarchy(&mut results);
+                        let first_space = results.first().map(|space| space.space_id.clone());
+                        spaces.set(results);
                         if selected_space().trim().is_empty() {
                             if let Some(space_id) = first_space {
                                 selected_space.set(space_id);
@@ -4048,6 +4655,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 current_spaces.push(preview);
                             }
                         }
+                        normalize_space_hierarchy(&mut current_spaces);
                         current_spaces.first().map(|space| space.space_id.clone())
                     };
                     if selected_space().trim().is_empty() {
@@ -4084,7 +4692,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 }
 
 fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
-    spaces
+    let mut previews: Vec<SpacePreview> = spaces
         .iter()
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
@@ -4123,15 +4731,19 @@ fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Spac
                     .get("category")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
+                parent_space_id: extract_parent_space_id(id, body),
+                child_space_ids: extract_child_space_ids(id, body),
             }
         })
-        .collect()
+        .collect();
+    normalize_space_hierarchy(&mut previews);
+    previews
 }
 
 fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
     for (id, body) in spaces {
-        events.push(TimelineEvent::system_notice(
+        let mut summary_event = TimelineEvent::system_notice(
             format!("summary-{id}"),
             "serverx",
             format!(
@@ -4140,7 +4752,9 @@ fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Tim
                     .as_str()
                     .unwrap_or("No summary available")
             ),
-        ));
+        );
+        summary_event.space_id = Some(id.clone());
+        events.push(summary_event);
 
         let Some(timeline_events) = body
             .get("timeline")
@@ -4175,6 +4789,7 @@ fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Tim
                 .unwrap_or("[message]")
                 .to_owned();
             events.push(TimelineEvent {
+                space_id: Some(id.clone()),
                 id: event_id.clone(),
                 sender: event
                     .get("sender")
@@ -4216,4 +4831,103 @@ fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
         .as_str()
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn preview(id: &str, name: &str, parent: Option<&str>) -> SpacePreview {
+        SpacePreview {
+            space_id: id.to_owned(),
+            name: name.to_owned(),
+            description: None,
+            tags: Default::default(),
+            public: true,
+            category: None,
+            parent_space_id: parent.map(ToOwned::to_owned),
+            child_space_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn space_tree_uses_parent_links_for_nested_menu() {
+        let spaces = vec![
+            preview("cx:space:root", "Root", None),
+            preview("cx:space:child", "Child", Some("cx:space:root")),
+            preview("cx:space:deep", "Deep", Some("cx:space:child")),
+        ];
+
+        let items = space_tree_items(&spaces);
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].space.space_id, "cx:space:root");
+        assert_eq!(items[0].depth, 0);
+        assert_eq!(items[0].descendant_count, 2);
+        assert_eq!(items[1].space.space_id, "cx:space:child");
+        assert_eq!(items[1].depth, 1);
+        assert_eq!(items[2].space.space_id, "cx:space:deep");
+        assert_eq!(items[2].depth, 2);
+    }
+
+    #[test]
+    fn scoped_space_ids_support_exact_and_descendants() {
+        let spaces = vec![
+            preview("cx:space:root", "Root", None),
+            preview("cx:space:child", "Child", Some("cx:space:root")),
+            preview("cx:space:deep", "Deep", Some("cx:space:child")),
+        ];
+
+        assert_eq!(
+            scoped_space_ids(&spaces, "cx:space:root", SpaceScopeMode::Exact),
+            vec!["cx:space:root".to_owned()]
+        );
+        assert_eq!(
+            scoped_space_ids(&spaces, "cx:space:root", SpaceScopeMode::IncludeDescendants),
+            vec![
+                "cx:space:root".to_owned(),
+                "cx:space:child".to_owned(),
+                "cx:space:deep".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn sync_projection_parses_space_hierarchy_fields() {
+        let mut spaces = BTreeMap::new();
+        spaces.insert(
+            "cx:space:root".to_owned(),
+            json!({
+                "summary": {
+                    "title": "Root",
+                    "summary": "Root Space",
+                    "child_space_ids": ["cx:space:child"]
+                }
+            }),
+        );
+        spaces.insert(
+            "cx:space:child".to_owned(),
+            json!({
+                "summary": {
+                    "title": "Child",
+                    "summary": "Child Space",
+                    "parent_space_id": "cx:space:root"
+                }
+            }),
+        );
+
+        let previews = space_previews_from_sync_spaces(&spaces);
+        let root = previews
+            .iter()
+            .find(|space| space.space_id == "cx:space:root")
+            .expect("root preview");
+        let child = previews
+            .iter()
+            .find(|space| space.space_id == "cx:space:child")
+            .expect("child preview");
+
+        assert_eq!(root.child_space_ids, vec!["cx:space:child".to_owned()]);
+        assert_eq!(child.parent_space_id.as_deref(), Some("cx:space:root"));
+    }
 }

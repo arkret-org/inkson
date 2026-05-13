@@ -48,6 +48,7 @@ struct BlobAttachment {
 /// Event model for timeline display.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineEvent {
+    pub space_id: Option<String>,
     pub id: String,
     pub sender: String,
     pub sender_display: String,
@@ -71,6 +72,7 @@ impl Default for TimelineEvent {
     fn default() -> Self {
         Self {
             id: String::new(),
+            space_id: None,
             sender: "yougen".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),
@@ -108,6 +110,7 @@ impl TimelineEvent {
     }
 
     pub fn pending_message(
+        space_id: impl Into<String>,
         id: impl Into<String>,
         sender: impl Into<String>,
         sender_display: impl Into<String>,
@@ -116,6 +119,7 @@ impl TimelineEvent {
         thread_id: Option<String>,
     ) -> Self {
         Self {
+            space_id: Some(space_id.into()),
             id: id.into(),
             sender: sender.into(),
             sender_display: sender_display.into(),
@@ -264,6 +268,7 @@ pub fn TimelinePanel(
     device_id: String,
     token: Signal<String>,
     selected_space: String,
+    selected_space_scope: Vec<String>,
     timeline: Signal<Vec<TimelineEvent>>,
     draft: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -308,6 +313,14 @@ pub fn TimelinePanel(
     let events_data: Vec<(usize, TimelineEvent)> = timeline()
         .iter()
         .enumerate()
+        .filter(|(_, event)| {
+            selected_space_scope.is_empty()
+                || event
+                    .space_id
+                    .as_deref()
+                    .map(|space_id| selected_space_scope.iter().any(|id| id == space_id))
+                    .unwrap_or(true)
+        })
         .map(|(i, event)| (i, event.clone()))
         .collect();
     let plaintext_service = plaintext_visible_service(&base_url);
@@ -963,6 +976,7 @@ pub fn TimelinePanel(
                         } else {
                             let event_id = format!("ev:local:{}", uuid_v8());
                             timeline.write().push(TimelineEvent {
+                                space_id: Some(space_for_plain.clone()),
                                 id: event_id.clone(),
                                 sender: account_did_key.clone(),
                                 sender_display: "you".to_owned(),
@@ -1180,6 +1194,7 @@ pub fn TimelinePanel(
                             } else {
                                 let local_event_id = format!("local-event-{}", uuid_v8());
                                 timeline.write().push(TimelineEvent::pending_message(
+                                    space_for_plain.clone(),
                                     local_event_id.clone(),
                                     ac.clone(),
                                     "local",
@@ -1314,7 +1329,20 @@ fn timeline_events_from_sync_spaces(
     spaces: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
-    for body in spaces.values() {
+    for (space_id, body) in spaces {
+        let mut summary_event = TimelineEvent::system_notice(
+            format!("summary-{space_id}"),
+            "serverx",
+            format!(
+                "{space_id}: {}",
+                body["summary"]["summary"]
+                    .as_str()
+                    .unwrap_or("No summary available")
+            ),
+        );
+        summary_event.space_id = Some(space_id.clone());
+        events.push(summary_event);
+
         let Some(timeline_events) = body
             .get("timeline")
             .and_then(|timeline| timeline.get("events"))
@@ -1348,6 +1376,7 @@ fn timeline_events_from_sync_spaces(
                 .unwrap_or("[message]")
                 .to_owned();
             events.push(TimelineEvent {
+                space_id: Some(space_id.clone()),
                 id: event_id.clone(),
                 sender: event
                     .get("sender")
