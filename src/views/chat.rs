@@ -9,7 +9,7 @@ use crate::{
     local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
     models::SubmitEventResponse,
     move_builder::{build_mls_commit_move, did_key_verification_method, sign_unsigned_move},
-    operation::{OperationBuilder, OperationEnvelope, cx_ops, uuid_v8},
+    operation::{OperationBuilder, OperationEnvelope, cx_ops, uuid_v7},
     routes::Route,
     views::helpers::{
         StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
@@ -1494,7 +1494,7 @@ pub fn ChatPanel(
                                         let member_text = new_channel_members();
                                         let create_card = new_channel_create_card();
                                         let participants = discussion_participants(&actor, &member_text);
-                                        let flow_id = format!("cx:flow:{}", uuid_v8());
+                                        let flow_id = format!("cx:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match cx_ops::discussion_flow_create(
                                             &space,
@@ -2168,7 +2168,7 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 let mentions = parse_structured_mentions(&body);
-                                let local_id = format!("chat-msg-{}", uuid_v8());
+                                let local_id = format!("chat-msg-{}", uuid_v7());
                                 let channel = channels()
                                     .iter()
                                     .find(|candidate| candidate.flow_id == selected_channel())

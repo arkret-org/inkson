@@ -689,7 +689,7 @@ impl GrantBuilder {
     pub fn new(issuer: &str, subject: &str) -> Self {
         Self {
             grant: CapabilityGrant {
-                grant_id: format!("grant-{}", crate::operation::uuid_v8()),
+                grant_id: format!("grant-{}", crate::operation::uuid_v7()),
                 issuer: issuer.to_owned(),
                 subject: subject.to_owned(),
                 resource_selectors: Vec::new(),

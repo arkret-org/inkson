@@ -47,10 +47,6 @@ pub struct OperationEnvelope {
     /// before [`crate::api::Api::submit_operation_event`] for any durable kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proof: Option<Proof>,
-    /// Legacy free-form signature string. Retained for call sites that have not
-    /// migrated to the typed [`Proof`] surface yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
 }
 
 /// Detached JWS proof over the canonical body of an [`OperationEnvelope`].
@@ -134,7 +130,7 @@ impl OperationBuilder {
     pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> OperationEnvelope {
         let hlc = Hlc::now(node_id);
         OperationEnvelope {
-            operation_id: uuid_v8(),
+            operation_id: uuid_v7(),
             space_id: self.space_id,
             actor: self.actor,
             op_type: self.op_type,
@@ -150,7 +146,6 @@ impl OperationBuilder {
             effects: Vec::new(),
             anchor_ref: None,
             proof: None,
-            signature: None,
         }
     }
 }
@@ -258,14 +253,6 @@ impl OperationEnvelope {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("operation envelope missing proof"))
     }
-}
-
-/// Generate a protocol-compatible UUIDv7 identifier.
-///
-/// The function name is kept for older UI call sites, but typed Contrix IDs
-/// are validated as UUIDv7 at service boundaries.
-pub fn uuid_v8() -> String {
-    uuid_v7()
 }
 
 /// Generate a canonical UUIDv7 string for typed protocol identifiers.

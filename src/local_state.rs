@@ -396,31 +396,6 @@ pub struct BottomCellInfo {
     pub heads: Vec<BottomCellHead>,
 }
 
-/// Accept both the legacy `{cell: "expose"}` shape (persisted by builds before
-/// the side-by-side head surface landed) and the richer `{cell: {status,
-/// heads}}` shape. Without this the first read after upgrade would error out
-/// and the user would lose every persisted Anchor view.
-fn deserialize_bottom_cells<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<String, BottomCellInfo>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let raw: BTreeMap<String, Value> = BTreeMap::deserialize(deserializer)?;
-    let mut out = BTreeMap::new();
-    for (k, v) in raw {
-        let info = match v {
-            Value::String(s) => BottomCellInfo {
-                status: s,
-                heads: vec![],
-            },
-            other => serde_json::from_value(other).map_err(serde::de::Error::custom)?,
-        };
-        out.insert(k, info);
-    }
-    Ok(out)
-}
-
 /// Snapshot of the latest Anchor view observed for a Space. Surfaced from
 /// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
@@ -458,9 +433,8 @@ pub struct LocalAnchorView {
     /// heads). Populated when the projection contains a `bottom=expose`
     /// cell so the UI can surface a "concurrent candidates unresolved"
     /// banner with side-by-side head values. Other cells are omitted to
-    /// keep this struct compact. The custom deserializer also accepts
-    /// the legacy `{cell: "expose"}` shape persisted by older builds.
-    #[serde(default, deserialize_with = "deserialize_bottom_cells")]
+    /// keep this struct compact.
+    #[serde(default)]
     pub bottom_cells: BTreeMap<String, BottomCellInfo>,
     /// Round 21: the current MLS epoch as published in the
     /// `cx.component.mls.epoch.v1` cas-register cell, when sync surfaces
@@ -2356,28 +2330,6 @@ mod tests {
             },
         );
         assert!(view.has_bottom_cells());
-    }
-
-    #[test]
-    fn anchor_view_bottom_cells_legacy_string_shape_deserialises() {
-        // Round 24 (M9): persisted state from older builds stored each
-        // bottom_cells entry as a bare status string. Loading that JSON
-        // must still succeed and lift the entry into a BottomCellInfo
-        // with empty heads, so the upgrade doesn't wipe Anchor views.
-        let raw = r#"{
-            "frontier": [],
-            "leaves": [],
-            "bottom_cells": {
-                "cx:cell:cx.component.member.state.v1:did:web:alice": "expose"
-            }
-        }"#;
-        let view: LocalAnchorView = serde_json::from_str(raw).expect("legacy shape parses");
-        let entry = view
-            .bottom_cells
-            .get("cx:cell:cx.component.member.state.v1:did:web:alice")
-            .expect("entry present");
-        assert_eq!(entry.status, "expose");
-        assert!(entry.heads.is_empty());
     }
 
     #[test]

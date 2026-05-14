@@ -21,8 +21,8 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         issuer: "https://auth.local.host/",
         authorization_endpoint: "https://auth.local.host/authorize",
-        token_endpoint: "https://auth.local.host/oauth2/token",
-        userinfo_endpoint: "https://auth.local.host/oauth2/userinfo",
+        token_endpoint: "https://auth.local.host/oauth/token",
+        userinfo_endpoint: "https://auth.local.host/oauth/userinfo",
         code_challenge_methods_supported: ["plain", "S256"],
         scopes_supported: ["openid", "profile"],
       });

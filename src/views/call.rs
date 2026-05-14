@@ -2,9 +2,8 @@
 //!
 //! Yougen does NOT bundle a WebRTC stack; the durable signaling envelope
 //! builders live in `crate::webrtc` and are intended for a host renderer
-//! (mobile / Tauri shell) to plug in.  This view replaces R-routes-001's
-//! old `/call → /` redirect — it now states clearly what is wired and
-//! what is pending so the URL is no longer a dead end.
+//! (mobile / Tauri shell) to plug in.  This view states clearly what is
+//! wired and what is pending so the URL is not a dead end.
 
 use dioxus::prelude::*;
 
@@ -58,14 +57,6 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                         span { "Opt-in marker only" }
                         div { class: "muted", "cx.call.recording.start; capture pipeline is host-side" }
                     }
-                }
-            }
-            div { class: "event",
-                div { class: "event-head",
-                    span { "Why this URL exists" }
-                }
-                div { class: "muted",
-                    "/call used to redirect to /home, which made bookmarked or shared links silently dead. R-routes-001 replaced the redirect with this honest status panel so the URL behavior matches user expectations until the media surface ships."
                 }
             }
         }

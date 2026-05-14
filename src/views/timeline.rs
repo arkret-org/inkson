@@ -7,7 +7,7 @@ use crate::{
     crypto::compose_local_encrypted_message,
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
-    operation::{OperationBuilder, OperationEnvelope, uuid_v8},
+    operation::{OperationBuilder, OperationEnvelope, uuid_v7},
     views::helpers::{active_sync_token, authed_api_with_sync},
 };
 
@@ -955,7 +955,7 @@ pub fn TimelinePanel(
                             ) {
                                 Ok(message) => {
                                     timeline.write().push(TimelineEvent::system_notice(
-                                        format!("local-encrypted-{}", uuid_v8()),
+                                        format!("local-encrypted-{}", uuid_v7()),
                                         "local",
                                         format!(
                                             "encrypted {} epoch {} digest {}",
@@ -967,14 +967,14 @@ pub fn TimelinePanel(
                                 }
                                 Err(error) => {
                                     timeline.write().push(TimelineEvent::system_notice(
-                                        format!("encrypt-error-{}", uuid_v8()),
+                                        format!("encrypt-error-{}", uuid_v7()),
                                         "local",
                                         format!("encryption failed: {error}"),
                                     ));
                                 }
                             }
                         } else {
-                            let event_id = format!("ev:local:{}", uuid_v8());
+                            let event_id = format!("ev:local:{}", uuid_v7());
                             timeline.write().push(TimelineEvent {
                                 space_id: Some(space_for_plain.clone()),
                                 id: event_id.clone(),
@@ -1170,7 +1170,7 @@ pub fn TimelinePanel(
                                 ) {
                                     Ok(message) => {
                                         timeline.write().push(TimelineEvent::system_notice(
-                                            format!("local-encrypted-{}", uuid_v8()),
+                                            format!("local-encrypted-{}", uuid_v7()),
                                             "local",
                                             format!(
                                                 "encrypted {} epoch {} digest {}",
@@ -1192,7 +1192,7 @@ pub fn TimelinePanel(
                                     Err(error) => crypto_state.set(format!("encrypt failed: {error}")),
                                 }
                             } else {
-                                let local_event_id = format!("local-event-{}", uuid_v8());
+                                let local_event_id = format!("local-event-{}", uuid_v7());
                                 timeline.write().push(TimelineEvent::pending_message(
                                     space_for_plain.clone(),
                                     local_event_id.clone(),

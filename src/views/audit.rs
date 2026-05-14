@@ -5,7 +5,6 @@
 //! raw-operation log, so administrators / users can verify the audit
 //! channel is firing under the active policy.
 //!
-//! Replaces R-routes-001's old `/audit → /settings/release` redirect.
 //! Writing new audit events is owned by the SDK / reducer path; this view
 //! does not emit anything.
 

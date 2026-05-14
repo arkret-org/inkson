@@ -62,7 +62,7 @@ fn flow_id_storage_key(space_id: &str) -> String {
 /// matching `cx.flow.create` event is accepted; once accepted, the
 /// reducer takes ownership.
 fn mint_flow_id() -> String {
-    format!("cx:flow:{}", crate::operation::uuid_v8())
+    format!("cx:flow:{}", crate::operation::uuid_v7())
 }
 
 /// Serialize the editable document for the synthesis-track body.

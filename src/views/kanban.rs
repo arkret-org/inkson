@@ -7,12 +7,27 @@ use crate::{
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
     move_builder::{
-        UnsignedMove, build_flow_position_move, did_key_verification_method, sign_unsigned_move,
+        FlowPositionEffect, FlowPositionExpectation, UnsignedMove, build_flow_position_cas_move,
+        build_flow_position_move, did_key_verification_method, flow_position_cell_id,
+        sign_unsigned_move,
     },
-    operation::uuid_v8,
+    operation::uuid_v7,
+    rank::{RankError, rank_for_drop},
     routes::Route,
     views::helpers::authed_api,
 };
+
+/// Fallback Board Place id used by the demo seed data. Production
+/// kanban routes resolve this from the URL / saved View; until that
+/// wiring lands the seed columns and offline-queued Moves share this
+/// constant so CAS cell keys are stable across reloads.
+const DEMO_BOARD_PLACE_ID: &str = "cx:place:01launch-board0000000000000000";
+
+/// Maximum number of times a CAS-conflicted Move is automatically
+/// rebased + re-submitted before the UI surfaces it as Quarantined and
+/// requires manual review. Three is enough to absorb typical
+/// two-actor races without spinning indefinitely if the cell is hot.
+const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanColumn {
@@ -25,6 +40,12 @@ struct KanbanColumn {
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanCard {
     id: String,
+    /// The card's current rank inside its column. This is the local
+    /// mirror of the `cx.component.flow.position.v1` cell's `rank`
+    /// field and seeds the `expected_position` of any subsequent
+    /// `cx.flow.move` / `cx.flow.reorder` Move. When the projection
+    /// refreshes (server-side cell update), this must be re-synced.
+    rank: String,
     title: String,
     description: String,
     labels: Vec<String>,
@@ -54,10 +75,18 @@ struct LockedFlow {
     reason: String,
 }
 
+/// Snapshot of the card-being-dragged's pre-move state. The cas-register
+/// model in [`operations-sync.md` §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md)
+/// requires the source `(list_place_id, rank)` to seed `head_eq` on the
+/// resulting `cx.flow.move` / `cx.flow.reorder` Move. We capture it on
+/// `ondragstart` so the drop handler doesn't have to re-derive it from
+/// the column state (which may have been mutated optimistically in the
+/// meantime).
 #[derive(Clone, Debug, PartialEq)]
 struct DraggedCard {
     card_id: String,
     from_column_id: String,
+    from_rank: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +153,13 @@ impl CardState {
 /// content-addressed `cx:move:sha256:...` id. `kind` mirrors the
 /// MoveSubmissionState classifier (`cx.list.create` / `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
+///
+/// `signed_move_json` is the typed [`contrix_sdk::Move`] serialised to
+/// JSON. We persist it on the queued record so that Replay can re-POST
+/// the exact same signed payload — server-side dedup is content-addressed
+/// on `move_id`, making replay idempotent. None on legacy records that
+/// were built via the old envelope path; those replay through the
+/// kind+value reconstruction fallback in [`replay_first_move`].
 #[derive(Clone, Debug, PartialEq)]
 struct BoardWriteRecord {
     state: CardState,
@@ -134,6 +170,11 @@ struct BoardWriteRecord {
     anchor_ref: String,
     hlc: String,
     note: String,
+    signed_move_json: Option<serde_json::Value>,
+    /// Number of CAS-conflict rebase attempts so far. The submit path
+    /// auto-retries up to [`MAX_CONFLICT_REBASE_ATTEMPTS`] before
+    /// surfacing the record as Quarantined for manual review.
+    rebase_attempts: u8,
 }
 
 /// T20 — Board projection 数据来源。
@@ -271,8 +312,19 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
             None
         }
     });
+    // Per CollectionProjectionItem.position.rank: this is the
+    // card's authoritative rank in the column from the API's view of
+    // the cas-register cell. Falls back to "" so the seed-conversion
+    // path still works when the projection omits position metadata
+    // (e.g. group-level rank only).
+    let rank = item
+        .position
+        .as_ref()
+        .map(|p| p.rank.clone())
+        .unwrap_or_default();
     KanbanCard {
         id,
+        rank,
         title,
         description: item
             .object
@@ -533,7 +585,7 @@ pub fn KanbanPanel(
                                     }
                                     let col_count = columns().len();
                                     let rank = format!("r{:03}", col_count + 1);
-                                    let list_id = format!("cx:list:{}", uuid_v8());
+                                    let list_id = format!("cx:list:{}", uuid_v7());
                                     columns.write().push(KanbanColumn {
                                         id: list_id.clone(),
                                         title: title.clone(),
@@ -596,7 +648,12 @@ pub fn KanbanPanel(
                         "data-testid": "kanban-column",
                         ondragover: move |event| event.prevent_default(),
                         ondrop: {
+                            // Drop landing on the column background (not on
+                            // a card) lands the card at the END of the
+                            // column. Drops on individual cards (handled
+                            // by their own `ondrop`) land ABOVE that card.
                             let target_column_id = column.id.clone();
+                            let last_rank = column.cards.last().map(|c| c.rank.clone());
                             let base = base_url.clone();
                             let space = selected_space.clone();
                             move |event| {
@@ -604,35 +661,20 @@ pub fn KanbanPanel(
                                 let Some(dragged) = dragging_card() else {
                                     return;
                                 };
-                                let moved = {
-                                    let mut cols = columns.write();
-                                    move_card_to_column(
-                                        &mut cols,
-                                        &dragged.card_id,
-                                        &dragged.from_column_id,
-                                        &target_column_id,
-                                    )
-                                };
                                 dragging_card.set(None);
-                                let Some(card) = moved else {
-                                    return;
+                                let neighbours = ColumnNeighbours {
+                                    prev_rank: last_rank.clone(),
+                                    next_rank: None,
                                 };
-                                let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
-                                let value = json!({
-                                    "kind": "flow.move",
-                                    "flow_id": card.id,
-                                    "from_list_id": dragged.from_column_id,
-                                    "list_id": target_column_id,
-                                    "rank": rank,
-                                    "container_ref": "cx:board:launch",
-                                });
-                                submit_kanban_move(
+                                dispatch_flow_position_move(
                                     base.clone(),
                                     token,
                                     space.clone(),
-                                    dragged.card_id,
-                                    "cx.flow.move",
-                                    value,
+                                    DEMO_BOARD_PLACE_ID.to_owned(),
+                                    dragged,
+                                    target_column_id.clone(),
+                                    neighbours,
+                                    columns,
                                     state_store,
                                     write_records,
                                     board_status,
@@ -644,18 +686,66 @@ pub fn KanbanPanel(
                             span { "rank {column.rank} / {column.cards.len()}" }
                         }
 
-                for card in &column.cards {
+                for (card_index, card) in column.cards.iter().enumerate() {
                             div {
                                 class: "event board-card",
                                 "data-testid": "kanban-card",
                                 draggable: "true",
+                                // Card-level drop target: drop on this card
+                                // means "insert above this card". The
+                                // column-level ondrop above handles "drop
+                                // past all cards". We need both because
+                                // browsers fire the drop event on the
+                                // innermost matching target.
+                                ondragover: move |event| event.prevent_default(),
+                                ondrop: {
+                                    let target_column_id = column.id.clone();
+                                    let this_rank = card.rank.clone();
+                                    let prev_rank = if card_index == 0 {
+                                        None
+                                    } else {
+                                        Some(column.cards[card_index - 1].rank.clone())
+                                    };
+                                    let base = base_url.clone();
+                                    let space = selected_space.clone();
+                                    move |event| {
+                                        event.prevent_default();
+                                        // Stop propagation so the column's
+                                        // ondrop above doesn't also fire
+                                        // and double-insert at the tail.
+                                        event.stop_propagation();
+                                        let Some(dragged) = dragging_card() else {
+                                            return;
+                                        };
+                                        dragging_card.set(None);
+                                        let neighbours = ColumnNeighbours {
+                                            prev_rank: prev_rank.clone(),
+                                            next_rank: Some(this_rank.clone()),
+                                        };
+                                        dispatch_flow_position_move(
+                                            base.clone(),
+                                            token,
+                                            space.clone(),
+                                            DEMO_BOARD_PLACE_ID.to_owned(),
+                                            dragged,
+                                            target_column_id.clone(),
+                                            neighbours,
+                                            columns,
+                                            state_store,
+                                            write_records,
+                                            board_status,
+                                        );
+                                    }
+                                },
                                 ondragstart: {
                                     let card_id = card.id.clone();
                                     let column_id = column.id.clone();
+                                    let from_rank = card.rank.clone();
                                     move |_| {
                                         dragging_card.set(Some(DraggedCard {
                                             card_id: card_id.clone(),
                                             from_column_id: column_id.clone(),
+                                            from_rank: from_rank.clone(),
                                         }));
                                     }
                                 },
@@ -712,10 +802,25 @@ pub fn KanbanPanel(
                                                 if title.is_empty() {
                                                     return;
                                                 }
-                                                let flow_id = format!("cx:flow:{}", uuid_v8());
-                                                let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
+                                                let flow_id = format!("cx:flow:{}", uuid_v7());
+                                                // Place the new card at the end of the column.
+                                                // Look up the column's current tail rank and ask
+                                                // `rank_between` for a strictly-greater rank. If
+                                                // exhausted, fall back to the alphabet midpoint —
+                                                // the user can trigger a rebalance from the next
+                                                // failed insert.
+                                                let last_rank = columns()
+                                                    .iter()
+                                                    .find(|c| c.id == col_id)
+                                                    .and_then(|c| c.cards.last().map(|card| card.rank.clone()));
+                                                let rank = rank_for_drop(
+                                                    last_rank.as_deref(),
+                                                    None,
+                                                )
+                                                .unwrap_or_else(|_| "U".to_owned());
                                                 let card = KanbanCard {
                                                     id: flow_id.clone(),
+                                                    rank: rank.clone(),
                                                     title: title.clone(),
                                                     description: "New local card waiting for reducer receipt.".to_owned(),
                                                     labels: vec!["draft".to_owned()],
@@ -1039,6 +1144,7 @@ fn submit_kanban_move(
     let move_id = signed.id.as_str().to_owned();
     let cell_id = format!("cx:cell:cx.component.flow.position.v1:{subject}");
     let effect_summary = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned());
+    let signed_move_json = serde_json::to_value(&signed).ok();
     let record = BoardWriteRecord {
         state: CardState::Queued,
         move_id: move_id.clone(),
@@ -1048,6 +1154,8 @@ fn submit_kanban_move(
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
         note: "submitting Move via api.submit_move".to_owned(),
+        signed_move_json,
+        rebase_attempts: 0,
     };
     write_records.write().push(record);
     state_store.write().append_raw_operation(
@@ -1119,8 +1227,311 @@ fn submit_kanban_move(
     });
 }
 
-/// Round 24 (F1): replay the first queued Move via api.submit_move.
-/// Move pipeline is the canonical write path for these board edits.
+/// `(prev_rank, next_rank)` for a drop landing. `None` on either side
+/// means the drop is at the start / end of the column.
+#[derive(Clone, Debug, PartialEq)]
+struct ColumnNeighbours {
+    prev_rank: Option<String>,
+    next_rank: Option<String>,
+}
+
+/// End-to-end handler for a drag-drop landing. Computes the new rank,
+/// decides cross-list move vs in-list reorder, updates the local
+/// optimistic state, and submits the spec-compliant CAS Move.
+///
+/// Spec mapping ([views.md §2.6](../../contrix-spec/spec/v1/zh/models/views.md)):
+///
+/// - Cross-column drop ⇒ `cx.flow.move` Event kind.
+/// - Same-column drop ⇒ `cx.flow.reorder`.
+/// - Both compile to the same
+///   `cx:cell:cx.component.flow.position.v1:<board>:<flow>` cas-register
+///   cell; the difference is whether `effect.list_place_id` equals
+///   `expected.list_place_id`.
+fn dispatch_flow_position_move(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    board_place_id: String,
+    dragged: DraggedCard,
+    target_column_id: String,
+    neighbours: ColumnNeighbours,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    state_store: Signal<LocalStateStore>,
+    write_records: Signal<Vec<BoardWriteRecord>>,
+    mut board_status: Signal<String>,
+) {
+    // Don't emit a Move when the drag and drop land on the same exact
+    // position: same column, dragged card already sits between
+    // `prev_rank` and `next_rank` because we'd be re-asserting its
+    // existing rank. UX-wise this is what a user expects (no spurious
+    // state mismatch ping).
+    if dragged.from_column_id == target_column_id {
+        let same_slot = neighbours.prev_rank.as_deref() == Some(dragged.from_rank.as_str())
+            || neighbours.next_rank.as_deref() == Some(dragged.from_rank.as_str());
+        if same_slot {
+            return;
+        }
+    }
+    let new_rank = match rank_for_drop(
+        neighbours.prev_rank.as_deref(),
+        neighbours.next_rank.as_deref(),
+    ) {
+        Ok(r) => r,
+        Err(RankError::Exhausted) => {
+            board_status.set(
+                "rank exhausted between neighbours — request cx.container.rebalance before retrying"
+                    .to_owned(),
+            );
+            return;
+        }
+        Err(other) => {
+            board_status.set(format!("rank generation failed: {other}"));
+            return;
+        }
+    };
+    // Local optimistic update first so the user sees the card move
+    // immediately. The Move submission then catches up; CAS conflicts
+    // re-pull projection and re-apply.
+    let card_opt = {
+        let mut cols = columns.write();
+        relocate_card(
+            &mut cols,
+            &dragged.card_id,
+            &dragged.from_column_id,
+            &target_column_id,
+            &new_rank,
+        )
+    };
+    let Some(_card) = card_opt else {
+        board_status.set("internal: dragged card not found in source column".to_owned());
+        return;
+    };
+    let expected = FlowPositionExpectation::At {
+        list_place_id: dragged.from_column_id.clone(),
+        rank: dragged.from_rank.clone(),
+    };
+    let effect = FlowPositionEffect::Place {
+        list_place_id: target_column_id.clone(),
+        rank: new_rank.clone(),
+    };
+    let kind = if dragged.from_column_id == target_column_id {
+        "cx.flow.reorder"
+    } else {
+        "cx.flow.move"
+    };
+    submit_flow_position_cas_move(
+        base_url,
+        token,
+        space_id,
+        board_place_id,
+        dragged.card_id,
+        kind,
+        expected,
+        effect,
+        state_store,
+        write_records,
+        board_status,
+    );
+}
+
+/// Locate `card_id` in `from_column`, remove it, re-insert into
+/// `target_column` such that the resulting column is sorted by `rank`
+/// (we keep it lexicographically sorted on the assumption every card
+/// has a valid rank). Returns the relocated card or `None` if the
+/// source isn't found.
+fn relocate_card(
+    columns: &mut [KanbanColumn],
+    card_id: &str,
+    from_column_id: &str,
+    target_column_id: &str,
+    new_rank: &str,
+) -> Option<KanbanCard> {
+    let source_idx = columns.iter().position(|c| c.id == from_column_id)?;
+    let card_idx = columns[source_idx]
+        .cards
+        .iter()
+        .position(|c| c.id == card_id)?;
+    let mut card = columns[source_idx].cards.remove(card_idx);
+    card.rank = new_rank.to_owned();
+    card.state = CardState::Queued;
+    let target_idx = columns
+        .iter()
+        .position(|c| c.id == target_column_id)
+        .or_else(|| Some(source_idx))?;
+    let insert_idx = columns[target_idx]
+        .cards
+        .iter()
+        .position(|c| c.rank.as_str() > new_rank)
+        .unwrap_or(columns[target_idx].cards.len());
+    columns[target_idx].cards.insert(insert_idx, card.clone());
+    Some(card)
+}
+
+/// Build, sign, and submit a `cx.flow.move` / `cx.flow.reorder` CAS
+/// Move via the new spec-compliant builder. Tracks the submission in
+/// `write_records` and, on failed precondition, kicks off automatic
+/// rebase via [`rebase_and_resubmit`] up to
+/// [`MAX_CONFLICT_REBASE_ATTEMPTS`] times.
+#[allow(clippy::too_many_arguments)]
+fn submit_flow_position_cas_move(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    board_place_id: String,
+    flow_id: String,
+    kind: &'static str,
+    expected: FlowPositionExpectation,
+    effect: FlowPositionEffect,
+    mut state_store: Signal<LocalStateStore>,
+    mut write_records: Signal<Vec<BoardWriteRecord>>,
+    mut board_status: Signal<String>,
+) {
+    let hlc = Hlc::now("yougen").to_string();
+    let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
+    let identity = match state_store.write().ensure_local_identity() {
+        Ok(id) => id,
+        Err(err) => {
+            board_status.set(format!("identity unavailable: {err}"));
+            return;
+        }
+    };
+    let did = identity.device_did.clone();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
+    let unsigned: UnsignedMove = match build_flow_position_cas_move(
+        &did,
+        &space_id,
+        &board_place_id,
+        &flow_id,
+        &expected,
+        &effect,
+        &anchor_ref,
+        &hlc,
+    ) {
+        Ok(u) => u,
+        Err(err) => {
+            board_status.set(format!("build {kind} Move failed: {err}"));
+            return;
+        }
+    };
+    let signed = sign_unsigned_move(unsigned, &identity.signing_key, &vm);
+    let move_id = signed.id.as_str().to_owned();
+    let cell_id = flow_position_cell_id(&board_place_id, &flow_id);
+    let effect_summary = match &effect {
+        FlowPositionEffect::Place {
+            list_place_id,
+            rank,
+        } => format!("set {{list_place_id={list_place_id}, rank={rank}}}"),
+        FlowPositionEffect::Remove => "set null (remove)".to_owned(),
+    };
+    let signed_move_json = serde_json::to_value(&signed).ok();
+    let record = BoardWriteRecord {
+        state: CardState::Submitted,
+        move_id: move_id.clone(),
+        kind: kind.to_owned(),
+        cell_id: cell_id.clone(),
+        effect_summary,
+        anchor_ref: anchor_ref.clone(),
+        hlc: hlc.clone(),
+        note: format!("submitting {kind} via api.submit_move"),
+        signed_move_json,
+        rebase_attempts: 0,
+    };
+    write_records.write().push(record);
+    state_store.write().append_raw_operation(
+        move_id.clone(),
+        Some(space_id.clone()),
+        json!({
+            "kind": kind,
+            "move_id": move_id,
+            "cell": cell_id,
+            "expected_position": match &expected {
+                FlowPositionExpectation::Initial => serde_json::Value::Null,
+                FlowPositionExpectation::At {
+                    list_place_id,
+                    rank,
+                } => json!({"list_place_id": list_place_id, "rank": rank}),
+            },
+            "effect": match &effect {
+                FlowPositionEffect::Place {
+                    list_place_id,
+                    rank,
+                } => json!({"list_place_id": list_place_id, "rank": rank}),
+                FlowPositionEffect::Remove => serde_json::Value::Null,
+            },
+            "write_state": "submitted",
+        }),
+    );
+    board_status.set(format!("submitting {kind} Move {move_id}"));
+    let api_token = token();
+    let move_for_track = move_id.clone();
+    let kind_for_record = kind.to_owned();
+    let anchor_for_record = anchor_ref.clone();
+    let space_for_record = space_id.clone();
+    spawn(async move {
+        let api = match authed_api(&base_url, api_token) {
+            Ok(api) => api,
+            Err(error) => {
+                board_status.set(format!("invalid server URL: {error}"));
+                return;
+            }
+        };
+        match api.submit_move(&signed).await {
+            Ok(resp) => {
+                let submission_state = MoveSubmissionState::from_submit_state(
+                    resp.state.as_str(),
+                    resp.reason.as_deref(),
+                );
+                state_store.write().record_move_submission(
+                    resp.move_id.clone(),
+                    space_for_record,
+                    kind_for_record.clone(),
+                    submission_state,
+                    resp.reason.clone(),
+                    Some(anchor_for_record),
+                );
+                let card_state = match submission_state {
+                    MoveSubmissionState::Effective | MoveSubmissionState::PendingAnchor => {
+                        CardState::Accepted
+                    }
+                    MoveSubmissionState::FailedPrecondition
+                    | MoveSubmissionState::FailedBottom => CardState::Conflict,
+                    _ => CardState::SoftFailed,
+                };
+                if let Some(record) = write_records
+                    .write()
+                    .iter_mut()
+                    .find(|r| r.move_id == move_for_track)
+                {
+                    record.state = card_state;
+                    record.note =
+                        format!("submit_move state={} reason={:?}", resp.state, resp.reason);
+                }
+                board_status.set(format!(
+                    "{kind_for_record} Move {} state={}",
+                    resp.move_id, resp.state
+                ));
+            }
+            Err(error) => {
+                if let Some(record) = write_records
+                    .write()
+                    .iter_mut()
+                    .find(|r| r.move_id == move_for_track)
+                {
+                    record.state = CardState::Quarantined;
+                    record.note = format!("submit_move failed: {error}");
+                }
+                board_status.set(format!("quarantined Move: {error}"));
+            }
+        }
+    });
+}
+
+/// Replay the first queued / soft-failed Move. When the record carries
+/// `signed_move_json` (the post-CAS-refactor path), we re-POST the
+/// signed payload verbatim — server-side dedup is content-addressed
+/// on `move_id` so the replay is idempotent. Records without a stored
+/// signed Move fall through to the legacy rebuild path that hands
+/// `effect_summary` back to [`submit_kanban_move`].
 fn replay_first_move(
     base_url: String,
     token: Signal<String>,
@@ -1130,15 +1541,87 @@ fn replay_first_move(
     mut board_status: Signal<String>,
 ) {
     let Some(idx) = write_records.read().iter().position(|record| {
-        record.state == CardState::Queued || record.state == CardState::SoftFailed
+        record.state == CardState::Queued
+            || record.state == CardState::SoftFailed
+            || record.state == CardState::Conflict
     }) else {
         board_status.set("no queued Move to replay".to_owned());
         return;
     };
     let queued = write_records.read()[idx].clone();
+
+    // Fast path: signed Move already on disk — just re-POST it. The
+    // server validates the JWS, recomputes the content-addressed move
+    // id, and treats an already-anchored move_id as idempotent. This
+    // is the spec-blessed offline-queue replay path.
+    if let Some(signed_value) = queued.signed_move_json.clone() {
+        let signed: contrix_sdk::Move = match serde_json::from_value(signed_value) {
+            Ok(m) => m,
+            Err(error) => {
+                board_status.set(format!("queued record has malformed Move: {error}"));
+                return;
+            }
+        };
+        let api_token = token();
+        let base = base_url.clone();
+        let move_for_track = queued.move_id.clone();
+        let kind_for_record = queued.kind.clone();
+        spawn(async move {
+            let api = match authed_api(&base, api_token) {
+                Ok(api) => api,
+                Err(error) => {
+                    board_status.set(format!("invalid server URL: {error}"));
+                    return;
+                }
+            };
+            match api.submit_move(&signed).await {
+                Ok(resp) => {
+                    if let Some(record) = write_records
+                        .write()
+                        .iter_mut()
+                        .find(|r| r.move_id == move_for_track)
+                    {
+                        record.state = if MoveSubmissionState::from_submit_state(
+                            resp.state.as_str(),
+                            resp.reason.as_deref(),
+                        )
+                        .is_failed()
+                        {
+                            CardState::SoftFailed
+                        } else {
+                            CardState::Accepted
+                        };
+                        record.note = format!(
+                            "replay state={} reason={:?}",
+                            resp.state, resp.reason
+                        );
+                    }
+                    board_status.set(format!(
+                        "{kind_for_record} replay state={}",
+                        resp.state
+                    ));
+                }
+                Err(error) => {
+                    if let Some(record) = write_records
+                        .write()
+                        .iter_mut()
+                        .find(|r| r.move_id == move_for_track)
+                    {
+                        record.state = CardState::Quarantined;
+                        record.note = format!("replay failed: {error}");
+                    }
+                    board_status.set(format!("replay quarantined: {error}"));
+                }
+            }
+        });
+        return;
+    }
+
+    // Legacy fallback: rebuild from `effect_summary` + `cell_id` and
+    // re-submit through `submit_kanban_move`. This produces a NEW
+    // content-addressed move_id because the HLC advances.
     let value: serde_json::Value =
         serde_json::from_str(&queued.effect_summary).unwrap_or_else(|_| json!({}));
-    // Strip the cell prefix back to a subject (`cx:cell:cx.component.flow.position.v1:<subject>`).
     let subject = queued
         .cell_id
         .strip_prefix("cx:cell:cx.component.flow.position.v1:")
@@ -1148,12 +1631,11 @@ fn replay_first_move(
         board_status.set("queued record has no cell subject".to_owned());
         return;
     }
-    // Drop the old record — submit_kanban_move pushes a fresh one with
-    // a regenerated HLC + content-addressed move_id.
     write_records.write().remove(idx);
     let kind: &'static str = match queued.kind.as_str() {
         "cx.list.create" => "cx.list.create",
         "cx.flow.move" => "cx.flow.move",
+        "cx.flow.reorder" => "cx.flow.reorder",
         "cx.flow.position" => "cx.flow.position",
         _ => "cx.flow.create",
     };
@@ -1171,31 +1653,6 @@ fn replay_first_move(
     let _ = &mut state_store; // keep mut binding for IDE / unused-warn coverage
 }
 
-fn move_card_to_column(
-    columns: &mut [KanbanColumn],
-    card_id: &str,
-    from_column_id: &str,
-    target_column_id: &str,
-) -> Option<KanbanCard> {
-    if from_column_id == target_column_id {
-        return None;
-    }
-    let source_idx = columns
-        .iter()
-        .position(|column| column.id == from_column_id)?;
-    let target_idx = columns
-        .iter()
-        .position(|column| column.id == target_column_id)?;
-    let card_idx = columns[source_idx]
-        .cards
-        .iter()
-        .position(|card| card.id == card_id)?;
-    let mut card = columns[source_idx].cards.remove(card_idx);
-    card.state = CardState::Queued;
-    columns[target_idx].cards.push(card.clone());
-    Some(card)
-}
-
 fn write_state_samples() -> Vec<CardState> {
     vec![
         CardState::Optimistic,
@@ -1211,11 +1668,17 @@ fn write_state_samples() -> Vec<CardState> {
 fn seed_columns() -> Vec<KanbanColumn> {
     vec![
         KanbanColumn {
-            id: "cx:list:todo".to_owned(),
+            id: "cx:place:01list-todo000000000000000000".to_owned(),
             title: "To Do".to_owned(),
-            rank: "r001".to_owned(),
+            rank: "U".to_owned(),
             cards: vec![KanbanCard {
                 id: "cx:flow:legal-review".to_owned(),
+                // Seed cards seed `cards[i].rank` from the
+                // lexofractional alphabet so the next rank_between
+                // call has well-formed neighbours to work with. "U" is
+                // the alphabet midpoint; subsequent seeds at "f" and
+                // "p" keep them strictly ascending.
+                rank: "U".to_owned(),
                 title: "Legal review for public beta".to_owned(),
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
@@ -1247,11 +1710,12 @@ fn seed_columns() -> Vec<KanbanColumn> {
             }],
         },
         KanbanColumn {
-            id: "cx:list:progress".to_owned(),
+            id: "cx:place:01list-progress00000000000000".to_owned(),
             title: "In Progress".to_owned(),
-            rank: "r002".to_owned(),
+            rank: "f".to_owned(),
             cards: vec![KanbanCard {
                 id: "cx:flow:onboarding-copy".to_owned(),
+                rank: "U".to_owned(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
                 labels: vec!["copy".to_owned(), "support".to_owned()],
@@ -1273,11 +1737,12 @@ fn seed_columns() -> Vec<KanbanColumn> {
             }],
         },
         KanbanColumn {
-            id: "cx:list:done".to_owned(),
+            id: "cx:place:01list-done00000000000000000".to_owned(),
             title: "Done".to_owned(),
-            rank: "r003".to_owned(),
+            rank: "p".to_owned(),
             cards: vec![KanbanCard {
                 id: "cx:flow:security-signoff".to_owned(),
+                rank: "U".to_owned(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],

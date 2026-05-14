@@ -52,9 +52,9 @@ pub struct CoauthLoginResponse {
 #[derive(Clone, Debug, Deserialize)]
 pub struct CoauthViewerInfo {
     pub id: String,
-    pub username: String,
-    pub did: String,
     pub handle: String,
+    pub did: String,
+    pub federated_handle: String,
     #[serde(default)]
     pub principal_id: Option<String>,
     #[serde(default)]
@@ -1487,9 +1487,9 @@ mod tests {
             "status": "success",
             "viewer": {
                 "id": "user:01K",
-                "username": "ca",
+                "handle": "ca",
                 "did": "did:web:auth.local.host:u:ca",
-                "handle": "ca@auth.local.host",
+                "federated_handle": "ca@auth.local.host",
                 "principal_id": "@ca:auth.local.host",
                 "display_name": null
             },

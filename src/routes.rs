@@ -40,14 +40,8 @@ pub enum Route {
     #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
 
-    #[route("/devices", crate::app::RouterView)]
-    Devices,
-
     #[route("/devices/verify", crate::app::RouterView)]
     VerifyDevice,
-
-    #[route("/readiness", crate::app::RouterView)]
-    Readiness,
 
     #[route("/space/:space_id/admin", SpaceAdminPage)]
     SpaceAdmin { space_id: String },
@@ -84,9 +78,6 @@ pub enum Route {
 
     #[route("/recovery", crate::app::RouterView)]
     Recovery,
-
-    #[route("/applets", crate::app::RouterView)]
-    Applets,
 
     #[route("/onboarding", crate::app::RouterView)]
     Onboarding,
@@ -160,13 +151,7 @@ impl Route {
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
-            // R-routes-002: /devices, /readiness, /applets stay as URL
-            // aliases that redirect to a Settings section. The View enum
-            // no longer carries a dedicated variant for them — they map
-            // to Settings so any in-app View-based check stays sensible.
-            Route::Devices => View::Settings,
             Route::VerifyDevice => View::VerifyDevice,
-            Route::Readiness => View::Settings,
             Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => View::SpaceAdmin,
             Route::Audit => View::Audit,
             Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
@@ -175,7 +160,6 @@ impl Route {
             Route::Document | Route::DocumentSpace { .. } => View::Document,
             Route::Call => View::Call,
             Route::Recovery => View::Recovery,
-            Route::Applets => View::Settings,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
         }
@@ -266,9 +250,7 @@ mod tests {
                 section: "spaces".to_owned(),
             },
             Route::Settings,
-            Route::Devices,
             Route::VerifyDevice,
-            Route::Readiness,
             Route::SpaceAdminSection {
                 space_id: "cx:space:roundtrip".to_owned(),
                 section: "members".to_owned(),
@@ -280,7 +262,6 @@ mod tests {
             Route::Document,
             Route::Call,
             Route::Recovery,
-            Route::Applets,
             Route::Onboarding,
             Route::Quarantine,
         ];

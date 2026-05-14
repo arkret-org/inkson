@@ -154,7 +154,7 @@ impl ORSet {
     /// Add an element to the set.
     pub fn add(&mut self, element: &str, hlc: Hlc, actor: &str) {
         let event = SetEvent {
-            tag: format!("add-{}", crate::operation::uuid_v8()),
+            tag: format!("add-{}", crate::operation::uuid_v7()),
             hlc,
             actor: actor.to_owned(),
         };
@@ -164,7 +164,7 @@ impl ORSet {
     /// Remove an element from the set.
     pub fn remove(&mut self, element: &str, hlc: Hlc, actor: &str) {
         let event = SetEvent {
-            tag: format!("rm-{}", crate::operation::uuid_v8()),
+            tag: format!("rm-{}", crate::operation::uuid_v7()),
             hlc,
             actor: actor.to_owned(),
         };
@@ -494,7 +494,7 @@ impl SnapshotManager {
         reducer_version: &str,
     ) -> SnapshotManifest {
         SnapshotManifest {
-            snapshot_id: format!("snap-{}", crate::operation::uuid_v8()),
+            snapshot_id: format!("snap-{}", crate::operation::uuid_v7()),
             space_id: space_id.to_owned(),
             covers_frontier: frontier,
             chunks: Vec::new(),
@@ -511,7 +511,7 @@ impl SnapshotManager {
         let manifest = self.snapshots.get_mut(space_id)?;
         let index = manifest.chunks.len() as u32;
         manifest.chunks.push(SnapshotChunk {
-            chunk_id: format!("chunk-{}", crate::operation::uuid_v8()),
+            chunk_id: format!("chunk-{}", crate::operation::uuid_v7()),
             content_hash: content_hash.to_owned(),
             size_bytes,
             index,

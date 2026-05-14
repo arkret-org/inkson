@@ -881,29 +881,6 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("archived");
 });
 
-test("legacy audit route now resolves to operational settings", async ({ page }) => {
-  await page.goto("/audit", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/settings\/release$/);
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-  await expect(page.getByTestId("release-moved-banner")).toContainText("Operational status");
-});
-
-test("legacy applets route now resolves to integrations settings", async ({ page }) => {
-  await page.goto("/applets", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/settings\/mimi$/);
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-  await expect(page.getByTestId("settings-nav-item-mimi")).toBeVisible();
-  await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
-});
-
-test("legacy devices route now resolves to security and recovery settings", async ({ page }) => {
-  await refreshServer(page);
-  await page.goto("/devices", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/settings\/encryption$/);
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-  await expect(page.getByTestId("settings-setup-recovery-hub")).toContainText("Verify Device");
-});
-
 test("server switcher hides custom endpoint controls", async ({ page }) => {
   await openServerSwitcher(page);
 
@@ -920,12 +897,6 @@ test("server switcher keeps only server choices after expand", async ({ page }) 
   await expect(page.getByTestId("server-switch-menu")).toContainText("https://local.host");
   await expect(page.getByTestId("server-switch-menu")).not.toContainText("Current data home");
   await expect(page.getByTestId("principal-context")).not.toContainText("Refresh");
-});
-
-test("legacy call route now redirects to home", async ({ page }) => {
-  await page.goto("/call", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
 });
 
 test("visual smoke renders core client pages on desktop and mobile", async ({ page }) => {
@@ -949,10 +920,3 @@ test("visual smoke renders core client pages on desktop and mobile", async ({ pa
   expect(mobileShot.length).toBeGreaterThan(10_000);
 });
 
-test("legacy readiness route now resolves to operational settings", async ({ page }) => {
-  await page.goto("/readiness", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/settings\/release$/);
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-  await expect(page.getByTestId("release-moved-banner")).toContainText("tracked blockers");
-  await expect(page.getByTestId("release-moved-banner")).toContainText("settings-owned surface");
-});

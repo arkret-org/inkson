@@ -385,6 +385,148 @@ pub fn build_flow_position_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Identifies the cas-register cell that holds a Flow's position inside
+/// a given Board. Per
+/// [`spec/v1/zh/models/space-and-place.md` §4.6](../../contrix-spec/spec/v1/zh/models/space-and-place.md)
+/// the cell key is `cx:cell:cx.component.flow.position.v1:<board_place_id>:<flow_id>`
+/// — a Flow can appear on multiple Boards with **independent** position
+/// cells, so the Board id is part of the subject.
+pub fn flow_position_cell_id(board_place_id: &str, flow_id: &str) -> String {
+    format!("cx:cell:cx.component.flow.position.v1:{board_place_id}:{flow_id}")
+}
+
+/// CAS pre-state that the caller expects to find on the position cell
+/// before the Move applies. Compiled into a `head_eq` precondition per
+/// [`spec/v1/zh/sync/operations-sync.md` §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
+///
+/// - `Initial` ⇒ `head_eq null` — the Flow is not yet on this Board.
+/// - `At { list_place_id, rank }` ⇒ `head_eq { list_place_id, rank }` —
+///   the Move expects the Flow to currently sit in `list_place_id` at
+///   `rank`; any drift triggers `failed_precondition` and the caller
+///   must rebase against the latest projection.
+///
+/// Omitting `expected_position` (passing `None` to the builder when the
+/// cell is non-initial) is a spec violation — soland's reducer rejects
+/// "blind writes" outside the initial-state path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlowPositionExpectation {
+    /// Flow not yet present on the target Board. Compiles to
+    /// `head_eq null`.
+    Initial,
+    /// Flow currently at `(list_place_id, rank)` on the target Board.
+    At {
+        list_place_id: String,
+        rank: String,
+    },
+}
+
+impl FlowPositionExpectation {
+    /// Compile to the JSON value used as `predicate.value` in the
+    /// canonical Move body. `Initial` becomes `null`; `At` becomes
+    /// `{"list_place_id": ..., "rank": ...}`.
+    fn to_predicate_value(&self) -> serde_json::Value {
+        match self {
+            Self::Initial => serde_json::Value::Null,
+            Self::At {
+                list_place_id,
+                rank,
+            } => serde_json::json!({
+                "list_place_id": list_place_id,
+                "rank": rank,
+            }),
+        }
+    }
+}
+
+/// Effect value for a `cx.flow.move` / `cx.flow.reorder` Move. Compiles
+/// to a cas-register `set` with `{"list_place_id", "rank"}` per
+/// [`operations-sync.md` §9.1-9.2](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
+///
+/// `Remove` is the "Flow leaves the Board" effect — compiles to
+/// `set null`. Reducer side this also retires the derived
+/// `contains` Relation for that Board.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlowPositionEffect {
+    /// Flow lands at `(list_place_id, rank)` on the target Board.
+    Place {
+        list_place_id: String,
+        rank: String,
+    },
+    /// Flow is removed from the target Board.
+    Remove,
+}
+
+impl FlowPositionEffect {
+    fn to_op_value(&self) -> serde_json::Value {
+        match self {
+            Self::Place {
+                list_place_id,
+                rank,
+            } => serde_json::json!({
+                "list_place_id": list_place_id,
+                "rank": rank,
+            }),
+            Self::Remove => serde_json::Value::Null,
+        }
+    }
+}
+
+/// Construct a `cx.flow.move` / `cx.flow.reorder` Move that targets the
+/// spec-canonical cell `cx:cell:cx.component.flow.position.v1:<board_place_id>:<flow_id>`
+/// with a `head_eq` precondition expressing the caller's view of
+/// pre-state. This is the spec-compliant replacement for the legacy
+/// [`build_flow_position_move`] (which used a non-composite cell
+/// subject and skipped CAS preconditions).
+///
+/// Per [`operations-sync.md` §9](../../contrix-spec/spec/v1/zh/sync/operations-sync.md):
+///
+/// - `expected_position == FlowPositionExpectation::Initial` is only
+///   valid when the Flow has never been positioned on this Board;
+///   reducer rejects with `failed_precondition` otherwise.
+/// - Concurrent Moves that share a `head_eq` but emit different `set`
+///   effects fold to `⊥` (kind=conflict) on the cas-register lattice;
+///   dependent Moves `fail_bottom` and the caller MUST go through the
+///   §8 conflict-recovery path (snapshot + state witness + retry with
+///   refreshed `expected_position`).
+///
+/// Reorder vs move is encoded by the spec as a static schema rule: if
+/// `effect.list_place_id == expected.list_place_id`, the Move is a
+/// reorder; otherwise it's a cross-list move. Callers SHOULD set the
+/// `kind` classifier on the wire envelope accordingly (`cx.flow.move`
+/// vs `cx.flow.reorder`) so soland's audit + projection trail can
+/// distinguish the two.
+pub fn build_flow_position_cas_move(
+    issuer: &str,
+    space_id: &str,
+    board_place_id: &str,
+    flow_id: &str,
+    expected_position: &FlowPositionExpectation,
+    effect: &FlowPositionEffect,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let cell_id = flow_position_cell_id(board_place_id, flow_id);
+    let effect_value = serde_json::json!({
+        "cell": cell_id,
+        "op": { "kind": "set", "value": effect.to_op_value() }
+    });
+    let precondition = serde_json::json!({
+        "cell": cell_id,
+        "predicate": {
+            "op": "head_eq",
+            "value": expected_position.to_predicate_value(),
+        }
+    });
+    build_move_inner_with_preconditions(
+        issuer,
+        space_id,
+        vec![precondition],
+        vec![effect_value],
+        anchor_ref,
+        hlc,
+    )
+}
+
 /// Round 23 (M8): construct a conflict-repair Move that points at two
 /// (or more) competing Anchor heads via `head_in` and references a
 /// `recovery_capability` so soland's authz reducer accepts the merge.
@@ -521,10 +663,25 @@ fn build_move_inner(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
+    build_move_inner_with_preconditions(issuer, space_id, vec![], effects, anchor_ref, hlc)
+}
+
+/// Variant of [`build_move_inner`] that accepts an explicit
+/// `preconditions[]` array. Used by builders that emit CAS-style Moves
+/// (`cx.flow.move` / `cx.flow.reorder` with `head_eq`); the legacy
+/// `build_move_inner` keeps the unconditional-write call sites compact.
+fn build_move_inner_with_preconditions(
+    issuer: &str,
+    space_id: &str,
+    preconditions: Vec<serde_json::Value>,
+    effects: Vec<serde_json::Value>,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
     let body = serde_json::json!({
         "issuer": issuer,
         "space_id": space_id,
-        "preconditions": [],
+        "preconditions": preconditions,
         "effects": effects,
         "anchor_ref": anchor_ref,
         "refs": [],
@@ -548,7 +705,7 @@ fn build_move_inner(
             .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
         space_id: SpaceId::new(space_id.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
-        preconditions: vec![],
+        preconditions: parse_preconditions(&preconditions)?,
         effects: parse_effects(&effects)?,
         anchor_ref: AnchorId::new(anchor_ref.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid anchor_ref: {e}"))?,
@@ -567,6 +724,20 @@ fn build_move_inner(
         move_obj,
         canonical_bytes,
     })
+}
+
+/// Re-parse the preconditions JSON array into typed
+/// [`contrix_sdk::Precondition`] records. Mirrors [`parse_effects`].
+fn parse_preconditions(
+    preconditions: &[serde_json::Value],
+) -> Result<Vec<contrix_sdk::Precondition>> {
+    preconditions
+        .iter()
+        .map(|p| {
+            serde_json::from_value::<contrix_sdk::Precondition>(p.clone())
+                .map_err(|e| anyhow::anyhow!("invalid precondition: {e}"))
+        })
+        .collect()
 }
 
 /// Re-parse the effects JSON array into typed `Effect` records. The
@@ -1189,6 +1360,167 @@ mod tests {
             Some("cx:list:01todo")
         );
         assert_eq!(value.get("rank").and_then(|v| v.as_str()), Some("r042"));
+    }
+
+    /// spec/v1/zh/models/space-and-place.md §4.6: the position cell key is
+    /// `cx:cell:cx.component.flow.position.v1:<board_place_id>:<flow_id>`.
+    /// This pins the composite subject so a future refactor that drops one
+    /// segment fails loudly.
+    #[test]
+    fn flow_position_cell_id_is_composite_board_flow() {
+        let cell = flow_position_cell_id("cx:place:01b0a40", "cx:flow:01abcd");
+        assert_eq!(
+            cell,
+            "cx:cell:cx.component.flow.position.v1:cx:place:01b0a40:cx:flow:01abcd"
+        );
+    }
+
+    /// Initial-entry CAS Move: `head_eq null` precondition and a
+    /// `set { list_place_id, rank }` effect that carries the spec wire
+    /// shape (spec field names, not the legacy `list_id`).
+    ///
+    /// We assert against the canonical body bytes — `Option<Value>` in
+    /// the typed SDK structs loses the literal `null` on round-trip, but
+    /// the body bytes (which seed the Move id and the JWS) are
+    /// authoritative.
+    #[test]
+    fn flow_position_cas_move_initial_emits_head_eq_null_and_spec_effect() {
+        let unsigned = build_flow_position_cas_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:place:01board",
+            "cx:flow:01abcd",
+            &FlowPositionExpectation::Initial,
+            &FlowPositionEffect::Place {
+                list_place_id: "cx:place:01list-review".to_owned(),
+                rank: "mV".to_owned(),
+            },
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let pre = &body["preconditions"][0];
+        assert_eq!(
+            pre["cell"].as_str(),
+            Some("cx:cell:cx.component.flow.position.v1:cx:place:01board:cx:flow:01abcd")
+        );
+        assert_eq!(pre["predicate"]["op"].as_str(), Some("head_eq"));
+        assert!(
+            pre["predicate"]["value"].is_null(),
+            "Initial expectation must serialize as head_eq null, got {}",
+            pre["predicate"]["value"],
+        );
+        let effect = &body["effects"][0];
+        assert_eq!(effect["op"]["kind"].as_str(), Some("set"));
+        assert_eq!(
+            effect["op"]["value"]["list_place_id"].as_str(),
+            Some("cx:place:01list-review"),
+            "spec wire shape uses list_place_id, not list_id",
+        );
+        assert_eq!(effect["op"]["value"]["rank"].as_str(), Some("mV"));
+    }
+
+    /// Cross-list move: `head_eq { list_place_id, rank }` precondition
+    /// reflects the prior position; effect points at the new list. This
+    /// is the wire shape soland's reducer expects per operations-sync.md
+    /// §9.1.
+    #[test]
+    fn flow_position_cas_move_with_expected_position_emits_head_eq_value() {
+        let unsigned = build_flow_position_cas_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:place:01board",
+            "cx:flow:01abcd",
+            &FlowPositionExpectation::At {
+                list_place_id: "cx:place:01list-todo".to_owned(),
+                rank: "h0".to_owned(),
+            },
+            &FlowPositionEffect::Place {
+                list_place_id: "cx:place:01list-review".to_owned(),
+                rank: "mV".to_owned(),
+            },
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let pre = &body["preconditions"][0]["predicate"];
+        assert_eq!(pre["op"].as_str(), Some("head_eq"));
+        assert_eq!(
+            pre["value"]["list_place_id"].as_str(),
+            Some("cx:place:01list-todo")
+        );
+        assert_eq!(pre["value"]["rank"].as_str(), Some("h0"));
+        let effect = &body["effects"][0];
+        assert_eq!(
+            effect["op"]["value"]["list_place_id"].as_str(),
+            Some("cx:place:01list-review")
+        );
+        assert_eq!(effect["op"]["value"]["rank"].as_str(), Some("mV"));
+    }
+
+    /// Removing a Flow from a Board: `set null` effect retires the
+    /// derived `contains` Relation on soland's reducer.
+    #[test]
+    fn flow_position_cas_move_remove_emits_set_null_effect() {
+        let unsigned = build_flow_position_cas_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:place:01board",
+            "cx:flow:01abcd",
+            &FlowPositionExpectation::At {
+                list_place_id: "cx:place:01list-done".to_owned(),
+                rank: "zz".to_owned(),
+            },
+            &FlowPositionEffect::Remove,
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let effect_op = &body["effects"][0]["op"];
+        assert_eq!(effect_op["kind"].as_str(), Some("set"));
+        assert!(
+            effect_op["value"].is_null(),
+            "remove effect must serialize as set null, got {}",
+            effect_op["value"],
+        );
+    }
+
+    /// In-list reorder: `expected.list_place_id == effect.list_place_id`.
+    /// Reducer-side schema rule distinguishes this from cross-list move.
+    #[test]
+    fn flow_position_cas_move_in_list_reorder_keeps_same_list() {
+        let list = "cx:place:01list-progress".to_owned();
+        let unsigned = build_flow_position_cas_move(
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:place:01board",
+            "cx:flow:01abcd",
+            &FlowPositionExpectation::At {
+                list_place_id: list.clone(),
+                rank: "h0".to_owned(),
+            },
+            &FlowPositionEffect::Place {
+                list_place_id: list.clone(),
+                rank: "mV".to_owned(),
+            },
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&unsigned.canonical_bytes).unwrap();
+        let pre_list = body["preconditions"][0]["predicate"]["value"]["list_place_id"]
+            .as_str()
+            .unwrap();
+        let post_list = body["effects"][0]["op"]["value"]["list_place_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            pre_list, post_list,
+            "reorder requires expected.list_place_id == effect.list_place_id",
+        );
     }
 
     #[test]

@@ -3050,22 +3050,6 @@ pub fn App() -> Element {
     }
 }
 
-#[component]
-fn RouteRedirect(to: Route) -> Element {
-    let navigator = use_navigator();
-    use_effect(move || {
-        let _ = navigator.replace(to.clone());
-    });
-
-    rsx! {
-        div { class: "timeline",
-            div { class: "event",
-                div { class: "muted", "Redirecting..." }
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpaceScopeMode {
     Exact,
@@ -4741,12 +4725,6 @@ pub fn RouterView() -> Element {
                             push_ready,
                         }
                     },
-                    Route::Devices => rsx! {
-                        RouteRedirect { to: Route::SettingsSection { section: "encryption".to_owned() } }
-                    },
-                    Route::Readiness => rsx! {
-                        RouteRedirect { to: Route::SettingsSection { section: "release".to_owned() } }
-                    },
                     Route::VerifyDevice => {
                         if e2ee_ready {
                             rsx! {
@@ -4870,9 +4848,6 @@ pub fn RouterView() -> Element {
                             token,
                         }
                     },
-                    Route::Applets => rsx! {
-                        RouteRedirect { to: Route::SettingsSection { section: "mimi".to_owned() } }
-                    },
                     Route::Onboarding => rsx! {
                         crate::views::onboarding::OnboardingPanel {
                             base_url: base_url(),
@@ -4965,8 +4940,7 @@ fn SpaceContextBar(
 
 /// Static list of jumpable destinations surfaced in the command palette.
 /// Keep in sync with `routes::Route` — only views the user can act on are
-/// listed (redirect-only routes like `/devices` and `/call` are excluded
-/// until they have real surfaces; see `R-routes-001`).
+/// listed.
 fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "dashboard, recent activity", Route::Dashboard),
@@ -5272,12 +5246,7 @@ fn route_label(route: &Route) -> &'static str {
             _ => "Workspace Setup",
         },
         Route::Settings | Route::SettingsSection { .. } => "Settings",
-        // R-routes-002: `/devices` and `/readiness` are URL aliases for
-        // Settings sections and immediately redirect; the label they
-        // briefly show in the crumb trail should match their target.
-        Route::Devices => "Settings",
         Route::VerifyDevice => "Verify Device",
-        Route::Readiness => "Settings",
         Route::SpaceAdmin { .. } => "Space Admin",
         Route::SpaceAdminSection { section, .. } => match section.as_str() {
             "members" => "Members Admin",
@@ -5295,8 +5264,6 @@ fn route_label(route: &Route) -> &'static str {
         Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
-        // R-routes-002: `/applets` is a URL alias for Settings → MIMI.
-        Route::Applets => "Settings",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
     }

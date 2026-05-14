@@ -336,7 +336,7 @@ impl QueuedOperationBuilder {
     pub fn new(endpoint: &str, method: &str) -> Self {
         Self {
             op: QueuedOperation {
-                id: format!("qop-{}", crate::operation::uuid_v8()),
+                id: format!("qop-{}", crate::operation::uuid_v7()),
                 endpoint: endpoint.to_owned(),
                 method: method.to_owned(),
                 body: serde_json::Value::Null,
