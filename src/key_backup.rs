@@ -41,6 +41,60 @@ pub fn build_key_backup_put_body(
     body
 }
 
+/// Build the PUT body for a real Encrypted Cloud Vault upload, with the
+/// actual Argon2id salt and XChaCha20-Poly1305 nonce that were used to
+/// produce `ciphertext`. The contents block reflects what's inside the
+/// vault (recovery_credentials by default), and `backup_class` is
+/// `recovery_vault` so soland can route the blob to the recovery store
+/// instead of the MLS history store.
+pub fn build_recovery_vault_backup_body(
+    backup_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    ciphertext_b64: &str,
+    ciphertext_digest: &str,
+    salt_b64: &str,
+    nonce_b64: &str,
+    argon2_m_kib: u32,
+    argon2_t: u32,
+    argon2_p: u32,
+) -> Value {
+    let mut body = json!({
+        "backup_id": backup_id,
+        "actor_id": actor_did,
+        "backup_class": "recovery_vault",
+        "backup_version": "kb_1",
+        "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        "encryption": {
+            "recipient_method": "passphrase_kdf",
+            "recipient_key_ref": device_id,
+            "kdf": {
+                "name": "argon2id",
+                "salt": salt_b64,
+                "m_kib": argon2_m_kib,
+                "t": argon2_t,
+                "p": argon2_p,
+            },
+            "aead": {
+                "name": "xchacha20_poly1305",
+                "nonce": nonce_b64,
+            }
+        },
+        "contents": [{
+            "item_type": "recovery_credentials",
+            "secret_id": "yougen_recovery_vault_payload",
+        }],
+        "ciphertext": ciphertext_b64,
+        "ciphertext_digest": ciphertext_digest,
+    });
+    if is_protocol_device_id(device_id)
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
+    }
+    body
+}
+
 fn is_protocol_device_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("cx:device:") else {
         return false;
@@ -85,6 +139,37 @@ mod tests {
         assert_eq!(
             body["ciphertext_digest"],
             "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        );
+    }
+
+    #[test]
+    fn build_recovery_vault_backup_body_carries_kdf_and_aead_metadata() {
+        let body = build_recovery_vault_backup_body(
+            "cx:backup:01964137-0000-7000-8000-00000000beef",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "AAAA_CIPHERTEXT_B64",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "U0FMVF9CNjQ",
+            "Tk9OQ0VfQjY0XzI0Ynl0ZXM",
+            65_536,
+            3,
+            4,
+        );
+        assert_eq!(body["backup_class"], "recovery_vault");
+        assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
+        assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");
+        assert_eq!(body["encryption"]["kdf"]["salt"], "U0FMVF9CNjQ");
+        assert_eq!(body["encryption"]["kdf"]["m_kib"], 65_536);
+        assert_eq!(body["encryption"]["kdf"]["t"], 3);
+        assert_eq!(body["encryption"]["kdf"]["p"], 4);
+        assert_eq!(body["encryption"]["aead"]["name"], "xchacha20_poly1305");
+        assert_eq!(body["encryption"]["aead"]["nonce"], "Tk9OQ0VfQjY0XzI0Ynl0ZXM");
+        assert_eq!(body["contents"][0]["item_type"], "recovery_credentials");
+        assert_eq!(body["ciphertext"], "AAAA_CIPHERTEXT_B64");
+        assert_eq!(
+            body["device_id"],
+            "cx:device:01964137-0000-7000-8000-000000000001"
         );
     }
 

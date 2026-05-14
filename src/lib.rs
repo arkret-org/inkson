@@ -35,6 +35,7 @@ pub mod operation;
 pub mod push;
 pub mod push_registration;
 pub mod rank;
+pub mod recovery_crypto;
 pub mod routes;
 pub mod secure_key_store;
 pub mod snapshot;
