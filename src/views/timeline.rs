@@ -101,7 +101,7 @@ impl TimelineEvent {
     ) -> Self {
         Self {
             id: id.into(),
-            sender: "did:web:serverx.local".to_owned(),
+            sender: "did:web:server.local".to_owned(),
             sender_display: sender_display.into(),
             body: body.into(),
             timestamp: timestamp_now(),
@@ -843,7 +843,7 @@ pub fn TimelinePanel(
 
             if timeline().is_empty() {
                 div { class: "event",
-                    div { class: "event-head", span { "serverx" } span { "empty" } }
+                    div { class: "event-head", span { "server" } span { "empty" } }
                     div { "No timeline events yet. Compose a dev-mode message." }
                 }
             }
@@ -1325,7 +1325,7 @@ fn timeline_events_from_sync_spaces(
     for (space_id, body) in spaces {
         let mut summary_event = TimelineEvent::system_notice(
             format!("summary-{space_id}"),
-            "serverx",
+            "server",
             format!(
                 "{space_id}: {}",
                 body["summary"]["summary"]

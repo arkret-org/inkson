@@ -305,7 +305,7 @@ mod tests {
         let path = temp_config_path("round_trip");
         let mut store = LocalConfigStore::with_path(path);
         store.save_fields(
-            "http://serverx.local".to_owned(),
+            "http://server.local".to_owned(),
             "did:web:bob.example".to_owned(),
             "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
             "sx_token".to_owned(),
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(
             store.load(),
             ClientConfig::from_fields(
-                "http://serverx.local",
+                "http://server.local",
                 "did:web:bob.example",
                 "cx:device:01964137-0000-7000-8000-000000000001",
                 "sx_token",

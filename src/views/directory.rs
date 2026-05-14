@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::Value;
 
-use crate::{models::*, routes::Route, views::helpers::authed_api};
+use crate::{components::HelpTip, models::*, routes::Route, views::helpers::authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
@@ -467,9 +467,7 @@ pub fn DirectoryPanel(
                     div { class: "event-head",
                         span { "Developer object lookup" }
                         span { "diagnostic projection" }
-                    }
-                    div { class: "muted",
-                        "These results are for protocol debugging and model inspection. They are not the normal end-user directory surface."
+                        HelpTip { text: "These results are for protocol debugging and model inspection. They are not the normal end-user directory surface." }
                     }
                 }
                 div { class: "event", "data-testid": "protocol-object-results",

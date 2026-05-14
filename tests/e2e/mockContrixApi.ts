@@ -15,7 +15,7 @@ export async function mockContrixApi(page: Page) {
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/health") {
-      return json(route, { ok: true, service: "serverx", storage: "memory" });
+      return json(route, { ok: true, service: "server", storage: "memory" });
     }
     if (url.hostname === "auth.local.host" && url.pathname === "/.well-known/openid-configuration") {
       return json(route, {
@@ -68,7 +68,7 @@ export async function mockContrixApi(page: Page) {
         });
       }
       return json(route, {
-        service_did: "did:web:serverx.local",
+        service_did: "did:web:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
@@ -180,7 +180,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/events/describe") {
       return json(route, {
-        service_did: "did:web:serverx.local",
+        service_did: "did:web:server.local",
         schema_profiles: ["cx.schema.core.v1"],
         reducer_profiles: ["cx.reducer.v1"],
         supported_event_types: [
@@ -535,7 +535,7 @@ export async function mockContrixApi(page: Page) {
           [DEMO_SPACE]: {
             summary: {
               title: "Contrix Demo Space",
-              summary: "Shared demo Space served by mocked serverx",
+              summary: "Shared demo Space served by mocked server",
               child_space_ids: [CHILD_SPACE],
             },
             timeline: { events: demoTimelineEvents, limited: false },
@@ -614,7 +614,7 @@ export async function mockContrixApi(page: Page) {
             description: "Protocol and client engineering for Contrix deployments.",
             discoverability: "listed",
             profile_visibility: "public",
-            directory_services: ["did:web:serverx.local"],
+            directory_services: ["did:web:server.local"],
             proofs: [{ type: "org_membership" }],
           },
         ],
@@ -652,13 +652,13 @@ export async function mockContrixApi(page: Page) {
         space_preview: spacePreview(),
         stripped_state: [],
         join_rule: "public",
-        via_services: ["did:web:serverx.local"],
+        via_services: ["did:web:server.local"],
       });
     }
 
     if (url.pathname === "/api/v1/directory/describe") {
       return json(route, {
-        service_did: "did:web:serverx.local",
+        service_did: "did:web:server.local",
         resource_types: ["space", "organization", "actor"],
         discovery_profiles: ["cx.profile.directory_service.v1"],
         restricted_query_proof: false,
@@ -687,7 +687,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/identity/describe") {
       return json(route, {
-        service_did: "did:web:serverx.local",
+        service_did: "did:web:server.local",
         registry_mode: "development_local",
         supported_receipts: ["local"],
         protocol_version: "1.0",
@@ -716,7 +716,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/sync/describe") {
       return json(route, {
-        service_did: "did:web:serverx.local",
+        service_did: "did:web:server.local",
         supported_sync_profiles: ["initial", "incremental"],
         limits: {},
         frontier: {},
@@ -810,16 +810,16 @@ export async function mockContrixApi(page: Page) {
         media_type: "application/octet-stream",
         sha256: "01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
         thumbnail_ref: "cx:blob:sha256:e2e-thumb",
-        upload_receipt: { service_did: "did:web:serverx.local", content_hash_verified: true },
+        upload_receipt: { service_did: "did:web:server.local", content_hash_verified: true },
       });
     }
 
     if (url.pathname === "/api/v1/media/ice-config") {
       return json(route, {
         ice_servers: [
-          { urls: ["stun:stun.serverx.local:3478"] },
+          { urls: ["stun:stun.server.local:3478"] },
           {
-            urls: ["turn:turn.serverx.local:3478?transport=udp"],
+            urls: ["turn:turn.server.local:3478?transport=udp"],
             username: "turn-user",
             credential: "turn-secret",
           },
@@ -833,7 +833,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/moderation/report") {
-      return json(route, { report_id: "cx:report:e2e", status: "queued", routed_to: ["did:web:serverx.local#moderation"] });
+      return json(route, { report_id: "cx:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
     return json(route, { ok: false, error: { errcode: "not_found", error: `No e2e mock for ${url.pathname}` } }, 404);
@@ -844,7 +844,7 @@ function spacePreview() {
   return {
     space_id: DEMO_SPACE,
     name: "Contrix Demo Space",
-    description: "Shared demo Space served by mocked serverx",
+    description: "Shared demo Space served by mocked server",
     tags: ["demo"],
     public: true,
     category: "collaboration",

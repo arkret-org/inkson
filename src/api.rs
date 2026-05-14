@@ -2190,7 +2190,7 @@ mod tests {
     #[test]
     fn parses_server_and_sync_payloads() {
         let description = parse_server_description(json!({
-            "service_did": "did:web:serverx.local",
+            "service_did": "did:web:server.local",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_features": ["sync.account"],
@@ -2211,7 +2211,7 @@ mod tests {
         assert_eq!(sync.spaces.len(), 1);
 
         let directory = parse_directory_describe(json!({
-            "service_did": "did:web:serverx.local",
+            "service_did": "did:web:server.local",
             "resource_types": ["space", "organization", "actor"],
             "discovery_profiles": ["cx.profile.directory.v1"],
             "restricted_query_proof": false

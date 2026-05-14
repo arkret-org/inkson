@@ -328,10 +328,7 @@ pub fn SettingsPanel(
                     div { class: "event", "data-testid": "settings-setup-recovery-hub",
                         div { class: "event-head",
                             span { "Setup & recovery" }
-                            span { "moved under settings" }
-                        }
-                        div { class: "muted",
-                            "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary workspace navigation."
+                            HelpTip { text: "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary workspace navigation." }
                         }
                         div { class: "actions",
                             Link {
@@ -458,41 +455,41 @@ pub fn SettingsPanel(
                     div { class: "event-head", span { "Storage Risks" } span { "warnings" } }
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
-                            strong { "Web localStorage Limit" }
+                            strong {
+                                "Web localStorage Limit "
+                                HelpTip { text: "localStorage has a ~5MB limit. Large sync data, drafts, and cached operations may exceed this limit. Consider using IndexedDB for production." }
+                            }
                             span { class: "badge badge-warning", "data-testid": "risk-badge",
                                 "Warning"
                             }
                         }
-                        div { class: "muted",
-                            "localStorage has a ~5MB limit. Large sync data, drafts, and cached operations may exceed this limit. Consider using IndexedDB for production."
-                        }
                         div { class: "metric",
-                            strong { "No Encryption at Rest" }
+                            strong {
+                                "No Encryption at Rest "
+                                HelpTip { text: "Web localStorage is not encrypted. Session tokens and cached data are accessible to any script on the same origin. Use secure httpOnly cookies or IndexedDB with encryption for production." }
+                            }
                             span { class: "badge badge-error",
                                 "Critical"
                             }
                         }
-                        div { class: "muted",
-                            "Web localStorage is not encrypted. Session tokens and cached data are accessible to any script on the same origin. Use secure httpOnly cookies or IndexedDB with encryption for production."
-                        }
                         div { class: "metric",
-                            strong { "No Cross-Tab Sync" }
+                            strong {
+                                "No Cross-Tab Sync "
+                                HelpTip { text: "localStorage changes in one tab are not automatically reflected in other tabs. Consider using BroadcastChannel or storage events for multi-tab sync." }
+                            }
                             span { class: "badge badge-info",
                                 "Info"
                             }
                         }
-                        div { class: "muted",
-                            "localStorage changes in one tab are not automatically reflected in other tabs. Consider using BroadcastChannel or storage events for multi-tab sync."
-                        }
                     } else {
                         div { class: "metric",
-                            strong { "Filesystem Storage" }
+                            strong {
+                                "Filesystem Storage "
+                                HelpTip { text: "Native filesystem storage is used. Data persists across sessions. Ensure proper file permissions for security." }
+                            }
                             span { class: "badge badge-success",
                                 "OK"
                             }
-                        }
-                        div { class: "muted",
-                            "Native filesystem storage is used. Data persists across sessions. Ensure proper file permissions for security."
                         }
                     }
                 }
@@ -810,8 +807,10 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Notifications {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "notification-rules-settings",
-                    div { class: "event-head", span { "Notification rules" } span { "this client only" } }
-                    div { class: "muted", "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
+                    div { class: "event-head",
+                        span { "Notification rules" }
+                        HelpTip { text: "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
+                    }
                     div { class: "metric-grid",
                         {render_notification_kind_toggle("mention", "Mention notifications", state_store, status)}
                         {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
@@ -1000,24 +999,15 @@ pub fn SettingsPanel(
                                 });
                             },
                         }
-                        " Send read receipts (cx.receipt.read) by default"
-                    }
-                    div { class: "muted",
-                        "Resolution order is (flow → space → default). When a Space declares "
-                        "a read-receipt policy with disclosure=required or disabled, the server "
-                        "policy overrides this preference."
+                        " Send read receipts (cx.receipt.read) by default "
+                        HelpTip { text: "Resolution order is (flow → space → default). When a Space declares a read-receipt policy with disclosure=required or disabled, the server policy overrides this preference." }
                     }
                     div { class: "event-head",
                         span { "Per-space overrides" }
                         span { "{read_receipt_space_overrides().len()} configured" }
+                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a cx.space.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Space policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
                     }
-                    if read_receipt_space_overrides().is_empty() {
-                        div { class: "muted",
-                            "No per-space overrides. Add a Space ID below to opt this Space "
-                            "out of (or into) read receipts independently of the global default."
-                        }
-                    } else {
-                        for (space_id, send) in read_receipt_space_overrides() {
+                    for (space_id, send) in read_receipt_space_overrides() {
                             // Policy lock — when soland publishes a
                             // cx.space.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
@@ -1119,7 +1109,6 @@ pub fn SettingsPanel(
                                 }
                             }
                         }
-                    }
                     div { class: "actions", "data-testid": "read-receipt-add-override",
                         input {
                             r#type: "text",
@@ -1180,15 +1169,6 @@ pub fn SettingsPanel(
                             "Add (send)"
                         }
                     }
-                    div { class: "muted",
-                        "data-testid": "read-receipt-policy-lock-note",
-                        "Server-declared policy lock is now wired. When soland's Anchor view (P0 "
-                        "M3) surfaces a cx.space.read_receipt_policy with disclosure=required or "
-                        "disabled, the matching per-Space toggle above shows a `locked by Space "
-                        "policy` badge and the controls become disabled. User-level overrides "
-                        "yield to the server policy in those cases — see "
-                        "LocalStateStore::read_receipt_should_send."
-                    }
                 }
 
                 // Progressive disclosure — identity-handles.md §16
@@ -1205,9 +1185,7 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { "Progressive disclosure" }
                         span { "identity-handles §16" }
-                    }
-                    div { class: "muted",
-                        "DID Document 不承担身份画像。Claim / handle / 邮箱等敏感属性按 audience 选择性披露：你设置 disclosure policy，对方发 presentation_request，你回 presentation_response，每次披露由 disclosure_receipt 留痕。"
+                        HelpTip { text: "DID Document 不承担身份画像。Claim / handle / 邮箱等敏感属性按 audience 选择性披露：你设置 disclosure policy，对方发 presentation_request，你回 presentation_response，每次披露由 disclosure_receipt 留痕。" }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -1273,9 +1251,7 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { "Account Data (actor-private)" }
                         span { "cx.account_data.set" }
-                    }
-                    div { class: "muted",
-                        "下面这些偏好写入到你账号的 actor-private channel，不会同步给 Space 其它成员；改变共享 View 设置请走该 View 的 Edit 按钮（写 cx.view.update）。"
+                        HelpTip { text: "下面这些偏好写入到你账号的 actor-private channel，不会同步给 Space 其它成员；改变共享 View 设置请走该 View 的 Edit 按钮（写 cx.view.update）。" }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -1404,9 +1380,7 @@ pub fn SettingsPanel(
                                 div { class: "event-head",
                                     span { "Operational status" }
                                     span { "{blocked_count} tracked blockers" }
-                                }
-                                div { class: "muted",
-                                    "The separate tools area has been removed from primary navigation. Keep release blockers, sync posture, and investigations summarized here so operational context stays adjacent to account settings."
+                                    HelpTip { text: "The separate tools area has been removed from primary navigation. Keep release blockers, sync posture, and investigations summarized here so operational context stays adjacent to account settings." }
                                 }
                                 div { class: "actions",
                                     span { class: "badge amber", "{blocked_count} blockers" }

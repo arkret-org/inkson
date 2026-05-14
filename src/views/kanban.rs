@@ -3,6 +3,7 @@ use dioxus_router::Link;
 use serde_json::json;
 
 use crate::{
+    components::HelpTip,
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
     move_builder::{
@@ -861,9 +862,7 @@ pub fn KanbanPanel(
                         div { class: "event-head",
                             span { "Card / Room visibility (independent)" }
                             span { "current-model §6" }
-                        }
-                        div { class: "muted",
-                            "Flow synthesis（Card 字段）与 Flow discussion branch（Room 消息）的可见性必须独立判定，不可互推。Locked Room 只暴露存在的提示，不暴露标题、成员、计数。"
+                            HelpTip { text: "Flow synthesis（Card 字段）与 Flow discussion branch（Room 消息）的可见性必须独立判定，不可互推。Locked Room 只暴露存在的提示，不暴露标题、成员、计数。" }
                         }
                         div { class: "metric-grid", "data-testid": "card-vs-room-axes",
                             div { class: "metric",

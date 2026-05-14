@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     models::SubmitEventResponse,
     move_builder::{build_mls_commit_move, did_key_verification_method, sign_unsigned_move},
     operation::{OperationBuilder, OperationEnvelope, cx_ops, uuid_v8},
+    routes::Route,
     views::helpers::{
         StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
     },
@@ -537,6 +539,44 @@ fn discussion_participants(actor: &str, input: &str) -> Vec<String> {
         }
     }
     participants
+}
+
+fn current_mention_query(text: &str) -> Option<(usize, String)> {
+    for (idx, ch) in text.char_indices().rev() {
+        if ch == '@' {
+            let preceding_ok = text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | ',' | ';'));
+            if preceding_ok {
+                let query_start = idx + '@'.len_utf8();
+                return Some((idx, text[query_start..].to_owned()));
+            }
+            return None;
+        }
+        if matches!(ch, ' ' | '\t' | '\n' | '\r' | ',' | ';') {
+            return None;
+        }
+    }
+    None
+}
+
+fn apply_mention_completion(current: &str, replacement: &str) -> String {
+    if let Some((idx, _)) = current_mention_query(current) {
+        let mut out = current[..idx].to_owned();
+        out.push_str(replacement);
+        out.push_str(", ");
+        out
+    } else {
+        let trimmed = current.trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+        let mut out = trimmed.to_owned();
+        if !out.is_empty() {
+            out.push_str(", ");
+        }
+        out.push_str(replacement);
+        out.push_str(", ");
+        out
+    }
 }
 
 fn chat_message_create_operation(
@@ -1083,12 +1123,12 @@ pub fn ChatPanel(
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
+    let navigator = use_navigator();
     let mut channels = use_signal(Vec::<ChannelEntity>::new);
     let mut selected_channel = use_signal(String::new);
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
     let mut new_channel_name = use_signal(String::new);
-    let mut new_channel_kind = use_signal(|| "general".to_owned());
     let mut new_channel_topic = use_signal(String::new);
     let mut new_channel_members = use_signal(String::new);
     let mut new_channel_create_card = use_signal(|| false);
@@ -1353,33 +1393,70 @@ pub fn ChatPanel(
                                 "data-testid": "new-channel-members",
                                 value: "{new_channel_members}",
                                 rows: "3",
-                                placeholder: "did:web:bob.example",
+                                placeholder: "did:web:bob.example  (type @ to search)",
                                 oninput: move |evt| new_channel_members.set(evt.value()),
                             }
-                            div { class: "discussion-category-grid",
-                                button {
-                                    class: if new_channel_kind() == "general" { "secondary active" } else { "secondary" },
-                                    "data-testid": "channel-kind-chat",
-                                    onclick: move |_| new_channel_kind.set("general".to_owned()),
-                                    "General"
-                                }
-                                button {
-                                    class: if new_channel_kind() == "announce" { "secondary active" } else { "secondary" },
-                                    "data-testid": "channel-kind-announce",
-                                    onclick: move |_| new_channel_kind.set("announce".to_owned()),
-                                    "Announcement"
-                                }
-                                button {
-                                    class: if new_channel_kind() == "support" { "secondary active" } else { "secondary" },
-                                    "data-testid": "channel-kind-support",
-                                    onclick: move |_| new_channel_kind.set("support".to_owned()),
-                                    "Support"
-                                }
-                                button {
-                                    class: if new_channel_kind() == "activity" { "secondary active" } else { "secondary" },
-                                    "data-testid": "channel-kind-activity",
-                                    onclick: move |_| new_channel_kind.set("activity".to_owned()),
-                                    "Activity"
+                            {
+                                let members_text = new_channel_members();
+                                let mention = current_mention_query(&members_text);
+                                let suggestions: Vec<SpaceParticipant> = if let Some((_, ref query)) = mention {
+                                    let query_lower = query.to_ascii_lowercase();
+                                    let already: Vec<String> = parse_discussion_principals(&members_text);
+                                    participants
+                                        .iter()
+                                        .filter(|p| !p.is_self)
+                                        .filter(|p| !already.iter().any(|d| d == &p.did))
+                                        .filter(|p| {
+                                            if query_lower.is_empty() {
+                                                return true;
+                                            }
+                                            if p.did.to_ascii_lowercase().contains(&query_lower) {
+                                                return true;
+                                            }
+                                            p.display_name
+                                                .as_deref()
+                                                .map(|n| n.to_ascii_lowercase().contains(&query_lower))
+                                                .unwrap_or(false)
+                                        })
+                                        .take(6)
+                                        .cloned()
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                                rsx! {
+                                    if mention.is_some() && !suggestions.is_empty() {
+                                        div {
+                                            class: "mention-suggestions",
+                                            "data-testid": "new-channel-members-suggestions",
+                                            for participant in suggestions {
+                                                {
+                                                    let did_for_click = participant.did.clone();
+                                                    let did_for_label = participant.did.clone();
+                                                    let display = participant
+                                                        .display_name
+                                                        .clone()
+                                                        .unwrap_or_else(|| short_principal_label(&participant.did));
+                                                    rsx! {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "mention-suggestion-item",
+                                                            "data-testid": "new-channel-members-suggestion",
+                                                            onclick: move |_| {
+                                                                let next = apply_mention_completion(
+                                                                    &new_channel_members(),
+                                                                    &did_for_click,
+                                                                );
+                                                                new_channel_members.set(next);
+                                                            },
+                                                            span { class: "mention-suggestion-name", "{display}" }
+                                                            span { class: "mention-suggestion-did muted", "{did_for_label}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             label { class: "discussion-checkbox-row",
@@ -1412,7 +1489,7 @@ pub fn ChatPanel(
                                             status_msg.set("Discussion title is required".to_owned());
                                             return;
                                         }
-                                        let category = new_channel_kind();
+                                        let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
                                         let member_text = new_channel_members();
                                         let create_card = new_channel_create_card();
@@ -1738,6 +1815,7 @@ pub fn ChatPanel(
                                                                     status_msg.set("Message sent".to_owned());
                                                                 }
                                                                 Err(error) => {
+                                                                    let auth_expired = is_auth_expired_error(&error);
                                                                     let message = chat_send_error_message(&error);
                                                                     if let Some(found) = messages
                                                                         .write()
@@ -1749,6 +1827,9 @@ pub fn ChatPanel(
                                                                         found.error = Some(message.clone());
                                                                     }
                                                                     status_msg.set(format!("Message send failed: {message}"));
+                                                                    if auth_expired {
+                                                                        let _ = navigator.push(Route::Login);
+                                                                    }
                                                                 }
                                                             },
                                                             Err(error) => {
@@ -2192,6 +2273,7 @@ pub fn ChatPanel(
                                                 status_msg.set("Message sent".to_owned());
                                             }
                                             Err(error) => {
+                                                let auth_expired = is_auth_expired_error(&error);
                                                 let message = chat_send_error_message(&error);
                                                 if let Some(found) = messages
                                                     .write()
@@ -2203,6 +2285,9 @@ pub fn ChatPanel(
                                                     found.error = Some(message.clone());
                                                 }
                                                 status_msg.set(format!("Message send failed: {message}"));
+                                                if auth_expired {
+                                                    let _ = navigator.push(Route::Login);
+                                                }
                                             }
                                         },
                                         Err(error) => {

@@ -126,7 +126,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("space-context-bar")).not.toContainText("Current + descendants");
   await expect(page.getByTestId("space-context-bar")).not.toContainText("Space views");
   await expect(page.getByTestId("space-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
-  await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
+  await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
 });
 
 test("topbar account menu shows identity and sync state", async ({ page }) => {
@@ -461,7 +461,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   );
   await page.getByTestId("create-space-button").click();
   const createSpaceBody = await createSpaceRequest.then((request) => request.postDataJSON());
-  expect(createSpaceBody.plaintext_visible_services).toContain("did:web:serverx.local");
+  expect(createSpaceBody.plaintext_visible_services).toContain("did:web:server.local");
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0setupflow000000000000");
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("policy invite_only / shared");
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
@@ -523,16 +523,15 @@ test("chat creates discussion entities and sends structured mention payloads", a
   await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
   await page.getByTestId("new-channel-members").fill("did:web:bob.example");
   await expect(page.getByTestId("new-channel-create-card")).not.toBeChecked();
-  await page.getByTestId("channel-kind-announce").click();
   const channelEvent = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("create-channel-button").click();
   const channelBody = await channelEvent.then((request) => request.postDataJSON());
   expect(channelBody.kind).toBe("cx.flow.create");
   expect(channelBody.payload.kind).toBeUndefined();
   expect(channelBody.payload.flow).toBeTruthy();
-  expect(channelBody.payload.category).toBe("announce");
-  expect(channelBody.payload.fields.category).toBe("announce");
-  expect(channelBody.payload.flow.fields.category).toBe("announce");
+  expect(channelBody.payload.category).toBe("general");
+  expect(channelBody.payload.fields.category).toBe("general");
+  expect(channelBody.payload.flow.fields.category).toBe("general");
   expect(channelBody.payload.summary).toBe("Broadcast deploy updates");
   expect(channelBody.payload.flow.summary).toBe("Broadcast deploy updates");
   expect(channelBody.payload.participants).toContain("did:web:alice.example");
@@ -703,7 +702,7 @@ test("chat retries plaintext sends after granting current service visibility", a
   await page.getByTestId("send-chat-button").click();
 
   const policyBody = await policyUpdate.then((request) => request.postDataJSON());
-  expect(policyBody.plaintext_visible_services).toContain("did:web:serverx.local");
+  expect(policyBody.plaintext_visible_services).toContain("did:web:server.local");
   await expect(page.getByTestId("chat-status")).toContainText("Message sent");
   await expect(page.getByTestId("chat-message").last()).not.toHaveClass(/is-failed/);
   expect(attempts).toBe(2);

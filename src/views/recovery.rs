@@ -9,6 +9,8 @@
 
 use dioxus::prelude::*;
 
+use crate::components::HelpTip;
+
 #[component]
 pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
     let _ = (base_url, token);
@@ -19,9 +21,7 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "event-head",
                     span { "恢复方案" }
                     span { "Encrypted Vault · Social Recovery · Recovery Key" }
-                }
-                div { class: "muted",
-                    "Contrix 不在服务端存口令；备份是客户端加密后再上传。任意一层完成恢复都会写入 cx.identity.recovery，再走 cx.device.authorized 流程把新设备并入 device set。"
+                    HelpTip { text: "Contrix 不在服务端存口令；备份是客户端加密后再上传。任意一层完成恢复都会写入 cx.identity.recovery，再走 cx.device.authorized 流程把新设备并入 device set。" }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
@@ -52,9 +52,7 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "event-head",
                     span { "加密云保险箱" }
                     span { "client-side encrypted blob" }
-                }
-                div { class: "muted",
-                    "客户端用强口令派生密钥（Argon2id 默认 m=128MiB, t=3, p=4）后，使用 AEAD 加密主钥、recovery key 与未备份的 MLS 状态再上传。FIPS profile 可降级为 PBKDF2 + AES-GCM，但必须在 backup metadata 中显式声明。"
+                    HelpTip { text: "客户端用强口令派生密钥（Argon2id 默认 m=128MiB, t=3, p=4）后，使用 AEAD 加密主钥、recovery key 与未备份的 MLS 状态再上传。FIPS profile 可降级为 PBKDF2 + AES-GCM，但必须在 backup metadata 中显式声明。" }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -90,9 +88,7 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
                 div { class: "event-head",
                     span { "社交恢复 · Shamir's Secret Sharing" }
                     span { "3 / 5 阈值" }
-                }
-                div { class: "muted",
-                    "Recovery key 切成 5 份，3 份即可重构。Guardian 可以是个人、组织 IT、家人或受信 HSM。轮换 polynomial 即作废所有旧 share。"
+                    HelpTip { text: "Recovery key 切成 5 份，3 份即可重构。Guardian 可以是个人、组织 IT、家人或受信 HSM。轮换 polynomial 即作废所有旧 share。" }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",

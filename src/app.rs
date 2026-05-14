@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::*;
-use dioxus_router::{Link, Router, hooks::*};
+use dioxus_router::{Link, Navigator, Router, hooks::*};
 use serde_json::Value;
 
 use crate::{
@@ -57,7 +57,9 @@ button, input, textarea { font: inherit; }
 .brand { font-size: 24px; font-weight: 700; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
 .search { display: grid; gap: 8px; }
-.search input, .settings input, .workflow-form input, .composer textarea, .composer input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 10px 12px; background: white; color: #18212f; }
+.search input:not([type="checkbox"]):not([type="radio"]), .settings input:not([type="checkbox"]):not([type="radio"]), .workflow-form input:not([type="checkbox"]):not([type="radio"]), .composer textarea, .composer input:not([type="checkbox"]):not([type="radio"]) { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 7px 12px; background: white; color: #18212f; }
+.composer label, .settings label, .workflow-form label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text, #4e5b6b); }
+.composer label > input[type="checkbox"], .composer label > input[type="radio"], .settings label > input[type="checkbox"], .settings label > input[type="radio"], .workflow-form label > input[type="checkbox"], .workflow-form label > input[type="radio"] { width: auto; margin: 0; padding: 0; }
 .space-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
 .space-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
 .space-button.active { border-color: #5cc8a7; background: #284252; }
@@ -314,12 +316,12 @@ body {
   background: var(--cx-surface-raised);
   color: var(--cx-ink);
 }
-.search input,
-.topbar-search input,
-.settings input,
-.workflow-form input,
+.search input:not([type="checkbox"]):not([type="radio"]),
+.topbar-search input:not([type="checkbox"]):not([type="radio"]),
+.settings input:not([type="checkbox"]):not([type="radio"]),
+.workflow-form input:not([type="checkbox"]):not([type="radio"]),
 .composer textarea,
-.composer input,
+.composer input:not([type="checkbox"]):not([type="radio"]),
 .settings textarea,
 .settings select,
 .workflow-form textarea,
@@ -329,13 +331,13 @@ body {
   background: var(--cx-surface);
   color: var(--cx-ink);
 }
-.search input:focus,
-.topbar-search input:focus,
-.auth-form input:focus,
-.settings input:focus,
-.workflow-form input:focus,
+.search input:not([type="checkbox"]):not([type="radio"]):focus,
+.topbar-search input:not([type="checkbox"]):not([type="radio"]):focus,
+.auth-form input:not([type="checkbox"]):not([type="radio"]):focus,
+.settings input:not([type="checkbox"]):not([type="radio"]):focus,
+.workflow-form input:not([type="checkbox"]):not([type="radio"]):focus,
 .composer textarea:focus,
-.composer input:focus,
+.composer input:not([type="checkbox"]):not([type="radio"]):focus,
 .settings textarea:focus,
 .settings select:focus,
 .workflow-form textarea:focus,
@@ -1199,25 +1201,52 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   letter-spacing: 0;
 }
 
-.discussion-category-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.discussion-category-grid .secondary {
-  min-height: 34px;
-  justify-content: center;
-}
-
-.discussion-category-grid .secondary.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
-
 .discussion-create-button {
   justify-content: center;
+}
+
+.mention-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.mention-suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention-suggestion-item:hover,
+.mention-suggestion-item:focus-visible {
+  background: var(--surface-2, color-mix(in srgb, var(--accent) 10%, transparent));
+  outline: none;
+}
+
+.mention-suggestion-name {
+  font-weight: 600;
+}
+
+.mention-suggestion-did {
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
 }
 
 .discussion-modal-backdrop {
@@ -1281,6 +1310,20 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   gap: 8px;
   color: var(--text);
   font-weight: 700;
+  cursor: pointer;
+}
+
+.discussion-checkbox-row input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: auto;
+  accent-color: var(--accent, #1f6b4f);
 }
 
 .discussion-chat-feed {
@@ -3848,6 +3891,7 @@ pub fn RouterView() -> Element {
                                 last_error,
                                 server_description,
                                 server_probe_status,
+                                navigator,
                             },
                         ),
                         "Refresh"
@@ -3975,6 +4019,7 @@ pub fn RouterView() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        navigator,
                                                     },
                                                 );
                                             }
@@ -4294,6 +4339,7 @@ pub fn RouterView() -> Element {
                                                                             account_session_state.set(
                                                                                 "Session expired. Sign in again.".to_owned()
                                                                             );
+                                                                            redirect_to_login(navigator);
                                                                         } else {
                                                                             account_session_state.set(format!(
                                                                                 "Session refresh failed: {error}"
@@ -4319,29 +4365,40 @@ pub fn RouterView() -> Element {
                                                     let device = device_id();
                                                     let api_token = token();
                                                     account_session_state.set("Logging out".to_owned());
+                                                    // Clear local OIDC state immediately so a
+                                                    // refresh-token-based silent re-auth cannot
+                                                    // resurrect the session if the server-side
+                                                    // logout call later fails or is cancelled.
+                                                    state_store.write().set_oidc_tokens(None);
+                                                    let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                     spawn(async move {
-                                                        match ContrixApi::new(&base) {
-                                                            Ok(api) => match api.with_bearer(api_token).logout().await {
-                                                                Ok(response) => {
-                                                                    token.set(String::new());
-                                                                    persist_config(
-                                                                        config_store,
-                                                                        base,
-                                                                        actor,
-                                                                        device,
-                                                                        String::new(),
-                                                                    );
-                                                                    account_session_state.set(format!(
-                                                                        "Logout ok: revoked {}",
-                                                                        response.revoked
-                                                                    ));
+                                                        let api_result = ContrixApi::new(&base)
+                                                            .map(|api| api.with_bearer(api_token));
+                                                        let logout_message = match api_result {
+                                                            Ok(api) => match api.logout().await {
+                                                                Ok(response) => format!(
+                                                                    "Logout ok: revoked {}",
+                                                                    response.revoked
+                                                                ),
+                                                                Err(error) => {
+                                                                    format!("Logout failed: {error}")
                                                                 }
-                                                                Err(error) => account_session_state
-                                                                    .set(format!("Logout failed: {error}")),
                                                             },
-                                                            Err(error) => account_session_state
-                                                                .set(format!("Invalid server URL: {error}")),
-                                                        }
+                                                            Err(error) => {
+                                                                format!("Invalid server URL: {error}")
+                                                            }
+                                                        };
+                                                        token.set(String::new());
+                                                        persist_config(
+                                                            config_store,
+                                                            base,
+                                                            actor,
+                                                            device,
+                                                            String::new(),
+                                                        );
+                                                        account_session_state.set(logout_message);
+                                                        account_menu_open.set(false);
+                                                        redirect_to_login(navigator);
                                                     });
                                                 },
                                                 "Log out"
@@ -5148,6 +5205,11 @@ struct ConnectContext {
     last_error: Signal<Option<String>>,
     server_description: Signal<Option<ServerDescription>>,
     server_probe_status: Signal<String>,
+    navigator: Navigator,
+}
+
+fn redirect_to_login(navigator: Navigator) {
+    let _ = navigator.push(Route::Login);
 }
 
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
@@ -5169,6 +5231,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut last_error = ctx.last_error;
         let mut server_description = ctx.server_description;
         let mut server_probe_status = ctx.server_probe_status;
+        let navigator = ctx.navigator;
 
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
@@ -5247,6 +5310,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         status.set("Session expired; sign in again".to_owned());
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
+                        redirect_to_login(navigator);
                         return;
                     }
                     _ => actor.clone(),
@@ -5309,6 +5373,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         status.set("Session expired; sign in again".to_owned());
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
+                        redirect_to_login(navigator);
                         return;
                     }
                     Err(error) => status.set(format!(
@@ -5455,7 +5520,7 @@ fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Tim
     for (id, body) in spaces {
         let mut summary_event = TimelineEvent::system_notice(
             format!("summary-{id}"),
-            "serverx",
+            "server",
             format!(
                 "{id}: {}",
                 body["summary"]["summary"]

@@ -9,9 +9,9 @@ use yougen::{
 };
 
 #[test]
-fn yougen_accepts_serverx_contract_payloads() {
+fn yougen_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
-        "service_did": "did:web:serverx.local",
+        "service_did": "did:web:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["cx.schema.core.v1"],
@@ -59,7 +59,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     assert_eq!(describe.supported_bindings[0]["base_path"], "/api/v1");
 
     let identity: yougen::models::IdentityDescribeResponse = serde_json::from_value(json!({
-        "service_did": "did:web:serverx.local",
+        "service_did": "did:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
@@ -83,7 +83,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     );
 
     let sync_describe = parse_sync_describe(json!({
-        "service_did": "did:web:serverx.local",
+        "service_did": "did:web:server.local",
         "supported_sync_profiles": ["initial", "incremental"],
         "limits": {"max_spaces": 50, "max_timeline_events": 100},
         "frontier": {"storage": "memory"}
@@ -101,7 +101,7 @@ fn yougen_accepts_serverx_contract_payloads() {
             "cx:space:0196419b-0000-7000-8000-000000000000": {
                 "summary": {
                     "title": "Contrix Demo Space",
-                    "summary": "Shared demo Space served by serverx",
+                    "summary": "Shared demo Space served by server",
                     "tags": ["demo"],
                     "category": "collaboration"
                 },
@@ -122,7 +122,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     );
 
     let directory = parse_directory_describe(json!({
-        "service_did": "did:web:serverx.local",
+        "service_did": "did:web:server.local",
         "resource_types": ["space", "organization", "actor"],
         "discovery_profiles": ["cx.profile.directory.v1"],
         "restricted_query_proof": false
@@ -134,14 +134,14 @@ fn yougen_accepts_serverx_contract_payloads() {
         "space_preview": {
             "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
             "name": "Contrix Demo Space",
-            "description": "Shared demo Space served by serverx",
+            "description": "Shared demo Space served by server",
             "tags": ["demo"],
             "public": true,
             "category": "collaboration"
         },
         "stripped_state": [],
         "join_rule": "public",
-        "via_services": ["did:web:serverx.local"]
+        "via_services": ["did:web:server.local"]
     }))
     .unwrap();
     assert_eq!(resolved.join_rule, "public");
@@ -152,7 +152,7 @@ fn yougen_accepts_serverx_contract_payloads() {
         "canonical_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "sync_token": "sx:1760000000000",
         "receipt": {
-            "service_did": "did:web:serverx.local"
+            "service_did": "did:web:server.local"
         }
     }))
     .unwrap();
@@ -162,7 +162,7 @@ fn yougen_accepts_serverx_contract_payloads() {
         "snapshot_ref": "cx:snapshot:cx:space:0196419b-0000-7000-8000-000000000000:head",
         "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "frontier": {"space_id": "cx:space:0196419b-0000-7000-8000-000000000000"},
-        "signature": {"kid": "did:web:serverx.local#dev", "alg": "none", "sig": ""}
+        "signature": {"kid": "did:web:server.local#dev", "alg": "none", "sig": ""}
     }))
     .unwrap();
     assert!(snapshot.snapshot_ref.starts_with("cx:snapshot:"));
@@ -248,7 +248,7 @@ fn yougen_accepts_serverx_contract_payloads() {
         "size": 23,
         "media_type": "application/octet-stream",
         "sha256": "abc",
-        "upload_receipt": {"service_did": "did:web:serverx.local"}
+        "upload_receipt": {"service_did": "did:web:server.local"}
     }))
     .unwrap();
     assert_eq!(blob.size, 23);
@@ -256,7 +256,7 @@ fn yougen_accepts_serverx_contract_payloads() {
     let report: yougen::models::ModerationReportResponse = serde_json::from_value(json!({
         "report_id": "cx:report:1760000000000",
         "status": "queued",
-        "routed_to": ["did:web:serverx.local#moderation"]
+        "routed_to": ["did:web:server.local#moderation"]
     }))
     .unwrap();
     assert_eq!(report.status, "queued");

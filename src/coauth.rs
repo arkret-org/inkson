@@ -1303,6 +1303,13 @@ fn build_authorize_url(
             query.append_pair("login_hint", actor_did);
         }
         query.append_pair("resource", principal_audience);
+        // OIDC Core §3.1.2.1: `prompt=login` forces the IdP to re-prompt
+        // the user for credentials even when an SSO session cookie is
+        // present. Without this, an explicit Logout in our app does not
+        // kill the IdP cookie, so clicking Continue on the login screen
+        // would silently re-authenticate the same user without a
+        // password.
+        query.append_pair("prompt", "login");
         if let Some(pkce_method) = pkce_method {
             query.append_pair("code_challenge_method", pkce_method);
             query.append_pair("code_challenge", code_challenge);

@@ -262,18 +262,6 @@ impl SpaceAdminSection {
         }
     }
 
-    fn summary(self) -> &'static str {
-        match self {
-            Self::Overview => "sectioned admin map",
-            Self::Members => "membership, invites, leave",
-            Self::Access => "metadata, join, history, discovery",
-            Self::Security => "MLS, capability grants, anchor visibility",
-            Self::Governance => "org policy and moderation surfaces",
-            Self::Federation => "trust bundles and partner boundaries",
-            Self::Repair => "conflicts, stalled moves, destructive actions",
-        }
-    }
-
     fn all() -> [Self; 7] {
         [
             Self::Overview,
@@ -405,33 +393,24 @@ pub fn SpaceAdminPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
-            div { class: "event", "data-testid": "space-admin-sections",
-                div { class: "event-head",
-                    span { "Space Admin" }
-                    span { "{active_section.label()} · {active_section.summary()}" }
-                }
-                div { class: "muted",
-                    "This admin surface is now split by responsibility. Daily membership work, Space policy, security state, governance, federation trust, and destructive repair flows no longer share one undifferentiated scroll page."
-                }
-                div { class: "actions",
-                    for section in SpaceAdminSection::all() {
-                        if let Some(slug) = section.slug() {
-                            Link {
-                                class: if active_section == section { "primary" } else { "secondary" },
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
-                                    section: slug.to_owned(),
-                                },
-                                "{section.label()}"
-                            }
-                        } else {
-                            Link {
-                                class: if active_section == section { "primary" } else { "secondary" },
-                                to: Route::SpaceAdmin {
-                                    space_id: selected_space.clone(),
-                                },
-                                "{section.label()}"
-                            }
+            div { class: "actions", "data-testid": "space-admin-sections",
+                for section in SpaceAdminSection::all() {
+                    if let Some(slug) = section.slug() {
+                        Link {
+                            class: if active_section == section { "primary" } else { "secondary" },
+                            to: Route::SpaceAdminSection {
+                                space_id: selected_space.clone(),
+                                section: slug.to_owned(),
+                            },
+                            "{section.label()}"
+                        }
+                    } else {
+                        Link {
+                            class: if active_section == section { "primary" } else { "secondary" },
+                            to: Route::SpaceAdmin {
+                                space_id: selected_space.clone(),
+                            },
+                            "{section.label()}"
                         }
                     }
                 }

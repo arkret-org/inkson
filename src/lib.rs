@@ -2,6 +2,7 @@ pub mod account_data;
 pub mod api;
 pub mod app;
 pub mod audit;
+pub mod blob;
 pub mod canonical;
 pub mod capability;
 pub mod coauth;
@@ -38,6 +39,7 @@ pub mod secure_key_store;
 pub mod snapshot;
 pub mod telemetry;
 pub mod views;
+pub mod webrtc;
 pub mod workflows;
 
 pub use app::App;

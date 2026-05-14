@@ -69,7 +69,7 @@
 #    - `TEST_ACCOUNT_PASSWORD` — bootstrap password / passkey-bypass
 #      token for the same account. Rotated quarterly.
 #    - `MOCK_PRINCIPAL_SERVER_URL` — base URL of a long-lived mock
-#      serverx instance (defaults to in-process Playwright stub when
+#      server instance (defaults to in-process Playwright stub when
 #      unset; an external mock lets the WebKit secure-context tests
 #      run over `https://`).
 # 3. PRs from forks won't see these secrets — that's the upstream

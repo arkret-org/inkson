@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use dioxus_router::Link;
+use dioxus_router::{Link, hooks::use_navigator};
 use serde_json::json;
 
 use crate::{
@@ -279,6 +279,7 @@ pub fn SetupPanel(
 ) -> Element {
     let active_section = SetupSection::from_slug(section.as_deref());
     let has_session = !token().trim().is_empty();
+    let navigator = use_navigator();
 
     let mut create_step = use_signal(|| NewSpaceStep::Basics);
     let mut seed_members = use_signal(String::new);
@@ -332,9 +333,6 @@ pub fn SetupPanel(
                         div { class: "metric",
                             strong { "New Space" }
                             span { "boundary-first bootstrap" }
-                            div { class: "muted",
-                                "Create a Space, define the three boundary axes, and seed the first members before collaboration starts."
-                            }
                             Link {
                                 class: "secondary",
                                 to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
@@ -344,25 +342,16 @@ pub fn SetupPanel(
                         div { class: "metric",
                             strong { "Onboarding" }
                             span { "identity bootstrap" }
-                            div { class: "muted",
-                                "Account registration, DID method choice, device setup, and recovery guidance now live in the onboarding flow."
-                            }
                             Link { class: "secondary", to: Route::Onboarding, "Open Onboarding" }
                         }
                         div { class: "metric",
                             strong { "Search" }
                             span { "actors / handles / spaces" }
-                            div { class: "muted",
-                                "Find spaces, organizations, and people there. Relationship operations no longer share the Space bootstrap surface."
-                            }
                             Link { class: "secondary", to: Route::Directory, "Open Search" }
                         }
                         div { class: "metric",
                             strong { "Space timeline" }
                             span { "after bootstrap" }
-                            div { class: "muted",
-                                "Once the Space exists, move into the Space shell for timeline, board, discussion, document, and admin work."
-                            }
                             if has_selected_space {
                                 Link {
                                     class: "secondary",
@@ -380,9 +369,6 @@ pub fn SetupPanel(
                     div { class: "event-head",
                         span { "What Moved" }
                         span { "IA cleanup" }
-                    }
-                    div { class: "muted",
-                        "The old setup dump mixed account state, contacts, space lifecycle, and sync drills. Those responsibilities are now split by object boundary and ongoing context."
                     }
                     div { class: "actions",
                         span { class: "badge", "Onboarding = identity bootstrap" }
@@ -746,6 +732,7 @@ pub fn SetupPanel(
                                                                         device.clone(),
                                                                         String::new(),
                                                                     );
+                                                                    let _ = navigator.push(Route::Login);
                                                                     "Session expired. Sign in again before creating a Space.".to_owned()
                                                                 } else {
                                                                     format!("create failed: {error}")
