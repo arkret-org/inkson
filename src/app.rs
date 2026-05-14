@@ -3571,6 +3571,45 @@ pub fn RouterView() -> Element {
     let mut global_query = use_signal(String::new);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
 
+    // On first render with a live session, fetch the directory + sync so
+    // the sidebar's Space list shows up after a page reload. The list
+    // intentionally isn't persisted in localStorage — `search_spaces`
+    // results live only in the in-memory `spaces` signal, so without
+    // this kick we'd render "No spaces loaded" until the user clicks
+    // Refresh.
+    let mut auto_refresh_pending = use_signal(|| true);
+    if auto_refresh_pending() {
+        auto_refresh_pending.set(false);
+        let base = base_url();
+        let session = token();
+        if !base.trim().is_empty() && !session.trim().is_empty() {
+            connect(
+                base,
+                account_did(),
+                device_id(),
+                ConnectContext {
+                    status,
+                    sync_cursor,
+                    token,
+                    account_did,
+                    selected_space,
+                    spaces,
+                    timeline,
+                    device_queue,
+                    frontier_state,
+                    crypto_state,
+                    config_store,
+                    state_store,
+                    network_state,
+                    last_error,
+                    server_description,
+                    server_probe_status,
+                    navigator,
+                },
+            );
+        }
+    }
+
     let routed_space_id = route.space_id().map(str::to_owned);
     let remembered_space_id = selected_space();
     let effective_space_id = routed_space_id.clone().or_else(|| {
@@ -5329,13 +5368,35 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 
                 let cached_spaces =
                     space_previews_from_sync_spaces(&state_store.read().load().space_projections);
-                match authed.search_spaces("", None).await {
-                    Ok(search) if search.results.is_empty() => {
-                        let merged = merge_space_previews(cached_spaces, spaces());
+                match authed.sync(None).await {
+                    Ok(sync) => {
+                        {
+                            let mut store = state_store.write();
+                            store.save_sync_cursor(sync.next_batch.clone());
+                            for (id, body) in &sync.spaces {
+                                store.save_space_projection(id.clone(), body.clone());
+                                // Thread the per-Space Anchor view (frontier /
+                                // leaves / state_root / bottom cells) into the
+                                // local store so Move builders + UI can read
+                                // it. Bodies without an `anchor_view` field
+                                // produce a Default view (empty frontier =
+                                // sentinel) so we still record presence.
+                                let view =
+                                    crate::local_state::LocalAnchorView::from_sync_body(body);
+                                store.set_anchor_view(id.clone(), view);
+                            }
+                        }
+                        let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
+                        let synced_previews = space_previews_from_sync_spaces(&sync.spaces);
+                        let merged = merge_space_previews(cached_spaces, synced_previews);
                         if merged.is_empty() {
                             status.set(ConnectionState::Empty.label().to_owned());
                         } else {
-                            status.set("Refreshed: showing cached/local Space list".to_owned());
+                            status.set(format!(
+                                "{}: synced {} space(s)",
+                                ConnectionState::Online.label(),
+                                merged.len()
+                            ));
                         }
                         let first_space = merged.first().map(|space| space.space_id.clone());
                         spaces.set(merged);
@@ -5344,16 +5405,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 selected_space.set(space_id);
                             }
                         }
-                    }
-                    Ok(search) => {
-                        let results = merge_space_previews(cached_spaces, search.results);
-                        let first_space = results.first().map(|space| space.space_id.clone());
-                        spaces.set(results);
-                        if selected_space().trim().is_empty() {
-                            if let Some(space_id) = first_space {
-                                selected_space.set(space_id);
-                            }
-                        }
+                        timeline.set(synced_timeline);
+                        device_queue.set(sync.to_device.len());
+                        sync_cursor.set(sync.next_batch);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
                         token.set(String::new());
@@ -5376,55 +5430,28 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         redirect_to_login(navigator);
                         return;
                     }
-                    Err(error) => status.set(format!(
-                        "{}: directory search failed: {error}",
-                        ConnectionState::Reconnecting.label()
-                    )),
-                }
-                if let Ok(sync) = authed.sync(None).await {
-                    {
-                        let mut store = state_store.write();
-                        store.save_sync_cursor(sync.next_batch.clone());
-                        for (id, body) in &sync.spaces {
-                            store.save_space_projection(id.clone(), body.clone());
-                            // Thread the per-Space Anchor view (frontier /
-                            // leaves / state_root / bottom cells) into the
-                            // local store so Move builders + UI can read
-                            // it. Bodies without an `anchor_view` field
-                            // produce a Default view (empty frontier =
-                            // sentinel) so we still record presence.
-                            let view = crate::local_state::LocalAnchorView::from_sync_body(body);
-                            store.set_anchor_view(id.clone(), view);
+                    Err(error) => {
+                        let merged = merge_space_previews(cached_spaces, spaces());
+                        if merged.is_empty() {
+                            status.set(format!(
+                                "{}: sync failed: {error}",
+                                ConnectionState::Reconnecting.label()
+                            ));
+                        } else {
+                            status.set(
+                                "Refreshed: sync unavailable, showing cached/local Space list"
+                                    .to_owned(),
+                            );
                         }
-                    }
-                    let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
-                    let first_synced_space = {
-                        let mut current_spaces = spaces.write();
-                        for preview in space_previews_from_sync_spaces(&sync.spaces) {
-                            if let Some(existing) = current_spaces
-                                .iter_mut()
-                                .find(|space| space.space_id == preview.space_id)
-                            {
-                                *existing = preview;
-                            } else {
-                                current_spaces.push(preview);
+                        let first_space = merged.first().map(|space| space.space_id.clone());
+                        spaces.set(merged);
+                        if selected_space().trim().is_empty() {
+                            if let Some(space_id) = first_space {
+                                selected_space.set(space_id);
                             }
                         }
-                        normalize_space_hierarchy(&mut current_spaces);
-                        current_spaces.first().map(|space| space.space_id.clone())
-                    };
-                    if selected_space().trim().is_empty() {
-                        if let Some(space_id) = first_synced_space {
-                            selected_space.set(space_id);
-                        }
+                        last_error.set(Some(format!("sync: {error}")));
                     }
-                    timeline.set(synced_timeline);
-                    device_queue.set(sync.to_device.len());
-                    sync_cursor.set(sync.next_batch);
-                } else {
-                    status.set(format!(
-                        "Refreshed: authenticated sync unavailable, showing cached/local state"
-                    ));
                 }
                 if let Ok(events) = authed.events_describe().await {
                     if let Some(frontier) = frontier_label(&events.frontier) {
