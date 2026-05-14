@@ -378,9 +378,16 @@ pub fn build_flow_position_move(
     hlc: &str,
 ) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.flow.position.v1:{flow_id}");
+    // NOTE: the SDK's `LatticeOp` serializes the discriminator under
+    // the wire-key `kind` (see `move_event.rs:LatticeOp.op_type`'s
+    // `#[serde(rename = "kind")]`). Older revisions of this builder
+    // used `"type"` which silently failed `parse_effects` deserialization
+    // — the same issue is still present in the consent / capability /
+    // member-state / space-organization / mls-commit builders below
+    // and should be fixed in a follow-up sweep.
     let effect = serde_json::json!({
         "cell": cell_id,
-        "op": { "type": "set", "value": value }
+        "op": { "kind": "set", "value": value }
     });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }

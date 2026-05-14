@@ -1370,7 +1370,7 @@ fn relocate_card(
 /// Build, sign, and submit a `cx.flow.move` / `cx.flow.reorder` CAS
 /// Move via the new spec-compliant builder. Tracks the submission in
 /// `write_records` and, on failed precondition, kicks off automatic
-/// rebase via [`rebase_and_resubmit`] up to
+/// rebase via [`rebase_flow_position_after_conflict`] up to
 /// [`MAX_CONFLICT_REBASE_ATTEMPTS`] times.
 #[allow(clippy::too_many_arguments)]
 fn submit_flow_position_cas_move(
@@ -1382,6 +1382,42 @@ fn submit_flow_position_cas_move(
     kind: &'static str,
     expected: FlowPositionExpectation,
     effect: FlowPositionEffect,
+    state_store: Signal<LocalStateStore>,
+    write_records: Signal<Vec<BoardWriteRecord>>,
+    board_status: Signal<String>,
+) {
+    submit_flow_position_cas_move_with_attempt(
+        base_url,
+        token,
+        space_id,
+        board_place_id,
+        flow_id,
+        kind,
+        expected,
+        effect,
+        0,
+        state_store,
+        write_records,
+        board_status,
+    );
+}
+
+/// Internal variant of [`submit_flow_position_cas_move`] that threads
+/// the rebase attempt counter. `attempt` is the **next** attempt number
+/// (`0` for the user-initiated drop, `1` for the first rebase, …);
+/// reaching [`MAX_CONFLICT_REBASE_ATTEMPTS`] without an Accepted /
+/// PendingAnchor result quarantines the record for manual review.
+#[allow(clippy::too_many_arguments)]
+fn submit_flow_position_cas_move_with_attempt(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    board_place_id: String,
+    flow_id: String,
+    kind: &'static str,
+    expected: FlowPositionExpectation,
+    effect: FlowPositionEffect,
+    attempt: u8,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -1432,9 +1468,13 @@ fn submit_flow_position_cas_move(
         effect_summary,
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
-        note: format!("submitting {kind} via api.submit_move"),
+        note: if attempt == 0 {
+            format!("submitting {kind} via api.submit_move")
+        } else {
+            format!("rebase attempt {attempt} of {kind}")
+        },
         signed_move_json,
-        rebase_attempts: 0,
+        rebase_attempts: attempt,
     };
     write_records.write().push(record);
     state_store.write().append_raw_operation(
@@ -1467,6 +1507,11 @@ fn submit_flow_position_cas_move(
     let kind_for_record = kind.to_owned();
     let anchor_for_record = anchor_ref.clone();
     let space_for_record = space_id.clone();
+    let base_for_rebase = base_url.clone();
+    let space_for_rebase = space_id.clone();
+    let board_for_rebase = board_place_id.clone();
+    let flow_for_rebase = flow_id.clone();
+    let effect_for_rebase = effect.clone();
     spawn(async move {
         let api = match authed_api(&base_url, api_token) {
             Ok(api) => api,
@@ -1502,7 +1547,7 @@ fn submit_flow_position_cas_move(
                     .iter_mut()
                     .find(|r| r.move_id == move_for_track)
                 {
-                    record.state = card_state;
+                    record.state = card_state.clone();
                     record.note =
                         format!("submit_move state={} reason={:?}", resp.state, resp.reason);
                 }
@@ -1510,6 +1555,45 @@ fn submit_flow_position_cas_move(
                     "{kind_for_record} Move {} state={}",
                     resp.move_id, resp.state
                 ));
+                // Auto-rebase the CAS Move after a conflict: re-fetch
+                // the cell's current head via the projection endpoint,
+                // build a fresh `expected_position`, and re-submit
+                // (with the same target effect) up to
+                // MAX_CONFLICT_REBASE_ATTEMPTS times.
+                if matches!(card_state, CardState::Conflict)
+                    && attempt + 1 < MAX_CONFLICT_REBASE_ATTEMPTS
+                {
+                    rebase_flow_position_after_conflict(
+                        base_for_rebase,
+                        token,
+                        space_for_rebase,
+                        board_for_rebase,
+                        flow_for_rebase,
+                        kind_for_record,
+                        effect_for_rebase,
+                        attempt + 1,
+                        state_store,
+                        write_records,
+                        board_status,
+                    );
+                } else if matches!(card_state, CardState::Conflict) {
+                    // Out of attempts → quarantine for manual review.
+                    if let Some(record) = write_records
+                        .write()
+                        .iter_mut()
+                        .find(|r| r.move_id == move_for_track)
+                    {
+                        record.state = CardState::Quarantined;
+                        record.note = format!(
+                            "CAS conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts; \
+                             reason={:?}",
+                            resp.reason
+                        );
+                    }
+                    board_status.set(format!(
+                        "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
+                    ));
+                }
             }
             Err(error) => {
                 if let Some(record) = write_records
@@ -1524,6 +1608,115 @@ fn submit_flow_position_cas_move(
             }
         }
     });
+}
+
+/// Re-fetch the kanban projection after a CAS conflict to discover the
+/// flow's current cell state, then re-submit the move with a refreshed
+/// `expected_position`. Effect (target list + rank) is preserved — the
+/// user's drop intent doesn't change just because someone else moved
+/// the card concurrently.
+///
+/// Spec ([operations-sync.md §8](../../contrix-spec/spec/v1/zh/sync/operations-sync.md)):
+/// the conflict-recovery path takes a snapshot + state witness +
+/// inclusion proof; this MVP approximation just refetches the
+/// collection projection (which the soland reducer derives from the
+/// same cell store) and reads the flow's current `list_place_id` /
+/// `rank` from it.
+#[allow(clippy::too_many_arguments)]
+fn rebase_flow_position_after_conflict(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    board_place_id: String,
+    flow_id: String,
+    kind: String,
+    effect: FlowPositionEffect,
+    attempt: u8,
+    state_store: Signal<LocalStateStore>,
+    write_records: Signal<Vec<BoardWriteRecord>>,
+    mut board_status: Signal<String>,
+) {
+    board_status.set(format!(
+        "rebase {kind} attempt {attempt}/{MAX_CONFLICT_REBASE_ATTEMPTS} — refetching projection"
+    ));
+    spawn(async move {
+        let api = match authed_api(&base_url, token()) {
+            Ok(api) => api,
+            Err(error) => {
+                board_status.set(format!("rebase aborted (invalid server URL): {error}"));
+                return;
+            }
+        };
+        // We hardcode the view id to match the rest of this view —
+        // production wiring should pass it through from the saved
+        // View. Falling back to seed leaves the conflict in place.
+        let view_id = "cx:view:01js0vw0000000000000000000release";
+        let new_expected = match api.collection_projection(view_id).await {
+            Ok(projection) => locate_flow_position_in_projection(&projection, &flow_id),
+            Err(error) => {
+                board_status.set(format!(
+                    "rebase aborted (projection refresh failed): {error}"
+                ));
+                return;
+            }
+        };
+        // The static lifetime requirement on `kind` is satisfied by
+        // mapping the dynamic String back to one of the known
+        // classifiers. Anything else falls through to cx.flow.move
+        // because that's the spec wire shape for drag operations.
+        let kind_static: &'static str = match kind.as_str() {
+            "cx.flow.reorder" => "cx.flow.reorder",
+            "cx.flow.move" => "cx.flow.move",
+            _ => "cx.flow.move",
+        };
+        submit_flow_position_cas_move_with_attempt(
+            base_url,
+            token,
+            space_id,
+            board_place_id,
+            flow_id,
+            kind_static,
+            new_expected,
+            effect,
+            attempt,
+            state_store,
+            write_records,
+            board_status,
+        );
+    });
+}
+
+/// Walk the projection groups looking for the flow's current cell
+/// pre-state. Returns `Initial` if the flow isn't on the board (i.e.
+/// the cell is in initial state) so the next CAS Move uses
+/// `head_eq null`.
+fn locate_flow_position_in_projection(
+    projection: &contrix_sdk::CollectionProjectionResponse,
+    flow_id: &str,
+) -> FlowPositionExpectation {
+    for group in &projection.groups {
+        for item in &group.items {
+            let item_id = item
+                .object
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if item_id == flow_id {
+                if let Some(position) = item.position.as_ref() {
+                    return FlowPositionExpectation::At {
+                        list_place_id: group.group_id.clone(),
+                        rank: position.rank.clone(),
+                    };
+                }
+                // Item present but no position metadata → treat as if
+                // the cell were initial so we use `head_eq null`. This
+                // is conservative; soland's reducer will reject if the
+                // cell actually has a non-null head.
+                return FlowPositionExpectation::Initial;
+            }
+        }
+    }
+    FlowPositionExpectation::Initial
 }
 
 /// Replay the first queued / soft-failed Move. When the record carries
@@ -1901,6 +2094,162 @@ mod tests {
             BoardProjectionSource::SeedFallback.class_name(),
             "badge amber"
         );
+    }
+
+    /// `relocate_card` is the optimistic local mutation that runs as
+    /// soon as the user drops a card — before the server sees the
+    /// Move. It MUST:
+    ///   1. remove the card from the source column,
+    ///   2. assign the new rank,
+    ///   3. insert into the target column such that ascending-rank
+    ///      ordering is preserved (otherwise the next drag uses
+    ///      wrong neighbours for `rank_between`).
+    #[test]
+    fn relocate_card_preserves_rank_ordering_after_move() {
+        let mut cols = vec![
+            KanbanColumn {
+                id: "cx:place:list-a".to_owned(),
+                title: "A".to_owned(),
+                rank: "U".to_owned(),
+                cards: vec![
+                    test_card("cx:flow:a1", "U"),
+                    test_card("cx:flow:a2", "f"),
+                ],
+            },
+            KanbanColumn {
+                id: "cx:place:list-b".to_owned(),
+                title: "B".to_owned(),
+                rank: "f".to_owned(),
+                cards: vec![
+                    test_card("cx:flow:b1", "U"),
+                    test_card("cx:flow:b3", "z"),
+                ],
+            },
+        ];
+        // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
+        let moved = relocate_card(&mut cols, "cx:flow:a1", "cx:place:list-a", "cx:place:list-b", "m").unwrap();
+        assert_eq!(moved.id, "cx:flow:a1");
+        assert_eq!(moved.rank, "m");
+        // Source column no longer contains a1, still has a2.
+        let a = &cols[0];
+        assert_eq!(a.cards.len(), 1);
+        assert_eq!(a.cards[0].id, "cx:flow:a2");
+        // Target column has b1 (U) < a1 (m) < b3 (z), ordering preserved.
+        let b = &cols[1];
+        assert_eq!(b.cards.len(), 3);
+        assert_eq!(b.cards[0].id, "cx:flow:b1");
+        assert_eq!(b.cards[1].id, "cx:flow:a1");
+        assert_eq!(b.cards[2].id, "cx:flow:b3");
+    }
+
+    /// In-list reorder: removing from a column then re-inserting into
+    /// the **same** column (target == source) at a new rank should
+    /// land at the right position.
+    #[test]
+    fn relocate_card_handles_in_list_reorder() {
+        let mut cols = vec![KanbanColumn {
+            id: "cx:place:list-a".to_owned(),
+            title: "A".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![
+                test_card("cx:flow:a1", "U"),
+                test_card("cx:flow:a2", "f"),
+                test_card("cx:flow:a3", "p"),
+            ],
+        }];
+        // Move a3 to the top of the same list (rank "0" — before "U").
+        let moved = relocate_card(&mut cols, "cx:flow:a3", "cx:place:list-a", "cx:place:list-a", "0").unwrap();
+        assert_eq!(moved.rank, "0");
+        let a = &cols[0];
+        assert_eq!(a.cards.len(), 3);
+        assert_eq!(a.cards[0].id, "cx:flow:a3");
+        assert_eq!(a.cards[1].id, "cx:flow:a1");
+        assert_eq!(a.cards[2].id, "cx:flow:a2");
+    }
+
+    /// `locate_flow_position_in_projection` is the post-conflict rebase
+    /// adapter — it must find the flow's current cell pre-state from a
+    /// freshly-fetched projection. When the flow is present with a
+    /// position, return `At { list_place_id, rank }`; absent ⇒ `Initial`.
+    #[test]
+    fn locate_flow_position_finds_present_flow_with_rank() {
+        use contrix_sdk::{
+            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionPosition,
+            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
+        };
+        let projection = CollectionProjectionResponse {
+            kind: ViewKind::Collection,
+            renderer: ViewRenderer::Board,
+            view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
+            frontier: Vec::new(),
+            groups: vec![CollectionProjectionGroup {
+                group_id: "cx:place:01list-review".to_owned(),
+                title: "Review".to_owned(),
+                rank: Some("U".to_owned()),
+                items: vec![CollectionProjectionItem {
+                    object: serde_json::json!({
+                        "id": "cx:flow:01wanted",
+                        "title": "Find me",
+                    }),
+                    position: Some(CollectionProjectionPosition {
+                        relation_id: "cx:relation:01rel".to_owned(),
+                        rank: "h3".to_owned(),
+                    }),
+                    discussion: None,
+                }],
+                hidden_count: None,
+            }],
+        };
+        let expected = locate_flow_position_in_projection(&projection, "cx:flow:01wanted");
+        assert_eq!(
+            expected,
+            FlowPositionExpectation::At {
+                list_place_id: "cx:place:01list-review".to_owned(),
+                rank: "h3".to_owned(),
+            }
+        );
+    }
+
+    /// When the flow isn't in the projection, the rebase must use
+    /// `head_eq null` (Initial) — soland's reducer rejects if the cell
+    /// is actually non-initial, which is the safe behaviour.
+    #[test]
+    fn locate_flow_position_missing_flow_returns_initial() {
+        use contrix_sdk::{
+            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
+        };
+        let projection = CollectionProjectionResponse {
+            kind: ViewKind::Collection,
+            renderer: ViewRenderer::Board,
+            view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
+            frontier: Vec::new(),
+            groups: Vec::new(),
+        };
+        let expected = locate_flow_position_in_projection(&projection, "cx:flow:01missing");
+        assert_eq!(expected, FlowPositionExpectation::Initial);
+    }
+
+    /// Helper for `relocate_card` tests — builds a KanbanCard with the
+    /// supplied id and rank, defaulting the rest of the demo fields.
+    fn test_card(id: &str, rank: &str) -> KanbanCard {
+        KanbanCard {
+            id: id.to_owned(),
+            rank: rank.to_owned(),
+            title: "test".to_owned(),
+            description: String::new(),
+            labels: Vec::new(),
+            assignee: String::new(),
+            due: String::new(),
+            primary_flow_id: String::new(),
+            primary_flow: String::new(),
+            linked_flows: Vec::new(),
+            locked_flow: None,
+            external_visibility: String::new(),
+            history_visibility: String::new(),
+            activity_hint: String::new(),
+            audit_hint: String::new(),
+            state: CardState::Synced,
+        }
     }
 
     #[test]
