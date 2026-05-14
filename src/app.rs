@@ -4846,6 +4846,9 @@ pub fn RouterView() -> Element {
                         crate::views::recovery::RecoveryPanel {
                             base_url: base_url(),
                             token,
+                            state_store,
+                            account_did,
+                            device_id,
                         }
                     },
                     Route::Onboarding => rsx! {
