@@ -3,7 +3,13 @@ use dioxus_router::Link;
 use serde_json::json;
 
 use crate::{
-    components::PermissionPillRow, models::SpacePreview, routes::Route, views::helpers::authed_api,
+    api::is_auth_expired_error,
+    components::PermissionPillRow,
+    config::LocalConfigStore,
+    local_state::LocalStateStore,
+    models::SpacePreview,
+    routes::Route,
+    views::helpers::{authed_api, persist_config},
 };
 
 const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
@@ -39,7 +45,7 @@ const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
     ),
 ];
 
-const JOIN_RULE_OPTIONS: [(&str, &str, &str); 6] = [
+const JOIN_RULE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "public",
         "Public",
@@ -59,16 +65,6 @@ const JOIN_RULE_OPTIONS: [(&str, &str, &str); 6] = [
         "restricted",
         "Restricted",
         "Joining depends on policy or claims, even if the Space is discoverable.",
-    ),
-    (
-        "knock_restricted",
-        "Knock + restricted",
-        "Applicants request entry, then additional eligibility policy is checked.",
-    ),
-    (
-        "closed",
-        "Closed",
-        "No self-serve admission path. Membership is controlled out of band.",
     ),
 ];
 
@@ -120,20 +116,6 @@ impl SetupSection {
             Self::Spaces => "spaces",
         }
     }
-
-    fn title(self) -> &'static str {
-        match self {
-            Self::Overview => "Workspace Setup",
-            Self::Spaces => "New Space",
-        }
-    }
-
-    fn subtitle(self) -> &'static str {
-        match self {
-            Self::Overview => "where bootstrap tasks live now",
-            Self::Spaces => "boundary / seed members / bootstrap only",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,12 +123,14 @@ enum NewSpaceStep {
     Basics,
     Boundary,
     Seed,
+    Done,
 }
 
-const NEW_SPACE_STEPS: [NewSpaceStep; 3] = [
+const NEW_SPACE_STEPS: [NewSpaceStep; 4] = [
     NewSpaceStep::Basics,
     NewSpaceStep::Boundary,
     NewSpaceStep::Seed,
+    NewSpaceStep::Done,
 ];
 
 impl NewSpaceStep {
@@ -155,6 +139,7 @@ impl NewSpaceStep {
             Self::Basics => "Basics",
             Self::Boundary => "Boundary",
             Self::Seed => "Seed",
+            Self::Done => "Done",
         }
     }
 
@@ -163,6 +148,7 @@ impl NewSpaceStep {
             Self::Basics => "name and intent",
             Self::Boundary => "three policy axes",
             Self::Seed => "initial members and create",
+            Self::Done => "open created space",
         }
     }
 
@@ -171,13 +157,15 @@ impl NewSpaceStep {
             Self::Basics => "1",
             Self::Boundary => "2",
             Self::Seed => "3",
+            Self::Done => "4",
         }
     }
 
     fn next(self) -> Self {
         match self {
             Self::Basics => Self::Boundary,
-            Self::Boundary | Self::Seed => Self::Seed,
+            Self::Boundary => Self::Seed,
+            Self::Seed | Self::Done => Self::Done,
         }
     }
 
@@ -185,12 +173,22 @@ impl NewSpaceStep {
         match self {
             Self::Basics | Self::Boundary => Self::Basics,
             Self::Seed => Self::Boundary,
+            Self::Done => Self::Seed,
         }
     }
 }
 
 fn discoverability_is_publicish(value: &str) -> bool {
     matches!(value, "public" | "listed")
+}
+
+fn plaintext_services_for_policy(service_did: &str) -> Vec<String> {
+    let service_did = service_did.trim();
+    if service_did.is_empty() {
+        Vec::new()
+    } else {
+        vec![service_did.to_owned()]
+    }
 }
 
 fn parse_seed_members(seed_members: &str) -> Vec<String> {
@@ -268,7 +266,12 @@ fn sync_space_preview(
 #[component]
 pub fn SetupPanel(
     base_url: String,
+    plaintext_service_did: String,
     token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+    config_store: Signal<LocalConfigStore>,
+    state_store: Signal<LocalStateStore>,
     mut selected_space: Signal<String>,
     mut spaces: Signal<Vec<SpacePreview>>,
     mut status: Signal<String>,
@@ -313,42 +316,12 @@ pub fn SetupPanel(
         NewSpaceStep::Basics => basics_ready,
         NewSpaceStep::Boundary => boundary_ready,
         NewSpaceStep::Seed => basics_ready && boundary_ready,
+        NewSpaceStep::Done => has_created_space,
     };
     let can_create_space = has_session && basics_ready && boundary_ready;
 
     rsx! {
         div { class: "timeline", "data-testid": "setup-panel",
-            div { class: "event", "data-testid": "workspace-setup-banner",
-                div { class: "event-head",
-                    span { "{active_section.title()}" }
-                    span { "{active_section.subtitle()}" }
-                }
-                if active_section == SetupSection::Overview {
-                    div { class: "muted",
-                        "Setup is no longer a protocol-tool dump. Identity bootstrap, discovery, and ongoing Space administration have separate surfaces."
-                    }
-                    div { class: "actions",
-                        Link {
-                            class: "primary",
-                            to: Route::Setup,
-                            "Setup Map"
-                        }
-                        Link {
-                            class: "secondary",
-                            to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
-                            "New Space"
-                        }
-                        Link { class: "secondary", to: Route::Onboarding, "Onboarding" }
-                        Link { class: "secondary", to: Route::Directory, "Search" }
-                        Link { class: "secondary", to: Route::Settings, "Settings" }
-                    }
-                } else {
-                    div { class: "muted",
-                        "Create exactly one Space bootstrap: name, boundary policy axes, and optional seed members."
-                    }
-                }
-            }
-
             if active_section == SetupSection::Overview {
                 div { class: "event", "data-testid": "workspace-setup-map",
                     div { class: "event-head",
@@ -442,12 +415,13 @@ pub fn SetupPanel(
                         div { class: "event new-space-stepper",
                             div { class: "event-head",
                                 span { "Create steps" }
-                                span { "{active_create_step.number()} / 3" }
+                                span { "{active_create_step.number()} / 4" }
                             }
                             div { class: "setup-step-list",
                                 for step in NEW_SPACE_STEPS {
                                     button {
                                         class: if active_create_step == step { "primary" } else { "secondary" },
+                                        disabled: step == NewSpaceStep::Done && !has_created_space,
                                         onclick: move |_| create_step.set(step),
                                         span { class: "setup-step-index", "{step.number()}" }
                                         span { class: "setup-step-label",
@@ -651,11 +625,31 @@ pub fn SetupPanel(
                                                 let join_rule = space_policy_join_rule();
                                                 let history_visibility = space_policy_history_visibility();
                                                 let seed_text = seed_members();
+                                                let actor = account_did();
+                                                let device = device_id();
+                                                let configured_plaintext_service_did =
+                                                    plaintext_service_did.clone();
                                                 spawn(async move {
                                                     let invitees = parse_seed_members(&seed_text);
                                                     let publicish = discoverability_is_publicish(&discoverability);
                                                     match authed_api(&base, api_token) {
-                                                        Ok(api) => match api.create_space(&title, Some(&summary), publicish, invitees.clone()).await {
+                                                        Ok(api) => {
+                                                            let mut plaintext_services = plaintext_services_for_policy(
+                                                                &configured_plaintext_service_did,
+                                                            );
+                                                            if plaintext_services.is_empty()
+                                                                && let Ok(description) = api.describe().await
+                                                                && !description.service_did.trim().is_empty()
+                                                            {
+                                                                plaintext_services.push(description.service_did);
+                                                            }
+                                                            match api.create_space(
+                                                                &title,
+                                                                Some(&summary),
+                                                                publicish,
+                                                                invitees.clone(),
+                                                                plaintext_services.clone(),
+                                                            ).await {
                                                             Ok(space) => {
                                                                 selected_space.set(space.space_id.clone());
                                                                 created_space_id.set(space.space_id.clone());
@@ -666,24 +660,49 @@ pub fn SetupPanel(
                                                                     summary.clone(),
                                                                     publicish,
                                                                 );
+                                                                let mut projection_members = Vec::new();
+                                                                if !actor.trim().is_empty() {
+                                                                    projection_members.push(actor.clone());
+                                                                }
+                                                                for invitee in &invitees {
+                                                                    if !projection_members.iter().any(|member| member == invitee) {
+                                                                        projection_members.push(invitee.clone());
+                                                                    }
+                                                                }
+                                                                let projection_admins = if actor.trim().is_empty() {
+                                                                    Vec::new()
+                                                                } else {
+                                                                    vec![actor.clone()]
+                                                                };
+                                                                state_store.write().save_space_projection(
+                                                                    space.space_id.clone(),
+                                                                    json!({
+                                                                        "owner": actor.clone(),
+                                                                        "admins": projection_admins.clone(),
+                                                                        "members": projection_members.clone(),
+                                                                        "plaintext_visible_services": plaintext_services.clone(),
+                                                                        "summary": {
+                                                                            "title": title.clone(),
+                                                                            "summary": summary.clone(),
+                                                                            "category": "collaboration",
+                                                                            "tags": [],
+                                                                            "discoverability": discoverability.clone(),
+                                                                            "plaintext_visible_services": plaintext_services.clone(),
+                                                                            "owner": actor.clone(),
+                                                                            "admins": projection_admins,
+                                                                            "members": projection_members,
+                                                                        },
+                                                                        "timeline": {
+                                                                            "events": []
+                                                                        }
+                                                                    }),
+                                                                );
 
                                                                 let mut steps = vec![format!("created {}", space.space_id)];
                                                                 if invitees.is_empty() {
                                                                     steps.push("seeded owner only".to_owned());
                                                                 } else {
                                                                     steps.push(format!("seeded {} member(s)", invitees.len()));
-                                                                }
-
-                                                                match api.update_space(
-                                                                    &space.space_id,
-                                                                    json!({
-                                                                        "title": title,
-                                                                        "summary": summary,
-                                                                        "discoverability": discoverability,
-                                                                    }),
-                                                                ).await {
-                                                                    Ok(_) => steps.push(format!("discoverability {}", discoverability)),
-                                                                    Err(error) => steps.push(format!("discoverability sync failed: {error}")),
                                                                 }
 
                                                                 match api.set_space_policy(
@@ -699,16 +718,43 @@ pub fn SetupPanel(
                                                                     Err(error) => steps.push(format!("policy sync failed: {error}")),
                                                                 }
 
+                                                                match api.update_space(
+                                                                    &space.space_id,
+                                                                    json!({
+                                                                        "title": title,
+                                                                        "summary": summary,
+                                                                        "discoverability": discoverability.clone(),
+                                                                        "plaintext_visible_services": plaintext_services,
+                                                                    }),
+                                                                ).await {
+                                                                    Ok(_) => steps.push(format!("discoverability {}", discoverability)),
+                                                                    Err(error) => steps.push(format!("discoverability sync failed: {error}")),
+                                                                }
+
                                                                 let message = steps.join(" · ");
                                                                 space_state.set(message.clone());
                                                                 status.set(message);
+                                                                create_step.set(NewSpaceStep::Done);
                                                             }
                                                             Err(error) => {
-                                                                let message = format!("create failed: {error}");
+                                                                let message = if is_auth_expired_error(&error) {
+                                                                    token.set(String::new());
+                                                                    persist_config(
+                                                                        config_store,
+                                                                        base.clone(),
+                                                                        actor.clone(),
+                                                                        device.clone(),
+                                                                        String::new(),
+                                                                    );
+                                                                    "Session expired. Sign in again before creating a Space.".to_owned()
+                                                                } else {
+                                                                    format!("create failed: {error}")
+                                                                };
                                                                 space_state.set(message.clone());
                                                                 status.set(message);
                                                             }
-                                                        },
+                                                        }
+                                                        }
                                                         Err(error) => {
                                                             let message = format!("invalid server URL: {error}");
                                                             space_state.set(message.clone());
@@ -719,6 +765,55 @@ pub fn SetupPanel(
                                             }
                                         },
                                         "Create Space"
+                                    }
+                                }
+                            }
+                        }
+
+                        if active_create_step == NewSpaceStep::Done {
+                            div { class: "event", "data-testid": "space-setup-done",
+                                div { class: "event-head",
+                                    span { "Done" }
+                                    span { "next context" }
+                                }
+                                if has_created_space {
+                                    div { class: "setup-summary-list",
+                                        div { class: "setup-summary-row",
+                                            strong { "Created Space" }
+                                            span { class: "mono", "{created_space_id_value}" }
+                                        }
+                                        div { class: "setup-summary-row setup-summary-row-stack",
+                                            strong { "Bootstrap state" }
+                                            span { class: "muted", "{space_state_value}" }
+                                        }
+                                    }
+                                    div { class: "actions setup-nav-actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "new-space-back-button",
+                                            onclick: move |_| create_step.set(active_create_step.previous()),
+                                            "Back"
+                                        }
+                                        Link {
+                                            class: "primary",
+                                            to: Route::Space { space_id: created_space_id_value.clone() },
+                                            "Open Space"
+                                        }
+                                        Link {
+                                            class: "secondary",
+                                            to: Route::SpaceAdmin { space_id: created_space_id_value.clone() },
+                                            "Open Space Admin"
+                                        }
+                                    }
+                                } else {
+                                    div { class: "muted", "Create a Space before opening the next context." }
+                                    div { class: "actions setup-nav-actions",
+                                        button {
+                                            class: "primary",
+                                            "data-testid": "new-space-back-button",
+                                            onclick: move |_| create_step.set(NewSpaceStep::Seed),
+                                            "Back to Seed"
+                                        }
                                     }
                                 }
                             }
@@ -763,26 +858,6 @@ pub fn SetupPanel(
                     }
                 }
 
-                if has_created_space {
-                    div { class: "event", "data-testid": "space-setup-followup",
-                        div { class: "event-head",
-                            span { "Created" }
-                            span { "next context" }
-                        }
-                        div { class: "actions",
-                            Link {
-                                class: "primary",
-                                to: Route::Space { space_id: created_space_id_value.clone() },
-                                "Open Space"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::SpaceAdmin { space_id: created_space_id_value.clone() },
-                                "Open Space Admin"
-                            }
-                        }
-                    }
-                }
             }
         }
     }

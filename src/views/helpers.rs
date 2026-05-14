@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::ContrixApi,
+    api::{ContrixApi, normalize_wait_for_sync_token},
     config::{ClientConfig, LocalConfigStore},
 };
 
@@ -67,8 +67,8 @@ pub fn persist_config(
     ));
 }
 
-pub fn active_sync_token(sync_cursor: &str) -> Option<String> {
-    (!sync_cursor.trim().is_empty() && sync_cursor != "-").then(|| sync_cursor.to_owned())
+pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
+    normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
 pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {

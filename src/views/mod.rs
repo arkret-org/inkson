@@ -15,19 +15,17 @@
 // | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
-// | devices            | desktop/devices.html, mobile      | crypto-media/device-lifecycle                          | cx.device.{authorized,revoked}, cx.device.list_update              |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
 // | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.space.policy.set, cx.capability.{grant,revoke,delegate}  |
-// | audit              | desktop/audit.html                | sync/operations-sync, conformance/snapshot-schema      | (审计派生流；无独立写入)                                             |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
-// | call               | desktop/call.html                 | crypto-media/webrtc-signaling                          | ephemeral signaling + cx.morph.create morph_type=call               |
-// | readiness          | (settings 内嵌)                   | overview/release-readiness, conformance/conformance-suite | (read-only)                                                      |
 // | setup              | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // 待新增 view（见 `_todos.md`）：
 // - onboarding   → desktop/onboarding.html        (拆出独立步进；T12)
 // - recovery     → desktop/recovery.html          (Argon2id / SSS / Recovery Key；T10)
-// - applets      → desktop/applets.html           (Applet / Bot / Bridge / Agent 集中管理；T11)
+//
+// 历史 route `/devices`、`/readiness`、`/audit`、`/call`、`/applets` 保留为
+// route alias，并在 `app::RouterView` 中重定向到当前 Settings/Home surface。
 //
 // 共享准则（_todos.md §6）：
 // 1. 任何写入 UI 必须显式标注其 canonical event kind。
@@ -36,9 +34,6 @@
 // 4. push 路径默认脱敏（background_sync_needed），正文在本地解密。
 // 5. Auth Service 只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized。
 
-pub mod applets;
-pub mod audit;
-pub mod call;
 pub mod chat;
 /// First end-to-end UI Move-flow PoC (C10.D 续 2026-05-09 十八轮).
 /// "Grant consent" button under settings → Privacy that builds + signs +
@@ -46,11 +41,6 @@ pub mod chat;
 /// pipeline landed in 十六轮.
 pub mod consent_demo;
 pub mod dashboard;
-/// Round 25 (R3): KeyVerificationFlow 10-state FSM driven from a
-/// dedicated device-verification page. Two devices compare emoji +
-/// numeric SAS codes; SDK FSM enforces transitions.
-pub mod device_verification;
-pub mod devices;
 pub mod directory;
 pub mod document;
 pub mod helpers;
@@ -62,7 +52,6 @@ pub mod onboarding;
 /// (claude-design no dedicated page yet; lives at `/quarantine` and is
 /// linked from the Settings sidebar for admins.)
 pub mod quarantine;
-pub mod readiness;
 pub mod recovery;
 pub mod settings;
 pub mod setup;

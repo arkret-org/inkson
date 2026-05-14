@@ -38,6 +38,9 @@ pub fn UiIcon(name: String) -> Element {
     let path = match name.as_str() {
         "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",
         "activity" => "M3 12h4l3 7 4-14 3 7h4",
+        "alert" => {
+            "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0ZM12 9v4m0 4h.01"
+        }
         "bell" => "M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9m4 13a2 2 0 0 0 4 0",
         "board" => "M3 3h18v18H3V3Zm6 0v18m6-18v18M3 9h18",
         "check" => "M20 6 9 17l-5-5",
@@ -81,6 +84,9 @@ pub fn UiIcon(name: String) -> Element {
         }
         "timeline" => "M8 6h13M3 6h.01M8 12h13M3 12h.01M8 18h13M3 18h.01",
         "user" => "M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
+        "users" => {
+            "M16 21a6 6 0 0 0-12 0M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm12 10a5 5 0 0 0-5-5M17 3.3a4 4 0 0 1 0 7.4"
+        }
         "x" => "M18 6 6 18M6 6l12 12",
         _ => "M12 5v14M5 12h14",
     };

@@ -1121,6 +1121,7 @@ pub fn capture_current_browser_callback_url() -> anyhow::Result<String> {
     anyhow::bail!("current browser callback capture is only available in wasm/web builds")
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn callback_url_with_query(
     current_href: &str,
     initial_navigation_href: Option<&str>,
@@ -1140,6 +1141,7 @@ fn callback_url_with_query(
     anyhow::bail!("current browser location does not contain callback query parameters")
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn same_callback_location(left: &Url, right: &Url) -> bool {
     left.scheme() == right.scheme()
         && left.host_str() == right.host_str()

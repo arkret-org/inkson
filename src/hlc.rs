@@ -150,11 +150,34 @@ pub fn hash_node_id(node_id: &str) -> u32 {
 }
 
 /// A global monotonic sequence counter for operation ordering.
-static GLOBAL_SEQ: AtomicU64 = AtomicU64::new(1);
+static GLOBAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Generate the next monotonic sequence number.
 pub fn next_seq() -> u64 {
-    GLOBAL_SEQ.fetch_add(1, Ordering::Relaxed)
+    let wall_floor = Utc::now()
+        .timestamp_millis()
+        .max(0)
+        .try_into()
+        .unwrap_or(0_u64)
+        .saturating_mul(1000);
+    loop {
+        let current = GLOBAL_SEQ.load(Ordering::Relaxed);
+        let next = wall_floor.max(current.saturating_add(1));
+        if GLOBAL_SEQ
+            .compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return next;
+        }
+    }
+}
+
+/// Advance the local sequence floor after observing remote history.
+pub fn observe_seq(seq: u64) {
+    let floor = seq.saturating_add(1);
+    let _ = GLOBAL_SEQ.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        (floor > current).then_some(floor)
+    });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,5 +257,11 @@ mod tests {
         let a = next_seq();
         let b = next_seq();
         assert!(b > a);
+    }
+
+    #[test]
+    fn observe_seq_advances_next_sequence_floor() {
+        observe_seq(9_000_000_000_000_000);
+        assert!(next_seq() > 9_000_000_000_000_000);
     }
 }

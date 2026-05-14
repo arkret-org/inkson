@@ -18,7 +18,7 @@ async function openServerSwitcher(page: import("@playwright/test").Page) {
 
 async function refreshServer(page: import("@playwright/test").Page) {
   await openServerSwitcher(page);
-  await latestTestId(page, "connect-button").click();
+  await page.getByTestId("server-option").filter({ hasText: "https://local.host" }).click();
 }
 
 async function openSettings(page: import("@playwright/test").Page) {
@@ -35,6 +35,22 @@ async function openDiscussion(page: import("@playwright/test").Page) {
   await page.goto(`/chat/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
   await refreshServer(page);
   await expect(page.getByTestId("chat-panel")).toBeVisible();
+}
+
+async function createDiscussion(
+  page: import("@playwright/test").Page,
+  name = "Test Discussion",
+) {
+  await page.getByTestId("open-channel-dialog").click();
+  await page.getByTestId("new-channel-name").fill(name);
+  const request = page.waitForRequest(
+    (candidate) => candidate.url().endsWith("/api/v1/events") && candidate.method() === "POST",
+  );
+  await page.getByTestId("create-channel-button").click();
+  const body = await request.then((candidate) => candidate.postDataJSON());
+  await expect(page.getByTestId("chat-status")).toContainText("Discussion created");
+  await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
+  return body;
 }
 
 async function writeLocalConfig(
@@ -107,7 +123,9 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await page.getByTestId("space-button").first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();
-  await expect(page.getByTestId("space-context-bar")).toContainText("Current + descendants");
+  await expect(page.getByTestId("space-context-bar")).not.toContainText("Current + descendants");
+  await expect(page.getByTestId("space-context-bar")).not.toContainText("Space views");
+  await expect(page.getByTestId("space-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked serverx");
 });
 
@@ -163,7 +181,9 @@ test("loopback proxy server aliases are normalized to local.host", async ({ page
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
   await openServerSwitcher(page);
-  await expect(latestTestId(page, "server-url-input")).toHaveValue("https://local.host");
+  await expect(page.getByTestId("principal-context")).toContainText("https://local.host");
+  await expect(page.getByTestId("server-url-input")).toHaveCount(0);
+  await expect(page.getByTestId("connect-button")).toHaveCount(0);
   await expect(page.getByTestId("topbar-crumbs")).toContainText("https://local.host");
 });
 
@@ -436,13 +456,25 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("three independent axes");
   await page.getByTestId("new-space-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
+  const createSpaceRequest = page.waitForRequest(
+    (request) => request.url().endsWith("/api/v1/spaces") && request.method() === "POST",
+  );
   await page.getByTestId("create-space-button").click();
+  const createSpaceBody = await createSpaceRequest.then((request) => request.postDataJSON());
+  expect(createSpaceBody.plaintext_visible_services).toContain("did:web:serverx.local");
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0setupflow000000000000");
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("policy invite_only / shared");
+  await expect(page.getByTestId("space-setup-done")).toBeVisible();
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0setupflow000000000000");
 
-  const sendRequest = page.waitForRequest("**/api/v1/events");
-  await page.getByRole("link", { name: "Open Space" }).first().click();
+  await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Space", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
+  await expect(page.getByTestId("timeline")).toBeVisible();
+  const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("composer-input").fill("setup flow message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
@@ -455,20 +487,84 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
 test("chat creates discussion entities and sends structured mention payloads", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);
+  await expect(page.getByTestId("discussion-list-panel")).toBeVisible();
+  await expect(page.getByTestId("discussion-main-panel")).toBeVisible();
+  await expect(page.getByTestId("channel-creation")).toHaveCount(0);
+  await expect(page.getByTestId("open-channel-dialog")).toBeVisible();
+  await expect(page.getByTestId("discussion-settings-toggle")).toBeVisible();
+  await expect(page.getByTestId("discussion-users-toggle")).toBeVisible();
+  await expect(page.getByTestId("discussion-users-panel")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-settings-panel")).toHaveCount(0);
+  await expect(page.getByTestId("channel-item")).toHaveCount(0);
+  await expect(page.getByTestId("empty-discussion-list")).toBeVisible();
+  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Launch board discussion");
+  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Announcements discussion");
+  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Support desk discussion");
+  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Activity audit discussion");
+  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Board coordination and planning");
+  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Mei");
+  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Carlos");
+  await page.getByTestId("discussion-users-toggle").click();
+  await expect(page.getByTestId("discussion-users-panel")).toBeVisible();
+  await expect(page.getByTestId("discussion-users-panel")).toContainText("did:web:alice.example");
+  await expect(page.getByTestId("discussion-users-panel")).toContainText("You");
+  await expect(page.getByTestId("discussion-users-panel")).not.toContainText("Mei");
+  await expect(page.getByTestId("discussion-users-panel")).not.toContainText("Carlos");
+  await page.getByTestId("discussion-settings-toggle").click();
+  await expect(page.getByTestId("discussion-settings-panel")).toBeVisible();
+  await expect(page.getByTestId("discussion-users-panel")).toHaveCount(0);
+  await expect(page.getByTestId("ephemeral-channel-banner")).toHaveCount(0);
+  await expect(page.getByTestId("wire-kind-vs-category-banner")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-track-vocab-banner")).toHaveCount(0);
 
+  await page.getByTestId("open-channel-dialog").click();
+  await expect(page.getByTestId("channel-create-modal")).toBeVisible();
   await page.getByTestId("new-channel-name").fill("Ops Announce");
   await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
+  await page.getByTestId("new-channel-members").fill("did:web:bob.example");
+  await expect(page.getByTestId("new-channel-create-card")).not.toBeChecked();
   await page.getByTestId("channel-kind-announce").click();
   const channelEvent = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("create-channel-button").click();
   const channelBody = await channelEvent.then((request) => request.postDataJSON());
   expect(channelBody.kind).toBe("cx.flow.create");
-  expect(channelBody.payload.kind).toBe("announce");
+  expect(channelBody.payload.kind).toBeUndefined();
+  expect(channelBody.payload.flow).toBeTruthy();
+  expect(channelBody.payload.category).toBe("announce");
+  expect(channelBody.payload.fields.category).toBe("announce");
+  expect(channelBody.payload.flow.fields.category).toBe("announce");
+  expect(channelBody.payload.summary).toBe("Broadcast deploy updates");
+  expect(channelBody.payload.flow.summary).toBe("Broadcast deploy updates");
+  expect(channelBody.payload.participants).toContain("did:web:alice.example");
+  expect(channelBody.payload.participants).toContain("did:web:bob.example");
+  expect(channelBody.payload.flow.tracks.discussion).toBeTruthy();
+  expect(channelBody.payload.flow.tracks.synthesis).toBeUndefined();
   expect(channelBody.payload.flow_id).toContain("cx:flow:");
   expect(channelBody.payload.title).toBe("Ops Announce");
   expect(channelBody.payload.rank).toBeTruthy();
   await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
-  await expect(page.getByTestId("chat-status")).toContainText("flow event accepted");
+  await expect(page.getByTestId("chat-status")).toContainText("Discussion created");
+  await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
+
+  await page.getByTestId("open-channel-dialog").click();
+  await page.getByTestId("new-channel-name").fill("Card Backed Discussion");
+  await page.getByTestId("new-channel-create-card").check();
+  const cardBackedEvent = page.waitForRequest("**/api/v1/events");
+  await page.getByTestId("create-channel-button").click();
+  const cardBackedBody = await cardBackedEvent.then((request) => request.postDataJSON());
+  expect(cardBackedBody.payload.flow.tracks.discussion).toBeTruthy();
+  expect(cardBackedBody.payload.flow.tracks.synthesis).toBeTruthy();
+  expect(cardBackedBody.payload.create_card).toBe(true);
+  await expect(page.getByTestId("space-list")).not.toContainText("Ops Announce");
+  await expect(page.getByTestId("space-list")).not.toContainText("Card Backed Discussion");
+
+  await page.getByTestId("collapse-discussion-list").click();
+  await expect(page.getByTestId("discussion-list-rail")).toBeVisible();
+  await page.getByTestId("expand-discussion-list").click();
+  await expect(page.getByTestId("discussion-list-panel")).toBeVisible();
+  await page.getByTestId("discussion-settings-toggle").click();
+  await expect(page.getByTestId("discussion-settings-panel")).toHaveCount(0);
+  await page.getByTestId("channel-item").filter({ hasText: "Ops Announce" }).click();
 
   const chatSend = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
@@ -481,9 +577,136 @@ test("chat creates discussion entities and sends structured mention payloads", a
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
   await expect(page.getByTestId("chat-mentions").last()).toContainText("did:web:bob.example");
-  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Revision chain");
-  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Tombstone");
-  await expect(page.getByTestId("discussion-timeline-protocol")).toContainText("Linked discussion access");
+  await expect(page.getByTestId("discussion-timeline-protocol")).toHaveCount(0);
+});
+
+test("chat reloads sent messages and keeps actor sequence increasing", async ({ page }) => {
+  await refreshServer(page);
+  await openDiscussion(page);
+  await createDiscussion(page, "Reload Discussion");
+
+  const firstSend = page.waitForRequest(
+    (request) => request.url().endsWith("/api/v1/events") && request.method() === "POST",
+  );
+  await page.getByTestId("chat-input").fill("message before reload");
+  await page.getByTestId("send-chat-button").click();
+  const firstBody = await firstSend.then((request) => request.postDataJSON());
+  await expect(page.getByTestId("chat-status")).toContainText("Message sent");
+  await expect(page.getByTestId("chat-message").last()).toContainText("message before reload");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  const reloadedMessage = page.getByTestId("chat-message").last();
+  await expect(reloadedMessage).toContainText("message before reload");
+  await expect(reloadedMessage).toHaveClass(/is-own/);
+  await expect(reloadedMessage.locator(".name")).toHaveText("yougen");
+  await expect(reloadedMessage).not.toContainText("did:web:alice.example");
+
+  const secondSend = page.waitForRequest(
+    (request) => request.url().endsWith("/api/v1/events") && request.method() === "POST",
+  );
+  await page.getByTestId("chat-input").fill("message after reload");
+  await page.getByTestId("send-chat-button").click();
+  const secondBody = await secondSend.then((request) => request.postDataJSON());
+
+  expect(secondBody.actor_seq).toBeGreaterThan(firstBody.actor_seq);
+  await expect(page.getByTestId("chat-status")).toContainText("Message sent");
+  await expect(page.getByTestId("chat-message").last()).toContainText("message after reload");
+  await expect(page.getByTestId("chat-message").last()).toHaveClass(/is-own/);
+});
+
+test("chat send failures mark the message and keep actions quiet until hover", async ({ page }) => {
+  await refreshServer(page);
+  await openDiscussion(page);
+  await createDiscussion(page, "Failure Discussion");
+  await page.route("**/api/v1/events", async (route) => {
+    if (route.request().method() !== "POST") {
+      return route.fallback();
+    }
+    const body = await route.request().postDataJSON();
+    if (body.kind !== "cx.message.create") {
+      return route.fallback();
+    }
+    return route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          ok: false,
+          error: {
+            code: "auth_expired",
+            message: "session expired",
+          },
+        },
+        request_id: "cx:req:e2e-auth-expired",
+      }),
+    });
+  });
+
+  await page.getByTestId("chat-input").fill("message that will fail");
+  await page.getByTestId("send-chat-button").click();
+
+  const message = page.getByTestId("chat-message").last();
+  await expect(message).toContainText("message that will fail");
+  await expect(message).toHaveClass(/is-failed/);
+  await expect(page.getByTestId("chat-message-error").last()).toContainText("Session expired");
+  await expect(page.getByTestId("chat-retry-button").last()).toBeVisible();
+  await expect(page.getByTestId("chat-reply-button").last()).toBeHidden();
+
+  await message.hover();
+  await expect(page.getByTestId("chat-reply-button").last()).toBeVisible();
+});
+
+test("chat retries plaintext sends after granting current service visibility", async ({ page }) => {
+  await refreshServer(page);
+  await openDiscussion(page);
+  await createDiscussion(page, "Policy Discussion");
+
+  let attempts = 0;
+  await page.route("**/api/v1/events", async (route) => {
+    if (route.request().method() !== "POST") {
+      return route.fallback();
+    }
+    const body = await route.request().postDataJSON();
+    if (body.kind !== "cx.message.create") {
+      return route.fallback();
+    }
+    attempts += 1;
+    if (attempts !== 1) {
+      return route.fallback();
+    }
+    return route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          ok: false,
+          error: {
+            code: "policy_denied",
+            message:
+              "private plaintext message operations require this service in plaintext_visible_services",
+          },
+        },
+        request_id: "cx:req:e2e-policy-denied",
+      }),
+    });
+  });
+
+  const policyUpdate = page.waitForRequest(
+    (request) =>
+      request.url().includes(`/api/v1/spaces/${DEMO_SPACE}`) &&
+      request.method() === "PATCH",
+  );
+  await page.getByTestId("chat-input").fill("policy retry message");
+  await page.getByTestId("send-chat-button").click();
+
+  const policyBody = await policyUpdate.then((request) => request.postDataJSON());
+  expect(policyBody.plaintext_visible_services).toContain("did:web:serverx.local");
+  await expect(page.getByTestId("chat-status")).toContainText("Message sent");
+  await expect(page.getByTestId("chat-message").last()).not.toHaveClass(/is-failed/);
+  expect(attempts).toBe(2);
 });
 
 test("kanban card drag queues a flow move", async ({ page }) => {
@@ -682,20 +905,22 @@ test("legacy devices route now resolves to security and recovery settings", asyn
   await expect(page.getByTestId("settings-setup-recovery-hub")).toContainText("Verify Device");
 });
 
-test("invalid server URL surfaces an error state", async ({ page }) => {
+test("server switcher hides custom endpoint controls", async ({ page }) => {
   await openServerSwitcher(page);
-  await page.getByTestId("server-url-input").fill("not a url");
-  await page.getByTestId("connect-button").click();
 
-  await expect(page.getByTestId("status-label")).toContainText("Error: invalid URL");
+  await expect(page.getByTestId("server-url-input")).toHaveCount(0);
+  await expect(page.getByTestId("connect-button")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Services" })).toHaveCount(0);
 });
 
-test("insecure remote http endpoint is rejected before connect", async ({ page }) => {
+test("server switcher keeps only server choices after expand", async ({ page }) => {
   await openServerSwitcher(page);
-  await page.getByTestId("server-url-input").fill("http://contrix.example");
-  await page.getByTestId("connect-button").click();
 
-  await expect(page.getByTestId("status-label")).toContainText("HTTPS is required for non-local servers");
+  await expect(page.getByTestId("server-switch-menu")).toBeVisible();
+  await expect(page.getByTestId("server-option")).toHaveCount(1);
+  await expect(page.getByTestId("server-switch-menu")).toContainText("https://local.host");
+  await expect(page.getByTestId("server-switch-menu")).not.toContainText("Current data home");
+  await expect(page.getByTestId("principal-context")).not.toContainText("Refresh");
 });
 
 test("legacy call route now redirects to home", async ({ page }) => {

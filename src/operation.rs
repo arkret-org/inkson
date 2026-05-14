@@ -248,18 +248,26 @@ mod tests {
     }
 
     #[test]
-    fn discussion_flow_create_emits_canonical_kind() {
+    fn discussion_flow_create_emits_discussion_track() {
         let op = cx_ops::discussion_flow_create(
-            "cx:space:test",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "cx:flow:test",
+            "cx:flow:0196419b-0000-7000-8000-000000000001",
             "Ops",
         )
         .unwrap()
         .build("node");
         assert_eq!(op.op_type, "cx.flow.create");
-        assert_eq!(op.body["flow_id"], "cx:flow:test");
-        assert_eq!(op.body["flow"]["kind"], "discussion");
+        assert_eq!(
+            op.body["flow_id"],
+            "cx:flow:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(
+            op.body["flow"]["tracks"]["discussion"]["profile"],
+            "discussion"
+        );
+        assert_eq!(op.body["flow"]["tracks"]["discussion"]["is_primary"], true);
+        assert!(op.body["flow"].get("kind").is_none());
     }
 
     #[test]

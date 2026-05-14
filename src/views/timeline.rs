@@ -8,7 +8,7 @@ use crate::{
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
     operation::{OperationBuilder, OperationEnvelope, uuid_v8},
-    views::helpers::authed_api_with_sync,
+    views::helpers::{active_sync_token, authed_api_with_sync},
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
@@ -1316,13 +1316,6 @@ pub fn TimelinePanel(
             }
         }
     }
-}
-
-fn active_sync_token(sync_cursor: String) -> Option<String> {
-    let sync_cursor = sync_cursor.trim();
-    sync_cursor
-        .starts_with("sx:")
-        .then(|| sync_cursor.to_owned())
 }
 
 fn timeline_events_from_sync_spaces(

@@ -10,6 +10,7 @@ export async function mockContrixApi(page: Page) {
   let setupMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
   let submitCounter = 0;
+  const timelineEvents: Array<Record<string, unknown>> = [];
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -204,6 +205,30 @@ export async function mockContrixApi(page: Page) {
       if (body.kind === "cx.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
+        timelineEvents.push({
+          ...(body.payload ?? {}),
+          event_id: body.event_id,
+          kind: body.kind,
+          space_id: body.space_id ?? DEMO_SPACE,
+          actor_id: body.actor_id ?? "did:web:alice.example",
+          actor_seq: body.actor_seq,
+          created_at: body.created_at ?? "2026-04-28T12:00:00Z",
+          payload: body.payload,
+        });
+      }
+      if (body.kind === "cx.flow.create") {
+        messageCounter += 1;
+        syncToken = `sx:e2e:flow-${messageCounter}`;
+        timelineEvents.push({
+          ...(body.payload ?? {}),
+          event_id: body.event_id,
+          kind: body.kind,
+          space_id: body.space_id ?? DEMO_SPACE,
+          actor_id: body.actor_id ?? "did:web:alice.example",
+          actor_seq: body.actor_seq,
+          created_at: body.created_at ?? "2026-04-28T12:00:00Z",
+          payload: body.payload,
+        });
       }
       return json(route, {
         event_id: body.event_id,
@@ -503,6 +528,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/sync") {
+      const demoTimelineEvents = timelineEvents.filter((event) => event.space_id === DEMO_SPACE);
       return json(route, {
         next_batch: "sx:e2e:2",
         spaces: {
@@ -512,7 +538,7 @@ export async function mockContrixApi(page: Page) {
               summary: "Shared demo Space served by mocked serverx",
               child_space_ids: [CHILD_SPACE],
             },
-            timeline: { events: [], limited: false },
+            timeline: { events: demoTimelineEvents, limited: false },
             state: [],
             ephemeral: [],
             unread: { notification_count: 0, highlight_count: 0 },
@@ -640,7 +666,14 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/events") {
-      return json(route, { events: [], next_cursor: null, frontier: {} });
+      const requestedSpaces = (url.searchParams.get("spaces") ?? "")
+        .split(",")
+        .map((space) => space.trim())
+        .filter(Boolean);
+      const events = requestedSpaces.length
+        ? timelineEvents.filter((event) => requestedSpaces.includes(String(event.space_id)))
+        : timelineEvents;
+      return json(route, { events, next_cursor: null, frontier: {} });
     }
 
     if (url.pathname === "/api/v1/sync/snapshot-head") {

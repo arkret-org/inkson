@@ -282,6 +282,43 @@ impl fmt::Display for ContrixApiError {
 
 impl std::error::Error for ContrixApiError {}
 
+pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ContrixApiError>()
+        .is_some_and(|api_error| {
+            api_error.status == StatusCode::UNAUTHORIZED && api_error.error.code() == "auth_expired"
+        })
+}
+
+pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ContrixApiError>()
+        .is_some_and(|api_error| {
+            api_error.status == StatusCode::FORBIDDEN
+                && api_error.error.code() == "policy_denied"
+                && api_error
+                    .error
+                    .message()
+                    .contains("plaintext_visible_services")
+        })
+}
+
+pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
+    let sync_token = sync_token.trim();
+    if sync_token.is_empty() || sync_token == "-" {
+        return None;
+    }
+    sync_token
+        .split(',')
+        .all(|candidate| {
+            let Some(timestamp_ms) = candidate.trim().strip_prefix("sx:") else {
+                return false;
+            };
+            !timestamp_ms.is_empty() && timestamp_ms.chars().all(|ch| ch.is_ascii_digit())
+        })
+        .then(|| sync_token.to_owned())
+}
+
 /// Round 28: typed error class for the `post_audit_user_action`
 /// path. Distinguishes "endpoint isn't wired yet" (404 — caller
 /// should re-buffer the entry) from "server said no" (every other
@@ -343,11 +380,7 @@ impl ContrixApi {
 
     pub fn with_wait_for(mut self, sync_token: impl Into<String>) -> Self {
         let sync_token = sync_token.into();
-        self.wait_for_sync_token = if sync_token.trim().is_empty() || sync_token == "-" {
-            None
-        } else {
-            Some(sync_token)
-        };
+        self.wait_for_sync_token = normalize_wait_for_sync_token(&sync_token);
         self
     }
 
@@ -581,6 +614,7 @@ impl ContrixApi {
         summary: Option<&str>,
         public: bool,
         invitees: Vec<String>,
+        plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
         self.post_json(
             "api/v1/spaces",
@@ -588,7 +622,8 @@ impl ContrixApi {
                 "title": title,
                 "summary": summary,
                 "public": public,
-                "invitees": invitees
+                "invitees": invitees,
+                "plaintext_visible_services": plaintext_visible_services
             }),
         )
         .await
@@ -1247,6 +1282,7 @@ impl ContrixApi {
         join_rule: &str,
         history_visibility: &str,
     ) -> anyhow::Result<SpacePolicyResponse> {
+        let join_rule = canonical_space_policy_join_rule(join_rule);
         self.put_json(
             &format!("api/v1/spaces/{space_id}/policy"),
             json!({"join_rule": join_rule, "history_visibility": history_visibility}),
@@ -1822,15 +1858,19 @@ impl ContrixApi {
     ) -> anyhow::Result<reqwest::Response> {
         let mut attempt = 0usize;
         let mut did_refresh = false;
+        let mut refreshed_access_token = None::<String>;
         loop {
             // Check if request was cancelled
             if self.cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
                 return Err(anyhow::anyhow!("request cancelled"));
             }
 
-            let Some(candidate) = request.try_clone() else {
+            let Some(mut candidate) = request.try_clone() else {
                 return Ok(request.send().await?);
             };
+            if let Some(token) = refreshed_access_token.as_deref() {
+                candidate = candidate.bearer_auth(token);
+            }
             match candidate.send().await {
                 Ok(response) => {
                     // Handle 401 with automatic token refresh
@@ -1839,10 +1879,7 @@ impl ContrixApi {
                         && self.refresh_token.is_some()
                     {
                         if let Ok(result) = self.try_refresh_token().await {
-                            // Update token for subsequent requests
-                            // Note: we can't mutate self here, but the caller
-                            // should handle the TokenRefreshResult
-                            let _ = result;
+                            refreshed_access_token = Some(result.new_access_token);
                             did_refresh = true;
                             continue;
                         }
@@ -2059,6 +2096,15 @@ fn is_retryable_reqwest_error(error: &reqwest::Error) -> bool {
     }
 }
 
+fn canonical_space_policy_join_rule(join_rule: &str) -> &str {
+    match join_rule {
+        "invite" => "invite_only",
+        "open" => "public",
+        "request" => "knock",
+        value => value,
+    }
+}
+
 async fn sleep_backoff(initial: Duration, attempt: usize) {
     tokio::time::sleep(backoff_duration(initial, attempt)).await;
 }
@@ -2200,6 +2246,60 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_auth_expired_errors() {
+        let error: anyhow::Error = ContrixApiError {
+            status: StatusCode::UNAUTHORIZED,
+            error: decode_contrix_error(
+                StatusCode::UNAUTHORIZED,
+                br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_auth_expired_error(&error));
+
+        let forbidden: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+            ),
+        }
+        .into();
+        assert!(!is_auth_expired_error(&forbidden));
+    }
+
+    #[test]
+    fn recognizes_plaintext_visibility_policy_errors() {
+        let error: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_plaintext_visibility_policy_error(&error));
+
+        let other_policy: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"}}"#,
+            ),
+        }
+        .into();
+        assert!(!is_plaintext_visibility_policy_error(&other_policy));
+    }
+
+    #[test]
+    fn canonicalizes_space_policy_join_rule_aliases_for_current_server_api() {
+        assert_eq!(canonical_space_policy_join_rule("invite"), "invite_only");
+        assert_eq!(canonical_space_policy_join_rule("open"), "public");
+        assert_eq!(canonical_space_policy_join_rule("request"), "knock");
+        assert_eq!(canonical_space_policy_join_rule("restricted"), "restricted");
+    }
+
+    #[test]
     fn retry_policy_defaults_to_bounded_idempotent_retries() {
         let options = ContrixApiOptions::default();
         assert_eq!(options.retry.max_retries, 2);
@@ -2258,6 +2358,26 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("sx:123")
         );
+    }
+
+    #[test]
+    fn wait_for_header_rejects_non_timestamp_sync_tokens() {
+        let api = ContrixApi::new("http://127.0.0.1:8787/")
+            .unwrap()
+            .with_wait_for("sx:e2e:2");
+        let request = api
+            .prepare_request(
+                api.with_write_request_headers(
+                    api.http
+                        .post(api.endpoint("api/v1/events").unwrap())
+                        .json(&json!({"body": "hello"})),
+                    "req-123",
+                ),
+            )
+            .build()
+            .unwrap();
+
+        assert!(request.headers().get("x-contrix-wait-for").is_none());
     }
 
     #[test]
