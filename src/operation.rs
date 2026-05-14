@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::canonical::{canonical_json_bytes, canonical_sha256};
 use crate::hlc::{Hlc, next_seq};
 
 /// An operation envelope per contrix-spec section 6.3.
@@ -30,9 +31,47 @@ pub struct OperationEnvelope {
     /// Optional authorization reference.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authz_ref: Option<String>,
-    /// Signature over the operation.
+    /// Pre-state assertions per `models/event-and-patch.md` reducer rules.
+    /// Empty when the envelope is a side-effect-only signal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Value>,
+    /// Post-state effects per `models/event-and-patch.md` reducer rules.
+    /// Empty when the envelope is a query / read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<Value>,
+    /// Anchor reference if this operation has been anchored to a Lattice
+    /// merge ordering anchor (`models/move-anchor-lattice.md`).
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_ref: Option<String>,
+    /// Detached JWS proof. Spec §6.3 calls this `proof`; callers MUST set this
+    /// before [`crate::api::Api::submit_operation_event`] for any durable kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<Proof>,
+    /// Legacy free-form signature string. Retained for call sites that have not
+    /// migrated to the typed [`Proof`] surface yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+}
+
+/// Detached JWS proof over the canonical body of an [`OperationEnvelope`].
+///
+/// Mirrors `MoveSignature` from `contrix_core` but stays as a JSON-only DTO so
+/// yougen can serialize / deserialize proofs without dragging the SDK's
+/// `MoveSignature` typed surface into every call site.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proof {
+    /// DID of the signing principal.
+    pub signer_did: String,
+    /// Verification method id (`<did>#<fragment>`).
+    pub key_id: String,
+    /// JWS `alg` parameter — `EdDSA` for Ed25519, per encoding.md §6.
+    pub alg: String,
+    /// `sha256:<hex>` digest over the canonical body.
+    pub payload_hash: String,
+    /// Detached JWS string `<protected>..<signature>` (RFC 7515 §3.7).
+    pub jws: String,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
 }
 
 /// Causal metadata for ordering and dependency tracking.
@@ -107,8 +146,117 @@ impl OperationBuilder {
             },
             body: self.body,
             authz_ref: self.authz_ref,
+            preconditions: Vec::new(),
+            effects: Vec::new(),
+            anchor_ref: None,
+            proof: None,
             signature: None,
         }
+    }
+}
+
+/// Body shape we feed into canonical JSON before signing. Excludes the proof
+/// itself so the resulting digest is stable across signing rounds.
+#[derive(Serialize)]
+struct CanonicalView<'a> {
+    operation_id: &'a str,
+    space_id: &'a str,
+    actor: &'a str,
+    #[serde(rename = "type")]
+    op_type: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_ref: Option<&'a str>,
+    causal: &'a CausalMetadata,
+    body: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authz_ref: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
+    preconditions: &'a [Value],
+    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
+    effects: &'a [Value],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_ref: Option<&'a str>,
+}
+
+impl OperationEnvelope {
+    /// Canonical JSON bytes used for hashing / signing. Excludes any present
+    /// proof so the digest is stable round-trip.
+    pub fn canonical_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let view = CanonicalView {
+            operation_id: &self.operation_id,
+            space_id: &self.space_id,
+            actor: &self.actor,
+            op_type: &self.op_type,
+            target_ref: self.target_ref.as_deref(),
+            causal: &self.causal,
+            body: &self.body,
+            authz_ref: self.authz_ref.as_deref(),
+            preconditions: &self.preconditions,
+            effects: &self.effects,
+            anchor_ref: self.anchor_ref.as_deref(),
+        };
+        canonical_json_bytes(&view)
+    }
+
+    /// `sha256:<hex>` digest of [`canonical_bytes`].
+    pub fn canonical_digest(&self) -> anyhow::Result<String> {
+        let view = CanonicalView {
+            operation_id: &self.operation_id,
+            space_id: &self.space_id,
+            actor: &self.actor,
+            op_type: &self.op_type,
+            target_ref: self.target_ref.as_deref(),
+            causal: &self.causal,
+            body: &self.body,
+            authz_ref: self.authz_ref.as_deref(),
+            preconditions: &self.preconditions,
+            effects: &self.effects,
+            anchor_ref: self.anchor_ref.as_deref(),
+        };
+        canonical_sha256(&view)
+    }
+
+    /// Sign the envelope with an Ed25519 key and attach a detached JWS [`Proof`].
+    ///
+    /// Mirrors the SDK's `Ed25519MoveSigner::sign_payload` JWS layout so the
+    /// receiver can verify with a `did:key`-derived public key.
+    pub fn sign_ed25519(
+        &mut self,
+        signer_did: impl Into<String>,
+        key_id: impl Into<String>,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> anyhow::Result<()> {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use ed25519_dalek::Signer;
+
+        let canonical = self.canonical_bytes()?;
+        let payload_hash = crate::canonical::sha256_digest(&canonical);
+
+        let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
+        let signing_input = format!("{header_b64}.{payload_b64}");
+        let signature = signing_key.sign(signing_input.as_bytes());
+        let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
+        let jws = format!("{header_b64}..{sig_b64}");
+
+        self.proof = Some(Proof {
+            signer_did: signer_did.into(),
+            key_id: key_id.into(),
+            alg: "EdDSA".to_owned(),
+            payload_hash,
+            jws,
+            created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        });
+        Ok(())
+    }
+
+    /// Returns `Ok(())` when a typed [`Proof`] is attached. Used by submit
+    /// paths that want to reject unsigned envelopes for durable event kinds.
+    pub fn require_proof(&self) -> anyhow::Result<&Proof> {
+        self.proof
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("operation envelope missing proof"))
     }
 }
 
@@ -268,6 +416,48 @@ mod tests {
         );
         assert_eq!(op.body["flow"]["tracks"]["discussion"]["is_primary"], true);
         assert!(op.body["flow"].get("kind").is_none());
+    }
+
+    #[test]
+    fn canonical_digest_is_stable_across_key_order() {
+        let mut op_a = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+            .body(json!({"b": 2, "a": 1}))
+            .build("node");
+        op_a.operation_id = "fixed".into();
+        op_a.causal.hlc = "0000000000000000-00000000-00000000".into();
+        op_a.causal.actor_seq = 1;
+
+        let mut op_b = op_a.clone();
+        op_b.body = json!({"a": 1, "b": 2});
+
+        assert_eq!(op_a.canonical_digest().unwrap(), op_b.canonical_digest().unwrap());
+    }
+
+    #[test]
+    fn sign_ed25519_attaches_typed_proof() {
+        use ed25519_dalek::SigningKey;
+        let mut op =
+            OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+                .body(json!({"body": "hi"}))
+                .build("node");
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
+            .expect("sign ok");
+        let proof = op.proof.as_ref().expect("proof present");
+        assert_eq!(proof.alg, "EdDSA");
+        assert_eq!(proof.signer_did, "did:web:alice");
+        assert!(proof.payload_hash.starts_with("sha256:"));
+        // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
+        assert_eq!(proof.jws.matches('.').count(), 2);
+        assert!(op.require_proof().is_ok());
+    }
+
+    #[test]
+    fn require_proof_fails_when_unsigned() {
+        let op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+            .body(json!({"body": "hi"}))
+            .build("node");
+        assert!(op.require_proof().is_err());
     }
 
     #[test]

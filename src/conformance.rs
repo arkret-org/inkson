@@ -13,6 +13,15 @@ pub const PROFILE_FULL_CLIENT: &str = "cx.profile.full_client.v1";
 pub const PROFILE_E2EE_CLIENT: &str = "cx.profile.e2ee_client.v1";
 pub const PROFILE_FEDERATION_MINIMAL: &str = "cx.profile.federation_minimal.v1";
 pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
+/// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
+///
+/// Yougen ships the canonical `governance_binding` payload (see
+/// [`crate::mls_governance::GovernanceBindingPayload`]) and the
+/// `covered_frontier_cell` add-effect through [`contrix_sdk::mls_move`]. The
+/// commit submit path remains gated on server features advertised via
+/// [`crate::api::Api::events_describe`] before the profile reports `ready`.
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str =
+    "cx.profile.mls_governance_binding.full.v1";
 
 /// Conformance profile declarations per contrix-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +149,14 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             description: "Push gateway client: chime registration, unregister, local push state, and notification projection.",
             local_supported: true,
             degradation_path: "Keep in-app notification projection and skip push registration controls.",
+            tier: ConformanceTier::V1Core,
+        },
+        ClientProfileDeclaration {
+            profile_id: PROFILE_MLS_GOVERNANCE_BINDING_FULL,
+            label: "mls_governance_binding_full",
+            description: "MLS Governance Binding hardening: governance_binding payload + covered_frontier_cell add-effect on every commit.",
+            local_supported: true,
+            degradation_path: "Fall back to baseline e2ee_client without binding governance anchors to MLS commits.",
             tier: ConformanceTier::V1Core,
         },
         // ---- v1.1+ extensions ----
@@ -530,6 +547,19 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
                 server,
                 "push.register_device",
                 "cx.push.register_device",
+                &mut missing,
+            );
+        }
+        PROFILE_MLS_GOVERNANCE_BINDING_FULL => {
+            // Hardening profile on top of e2ee_client. Server MUST advertise
+            // the MLS commit submission path AND accept covered_frontier
+            // cell additions; the SDK already validates the cell shape, but
+            // the wire route is fronted by events.submit.
+            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
+            require_feature_or_operation(
+                server,
+                "keys.upload",
+                "cx.keys.upload",
                 &mut missing,
             );
         }
