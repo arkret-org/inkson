@@ -371,8 +371,9 @@ mod tests {
             estimate_passphrase_strength("alllowercaseonly")
                 < estimate_passphrase_strength("Alllowercaseonly1!")
         );
+        // 24+ chars across all four character classes saturates the scorer.
         assert_eq!(
-            estimate_passphrase_strength("correct horse battery staple correct horse battery"),
+            estimate_passphrase_strength("Correct horse battery staple 9!"),
             5
         );
     }

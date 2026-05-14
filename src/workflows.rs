@@ -51,8 +51,29 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "identity.device_verification",
             name: "Device verification",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Devices panel + SDK device primitives",
-            server_dependency: "Needs persisted device trust, cross-signing, SAS/QR verification, and revocation endpoints",
+            client_surface: "Devices panel + SDK device primitives + cross-signing plan",
+            server_dependency: "Needs persisted device trust + SAS/QR verification + revocation + cross_signing publish/reset endpoints (SDK three-tier model and trust-chain verifier are now in place)",
+        },
+        ClientWorkflow {
+            id: "recovery.key_backup_upload",
+            name: "Encrypted Cloud Vault upload",
+            stage: WorkflowStage::ClientReady,
+            client_surface: "Recovery panel: passphrase + Argon2id KDF + XChaCha20-Poly1305 AEAD",
+            server_dependency: "PUT /api/v1/keys/backups/{backup_id} (cx.schema.key_backup.v1 envelope)",
+        },
+        ClientWorkflow {
+            id: "recovery.key_backup_restore",
+            name: "Restore from encrypted backup",
+            stage: WorkflowStage::ClientReady,
+            client_surface: "Recovery panel: list + decrypt + delete the server-side vault ciphertext",
+            server_dependency: "GET /api/v1/keys/backups, GET /api/v1/keys/backups/{id}, DELETE /api/v1/keys/backups/{id}",
+        },
+        ClientWorkflow {
+            id: "identity.cross_signing_setup",
+            name: "Cross-signing bootstrap and reset",
+            stage: WorkflowStage::ClientReady,
+            client_surface: "Verify Device panel: renders CrossSigningSetupPlan steps + canonical events",
+            server_dependency: "Needs cx.cross_signing.publish.v1 / cx.cross_signing.reset.v1 / cx.device.authorized acceptance endpoints",
         },
         ClientWorkflow {
             id: "space.discovery",
@@ -149,5 +170,22 @@ mod tests {
                 .any(|workflow| workflow.id == "message.create"
                     && workflow.stage == WorkflowStage::ClientReady)
         );
+    }
+
+    #[test]
+    fn key_backup_flows_are_client_ready() {
+        let workflows = production_release_workflows();
+        for id in [
+            "recovery.key_backup_upload",
+            "recovery.key_backup_restore",
+            "identity.cross_signing_setup",
+        ] {
+            assert!(
+                workflows
+                    .iter()
+                    .any(|w| w.id == id && w.stage == WorkflowStage::ClientReady),
+                "expected {id} to be client-ready"
+            );
+        }
     }
 }

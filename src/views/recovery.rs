@@ -29,8 +29,9 @@ use crate::{
     local_state::LocalStateStore,
     operation::uuid_v7,
     recovery_crypto::{
-        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
-        estimate_passphrase_strength, fingerprint_recovery_key, generate_recovery_key,
+        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, decrypt_vault, derive_vault_kek,
+        encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key,
+        generate_recovery_key,
     },
     views::helpers::authed_api,
 };
@@ -72,6 +73,127 @@ struct Guardian {
     note: String,
     #[serde(default)]
     confirmed: bool,
+}
+
+/// One row in the "List existing backups" table — server-side metadata
+/// only. The server returns the full `cx.schema.key_backup.v1` envelope
+/// (encryption block + ciphertext) and we decode just the fields the
+/// restore UI actually needs: identification, KDF salt, AEAD nonce.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BackupSummaryRow {
+    backup_id: String,
+    backup_class: String,
+    backup_version: String,
+    created_at: String,
+    ciphertext_digest: String,
+    salt_b64: String,
+    nonce_b64: String,
+    ciphertext_b64: String,
+}
+
+fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
+    let backup_id = v.get("backup_id")?.as_str()?.to_owned();
+    let backup_class = v
+        .get("backup_class")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let backup_version = v
+        .get("backup_version")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let created_at = v
+        .get("created_at")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let ciphertext_digest = v
+        .get("ciphertext_digest")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let salt_b64 = v
+        .pointer("/encryption/kdf/salt")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let nonce_b64 = v
+        .pointer("/encryption/aead/nonce")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let ciphertext_b64 = v
+        .get("ciphertext")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_owned();
+    Some(BackupSummaryRow {
+        backup_id,
+        backup_class,
+        backup_version,
+        created_at,
+        ciphertext_digest,
+        salt_b64,
+        nonce_b64,
+        ciphertext_b64,
+    })
+}
+
+/// Extract `BackupSummaryRow`s from either the typed `list_key_backups`
+/// response (`{"backups": [...]}`) or the legacy raw-list shape (`[...]`).
+fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummaryRow> {
+    let candidate = payload
+        .get("backups")
+        .and_then(|v| v.as_array())
+        .or_else(|| payload.as_array());
+    candidate
+        .map(|arr| arr.iter().filter_map(parse_backup_summary).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod restore_parse_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_backup_summary_extracts_kdf_and_aead_fields() {
+        let row = parse_backup_summary(&json!({
+            "backup_id": "cx:backup:01964137-0000-7000-8000-000000000000",
+            "backup_class": "recovery_vault",
+            "backup_version": "kb_1",
+            "created_at": "2026-05-15T00:00:00Z",
+            "ciphertext_digest": "sha256:abc",
+            "encryption": {
+                "recipient_method": "passphrase_kdf",
+                "kdf": { "name": "argon2id", "salt": "U0FMVA" },
+                "aead": { "name": "xchacha20_poly1305", "nonce": "Tk9OQ0U" }
+            },
+            "ciphertext": "Q1Q"
+        }))
+        .unwrap();
+        assert_eq!(row.backup_id, "cx:backup:01964137-0000-7000-8000-000000000000");
+        assert_eq!(row.backup_class, "recovery_vault");
+        assert_eq!(row.backup_version, "kb_1");
+        assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
+        assert_eq!(row.salt_b64, "U0FMVA");
+        assert_eq!(row.nonce_b64, "Tk9OQ0U");
+        assert_eq!(row.ciphertext_b64, "Q1Q");
+    }
+
+    #[test]
+    fn parse_backup_list_handles_envelope_and_bare_array() {
+        let enveloped = json!({"backups": [{"backup_id": "cx:backup:x"}]});
+        let bare = json!([{"backup_id": "cx:backup:y"}]);
+        assert_eq!(parse_backup_list(&enveloped).len(), 1);
+        assert_eq!(parse_backup_list(&bare).len(), 1);
+    }
+
+    #[test]
+    fn parse_backup_summary_rejects_missing_id() {
+        assert!(parse_backup_summary(&json!({})).is_none());
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +343,16 @@ pub fn RecoveryPanel(
     let mut new_guardian_note = use_signal(String::new);
     let mut last_rehearsed = use_signal(|| initial.last_rehearsed_at.clone());
     let mut social_status = use_signal(String::new);
+
+    // Restore-from-backup state — drives the "List + decrypt + delete"
+    // panel further down. The decrypted payload (recovery credentials)
+    // lives only in `restore_plaintext` until the user clears it.
+    let mut restore_status = use_signal(String::new);
+    let mut restore_loading = use_signal(|| false);
+    let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
+    let mut restore_pass = use_signal(String::new);
+    let mut restore_target = use_signal(|| Option::<String>::None);
+    let mut restore_plaintext = use_signal(String::new);
 
     let strength = estimate_passphrase_strength(&passphrase());
 
@@ -732,6 +864,225 @@ pub fn RecoveryPanel(
                     }
                 }
             }
+
+            // Restore from backup — devices-and-auth §4.1 + key-management.md §7.3
+            //
+            // Lists every backup the server still holds for this principal,
+            // lets the user decrypt one locally with the original
+            // passphrase (XChaCha20-Poly1305 AEAD authenticates the tag
+            // before any plaintext is returned), and offers a destructive
+            // Delete that goes through the typed delete endpoint.
+            div { class: "event", "data-testid": "restore-section",
+                div { class: "event-head",
+                    span { "Restore from backup" }
+                    span { class: "muted", "Encrypted Cloud Vault · server-side ciphertext only" }
+                    HelpTip { text: "List every encrypted vault the server still holds for your principal. Decryption happens on-device with your passphrase; the server never sees plaintext. Use this on a new device, or to verify that the latest upload is still readable." }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "restore-list-button",
+                        disabled: restore_loading(),
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                restore_status.set("Fetching vault list…".to_owned());
+                                restore_loading.set(true);
+                                let base = base.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    match authed_api(&base, api_token) {
+                                        Ok(api) => match api.list_key_backups().await {
+                                            Ok(payload) => {
+                                                let rows = parse_backup_list(&payload);
+                                                let len = rows.len();
+                                                backup_rows.set(rows);
+                                                restore_status.set(format!("Loaded {len} backup(s) from the server"));
+                                            }
+                                            Err(err) => restore_status.set(format!("List failed: {err}")),
+                                        },
+                                        Err(err) => restore_status.set(format!("API unavailable: {err}")),
+                                    }
+                                    restore_loading.set(false);
+                                });
+                            }
+                        },
+                        if restore_loading() { "Loading…" } else { "List my backups" }
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "restore-clear-button",
+                        disabled: backup_rows().is_empty() && restore_plaintext().is_empty(),
+                        onclick: move |_| {
+                            backup_rows.set(Vec::new());
+                            restore_target.set(None);
+                            restore_pass.set(String::new());
+                            restore_plaintext.set(String::new());
+                            restore_status.set("Cleared restore panel state.".to_owned());
+                        },
+                        "Clear"
+                    }
+                }
+                if !restore_status().is_empty() {
+                    div { class: "muted", "data-testid": "restore-status", "{restore_status}" }
+                }
+                if backup_rows().is_empty() {
+                    div { class: "muted", "data-testid": "restore-empty", "No backups listed yet. Click \"List my backups\" to fetch from the server." }
+                } else {
+                    div { class: "metric-grid", "data-testid": "restore-rows",
+                        for row in backup_rows() {
+                            div { class: "metric", "data-testid": "restore-row",
+                                strong { "{row.backup_class}" }
+                                div { class: "mono", "{row.backup_id}" }
+                                div { class: "muted",
+                                    "version {row.backup_version} · created {fmt_relative(&row.created_at)}"
+                                }
+                                div { class: "muted", style: "word-break: break-all;",
+                                    {
+                                        let digest = row.ciphertext_digest.clone();
+                                        let suffix = digest.split(':').nth(1).unwrap_or("");
+                                        if suffix.len() > 16 {
+                                            format!("digest sha256:{}…", &suffix[..16])
+                                        } else {
+                                            format!("digest {digest}")
+                                        }
+                                    }
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "restore-select-button",
+                                        onclick: {
+                                            let bid = row.backup_id.clone();
+                                            move |_| {
+                                                restore_target.set(Some(bid.clone()));
+                                                restore_plaintext.set(String::new());
+                                                restore_status.set(format!("Selected {bid}. Enter your vault passphrase below."));
+                                            }
+                                        },
+                                        if restore_target() == Some(row.backup_id.clone()) { "Selected" } else { "Decrypt" }
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "restore-delete-button",
+                                        title: "Delete the server-side ciphertext. Local fingerprint metadata stays.",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let bid = row.backup_id.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let api_token = token();
+                                                let bid = bid.clone();
+                                                restore_loading.set(true);
+                                                restore_status.set(format!("Deleting {bid}…"));
+                                                spawn(async move {
+                                                    let result = match authed_api(&base, api_token) {
+                                                        Ok(api) => api.delete_key_backup(&bid).await,
+                                                        Err(err) => Err(anyhow::anyhow!("API unavailable: {err}")),
+                                                    };
+                                                    match result {
+                                                        Ok(_) => {
+                                                            restore_status.set(format!("Deleted {bid}"));
+                                                            let mut rows = backup_rows();
+                                                            rows.retain(|r| r.backup_id != bid);
+                                                            backup_rows.set(rows);
+                                                            if restore_target() == Some(bid.clone()) {
+                                                                restore_target.set(None);
+                                                                restore_plaintext.set(String::new());
+                                                            }
+                                                        }
+                                                        Err(err) => restore_status
+                                                            .set(format!("Delete {bid} failed: {err}")),
+                                                    }
+                                                    restore_loading.set(false);
+                                                });
+                                            }
+                                        },
+                                        "Delete"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(target_row) = restore_target()
+                    .and_then(|id| backup_rows().into_iter().find(|r| r.backup_id == id))
+                {
+                    div { class: "workflow-form", "data-testid": "restore-decrypt-form",
+                            div { class: "muted", "Decrypt {target_row.backup_id}" }
+                            label { r#for: "restore-passphrase", "Vault passphrase" }
+                            input {
+                                id: "restore-passphrase",
+                                "data-testid": "restore-passphrase",
+                                r#type: "password",
+                                value: "{restore_pass}",
+                                autocomplete: "current-password",
+                                placeholder: "Enter the passphrase you used when this vault was uploaded",
+                                oninput: move |evt| restore_pass.set(evt.value()),
+                            }
+                            div { class: "actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "restore-decrypt-button",
+                                    disabled: restore_pass().is_empty() || target_row.salt_b64.is_empty() || target_row.nonce_b64.is_empty() || target_row.ciphertext_b64.is_empty(),
+                                    onclick: {
+                                        let target_row = target_row.clone();
+                                        move |_| {
+                                            let pass_bytes = restore_pass().into_bytes();
+                                            let salt = target_row.salt_b64.clone();
+                                            let nonce = target_row.nonce_b64.clone();
+                                            let ct = target_row.ciphertext_b64.clone();
+                                            let bid = target_row.backup_id.clone();
+                                            restore_status.set("Stretching passphrase with Argon2id…".to_owned());
+                                            restore_loading.set(true);
+                                            spawn(async move {
+                                                match decrypt_vault(&pass_bytes, &salt, &nonce, &ct) {
+                                                    Ok(plain) => {
+                                                        let text = String::from_utf8_lossy(&plain).into_owned();
+                                                        restore_plaintext.set(text);
+                                                        restore_pass.set(String::new());
+                                                        restore_status.set(format!("Decrypted {bid}. The plaintext below stays in memory only — clear it when done."));
+                                                    }
+                                                    Err(err) => {
+                                                        restore_plaintext.set(String::new());
+                                                        restore_status.set(format!("Decrypt failed: {err}"));
+                                                    }
+                                                }
+                                                restore_loading.set(false);
+                                            });
+                                        }
+                                    },
+                                    "Decrypt with passphrase"
+                                }
+                            }
+                            if !restore_plaintext().is_empty() {
+                                div { class: "event", "data-testid": "restore-plaintext-display",
+                                    div { class: "event-head",
+                                        span { "Decrypted payload" }
+                                        span { class: "badge green", "in-memory" }
+                                    }
+                                    pre {
+                                        class: "mono",
+                                        "data-testid": "restore-plaintext",
+                                        style: "white-space: pre-wrap; word-break: break-all;",
+                                        "{restore_plaintext}"
+                                    }
+                                    div { class: "actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "restore-clear-plaintext-button",
+                                            onclick: move |_| {
+                                                restore_plaintext.set(String::new());
+                                                restore_status.set("Cleared decrypted plaintext from memory.".to_owned());
+                                            },
+                                            "Clear plaintext"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
             // Recovery write path
             div { class: "event", "data-testid": "recovery-writeback-explainer",

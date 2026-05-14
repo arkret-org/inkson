@@ -2,7 +2,11 @@ use dioxus::prelude::*;
 use qrcode::{render::svg, EcLevel, QrCode};
 use serde_json::json;
 
-use crate::{models::*, views::helpers::authed_api};
+use crate::{
+    cross_signing::CrossSigningSetupPlan,
+    models::*,
+    views::helpers::authed_api,
+};
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
 /// string if encoding fails (oversize / invalid input); callers should
@@ -52,6 +56,7 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
     let mut verify_status = use_signal(|| String::new());
     let mut trust_devices = use_signal(Vec::<DeviceTrustEntry>::new);
     let cross_signing_state = use_signal(|| "Not configured".to_owned());
+    let cross_signing_plan = use_signal(|| Option::<CrossSigningSetupPlan>::None);
     let mut sas_code = use_signal(|| String::new());
     let mut qr_data = use_signal(|| String::new());
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
@@ -93,8 +98,14 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                             button {
                                 class: "primary",
                                 "data-testid": "generate-qr-button",
-                                onclick: move |_| {
-                                    qr_data.set(format!("contrix:verify:{}:{}", device_id, target_device()));
+                                onclick: {
+                                    let device_id = device_id.clone();
+                                    move |_| {
+                                        qr_data.set(format!(
+                                            "contrix:verify:{}:{}",
+                                            device_id, target_device()
+                                        ));
+                                    }
                                 },
                                 "Generate QR Data"
                             }
@@ -363,22 +374,74 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
             div { class: "event", "data-testid": "cross-signing",
                 div { class: "event-head",
                     span { "Cross-Signing" }
-                    span { class: "badge", "Coming in v1.1" }
+                    span { class: "badge",
+                        if cross_signing_plan().is_some() { "Plan ready" } else { "Not configured" }
+                    }
                 }
                 div { class: "muted", "{cross_signing_state}" }
                 div { class: "muted",
-                    "Cross-signing lets your other authorized devices vouch for new ones without a manual SAS ceremony every time. This setup surface is not yet wired up."
+                    "三层 signing chain: principal_signing_key (DID 控制层) · self_signing_key (本设备) · user_signing_key (跨 principal 信任)。"
+                    "Spec: crypto-media/device-lifecycle.md §5."
                 }
                 div { class: "actions",
                     button {
-                        class: "secondary",
+                        class: "primary",
                         "data-testid": "setup-cross-signing",
-                        disabled: true,
-                        title: "Setup will land with the v1.1 device-set rollout",
-                        "Setup Cross-Signing (coming soon)"
+                        onclick: {
+                            let device_id_clone = device_id.clone();
+                            let mut plan_signal = cross_signing_plan;
+                            let mut status = verify_status;
+                            move |_| {
+                                let plan = CrossSigningSetupPlan::build_initial(
+                                    "did:webvh:current-principal",
+                                    &device_id_clone,
+                                );
+                                let preview = plan
+                                    .event_kinds()
+                                    .iter()
+                                    .map(|k| (*k).to_owned())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                status.set(format!("Cross-signing plan generated · events: {preview}"));
+                                plan_signal.set(Some(plan));
+                            }
+                        },
+                        "Build setup plan"
+                    }
+                }
+                if let Some(plan) = cross_signing_plan() {
+                    div { class: "muted", "data-testid": "cross-signing-plan",
+                        "Mode: {plan.mode:?} · generation: {plan.new_generation}"
+                    }
+                    ul { class: "list", "data-testid": "cross-signing-steps",
+                        for (idx , step) in plan.steps.iter().enumerate() {
+                            li { key: "{idx}",
+                                div { strong { "{step.description()}" } }
+                                if let Some(kind) = step.canonical_event_kind() {
+                                    div { class: "muted", "event: {kind}" }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cross_signing_view_tests {
+    use crate::cross_signing::{CrossSigningSetupMode, CrossSigningSetupPlan};
+
+    #[test]
+    fn initial_plan_lists_publish_and_device_authorized_events() {
+        let plan = CrossSigningSetupPlan::build_initial(
+            "did:webvh:alice.example",
+            "cx:device:01a",
+        );
+        let kinds = plan.event_kinds();
+        assert!(kinds.contains(&"cx.cross_signing.publish.v1"));
+        assert!(kinds.contains(&"cx.device.authorized"));
+        assert!(matches!(plan.mode, CrossSigningSetupMode::InitialSetup));
     }
 }
