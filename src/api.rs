@@ -2240,8 +2240,11 @@ mod tests {
         );
         assert_eq!(decoded.code(), "invalid_param");
 
+        // The SDK's ErrorEnvelope::new strips the `cx.error.` prefix in
+        // `canonical_error_code` and we depend on that canonicalization so
+        // downstream comparisons against the registry shape match.
         let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
-        assert_eq!(fallback.code(), "cx.error.http_status");
+        assert_eq!(fallback.code(), "http_status");
         assert!(fallback.message().contains("503 Service Unavailable"));
     }
 

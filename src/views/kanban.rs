@@ -171,10 +171,10 @@ impl BoardProjectionSource {
     fn explanation(self) -> &'static str {
         match self {
             Self::ApiDerived => {
-                "数据从 Principal Server 的 view projection endpoint 派生，与当前 sync frontier 对齐"
+                "Data is derived from the Principal Server view-projection endpoint and aligned with the current sync frontier."
             }
             Self::SeedFallback => {
-                "API endpoint 不可用 / 尚未实现，使用本地 seed 数据；操作仍会写入 cx.flow.move / cx.flow.reorder 进入离线队列"
+                "The view-projection endpoint is unavailable, so we are showing local seed data. Drag-and-drop edits still emit cx.flow.move / cx.flow.reorder and queue offline."
             }
         }
     }
@@ -432,7 +432,7 @@ pub fn KanbanPanel(
                     span { class: "badge", "data-testid": "renderer-calendar", role: "tab", "calendar" }
                     span { class: "badge", "data-testid": "renderer-timeline", role: "tab", "timeline" }
                     span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
-                    span { class: "muted", "新 View → cx.view.create · 改 filter/sort/columns → cx.view.update · 重建 projection cache → cx.view.reconcile · Morph 内容更新 → cx.morph.update" }
+                    span { class: "muted", "New View → cx.view.create · Filter/sort/columns → cx.view.update · Rebuild projection cache → cx.view.reconcile · Morph content → cx.morph.update" }
                 }
                 // T20 — board projection source indicator. Shows whether the
                 // current columns came from the API (Principal Server view
@@ -493,7 +493,7 @@ pub fn KanbanPanel(
                         "Refresh from API"
                     }
                     span { class: "muted",
-                        "Refresh 调用 SDK Client::collection_projection（POST /api/v1/views/:id/projection）；endpoint 不可用时回退到 seed。"
+                        "Refresh calls Client::collection_projection (POST /api/v1/views/:id/projection); when unavailable we fall back to seed data."
                     }
                 }
 
@@ -827,7 +827,7 @@ pub fn KanbanPanel(
                         span { class: "muted", "Branch:" }
                         span { class: "badge blue", role: "tab", "aria-selected": "true", "synthesis · primary" }
                         span { class: "badge", role: "tab", "discussion" }
-                        span { class: "muted", "branch 默认继承 Flow / Space access；显式 override 才独立" }
+                        span { class: "muted", "Branches inherit Flow / Space access by default; only an explicit override makes them independent." }
                     }
                     // Fields grid — claude-design desktop/flow-detail.html
                     div { class: "metric-grid", "data-testid": "card-fields",
@@ -849,7 +849,7 @@ pub fn KanbanPanel(
                         div { class: "metric",
                             strong { "Capability" }
                             span { "read · write" }
-                            div { class: "muted", "discussion 写入需 branch-scoped grant" }
+                            div { class: "muted", "Discussion writes require a branch-scoped grant" }
                         }
                     }
                     // Card vs Room visibility — claude-design desktop/flow-detail.html
@@ -862,13 +862,13 @@ pub fn KanbanPanel(
                         div { class: "event-head",
                             span { "Card / Room visibility (independent)" }
                             span { "current-model §6" }
-                            HelpTip { text: "Flow synthesis（Card 字段）与 Flow discussion branch（Room 消息）的可见性必须独立判定，不可互推。Locked Room 只暴露存在的提示，不暴露标题、成员、计数。" }
+                            HelpTip { text: "Card field visibility (Flow synthesis) and discussion Room visibility (Flow discussion branch) are evaluated independently — one does not imply the other. A locked Room only reveals that it exists; titles, members, and counts stay hidden." }
                         }
                         div { class: "metric-grid", "data-testid": "card-vs-room-axes",
                             div { class: "metric",
                                 strong { "Card synthesis" }
                                 span { class: crate::components::write_state::WriteState::Accepted.class_name(), "readable + writable" }
-                                div { class: "muted", "你看见 Flow 字段不代表能看到 discussion" }
+                                div { class: "muted", "Seeing Flow fields does not imply you can see the discussion" }
                             }
                             div { class: "metric",
                                 strong { "Primary Room" }
@@ -943,10 +943,10 @@ pub fn KanbanPanel(
                         div { class: "muted", "cx.flow.move · superseded(HLC older) → {card.id}" }
                         div { class: "muted", "cx.flow.update · fields.status / fields.priority" }
                         div { class: "muted", "cx.relation.create / cx.relation.update · contains list→flow（rank stable tie-break）" }
-                        div { class: "muted", "cx.relation.delete · 切换 list 时旧 contains 边 tombstone" }
-                        div { class: "muted", "cx.flow.archive / cx.flow.restore · 进入或离开 archived 状态" }
-                        div { class: "muted", "cx.morph.archive / cx.morph.restore · 卡片关联 morph 的归档与恢复" }
-                        div { class: "muted", "Auth refs 与 prev_refs 在 Audit 页可展开为完整 envelope。" }
+                        div { class: "muted", "cx.relation.delete · tombstones the prior contains edge when a card switches lists" }
+                        div { class: "muted", "cx.flow.archive / cx.flow.restore · enters or leaves archived state" }
+                        div { class: "muted", "cx.morph.archive / cx.morph.restore · archives or restores the morph attached to the card" }
+                        div { class: "muted", "Auth refs and prev_refs expand to a full envelope on the Audit page." }
                     }
                     div { class: "actions",
                         button {

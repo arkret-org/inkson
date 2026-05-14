@@ -371,6 +371,56 @@ pub struct MoveSubmissionRecord {
     pub anchor_ref: Option<String>,
 }
 
+/// One competing head for a `bottom=expose` cell. Surfaced from sync so the
+/// UI can render side-by-side candidates and prefill the "safer side" of a
+/// conflict-repair Move.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BottomCellHead {
+    /// Move (or Anchor head) id that produced this candidate.
+    pub move_id: String,
+    /// Candidate cell value carried by that Move. `Value::Null` when soland
+    /// only published the move_id without an inline value.
+    #[serde(default)]
+    pub value: Value,
+}
+
+/// Per-cell bottom record. `status` is the lattice `bottom=` literal (typically
+/// `"expose"`) and `heads` is the competing-candidate list. `heads` may be
+/// empty when soland publishes only the bottom flag without per-head values;
+/// the UI then falls back to manual JSON entry on the repair dialog.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BottomCellInfo {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heads: Vec<BottomCellHead>,
+}
+
+/// Accept both the legacy `{cell: "expose"}` shape (persisted by builds before
+/// the side-by-side head surface landed) and the richer `{cell: {status,
+/// heads}}` shape. Without this the first read after upgrade would error out
+/// and the user would lose every persisted Anchor view.
+fn deserialize_bottom_cells<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, BottomCellInfo>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, Value> = BTreeMap::deserialize(deserializer)?;
+    let mut out = BTreeMap::new();
+    for (k, v) in raw {
+        let info = match v {
+            Value::String(s) => BottomCellInfo {
+                status: s,
+                heads: vec![],
+            },
+            other => serde_json::from_value(other).map_err(serde::de::Error::custom)?,
+        };
+        out.insert(k, info);
+    }
+    Ok(out)
+}
+
 /// Snapshot of the latest Anchor view observed for a Space. Surfaced from
 /// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
@@ -404,12 +454,14 @@ pub struct LocalAnchorView {
     /// brand new spaces / offline clients may not have one yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_root: Option<String>,
-    /// Cell map snapshot: cell ref → bottom status string. Populated when
-    /// the projection contains a `bottom=expose` cell so the UI can
-    /// surface a "concurrent candidates unresolved" banner. Other cells
-    /// are omitted to keep this struct compact.
-    #[serde(default)]
-    pub bottom_cells: BTreeMap<String, String>,
+    /// Cell map snapshot: cell ref → bottom record (status + competing
+    /// heads). Populated when the projection contains a `bottom=expose`
+    /// cell so the UI can surface a "concurrent candidates unresolved"
+    /// banner with side-by-side head values. Other cells are omitted to
+    /// keep this struct compact. The custom deserializer also accepts
+    /// the legacy `{cell: "expose"}` shape persisted by older builds.
+    #[serde(default, deserialize_with = "deserialize_bottom_cells")]
+    pub bottom_cells: BTreeMap<String, BottomCellInfo>,
     /// Round 21: the current MLS epoch as published in the
     /// `cx.component.mls.epoch.v1` cas-register cell, when sync surfaces
     /// it. `None` means the Space hasn't published an MLS epoch yet (no
@@ -469,6 +521,83 @@ impl LocalAnchorView {
         self.covered_frontier_lag.is_some_and(|lag| lag > threshold)
     }
 
+    /// For security-relevant cell families (member.state, capability.grant),
+    /// return the safer winner candidate from the cell's competing heads —
+    /// the more restrictive membership value or the revoked grant. Returns
+    /// `None` when:
+    /// - the cell isn't a known security-relevant family (operator must
+    ///   pick manually — there's no semantic safety ordering to lean on),
+    /// - sync hasn't published per-head values yet (`heads` is empty),
+    /// - the heads aren't comparable in the safety order.
+    ///
+    /// The protocol layer never auto-picks a winner; this only powers a UX
+    /// "Prefer safer side" prefill — the operator still signs and submits
+    /// the resulting repair Move.
+    pub fn safer_winner_for(&self, cell_ref: &str) -> Option<(String, String, Value)> {
+        let info = self.bottom_cells.get(cell_ref)?;
+        if info.heads.len() < 2 {
+            return None;
+        }
+        let head_a = &info.heads[0];
+        let head_b = &info.heads[1];
+        let safer = safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?;
+        Some((head_a.move_id.clone(), head_b.move_id.clone(), safer))
+    }
+}
+
+/// Rank `a` and `b` on the cell's safety order; return whichever ranks
+/// higher (more restrictive). `None` means "no order I'll commit to" —
+/// either the cell family is not in the table, or both heads tie. Tying
+/// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
+/// not a safety call, so we surface no preference and the operator picks.
+fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
+    let rank: fn(&Value) -> u8 =
+        if cell_ref.starts_with("cx:cell:cx.component.member.state.v1") {
+            member_state_safety_rank
+        } else if cell_ref.starts_with("cx:cell:cx.component.capability.grant.v1") {
+            capability_grant_safety_rank
+        } else {
+            return None;
+        };
+    let ra = rank(a);
+    let rb = rank(b);
+    match ra.cmp(&rb) {
+        std::cmp::Ordering::Greater => Some(a.clone()),
+        std::cmp::Ordering::Less => Some(b.clone()),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+fn member_state_safety_rank(value: &Value) -> u8 {
+    let label = value
+        .get("membership")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.as_str())
+        .unwrap_or("");
+    match label {
+        "ban" => 4,
+        "leave" => 3,
+        "knock" => 2,
+        "invite" => 1,
+        "join" => 0,
+        _ => 0,
+    }
+}
+
+fn capability_grant_safety_rank(value: &Value) -> u8 {
+    let label = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.as_str())
+        .unwrap_or("");
+    match label {
+        "revoked" => 2,
+        "active" => 1,
+        _ => 0,
+    }
+}
+
+impl LocalAnchorView {
     /// Best-effort extraction of an Anchor view from a per-Space `/sync`
     /// body. The wire shape soland is moving toward (P0 M3) is:
     ///
@@ -524,7 +653,28 @@ impl LocalAnchorView {
                 if let Some(b) = bottom
                     && b == "expose"
                 {
-                    view.bottom_cells.insert(cell_ref.clone(), b.to_owned());
+                    let mut heads = Vec::new();
+                    if let Some(arr) = status.get("heads").and_then(|v| v.as_array()) {
+                        for h in arr {
+                            let move_id = h
+                                .get("move_id")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned)
+                                .unwrap_or_default();
+                            if move_id.is_empty() {
+                                continue;
+                            }
+                            let value = h.get("value").cloned().unwrap_or(Value::Null);
+                            heads.push(BottomCellHead { move_id, value });
+                        }
+                    }
+                    view.bottom_cells.insert(
+                        cell_ref.clone(),
+                        BottomCellInfo {
+                            status: b.to_owned(),
+                            heads,
+                        },
+                    );
                 }
                 // Round 21: well-known named cells surfaced for the
                 // space_admin MLS epoch widget. We accept either a raw
@@ -2200,9 +2350,155 @@ mod tests {
         assert!(!view.has_bottom_cells());
         view.bottom_cells.insert(
             "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned(),
-            "expose".to_owned(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![],
+            },
         );
         assert!(view.has_bottom_cells());
+    }
+
+    #[test]
+    fn anchor_view_bottom_cells_legacy_string_shape_deserialises() {
+        // Round 24 (M9): persisted state from older builds stored each
+        // bottom_cells entry as a bare status string. Loading that JSON
+        // must still succeed and lift the entry into a BottomCellInfo
+        // with empty heads, so the upgrade doesn't wipe Anchor views.
+        let raw = r#"{
+            "frontier": [],
+            "leaves": [],
+            "bottom_cells": {
+                "cx:cell:cx.component.member.state.v1:did:web:alice": "expose"
+            }
+        }"#;
+        let view: LocalAnchorView = serde_json::from_str(raw).expect("legacy shape parses");
+        let entry = view
+            .bottom_cells
+            .get("cx:cell:cx.component.member.state.v1:did:web:alice")
+            .expect("entry present");
+        assert_eq!(entry.status, "expose");
+        assert!(entry.heads.is_empty());
+    }
+
+    #[test]
+    fn safer_winner_for_member_state_prefers_ban_over_join() {
+        let mut view = LocalAnchorView::default();
+        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        view.bottom_cells.insert(
+            cell.clone(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![
+                    BottomCellHead {
+                        move_id: "cx:event:joined".to_owned(),
+                        value: serde_json::json!({"membership": "join"}),
+                    },
+                    BottomCellHead {
+                        move_id: "cx:event:banned".to_owned(),
+                        value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
+                    },
+                ],
+            },
+        );
+        let (head_a, head_b, winner) = view.safer_winner_for(&cell).expect("ban beats join");
+        assert_eq!(head_a, "cx:event:joined");
+        assert_eq!(head_b, "cx:event:banned");
+        assert_eq!(
+            winner.get("membership").and_then(|v| v.as_str()),
+            Some("ban")
+        );
+    }
+
+    #[test]
+    fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
+        let mut view = LocalAnchorView::default();
+        let cell = "cx:cell:cx.component.capability.grant.v1:cx.grant.01".to_owned();
+        view.bottom_cells.insert(
+            cell.clone(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![
+                    BottomCellHead {
+                        move_id: "cx:event:granted".to_owned(),
+                        value: serde_json::json!({"status": "active"}),
+                    },
+                    BottomCellHead {
+                        move_id: "cx:event:revoked".to_owned(),
+                        value: serde_json::json!({"status": "revoked"}),
+                    },
+                ],
+            },
+        );
+        let (_, _, winner) = view
+            .safer_winner_for(&cell)
+            .expect("revoked beats active");
+        assert_eq!(
+            winner.get("status").and_then(|v| v.as_str()),
+            Some("revoked")
+        );
+    }
+
+    #[test]
+    fn safer_winner_for_unknown_cell_family_returns_none() {
+        let mut view = LocalAnchorView::default();
+        let cell = "cx:cell:cx.component.space.organization.v1:cx:space:demo".to_owned();
+        view.bottom_cells.insert(
+            cell.clone(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![
+                    BottomCellHead {
+                        move_id: "cx:event:a".to_owned(),
+                        value: serde_json::json!({"title": "alpha"}),
+                    },
+                    BottomCellHead {
+                        move_id: "cx:event:b".to_owned(),
+                        value: serde_json::json!({"title": "beta"}),
+                    },
+                ],
+            },
+        );
+        // No semantic safety ordering for space.organization — operator
+        // must pick manually.
+        assert!(view.safer_winner_for(&cell).is_none());
+    }
+
+    #[test]
+    fn safer_winner_for_tied_heads_returns_none() {
+        let mut view = LocalAnchorView::default();
+        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        view.bottom_cells.insert(
+            cell.clone(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![
+                    BottomCellHead {
+                        move_id: "cx:event:ban-a".to_owned(),
+                        value: serde_json::json!({"membership": "ban", "reason": "spam"}),
+                    },
+                    BottomCellHead {
+                        move_id: "cx:event:ban-b".to_owned(),
+                        value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
+                    },
+                ],
+            },
+        );
+        // Both heads tie on safety rank → no preference; operator picks.
+        assert!(view.safer_winner_for(&cell).is_none());
+    }
+
+    #[test]
+    fn safer_winner_for_missing_heads_returns_none() {
+        let mut view = LocalAnchorView::default();
+        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        view.bottom_cells.insert(
+            cell.clone(),
+            BottomCellInfo {
+                status: "expose".to_owned(),
+                heads: vec![],
+            },
+        );
+        assert!(view.safer_winner_for(&cell).is_none());
     }
 
     #[test]
@@ -2213,7 +2509,19 @@ mod tests {
                 "leaves":   ["cx:move:sha256:lf1"],
                 "state_root": "cx:state:sha256:abc",
                 "cells": {
-                    "cx:cell:cx.component.member.state.v1:did:web:alice": { "bottom": "expose" },
+                    "cx:cell:cx.component.member.state.v1:did:web:alice": {
+                        "bottom": "expose",
+                        "heads": [
+                            {
+                                "move_id": "cx:event:joined",
+                                "value": {"membership": "join"}
+                            },
+                            {
+                                "move_id": "cx:event:banned",
+                                "value": {"membership": "ban", "reason": "abuse"}
+                            }
+                        ]
+                    },
                     "cx:cell:cx.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
                 }
             }
@@ -2225,9 +2533,16 @@ mod tests {
         // Only `bottom=expose` cells are surfaced — `reject` cells stay
         // out of the conflict map.
         assert_eq!(view.bottom_cells.len(), 1);
-        assert!(
-            view.bottom_cells
-                .contains_key("cx:cell:cx.component.member.state.v1:did:web:alice")
+        let info = view
+            .bottom_cells
+            .get("cx:cell:cx.component.member.state.v1:did:web:alice")
+            .expect("expose cell present");
+        assert_eq!(info.status, "expose");
+        assert_eq!(info.heads.len(), 2);
+        assert_eq!(info.heads[0].move_id, "cx:event:joined");
+        assert_eq!(
+            info.heads[1].value.get("membership").and_then(|v| v.as_str()),
+            Some("ban")
         );
     }
 

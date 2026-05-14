@@ -336,10 +336,21 @@ pub fn SpaceAdminPanel(
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
     let anchor_view = state_store.read().anchor_view_for(&selected_space);
-    let bottom_cells: Vec<(String, String)> = anchor_view
+    let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = anchor_view
         .bottom_cells
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // Round 24 (M9): per-cell safer-winner suggestion, cloned out of the
+    // anchor_view so the rsx! event handlers don't have to borrow it.
+    // Tuple is (cell_ref, head_a_move_id, head_b_move_id, safer_value_json).
+    let safer_suggestions: Vec<(String, String, String, String)> = bottom_cells
+        .iter()
+        .filter_map(|(cell_ref, _)| {
+            let (head_a, head_b, value) = anchor_view.safer_winner_for(cell_ref)?;
+            let json = serde_json::to_string_pretty(&value).ok()?;
+            Some((cell_ref.clone(), head_a, head_b, json))
+        })
         .collect();
     let anchor_frontier_label = if anchor_view.frontier.is_empty() {
         "(no Anchor seen — using sha256(empty) sentinel)".to_owned()
@@ -512,7 +523,7 @@ pub fn SpaceAdminPanel(
                     class: "event error-banner",
                     "data-testid": "anchorer-paused-banner",
                     div { class: "event-head",
-                        span { "Space 暂停推进，等待 recovery anchorer" }
+                        span { "Space halted, waiting for the recovery anchorer" }
                         span { class: "badge red", "anchorer_paused" }
                     }
                     div { class: "muted",
@@ -529,7 +540,7 @@ pub fn SpaceAdminPanel(
                     class: "event",
                     "data-testid": "pending-mls-binding-toast",
                     div { class: "event-head",
-                        span { "covered_frontier 暂未覆盖所需 governance frontier" }
+                        span { "covered_frontier has not yet caught up to the required governance frontier" }
                         span { class: "badge amber", "pending_mls_binding" }
                     }
                     div { class: "muted",
@@ -614,9 +625,52 @@ pub fn SpaceAdminPanel(
                     div { class: "muted",
                         "One or more cells in this Space's projection are in the bottom-expose state — soland received concurrent Moves it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a head_in repair Move before downstream queries return a definitive value."
                     }
-                    for (cell_ref, status) in &bottom_cells {
+                    for (cell_ref, info) in &bottom_cells {
                         div { class: "muted", "data-testid": "bottom-cell-row",
-                            "{cell_ref} · status={status}"
+                            "{cell_ref} · status={info.status}"
+                        }
+                        // Round 24 (M9): side-by-side render of the competing
+                        // heads so the operator can see what they're picking
+                        // between instead of pasting blind JSON.
+                        if !info.heads.is_empty() {
+                            div { class: "metric-grid", "data-testid": "bottom-cell-heads",
+                                for head in &info.heads {
+                                    div { class: "metric", "data-testid": "bottom-cell-head",
+                                        strong { "data-testid": "bottom-cell-head-move-id", "{head.move_id}" }
+                                        span { "data-testid": "bottom-cell-head-value",
+                                            "{serde_json::to_string(&head.value).unwrap_or_default()}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Round 24 (M9): "Prefer safer side" prefill — only
+                        // rendered for cell families where there's a
+                        // semantic safety ordering (member.state,
+                        // capability.grant). For everything else the
+                        // operator picks manually below.
+                        if let Some((_, head_a, head_b, winner_json)) = safer_suggestions
+                            .iter()
+                            .find(|(c, _, _, _)| c == cell_ref)
+                            .cloned()
+                        {
+                            div { class: "actions",
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "prefer-safer-side-button",
+                                    "data-cell": "{cell_ref}",
+                                    onclick: {
+                                        let cell_ref_owned = cell_ref.clone();
+                                        move |_| {
+                                            repair_target_cell.set(cell_ref_owned.clone());
+                                            repair_head_a.set(head_a.clone());
+                                            repair_head_b.set(head_b.clone());
+                                            repair_winner_json.set(winner_json.clone());
+                                        }
+                                    },
+                                    "Prefer safer side"
+                                }
+                            }
                         }
                     }
                 }
@@ -1262,7 +1316,7 @@ pub fn SpaceAdminPanel(
                     span { "cx.member.state · 5 variants" }
                 }
                 div { class: "muted",
-                    "成员状态由 cx.member.state event 驱动。`knock` Space 允许未邀请的 actor 敲门，admin 同意后 transition 为 invited 再 join。"
+                    "Membership state is driven by cx.member.state events. In a `knock` Space, an uninvited actor can request access; an admin transitions them to invited, then to joined."
                 }
                 div { class: "actions",
                     span { class: "badge blue", "Invited" }
@@ -1272,7 +1326,7 @@ pub fn SpaceAdminPanel(
                     span { class: "badge amber", "Knocked" }
                 }
                 div { class: "muted",
-                    "合法转移：none → {{join, invite, knock}} | invite → {{join, leave}} | knock → {{invite, leave}} | join → {{leave, ban}} | leave → {{invite, knock}} | ban → leave (via unban)。"
+                    "Allowed transitions: none → {{join, invite, knock}} | invite → {{join, leave}} | knock → {{invite, leave}} | join → {{leave, ban}} | leave → {{invite, knock}} | ban → leave (via unban)."
                 }
             }
 
@@ -1498,7 +1552,7 @@ pub fn SpaceAdminPanel(
                     span { "6 canonical events" }
                 }
                 div { class: "muted",
-                    "Invite 不直接授予 capability — 接受后才进入有效集合。MUST 携带 expires_at；默认 7 天，高安全 Space 24 小时。"
+                    "Invites do not grant capabilities directly — the recipient must accept first. MUST carry expires_at; default 7 days, 24 hours for high-security Spaces."
                 }
                 div { class: "actions",
                     span { class: "badge blue", "cx.invite.create" }
@@ -1694,27 +1748,27 @@ pub fn SpaceAdminPanel(
                     span { "audit_disclosure policy" }
                 }
                 div { class: "muted",
-                    "v1 core 把 audited E2EE 拆成 attested / disclosed 两类 hardening profile。Space policy 通过 audit_disclosure 对象 + audit_assurance enum 声明；UI join warning 与对外材料按 audited-e2ee.md §3.1.1 / §3.5 normative 分类与禁用措辞执行。"
+                    "v1 core splits audited E2EE into two hardening profiles: attested and disclosed. Space policy is declared with an audit_disclosure object plus an audit_assurance enum; join warnings and external materials follow the normative classification and forbidden-marketing wording in audited-e2ee.md §3.1.1 and §3.5."
                 }
                 div { class: "metric-grid", "data-testid": "audited-e2ee-tiers",
                     div { class: "metric",
                         strong { "none" }
                         span { class: "badge", "default" }
-                        div { class: "muted", "标准 MLS E2EE，无 audit profile" }
+                        div { class: "muted", "Standard MLS E2EE with no audit profile" }
                     }
                     div { class: "metric",
                         strong { "disclosed_audit" }
                         span { class: "badge amber", "disclosed_audit.e2ee.v1" }
-                        div { class: "muted", "审计 agent 流程性披露；强制留痕 cx.audit.accessed；无密码学 attestation" }
+                        div { class: "muted", "Audit agent receives procedural disclosure; cx.audit.accessed is mandatory; no cryptographic attestation" }
                     }
                     div { class: "metric",
                         strong { "attested_audit" }
                         span { class: "badge red", "attested_audit.e2ee.v1" }
-                        div { class: "muted", "硬件 attestation 强制；RYW receipt schema 强制 cx.audit.ryw_receipt" }
+                        div { class: "muted", "Hardware attestation required; the RYW receipt schema enforces cx.audit.ryw_receipt" }
                     }
                 }
                 div { class: "muted",
-                    "禁用 marketing 措辞：不得宣称 \"end-to-end encrypted\" 不加修饰；必须使用 \"E2EE with disclosed/attested audit\"。详见 audited-e2ee.md §3.5。"
+                    "Forbidden marketing wording: do not claim plain \"end-to-end encrypted\" — use \"E2EE with disclosed/attested audit\". See audited-e2ee.md §3.5."
                 }
                 div { class: "actions",
                     span { class: "muted", "Audit-bound key share events:" }
@@ -1723,9 +1777,9 @@ pub fn SpaceAdminPanel(
                     span { class: "badge red", "cx.space_key.withheld" }
                 }
                 div { class: "actions",
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-none", "无 audit profile" }
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-disclosed", "启用 disclosed_audit" }
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-attested", "启用 attested_audit" }
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-none", "No audit profile" }
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-disclosed", "Enable disclosed_audit" }
+                    button { class: "secondary", "data-testid": "audited-e2ee-set-attested", "Enable attested_audit" }
                 }
             }
 
@@ -1809,13 +1863,13 @@ pub fn SpaceAdminPanel(
                     span { "approval_constraint trail" }
                 }
                 div { class: "muted",
-                    "Grant 是 reducer 接受/拒绝写入的依据。每次决策都可追溯到签名 grant；高风险动作叠加 approval_constraint。Handle / 邮箱仅作展示，权限主体以 DID 为准。"
+                    "Grants are the input reducers use to accept or reject writes. Every decision is traceable to a signed grant; high-risk actions add an approval_constraint on top. Handles and email addresses are display-only — the permission subject is the DID."
                 }
                 div { class: "metric-grid", "data-testid": "grant-explanation-rows",
                     div { class: "metric",
                         strong { "Mei (admin)" }
                         span { "read · write · moderate · grant" }
-                        div { class: "muted", "did:plc:8djrfj4… · 永久 · auto-renew" }
+                        div { class: "muted", "did:plc:8djrfj4… · permanent · auto-renew" }
                     }
                     div { class: "metric",
                         strong { "Build-bot (applet)" }
@@ -1824,8 +1878,8 @@ pub fn SpaceAdminPanel(
                     }
                     div { class: "metric",
                         strong { "Researcher Agent" }
-                        span { "read_flow (申请中)" }
-                        div { class: "muted", "approval_constraint = 2 of 3 admin · 1/3 已批准" }
+                        span { "read_flow (pending)" }
+                        div { class: "muted", "approval_constraint = 2 of 3 admin · 1/3 approved" }
                     }
                     div { class: "metric",
                         strong { "Compliance Auditor (partner)" }
@@ -1834,12 +1888,12 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 div { class: "actions", "data-testid": "grant-decision-actions",
-                    button { class: "primary", "data-testid": "grant-approve-button", "批准 Researcher Agent" }
-                    button { class: "secondary", "data-testid": "grant-deny-button", "拒绝并签名 cx.capability.revoke" }
-                    button { class: "secondary", "data-testid": "grant-explain-button", "查看完整 grant trail (audit)" }
+                    button { class: "primary", "data-testid": "grant-approve-button", "Approve Researcher Agent" }
+                    button { class: "secondary", "data-testid": "grant-deny-button", "Deny and sign cx.capability.revoke" }
+                    button { class: "secondary", "data-testid": "grant-explain-button", "View full grant trail (audit)" }
                 }
                 div { class: "muted",
-                    "Reducer 决策入口：cx.capability.grant / cx.capability.revoke / approval_constraint resolved。详细 trail 在 /audit。"
+                    "Reducer decision inputs: cx.capability.grant / cx.capability.revoke / resolved approval_constraint. Full trail in /audit."
                 }
             }
 
@@ -2110,28 +2164,28 @@ pub fn SpaceAdminPanel(
                     span { "Space ≠ Organization" }
                 }
                 div { class: "muted",
-                    "Organization 是 Principal（DID），不是 Space。多组织共治通过 cx.space.organization 关系表达；组织目录与审核策略独立维护，不绑定到任何单一 Space。"
+                    "An Organization is a Principal (a DID), not a Space. Multi-org governance is expressed via cx.space.organization relations; organization directory and moderation policy live independently of any single Space."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Owning organizations" }
                         span { "cx.space.organization" }
-                        div { class: "muted", "声明 Space 的归属组织（可多个）" }
+                        div { class: "muted", "Declares the organization(s) this Space belongs to" }
                     }
                     div { class: "metric",
                         strong { "Org directory listing" }
                         span { "cx.organization.discovery" }
-                        div { class: "muted", "组织级 discoverability policy（独立于 Space）" }
+                        div { class: "muted", "Organization-level discoverability, independent of any Space" }
                     }
                     div { class: "metric",
                         strong { "Org moderation policy" }
                         span { "cx.organization.moderation_policy" }
-                        div { class: "muted", "组织级审核策略；Space 可继承 / 覆写" }
+                        div { class: "muted", "Organization-level moderation; Spaces can inherit or override" }
                     }
                     div { class: "metric",
                         strong { "Sovereign DID policy" }
                         span { "cx.sovereign.did_policy" }
-                        div { class: "muted", "高安全部署：限制可接受的 DID method / resolver trust" }
+                        div { class: "muted", "High-security deployments: restrict acceptable DID methods / resolver trust" }
                     }
                 }
             }
@@ -2147,14 +2201,14 @@ pub fn SpaceAdminPanel(
                     span { "cx.policy.{{rule,action,set}}" }
                 }
                 div { class: "muted",
-                    "Policy 是 reducer / 服务节点判断请求是否可接受的输入。Policy 通过 rule + action 组合发布为 set；同一 policy_version 一次写入。"
+                    "Policy is the input the reducer and service node use to decide whether a request is acceptable. A policy is published as a set composed of rules + actions; one policy_version is written atomically."
                 }
                 div { class: "actions",
                     span { class: "badge blue", "cx.policy.rule" }
                     span { class: "badge", "cx.policy.action" }
                     span { class: "badge green", "cx.policy.set" }
-                    span { class: "muted", "—— 三 event 联合发布为 policy version" }
-                    span { class: "muted", "policy_version_ref 由 cx.space.policy.set 选取" }
+                    span { class: "muted", "— three events combine to publish one policy version" }
+                    span { class: "muted", "policy_version_ref is chosen by cx.space.policy.set" }
                 }
             }
 
@@ -2169,12 +2223,12 @@ pub fn SpaceAdminPanel(
                     span { "governance/content-moderation.md" }
                 }
                 div { class: "muted",
-                    "举报和审核证据由两 event 驱动；reducer 输出 (deny / quarantine / require_review) 通过 cx.policy.action 落地。E2EE 内容通过 franking 让审核者可验证发送方又不破坏密文。"
+                    "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as cx.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
                 }
                 div { class: "actions",
                     span { class: "badge blue", "cx.moderation.report" }
                     span { class: "badge accent", "cx.moderation.frank" }
-                    span { class: "muted", "→ reducer 输出 cx.policy.action（deny/quarantine/require_review）" }
+                    span { class: "muted", "→ reducer emits cx.policy.action (deny / quarantine / require_review)" }
                 }
             }
             }
@@ -2185,10 +2239,10 @@ pub fn SpaceAdminPanel(
             div { class: "event", "data-testid": "trust-bundle-panel",
                 div { class: "event-head",
                     span { "Trust Bundle (Federation)" }
-                    span { "受信 organization / service DID" }
+                    span { "Trusted organization / service DIDs" }
                 }
                 div { class: "muted",
-                    "联邦 / 跨组织 / Controlled Collaboration Space 必须用显式 trust_bundle 列出可参与的 organization DID + service DID + trusted issuer。导入前请校验 method evidence、trust root 与 service delegation。"
+                    "Federation, cross-organization, and Controlled Collaboration Spaces must publish an explicit trust_bundle that enumerates eligible organization DIDs, service DIDs, and trusted issuers. Validate method evidence, the trust root, and service delegation before importing."
                 }
                 div { class: "metric-grid", "data-testid": "trust-bundle-rows",
                     div { class: "metric",
@@ -2199,7 +2253,7 @@ pub fn SpaceAdminPanel(
                     div { class: "metric",
                         strong { "did:web:beta.example" }
                         span { "trust_bundle v2 · pending" }
-                        div { class: "muted", "缺 attestation issuer; trust root 未确认" }
+                        div { class: "muted", "Missing attestation issuer; trust root not confirmed" }
                     }
                     div { class: "metric",
                         strong { "did:web:github-mirror.acme.example" }
@@ -2209,12 +2263,12 @@ pub fn SpaceAdminPanel(
                     div { class: "metric",
                         strong { "did:web:hsm.contrix.social" }
                         span { "service · backup HSM" }
-                        div { class: "muted", "1 次/年配额; recovery only" }
+                        div { class: "muted", "1 use per year quota; recovery only" }
                     }
                 }
                 div { class: "actions", "data-testid": "trust-bundle-actions",
-                    button { class: "primary", "data-testid": "trust-bundle-import-button", "导入 trust_bundle" }
-                    button { class: "secondary", "data-testid": "trust-bundle-validate-button", "校验签名 + method evidence" }
+                    button { class: "primary", "data-testid": "trust-bundle-import-button", "Import trust_bundle" }
+                    button { class: "secondary", "data-testid": "trust-bundle-validate-button", "Validate signature + method evidence" }
                     button { class: "secondary", "data-testid": "trust-bundle-revoke-button", "Revoke federation_in (partner)" }
                 }
             }

@@ -413,11 +413,39 @@ pub fn build_conflict_repair_move(
             conflict_heads.len()
         ));
     }
+    // Splice `repair_of: [head_a, head_b, ...]` into the winner value so
+    // the resulting cell value carries an audit trail of which conflict
+    // it superseded. Spec: `authz/event-auth-state-resolution.md §8` and
+    // conformance fixture `conflict_repair_fixture.json`. Scalar winner
+    // values are wrapped under `{"value": <scalar>, "repair_of": [...]}`
+    // so the audit field is always reachable.
+    let repair_of: Vec<serde_json::Value> = conflict_heads
+        .iter()
+        .map(|h| serde_json::Value::String(h.clone()))
+        .collect();
+    let augmented_winner = match winner_value {
+        serde_json::Value::Object(mut obj) => {
+            obj.insert(
+                "repair_of".to_owned(),
+                serde_json::Value::Array(repair_of),
+            );
+            serde_json::Value::Object(obj)
+        }
+        other => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("value".to_owned(), other);
+            obj.insert(
+                "repair_of".to_owned(),
+                serde_json::Value::Array(repair_of),
+            );
+            serde_json::Value::Object(obj)
+        }
+    };
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": {
             "type": "set",
-            "value": winner_value,
+            "value": augmented_winner,
         }
     });
     // Conflict repair body needs custom shape (head_in array +
@@ -1080,11 +1108,58 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("refs array");
         assert_eq!(refs.len(), 2);
-        // Effect carries the chosen merge value.
+        // Effect carries the chosen merge value AND the repair_of audit
+        // trail listing the conflict heads it supersedes.
         let effect = &unsigned.move_obj.effects[0];
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().unwrap();
         assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("merged"));
+        let repair_of = value
+            .get("repair_of")
+            .and_then(|v| v.as_array())
+            .expect("repair_of array on effect value");
+        assert_eq!(repair_of.len(), 2);
+        assert_eq!(
+            repair_of[0].as_str(),
+            Some("cx:anchor:sha256:headA"),
+        );
+        assert_eq!(
+            repair_of[1].as_str(),
+            Some("cx:anchor:sha256:headB"),
+        );
+    }
+
+    #[test]
+    fn conflict_repair_move_wraps_scalar_winner_under_value_field() {
+        let heads = vec![
+            "cx:anchor:sha256:headA".to_owned(),
+            "cx:anchor:sha256:headB".to_owned(),
+        ];
+        let unsigned = build_conflict_repair_move(
+            "did:web:admin.example",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:cell:cx.component.flow.position.v1:cx:flow:01abcd",
+            &heads,
+            "cap.recovery-01",
+            // Scalar winner — must be wrapped so repair_of is reachable.
+            serde_json::json!("merged-string-value"),
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+        let effect = &unsigned.move_obj.effects[0];
+        let value = effect.op.value.as_ref().unwrap();
+        assert_eq!(
+            value.get("value").and_then(|v| v.as_str()),
+            Some("merged-string-value"),
+        );
+        assert_eq!(
+            value
+                .get("repair_of")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(2),
+        );
     }
 
     #[test]

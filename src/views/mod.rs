@@ -34,6 +34,8 @@
 // 4. push 路径默认脱敏（background_sync_needed），正文在本地解密。
 // 5. Auth Service 只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized。
 
+pub mod audit;
+pub mod call;
 pub mod chat;
 /// First end-to-end UI Move-flow PoC (C10.D 续 2026-05-09 十八轮).
 /// "Grant consent" button under settings → Privacy that builds + signs +
@@ -67,10 +69,11 @@ pub enum View {
     Directory,
     Setup,
     Settings,
-    Devices,
-    Readiness,
     VerifyDevice,
     SpaceAdmin,
+    /// Audit log view — surfaces `cx.audit.accessed` and
+    /// `cx.audit.ryw_receipt` from the local raw-operation projection.
+    /// Revived from a redirect in R-routes-001.
     Audit,
     Kanban,
     Chat,
@@ -82,13 +85,12 @@ pub enum View {
     /// on a synthetic `cx.notification.*` event.
     Notifications,
     Document,
+    /// Call signaling status (signaling-only preview — WebRTC media is
+    /// renderer-provided). Revived from a redirect in R-routes-001.
     Call,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
     /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
-    /// Applets / Bots / Bridges / Agents / Portal Spaces
-    /// (claude-design `desktop/applets.html`, extensions/applet-integration.md)
-    Applets,
     /// Onboarding 步进器 — 4 步引导（DID method / Handle / Device / Recovery）。
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity setup surface.
     /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
@@ -98,6 +100,10 @@ pub enum View {
     /// see their own quarantined invites. Approve / reject buttons
     /// POST `/admin/v1/invite-quarantine/{id}/resolve`.
     Quarantine,
+    // R-routes-002 (2026-05-14): `Devices`, `Readiness`, `Applets` were
+    // removed from this enum. Their Route variants stay as URL aliases
+    // and resolve to the Settings view; see `Route::to_view` in
+    // `routes.rs` for the mapping.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

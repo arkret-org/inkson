@@ -99,6 +99,7 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
     let mut entries = use_signal(Vec::<QuarantineEntry>::new);
     let mut status = use_signal(|| String::new());
     let mut reject_reason = use_signal(String::new);
+    let mut reject_confirm = use_signal(|| Option::<String>::None);
 
     let coauth_url_load = coauth_url.clone();
     let load_handler = move |_| {
@@ -225,42 +226,68 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                 class: "secondary",
                                 "data-testid": "quarantine-reject-button",
                                 onclick: {
-                                    let url = coauth_url.clone();
                                     let invite_id = entry.invite_id.clone();
-                                    move |_| {
-                                        let url = url.clone();
-                                        let invite_id = invite_id.clone();
-                                        let reason_val = reject_reason();
-                                        let reason_opt = if reason_val.trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(reason_val.clone())
-                                        };
-                                        spawn(async move {
-                                            match CoauthApi::new(&url) {
-                                                Ok(api) => match api
-                                                    .invite_quarantine_resolve(
-                                                        &invite_id,
-                                                        "reject",
-                                                        reason_opt.as_deref(),
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(_) => status.set(format!(
-                                                        "rejected invite {invite_id}"
-                                                    )),
-                                                    Err(err) => status.set(format!(
-                                                        "reject {invite_id} failed: {err}"
-                                                    )),
-                                                },
-                                                Err(err) => {
-                                                    status.set(format!("invalid coauth URL: {err}"))
-                                                }
-                                            }
-                                        });
-                                    }
+                                    move |_| reject_confirm.set(Some(invite_id.clone()))
                                 },
                                 "Reject"
+                            }
+                        }
+                        if reject_confirm() == Some(entry.invite_id.clone()) {
+                            div { class: "event", "data-testid": "quarantine-reject-confirm",
+                                div { class: "space-title", "Reject this invite?" }
+                                div { class: "muted",
+                                    "Rejection is recorded in the audit trail with the reason above. The target cannot be re-invited without a new issuance."
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "confirm-reject-button",
+                                        onclick: {
+                                            let url = coauth_url.clone();
+                                            let invite_id = entry.invite_id.clone();
+                                            move |_| {
+                                                let url = url.clone();
+                                                let invite_id = invite_id.clone();
+                                                let reason_val = reject_reason();
+                                                let reason_opt = if reason_val.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(reason_val.clone())
+                                                };
+                                                reject_confirm.set(None);
+                                                spawn(async move {
+                                                    match CoauthApi::new(&url) {
+                                                        Ok(api) => match api
+                                                            .invite_quarantine_resolve(
+                                                                &invite_id,
+                                                                "reject",
+                                                                reason_opt.as_deref(),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(_) => status.set(format!(
+                                                                "rejected invite {invite_id}"
+                                                            )),
+                                                            Err(err) => status.set(format!(
+                                                                "reject {invite_id} failed: {err}"
+                                                            )),
+                                                        },
+                                                        Err(err) => {
+                                                            status.set(format!("invalid coauth URL: {err}"))
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Confirm Reject"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "cancel-reject-button",
+                                        onclick: move |_| reject_confirm.set(None),
+                                        "Cancel"
+                                    }
+                                }
                             }
                         }
                     }

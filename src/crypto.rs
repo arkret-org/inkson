@@ -230,8 +230,18 @@ mod tests {
 
     #[test]
     fn local_mls_devices_encrypt_decrypt_and_preserve_pending_ciphertext() {
-        let mut alice = LocalMlsDevice::new("did:web:alice.example", "dev_alice_1").unwrap();
-        let mut bob = LocalMlsDevice::new("did:web:bob.example", "dev_bob_1").unwrap();
+        // SDK 0.7 tightened DeviceId validation — only `cx:device:<uuid7>`
+        // forms are accepted; legacy `dev_alice_1` style ids no longer pass.
+        let mut alice = LocalMlsDevice::new(
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+        )
+        .unwrap();
+        let mut bob = LocalMlsDevice::new(
+            "did:web:bob.example",
+            "cx:device:01904100-0000-7000-8000-000000000002",
+        )
+        .unwrap();
         let bob_keys = bob.key_package_record().unwrap();
 
         alice.create_group(b"cx:space:local-e2ee").unwrap();
@@ -250,7 +260,11 @@ mod tests {
         };
         assert_eq!(plaintext, br#"{"body":"hello secure client"}"#);
 
-        let mut offline = LocalMlsDevice::new("did:web:carol.example", "dev_carol_1").unwrap();
+        let mut offline = LocalMlsDevice::new(
+            "did:web:carol.example",
+            "cx:device:01904100-0000-7000-8000-000000000003",
+        )
+        .unwrap();
         let pending = offline.decrypt_or_preserve(encrypted).unwrap();
         let MessageCryptoDecrypt::Encrypted {
             payload, reason, ..
@@ -268,7 +282,7 @@ mod tests {
     fn local_compose_creates_protocol_mls_envelope() {
         let encrypted = compose_local_encrypted_message(
             "did:web:alice.example",
-            "dev_alice_1",
+            "cx:device:01904100-0000-7000-8000-000000000001",
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cx:message:local-2",
             "encrypted hello",

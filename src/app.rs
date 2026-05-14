@@ -155,7 +155,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   .sidebar { display: none; }
   .panel { display: none; }
   .mobile-shellbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: #101827; color: white; }
-  .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: #172033; }
+  .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: #172033; max-height: calc(100vh - 60px); overflow-y: auto; }
+  .mobile-space-filter { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3a52; background: #0f172a; color: #e5edf7; }
+  .mobile-space-filter::placeholder { color: #6b7a90; }
+  .mobile-space-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
   .main { min-height: 100vh; padding: 16px; }
   .title { font-size: 22px; }
   .actions { flex-direction: column; }
@@ -3560,8 +3563,21 @@ pub fn RouterView() -> Element {
     let server_description = use_signal(|| Option::<ServerDescription>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
+    // Provide i18n context for views that call `crate::i18n::tr(key)`.
+    // The locale field stays in sync with `locale` via the use_effect
+    // below; the dictionary tables are baked once at boot.
+    let i18n_signal = use_context_provider::<crate::i18n::I18nSignal>(|| {
+        crate::i18n::init_i18n_with_locale(initial_locale)
+    });
+    {
+        let mut sig = i18n_signal;
+        use_effect(move || {
+            crate::i18n::set_locale(&mut sig, locale());
+        });
+    }
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
+    let mut mobile_space_query = use_signal(String::new);
     let mut sidebar_collapsed = use_signal(|| false);
     let mut sidebar_width = use_signal(move || initial_sidebar_width);
     let mut sidebar_resizing = use_signal(|| false);
@@ -3569,6 +3585,7 @@ pub fn RouterView() -> Element {
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
+    let mut palette_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
 
     // On first render with a live session, fetch the directory + sync so
@@ -3936,24 +3953,54 @@ pub fn RouterView() -> Element {
                         "Refresh"
                     }
                 }
-                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), "Home" }
-                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), "Search" }
-                Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), "Settings" }
+                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
+                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
+                Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_spaces.is_empty() {
-                    div { class: "muted", "Spaces" }
-                    for item in space_tree.iter().take(6) {
-                        Link {
-                            class: "secondary",
-                            "data-testid": "mobile-space-nav-button",
-                            to: Route::Space { space_id: item.space.space_id.clone() },
-                            onclick: {
-                                let id = item.space.space_id.clone();
-                                move |_| {
-                                    selected_space.set(id.clone());
-                                    mobile_nav_open.set(false);
+                    div { class: "muted", "{crate::i18n::tr(\"command_palette.spaces\")} ({space_tree.len()})" }
+                    input {
+                        class: "mobile-space-filter",
+                        "data-testid": "mobile-space-filter",
+                        value: "{mobile_space_query}",
+                        placeholder: crate::i18n::tr("mobile.filter_spaces"),
+                        oninput: move |event| mobile_space_query.set(event.value()),
+                    }
+                    div { class: "mobile-space-list", "data-testid": "mobile-space-list",
+                        {
+                            let q = mobile_space_query();
+                            let q_lc = q.trim().to_lowercase();
+                            let filtered: Vec<_> = space_tree
+                                .iter()
+                                .filter(|item| {
+                                    q_lc.is_empty()
+                                        || item.space.name.to_lowercase().contains(&q_lc)
+                                        || item.space.space_id.to_lowercase().contains(&q_lc)
+                                })
+                                .collect();
+                            if filtered.is_empty() {
+                                rsx! {
+                                    div { class: "muted", "data-testid": "mobile-space-empty", {crate::i18n::tr("mobile.no_match")} }
                                 }
-                            },
-                            "{item.space.name}"
+                            } else {
+                                rsx! {
+                                    for item in filtered.iter() {
+                                        Link {
+                                            class: "secondary",
+                                            "data-testid": "mobile-space-nav-button",
+                                            to: Route::Space { space_id: item.space.space_id.clone() },
+                                            onclick: {
+                                                let id = item.space.space_id.clone();
+                                                move |_| {
+                                                    selected_space.set(id.clone());
+                                                    mobile_nav_open.set(false);
+                                                    mobile_space_query.set(String::new());
+                                                }
+                                            },
+                                            "{item.space.name}"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -4225,16 +4272,43 @@ pub fn RouterView() -> Element {
                             input {
                                 "data-testid": "global-search-input",
                                 value: "{global_query}",
-                                placeholder: "Search spaces, flows, people...",
-                                oninput: move |event| global_query.set(event.value()),
+                                placeholder: crate::i18n::tr("topbar.search_placeholder"),
+                                onfocusin: move |_| palette_open.set(true),
+                                oninput: move |event| {
+                                    global_query.set(event.value());
+                                    palette_open.set(true);
+                                },
                                 onkeydown: move |event| {
-                                    if event.key().to_string() == "Enter" && !global_query().trim().is_empty() {
-                                        view.set(crate::views::View::Directory);
-                                        let _ = navigator.push(Route::Directory);
+                                    let key = event.key().to_string();
+                                    if key == "Escape" {
+                                        palette_open.set(false);
+                                        global_query.set(String::new());
                                     }
                                 },
                             }
                             kbd { "⌘K" }
+                            if palette_open() {
+                                CommandPalette {
+                                    query: global_query(),
+                                    spaces: spaces(),
+                                    on_navigate: move |route: Route| {
+                                        view.set(Route::to_view(&route));
+                                        let _ = navigator.push(route);
+                                        palette_open.set(false);
+                                        global_query.set(String::new());
+                                    },
+                                    on_pick_space: move |space_id: String| {
+                                        selected_space.set(space_id.clone());
+                                        view.set(crate::views::View::Timeline);
+                                        let _ = navigator.push(Route::Space { space_id });
+                                        palette_open.set(false);
+                                        global_query.set(String::new());
+                                    },
+                                    on_close: move |_: ()| {
+                                        palette_open.set(false);
+                                    },
+                                }
+                            }
                         }
                         div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
                             span { "data-testid": "status-label", "{status}" }
@@ -4248,8 +4322,8 @@ pub fn RouterView() -> Element {
                             class: "btn icon sm ghost topbar-notifications-link",
                             "data-testid": "topbar-notifications-button",
                             to: Route::Notifications,
-                            title: "Notifications",
-                            "aria-label": "Notifications",
+                            title: crate::i18n::tr("nav.notifications"),
+                            "aria-label": crate::i18n::tr("nav.notifications"),
                             UiIcon { name: "inbox" }
                             span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
@@ -4258,14 +4332,14 @@ pub fn RouterView() -> Element {
                             "data-testid": "topbar-create-button",
                             to: Route::SetupSection { section: "spaces".to_owned() },
                             UiIcon { name: "plus" }
-                            "New Space"
+                            {crate::i18n::tr("topbar.new_space")}
                         }
                         div { class: "account-menu-wrap",
                             button {
                                 class: "btn icon sm ghost account-menu-button",
                                 "data-testid": "account-menu-button",
-                                title: "Account menu",
-                                "aria-label": "Account menu",
+                                title: crate::i18n::tr("topbar.account_menu"),
+                                "aria-label": crate::i18n::tr("topbar.account_menu"),
                                 onclick: move |_| {
                                     server_menu_open.set(false);
                                     account_menu_open.toggle();
@@ -4506,6 +4580,7 @@ pub fn RouterView() -> Element {
                             spaces,
                             selected_space,
                             view,
+                            state_store,
                             device_queue: device_queue(),
                             frontier_state: frontier_state(),
                             sync_cursor: sync_cursor(),
@@ -4581,6 +4656,8 @@ pub fn RouterView() -> Element {
                                             base_url: base_url(),
                                             token,
                                             selected_space: active_space_id.clone(),
+                                            state_store,
+                                            account_did: account_did(),
                                         }
                                     }
                                 } else {
@@ -4707,7 +4784,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Audit => rsx! {
-                        RouteRedirect { to: Route::SettingsSection { section: "release".to_owned() } }
+                        crate::views::audit::AuditPanel { state_store }
                     },
                     Route::Kanban | Route::KanbanSpace { .. } => {
                         if let Some(sid) = route.space_id() {
@@ -4776,6 +4853,8 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     token,
                                     selected_space: active_space_id.clone(),
+                                    state_store,
+                                    account_did: account_did(),
                                 }
                             } else {
                                 ProfileGateNotice { profile: "full_client" }
@@ -4783,7 +4862,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Call => rsx! {
-                        RouteRedirect { to: Route::Dashboard }
+                        crate::views::call::CallPanel { state_store }
                     },
                     Route::Recovery => rsx! {
                         crate::views::recovery::RecoveryPanel {
@@ -4800,6 +4879,7 @@ pub fn RouterView() -> Element {
                             token,
                             account_did,
                             device_id,
+                            state_store,
                         }
                     },
                     Route::Quarantine => rsx! {
@@ -4877,6 +4957,122 @@ fn SpaceContextBar(
                     to: Route::SpaceAdmin { space_id: space_id.clone() },
                     UiIcon { name: "settings" }
                     "Admin"
+                }
+            }
+        }
+    }
+}
+
+/// Static list of jumpable destinations surfaced in the command palette.
+/// Keep in sync with `routes::Route` — only views the user can act on are
+/// listed (redirect-only routes like `/devices` and `/call` are excluded
+/// until they have real surfaces; see `R-routes-001`).
+fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
+    vec![
+        ("Home", "dashboard, recent activity", Route::Dashboard),
+        ("Notifications", "inbox, mentions, approvals", Route::Notifications),
+        ("Directory", "search spaces, orgs, actors", Route::Directory),
+        ("Onboarding", "DID, handle, device, recovery", Route::Onboarding),
+        ("Settings", "account, encryption, push, server", Route::Settings),
+        ("Recovery", "vault, social, recovery key (preview)", Route::Recovery),
+        ("Verify device", "QR / SAS device verification", Route::VerifyDevice),
+        ("Quarantine", "review held invites (admin)", Route::Quarantine),
+        ("Workspace setup", "bootstrap a Space and policy", Route::Setup),
+    ]
+}
+
+fn palette_filter(query: &str, haystack: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let needle = query.trim().to_lowercase();
+    let hay = haystack.to_lowercase();
+    needle
+        .split_whitespace()
+        .all(|token| hay.contains(token))
+}
+
+#[component]
+fn CommandPalette(
+    query: String,
+    spaces: Vec<SpacePreview>,
+    on_navigate: EventHandler<Route>,
+    on_pick_space: EventHandler<String>,
+    on_close: EventHandler<()>,
+) -> Element {
+    let dest_list = palette_destinations();
+    let matched_dests: Vec<_> = dest_list
+        .iter()
+        .filter(|(label, hint, _)| {
+            palette_filter(&query, &format!("{label} {hint}"))
+        })
+        .cloned()
+        .collect();
+    let matched_spaces: Vec<SpacePreview> = spaces
+        .iter()
+        .filter(|space| {
+            palette_filter(
+                &query,
+                &format!("{} {}", space.name, space.space_id),
+            )
+        })
+        .take(10)
+        .cloned()
+        .collect();
+
+    rsx! {
+        div {
+            class: "command-palette",
+            "data-testid": "command-palette",
+            role: "listbox",
+            "aria-label": "Command palette",
+            if matched_spaces.is_empty() && matched_dests.is_empty() {
+                div { class: "command-palette-empty", "data-testid": "command-palette-empty",
+                    {crate::i18n::tr("command_palette.empty")}
+                }
+            }
+            if !matched_spaces.is_empty() {
+                div { class: "command-palette-group",
+                    div { class: "command-palette-label", {crate::i18n::tr("command_palette.spaces")} }
+                    for space in matched_spaces.iter() {
+                        button {
+                            class: "command-palette-item",
+                            "data-testid": "command-palette-space",
+                            role: "option",
+                            onclick: {
+                                let id = space.space_id.clone();
+                                move |_| on_pick_space.call(id.clone())
+                            },
+                            span { class: "command-palette-item-title", "{space.name}" }
+                            span { class: "command-palette-item-hint", "{space.space_id}" }
+                        }
+                    }
+                }
+            }
+            if !matched_dests.is_empty() {
+                div { class: "command-palette-group",
+                    div { class: "command-palette-label", {crate::i18n::tr("command_palette.jump_to")} }
+                    for (label, hint, route) in matched_dests.iter() {
+                        button {
+                            class: "command-palette-item",
+                            "data-testid": "command-palette-dest",
+                            role: "option",
+                            onclick: {
+                                let route = route.clone();
+                                move |_| on_navigate.call(route.clone())
+                            },
+                            span { class: "command-palette-item-title", "{label}" }
+                            span { class: "command-palette-item-hint", "{hint}" }
+                        }
+                    }
+                }
+            }
+            div { class: "command-palette-footer",
+                button {
+                    class: "btn sm ghost",
+                    "data-testid": "command-palette-close",
+                    onclick: move |_| on_close.call(()),
+                    {crate::i18n::tr("command_palette.close")}
                 }
             }
         }
@@ -5076,9 +5272,12 @@ fn route_label(route: &Route) -> &'static str {
             _ => "Workspace Setup",
         },
         Route::Settings | Route::SettingsSection { .. } => "Settings",
-        Route::Devices => "Devices",
+        // R-routes-002: `/devices` and `/readiness` are URL aliases for
+        // Settings sections and immediately redirect; the label they
+        // briefly show in the crumb trail should match their target.
+        Route::Devices => "Settings",
         Route::VerifyDevice => "Verify Device",
-        Route::Readiness => "Readiness",
+        Route::Readiness => "Settings",
         Route::SpaceAdmin { .. } => "Space Admin",
         Route::SpaceAdminSection { section, .. } => match section.as_str() {
             "members" => "Members Admin",
@@ -5096,7 +5295,8 @@ fn route_label(route: &Route) -> &'static str {
         Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
-        Route::Applets => "Applets & Agents",
+        // R-routes-002: `/applets` is a URL alias for Settings → MIMI.
+        Route::Applets => "Settings",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
     }

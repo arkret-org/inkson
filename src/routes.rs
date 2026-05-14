@@ -160,9 +160,13 @@ impl Route {
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
-            Route::Devices => View::Devices,
+            // R-routes-002: /devices, /readiness, /applets stay as URL
+            // aliases that redirect to a Settings section. The View enum
+            // no longer carries a dedicated variant for them — they map
+            // to Settings so any in-app View-based check stays sensible.
+            Route::Devices => View::Settings,
             Route::VerifyDevice => View::VerifyDevice,
-            Route::Readiness => View::Readiness,
+            Route::Readiness => View::Settings,
             Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => View::SpaceAdmin,
             Route::Audit => View::Audit,
             Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
@@ -171,7 +175,7 @@ impl Route {
             Route::Document | Route::DocumentSpace { .. } => View::Document,
             Route::Call => View::Call,
             Route::Recovery => View::Recovery,
-            Route::Applets => View::Applets,
+            Route::Applets => View::Settings,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
         }
@@ -226,9 +230,7 @@ impl From<View> for Route {
             View::Directory => Route::Directory,
             View::Setup => Route::Setup,
             View::Settings => Route::Settings,
-            View::Devices => Route::Devices,
             View::VerifyDevice => Route::VerifyDevice,
-            View::Readiness => Route::Readiness,
             View::SpaceAdmin => Route::SpaceAdmin {
                 space_id: String::new(),
             },
@@ -239,7 +241,6 @@ impl From<View> for Route {
             View::Document => Route::Document,
             View::Call => Route::Call,
             View::Recovery => Route::Recovery,
-            View::Applets => Route::Applets,
             View::Onboarding => Route::Onboarding,
             View::Quarantine => Route::Quarantine,
         }

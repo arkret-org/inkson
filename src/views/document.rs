@@ -1,6 +1,27 @@
-use dioxus::prelude::*;
+//! Document view — block editor backed by a Flow synthesis track.
+//!
+//! - Every edit is mirrored to `LocalStateStore.private_data` so the
+//!   draft survives navigation and offline use.
+//! - Save Version emits a real `cx.flow.create` (first time) or
+//!   `cx.flow.update` (subsequent saves) against the Space's document
+//!   Flow on the synthesis track per `models/flow-and-message.md`
+//!   §synthesis_track. The flow_id is persisted per-Space so subsequent
+//!   saves target the same Flow.
+//! - The header sync badge reports the result of the most recent
+//!   submit: `Synced` / `Pending sync` / `Local draft`. Failed submits
+//!   fall back to local draft without losing the user's edits.
 
-#[derive(Clone, Debug, PartialEq)]
+use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::{
+    local_state::LocalStateStore,
+    operation::cx_ops,
+    views::helpers::authed_api,
+};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum BlockKind {
     Paragraph,
     Heading,
@@ -8,14 +29,14 @@ enum BlockKind {
     CodeBlock,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct DocumentBlock {
     id: String,
     kind: BlockKind,
     content: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct DocumentVersion {
     id: String,
     timestamp: String,
@@ -23,10 +44,66 @@ struct DocumentVersion {
     block_count: usize,
 }
 
-#[component]
-pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: String) -> Element {
-    let mut blocks = use_signal(|| {
-        vec![
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct DocumentDraft {
+    blocks: Vec<DocumentBlock>,
+    versions: Vec<DocumentVersion>,
+}
+
+fn storage_key(space_id: &str) -> String {
+    format!("document.draft.{space_id}")
+}
+
+fn flow_id_storage_key(space_id: &str) -> String {
+    format!("document.flow_id.{space_id}")
+}
+
+/// Mint a fresh document Flow id. The id is local-only until the
+/// matching `cx.flow.create` event is accepted; once accepted, the
+/// reducer takes ownership.
+fn mint_flow_id() -> String {
+    format!("cx:flow:{}", crate::operation::uuid_v8())
+}
+
+/// Serialize the editable document for the synthesis-track body.
+fn document_body_payload(blocks: &[DocumentBlock]) -> serde_json::Value {
+    json!({
+        "schema_version": 1,
+        "blocks": blocks,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SyncState {
+    LocalOnly,
+    Pending,
+    Synced,
+    Failed,
+}
+
+impl SyncState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::LocalOnly => "Local draft",
+            Self::Pending => "Pending sync…",
+            Self::Synced => "Synced",
+            Self::Failed => "Local draft (sync failed)",
+        }
+    }
+
+    fn badge_class(self) -> &'static str {
+        match self {
+            Self::LocalOnly => "badge",
+            Self::Pending => "badge amber",
+            Self::Synced => "badge green",
+            Self::Failed => "badge red",
+        }
+    }
+}
+
+fn default_draft() -> DocumentDraft {
+    DocumentDraft {
+        blocks: vec![
             DocumentBlock {
                 id: "block-1".to_owned(),
                 kind: BlockKind::Heading,
@@ -37,19 +114,85 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
                 kind: BlockKind::Paragraph,
                 content: "Start writing here...".to_owned(),
             },
-        ]
-    });
-    let mut versions = use_signal(|| {
-        vec![DocumentVersion {
-            id: "v-1".to_owned(),
+        ],
+        versions: vec![DocumentVersion {
+            id: "v-0".to_owned(),
             timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
             author: "yougen".to_owned(),
             block_count: 2,
-        }]
-    });
+        }],
+    }
+}
+
+fn load_draft(
+    state_store: &Signal<LocalStateStore>,
+    account_key: &str,
+    space_id: &str,
+) -> DocumentDraft {
+    if space_id.is_empty() {
+        return default_draft();
+    }
+    let key = storage_key(space_id);
+    let raw = state_store.read().load_private_data(account_key, &key);
+    match raw {
+        Some(json) => match serde_json::from_str::<DocumentDraft>(&json) {
+            Ok(draft) if !draft.blocks.is_empty() => draft,
+            _ => default_draft(),
+        },
+        None => default_draft(),
+    }
+}
+
+fn save_draft(
+    state_store: &mut Signal<LocalStateStore>,
+    account_key: &str,
+    space_id: &str,
+    draft: &DocumentDraft,
+) {
+    if space_id.is_empty() {
+        return;
+    }
+    let key = storage_key(space_id);
+    if let Ok(payload) = serde_json::to_string(draft) {
+        state_store
+            .write()
+            .save_private_data(account_key, key, payload);
+    }
+}
+
+#[component]
+pub fn DocumentPanel(
+    base_url: String,
+    token: Signal<String>,
+    selected_space: String,
+    state_store: Signal<LocalStateStore>,
+    account_did: String,
+) -> Element {
+    let space_id = selected_space.clone();
+    let actor_key = account_did.clone();
+    let initial = load_draft(&state_store, &actor_key, &space_id);
+
+    let mut blocks = use_signal(|| initial.blocks.clone());
+    let mut versions = use_signal(|| initial.versions.clone());
     let mut editing_block = use_signal(|| Option::<String>::None);
     let mut edit_text = use_signal(String::new);
     let mut show_versions = use_signal(|| false);
+    let mut save_status = use_signal(String::new);
+    let mut sync_state = use_signal(|| SyncState::LocalOnly);
+
+    let persist = {
+        let actor_key = actor_key.clone();
+        let space_id = space_id.clone();
+        move |store: &mut Signal<LocalStateStore>,
+              blocks_snapshot: Vec<DocumentBlock>,
+              versions_snapshot: Vec<DocumentVersion>| {
+            let draft = DocumentDraft {
+                blocks: blocks_snapshot,
+                versions: versions_snapshot,
+            };
+            save_draft(store, &actor_key, &space_id, &draft);
+        }
+    };
 
     rsx! {
         div { class: "timeline", "data-testid": "document-panel",
@@ -57,7 +200,18 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
             div { class: "event",
                 div { class: "event-head",
                     span { "Document" }
-                    span { "{selected_space}" }
+                    span {
+                        class: sync_state().badge_class(),
+                        "data-testid": "document-sync-badge",
+                        {sync_state().label()}
+                    }
+                    span { class: "mono", "{space_id}" }
+                }
+                div { class: "muted",
+                    "Edits save to this device immediately. Save Version writes a cx.flow.create or cx.flow.update event to the Space's document Flow synthesis track."
+                }
+                if !save_status().is_empty() {
+                    div { class: "muted", "data-testid": "document-save-status", "{save_status}" }
                 }
                 div { class: "actions",
                     button {
@@ -73,15 +227,106 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
                     button {
                         class: "secondary",
                         "data-testid": "save-document",
-                        onclick: move |_| {
-                            let v_count = versions().len();
-                            let b_count = blocks().len();
-                            versions.write().push(DocumentVersion {
-                                id: format!("v-{v_count}"),
-                                timestamp: "2026-01-01 00:00".to_owned(),
-                                author: "yougen".to_owned(),
-                                block_count: b_count,
-                            });
+                        onclick: {
+                            let persist = persist.clone();
+                            let mut store = state_store;
+                            let actor_key_save = actor_key.clone();
+                            let space_id_save = space_id.clone();
+                            let base = base_url.clone();
+                            move |_| {
+                                let v_count = versions().len();
+                                let b_count = blocks().len();
+                                versions.write().push(DocumentVersion {
+                                    id: format!("v-{v_count}"),
+                                    timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+                                    author: "yougen".to_owned(),
+                                    block_count: b_count,
+                                });
+                                persist(&mut store, blocks(), versions());
+                                save_status.set(format!(
+                                    "Saved locally at {}",
+                                    chrono::Utc::now().format("%H:%M:%S")
+                                ));
+
+                                if space_id_save.trim().is_empty() {
+                                    sync_state.set(SyncState::LocalOnly);
+                                    return;
+                                }
+                                sync_state.set(SyncState::Pending);
+
+                                let blocks_for_wire = blocks();
+                                let base = base.clone();
+                                let token_val = token();
+                                let actor_key_save = actor_key_save.clone();
+                                let space_id_save = space_id_save.clone();
+                                let mut store_for_sync = store;
+                                spawn(async move {
+                                    let body = document_body_payload(&blocks_for_wire);
+                                    let title = blocks_for_wire
+                                        .iter()
+                                        .find(|b| b.kind == BlockKind::Heading)
+                                        .map(|b| b.content.clone())
+                                        .unwrap_or_else(|| "Untitled Document".to_owned());
+
+                                    let flow_id_key = flow_id_storage_key(&space_id_save);
+                                    let existing_flow_id = store_for_sync
+                                        .read()
+                                        .load_private_data(&actor_key_save, &flow_id_key);
+
+                                    let (flow_id, is_create) = match existing_flow_id {
+                                        Some(id) if !id.trim().is_empty() => (id, false),
+                                        _ => (mint_flow_id(), true),
+                                    };
+
+                                    let op = if is_create {
+                                        cx_ops::document_flow_create(
+                                            &space_id_save,
+                                            &actor_key_save,
+                                            &flow_id,
+                                            &title,
+                                            body,
+                                        )
+                                    } else {
+                                        cx_ops::document_flow_update(
+                                            &space_id_save,
+                                            &actor_key_save,
+                                            &flow_id,
+                                            body,
+                                        )
+                                    }
+                                    .build("yougen");
+
+                                    let api = match authed_api(&base, token_val) {
+                                        Ok(api) => api,
+                                        Err(err) => {
+                                            sync_state.set(SyncState::Failed);
+                                            save_status.set(format!("invalid server URL: {err}"));
+                                            return;
+                                        }
+                                    };
+
+                                    match api.submit_operation_event(&op).await {
+                                        Ok(resp) => {
+                                            if is_create {
+                                                store_for_sync.write().save_private_data(
+                                                    &actor_key_save,
+                                                    flow_id_key,
+                                                    flow_id.clone(),
+                                                );
+                                            }
+                                            sync_state.set(SyncState::Synced);
+                                            save_status.set(format!(
+                                                "Synced flow {} (event {})",
+                                                flow_id, resp.event_id
+                                            ));
+                                        }
+                                        Err(err) => {
+                                            sync_state.set(SyncState::Failed);
+                                            save_status.set(format!("sync failed: {err}"));
+                                        }
+                                    }
+                                });
+                            }
                         },
                         "Save Version"
                     }
@@ -128,15 +373,24 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
                             div { class: "actions",
                                 button {
                                     class: "primary",
-                                    onclick: move |_| {
-                                        let text = edit_text().trim().to_owned();
-                                        if !text.is_empty() {
-                                            if let Some(b) = blocks.write().iter_mut().find(|b| b.id == editing_block().unwrap_or_default()) {
-                                                b.content = text;
+                                    onclick: {
+                                        let persist = persist.clone();
+                                        let mut store = state_store;
+                                        move |_| {
+                                            let text = edit_text().trim().to_owned();
+                                            if !text.is_empty() {
+                                                if let Some(b) = blocks.write().iter_mut().find(|b| b.id == editing_block().unwrap_or_default()) {
+                                                    b.content = text;
+                                                }
                                             }
+                                            editing_block.set(None);
+                                            edit_text.set(String::new());
+                                            persist(&mut store, blocks(), versions());
+                                            save_status.set(format!(
+                                                "Saved locally at {}",
+                                                chrono::Utc::now().format("%H:%M:%S")
+                                            ));
                                         }
-                                        editing_block.set(None);
-                                        edit_text.set(String::new());
                                     },
                                     "Save"
                                 }
@@ -170,57 +424,84 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
                         div { class: "actions",
                             button {
                                 class: "secondary",
+                                title: "Paragraph",
+                                "aria-label": "Convert block to paragraph",
                                 onclick: {
                                     let bid = block.id.clone();
+                                    let persist = persist.clone();
+                                    let mut store = state_store;
                                     move |_| {
                                         if let Some(b) = blocks.write().iter_mut().find(|b| b.id == bid) {
                                             b.kind = BlockKind::Paragraph;
                                         }
+                                        persist(&mut store, blocks(), versions());
                                     }
                                 },
                                 "P"
                             }
                             button {
                                 class: "secondary",
+                                title: "Heading",
+                                "aria-label": "Convert block to heading",
                                 onclick: {
                                     let bid = block.id.clone();
+                                    let persist = persist.clone();
+                                    let mut store = state_store;
                                     move |_| {
                                         if let Some(b) = blocks.write().iter_mut().find(|b| b.id == bid) {
                                             b.kind = BlockKind::Heading;
                                         }
+                                        persist(&mut store, blocks(), versions());
                                     }
                                 },
                                 "H"
                             }
                             button {
                                 class: "secondary",
+                                title: "Bullet list",
+                                "aria-label": "Convert block to bullet list",
                                 onclick: {
                                     let bid = block.id.clone();
+                                    let persist = persist.clone();
+                                    let mut store = state_store;
                                     move |_| {
                                         if let Some(b) = blocks.write().iter_mut().find(|b| b.id == bid) {
                                             b.kind = BlockKind::BulletList;
                                         }
+                                        persist(&mut store, blocks(), versions());
                                     }
                                 },
                                 "L"
                             }
                             button {
                                 class: "secondary",
+                                title: "Code block",
+                                "aria-label": "Convert block to code block",
                                 onclick: {
                                     let bid = block.id.clone();
+                                    let persist = persist.clone();
+                                    let mut store = state_store;
                                     move |_| {
                                         if let Some(b) = blocks.write().iter_mut().find(|b| b.id == bid) {
                                             b.kind = BlockKind::CodeBlock;
                                         }
+                                        persist(&mut store, blocks(), versions());
                                     }
                                 },
                                 "</>"
                             }
                             button {
                                 class: "secondary",
+                                title: "Delete block",
+                                "aria-label": "Delete this block",
                                 onclick: {
                                     let bid = block.id.clone();
-                                    move |_| blocks.write().retain(|b| b.id != bid)
+                                    let persist = persist.clone();
+                                    let mut store = state_store;
+                                    move |_| {
+                                        blocks.write().retain(|b| b.id != bid);
+                                        persist(&mut store, blocks(), versions());
+                                    }
                                 },
                                 "Delete"
                             }
@@ -233,17 +514,98 @@ pub fn DocumentPanel(base_url: String, token: Signal<String>, selected_space: St
                     button {
                         class: "primary",
                         "data-testid": "add-block-button",
-                        onclick: move |_| {
-                            blocks.write().push(DocumentBlock {
-                                id: format!("block-{}", chrono::Utc::now().timestamp_millis()),
-                                kind: BlockKind::Paragraph,
-                                content: String::new(),
-                            });
+                        onclick: {
+                            let persist = persist.clone();
+                            let mut store = state_store;
+                            move |_| {
+                                blocks.write().push(DocumentBlock {
+                                    id: format!("block-{}", chrono::Utc::now().timestamp_millis()),
+                                    kind: BlockKind::Paragraph,
+                                    content: String::new(),
+                                });
+                                persist(&mut store, blocks(), versions());
+                            }
                         },
                         "+ Add Block"
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_draft, document_body_payload, flow_id_storage_key, mint_flow_id, storage_key,
+        BlockKind, DocumentBlock, DocumentDraft, SyncState,
+    };
+
+    #[test]
+    fn storage_key_includes_space_id() {
+        let key = storage_key("cx:space:abc");
+        assert!(key.contains("cx:space:abc"));
+        assert!(key.starts_with("document.draft."));
+    }
+
+    #[test]
+    fn flow_id_storage_key_is_distinct_from_draft_key() {
+        let draft_key = storage_key("cx:space:s1");
+        let flow_key = flow_id_storage_key("cx:space:s1");
+        assert_ne!(draft_key, flow_key);
+        assert!(flow_key.starts_with("document.flow_id."));
+    }
+
+    #[test]
+    fn default_draft_seeds_two_blocks_and_one_version() {
+        let draft = default_draft();
+        assert_eq!(draft.blocks.len(), 2);
+        assert_eq!(draft.blocks[0].kind, BlockKind::Heading);
+        assert_eq!(draft.blocks[1].kind, BlockKind::Paragraph);
+        assert_eq!(draft.versions.len(), 1);
+    }
+
+    #[test]
+    fn document_draft_round_trips_through_serde() {
+        let draft = DocumentDraft {
+            blocks: vec![DocumentBlock {
+                id: "block-test".to_owned(),
+                kind: BlockKind::CodeBlock,
+                content: "fn main() {}".to_owned(),
+            }],
+            versions: vec![],
+        };
+        let json = serde_json::to_string(&draft).expect("serialize");
+        let round: DocumentDraft = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round, draft);
+    }
+
+    #[test]
+    fn document_body_payload_carries_schema_version_and_blocks() {
+        let blocks = default_draft().blocks;
+        let body = document_body_payload(&blocks);
+        assert_eq!(body["schema_version"], 1);
+        assert_eq!(body["blocks"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn mint_flow_id_emits_typed_cx_flow_prefix() {
+        let id = mint_flow_id();
+        assert!(id.starts_with("cx:flow:"));
+        assert!(id.len() > "cx:flow:".len());
+        let again = mint_flow_id();
+        assert_ne!(id, again, "minted ids must be unique");
+    }
+
+    #[test]
+    fn sync_state_labels_are_distinct() {
+        let labels = [
+            SyncState::LocalOnly.label(),
+            SyncState::Pending.label(),
+            SyncState::Synced.label(),
+            SyncState::Failed.label(),
+        ];
+        let unique: std::collections::BTreeSet<_> = labels.iter().copied().collect();
+        assert_eq!(unique.len(), labels.len());
     }
 }

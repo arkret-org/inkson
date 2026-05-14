@@ -1,12 +1,48 @@
 use dioxus::prelude::*;
+use qrcode::{render::svg, EcLevel, QrCode};
 use serde_json::json;
 
 use crate::{models::*, views::helpers::authed_api};
+
+/// Render `payload` as an inline SVG QR code. Falls back to an empty
+/// string if encoding fails (oversize / invalid input); callers should
+/// keep the textual fallback visible regardless.
+fn render_qr_svg(payload: &str) -> String {
+    if payload.is_empty() {
+        return String::new();
+    }
+    match QrCode::with_error_correction_level(payload.as_bytes(), EcLevel::M) {
+        Ok(code) => code
+            .render::<svg::Color<'_>>()
+            .min_dimensions(192, 192)
+            .quiet_zone(true)
+            .build(),
+        Err(_) => String::new(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifyMethod {
     QrCode,
     Sas,
+}
+
+#[cfg(test)]
+mod qr_tests {
+    use super::render_qr_svg;
+
+    #[test]
+    fn empty_payload_returns_empty_string() {
+        assert_eq!(render_qr_svg(""), "");
+    }
+
+    #[test]
+    fn typical_payload_produces_svg() {
+        let svg = render_qr_svg("contrix:verify:cx:device:abc:cx:device:xyz");
+        // qrcode 0.14 emits an `<?xml …?>` declaration before `<svg`.
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
+    }
 }
 
 #[component]
@@ -15,9 +51,10 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(|| String::new());
     let mut trust_devices = use_signal(Vec::<DeviceTrustEntry>::new);
-    let mut cross_signing_state = use_signal(|| "Not configured".to_owned());
+    let cross_signing_state = use_signal(|| "Not configured".to_owned());
     let mut sas_code = use_signal(|| String::new());
     let mut qr_data = use_signal(|| String::new());
+    let mut revoke_confirm = use_signal(|| Option::<String>::None);
 
     rsx! {
         div { class: "timeline", "data-testid": "verify-device-panel",
@@ -64,9 +101,31 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                         }
                         if !qr_data().is_empty() {
                             div { class: "event", "data-testid": "qr-display",
-                                div { class: "space-title", "QR Code Data" }
-                                div { class: "muted", "data-testid": "qr-data", "{qr_data}" }
-                                div { class: "muted", "Display this QR code for the other device to scan." }
+                                div { class: "space-title", "QR verification payload" }
+                                {
+                                    let svg = render_qr_svg(&qr_data());
+                                    if svg.is_empty() {
+                                        rsx! {
+                                            div { class: "muted",
+                                                "QR encoding failed — the payload is too long for a single code. Use the copyable string below instead."
+                                            }
+                                        }
+                                    } else {
+                                        rsx! {
+                                            div {
+                                                class: "qr-image",
+                                                "data-testid": "qr-image",
+                                                role: "img",
+                                                "aria-label": "Verification QR code; scan with the other device",
+                                                dangerous_inner_html: "{svg}",
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "muted", "data-testid": "qr-data", style: "font-family: var(--mono); word-break: break-all;", "{qr_data}" }
+                                div { class: "muted",
+                                    "Scan the code with the other device, or copy the text payload through a secure channel if scanning is not available."
+                                }
                             }
                         }
                     }
@@ -114,7 +173,7 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                         if !sas_code().is_empty() {
                             div { class: "event", "data-testid": "sas-display",
                                 div { class: "space-title", "Short Authentication String" }
-                                div { class: "muted", "在两台设备上 *肉眼比对* 同一组 emoji + 数字。" }
+                                div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
                                 // SAS emoji row — claude-design desktop/verify-device.html
                                 div { class: "actions", "data-testid": "sas-emoji-row",
                                     span { class: "badge", "🐬 Dolphin" }
@@ -131,13 +190,13 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                     button {
                                         class: "primary",
                                         "data-testid": "sas-match-button",
-                                        onclick: move |_| verify_status.set("SAS verified · 准备签发 cx.device.authorized + cx.device.cross_sign".to_owned()),
+                                        onclick: move |_| verify_status.set("Verified. Preparing device authorization and cross-signing.".to_owned()),
                                         "They Match"
                                     }
                                     button {
                                         class: "secondary",
                                         "data-testid": "sas-mismatch-button",
-                                        onclick: move |_| verify_status.set("SAS mismatch — abort. 不会签发任何 device authorization 或 mls welcome".to_owned()),
+                                        onclick: move |_| verify_status.set("Mismatch — aborted. The new device will not be authorized and will not receive encrypted history.".to_owned()),
                                         "They Don't Match"
                                     }
                                 }
@@ -145,36 +204,36 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                 // crypto-media/device-lifecycle.md §1.2 + §7-§9 (verification)
                                 div { class: "event", "data-testid": "sas-post-verification",
                                     div { class: "event-head",
-                                        span { "Verification 通过后写入" }
-                                        span { "actor event chain" }
+                                        span { "What happens after you confirm" }
+                                        span { class: "muted", "device-lifecycle §1.2, §7-§9" }
                                     }
                                     div { class: "muted",
-                                        "SAS 只确认 device key 的人工信任。要让新设备成为长期 device、加入 MLS group、收到 E2EE 历史，下面这组 events 必须依序签名生效。"
+                                        "SAS only confirms human trust in the new device's key. The four steps below sign that trust into your account so the device becomes a long-term member and gains access to encrypted history."
                                     }
                                     div { class: "metric-grid",
                                         div { class: "metric",
                                             strong { "①" }
-                                            span { "cx.device.authorized" }
-                                            div { class: "muted", "把新设备公钥加入 device set" }
+                                            span { "Authorize device" }
+                                            div { class: "muted", "Add the new device's public key to your authorized set" }
                                         }
                                         div { class: "metric",
                                             strong { "②" }
-                                            span { "cx.device.cross_sign" }
-                                            div { class: "muted", "主设备签名 device key" }
+                                            span { "Cross-sign" }
+                                            div { class: "muted", "Your main device signs the new device's key" }
                                         }
                                         div { class: "metric",
                                             strong { "③" }
-                                            span { "cx.mls.welcome × N" }
-                                            div { class: "muted", "对每个 Space group 触发 epoch++" }
+                                            span { "Rejoin encrypted groups" }
+                                            div { class: "muted", "Each Space rolls its encryption epoch to include the new device" }
                                         }
                                         div { class: "metric",
                                             strong { "④" }
-                                            span { "secret storage sync" }
-                                            div { class: "muted", "拉取 master key 加密 envelope" }
+                                            span { "Sync secret storage" }
+                                            div { class: "muted", "Pull the encrypted master-key envelope so history is decryptable" }
                                         }
                                     }
                                     div { class: "muted",
-                                        "三件事分开：登录因子 → cx.session.grant；设备授权 → cx.device.authorized；设备验证 → cx.device.cross_sign。跳过 SAS 等于只拿到短期 session，无法读 E2EE 历史。"
+                                        "Sign-in, device authorization and device verification are three separate steps. Skipping SAS leaves you with a short-lived session that cannot decrypt past messages."
                                     }
                                 }
                             }
@@ -248,20 +307,49 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                 class: "secondary",
                                 "data-testid": "revoke-action-button",
                                 onclick: {
-                                    let base = base_url.clone();
                                     let dev_id = entry.device_id.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let dev_id = dev_id.clone();
-                                        let api_token = token();
-                                        spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                let _ = api.revoke_device(&dev_id).await;
-                                            }
-                                        });
-                                    }
+                                    move |_| revoke_confirm.set(Some(dev_id.clone()))
                                 },
                                 "Revoke"
+                            }
+                        }
+                        if revoke_confirm() == Some(entry.device_id.clone()) {
+                            div { class: "event", "data-testid": "revoke-confirm",
+                                div { class: "space-title", "Revoke this device?" }
+                                div { class: "muted",
+                                    "Revoking removes the device from the authorized set and excludes it from future encrypted messages. This cannot be undone."
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "confirm-revoke-button",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let dev_id = entry.device_id.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let dev_id = dev_id.clone();
+                                                let api_token = token();
+                                                revoke_confirm.set(None);
+                                                spawn(async move {
+                                                    if let Ok(api) = authed_api(&base, api_token) {
+                                                        match api.revoke_device(&dev_id).await {
+                                                            Ok(_) => verify_status.set(format!("revoked {dev_id}")),
+                                                            Err(e) => verify_status.set(format!("revoke {dev_id} failed: {e}")),
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Confirm Revoke"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "cancel-revoke-button",
+                                        onclick: move |_| revoke_confirm.set(None),
+                                        "Cancel"
+                                    }
+                                }
                             }
                         }
                     }
@@ -273,14 +361,21 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
 
             // Cross-signing state
             div { class: "event", "data-testid": "cross-signing",
-                div { class: "event-head", span { "Cross-Signing" } span { "state" } }
+                div { class: "event-head",
+                    span { "Cross-Signing" }
+                    span { class: "badge", "Coming in v1.1" }
+                }
                 div { class: "muted", "{cross_signing_state}" }
+                div { class: "muted",
+                    "Cross-signing lets your other authorized devices vouch for new ones without a manual SAS ceremony every time. This setup surface is not yet wired up."
+                }
                 div { class: "actions",
                     button {
                         class: "secondary",
                         "data-testid": "setup-cross-signing",
-                        onclick: move |_| cross_signing_state.set("Setup not yet available".to_owned()),
-                        "Setup Cross-Signing"
+                        disabled: true,
+                        title: "Setup will land with the v1.1 device-set rollout",
+                        "Setup Cross-Signing (coming soon)"
                     }
                 }
             }

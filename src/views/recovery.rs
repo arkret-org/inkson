@@ -17,32 +17,41 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
 
     rsx! {
         div { class: "timeline", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
+            div { class: "event error-banner", "data-testid": "recovery-preview-banner",
+                div { class: "event-head",
+                    span { "Recovery" }
+                    span { class: "badge", "Preview" }
+                }
+                div { class: "muted",
+                    "This surface is a visual preview while we wire the recovery flows. Values shown below are illustrative and the action buttons are disabled — nothing here writes to the server. Real account recovery setup will land in an upcoming release."
+                }
+            }
             div { class: "event",
                 div { class: "event-head",
-                    span { "恢复方案" }
+                    span { "Recovery options" }
                     span { "Encrypted Vault · Social Recovery · Recovery Key" }
-                    HelpTip { text: "Contrix 不在服务端存口令；备份是客户端加密后再上传。任意一层完成恢复都会写入 cx.identity.recovery，再走 cx.device.authorized 流程把新设备并入 device set。" }
+                    HelpTip { text: "Contrix never stores your passphrase on the server. Backups are encrypted on-device before upload. Any one recovery path is enough to re-authorize a new device on your account." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
-                        strong { "主方案" }
+                        strong { "Primary" }
                         span { "Encrypted Cloud Vault" }
                         div { class: "muted", "Argon2id + xchacha20poly1305" }
                     }
                     div { class: "metric",
-                        strong { "备用方案" }
-                        span { "SSS 3 / 5" }
-                        div { class: "muted", "3 名 guardian 在线" }
+                        strong { "Backup" }
+                        span { "SSS 3 of 5" }
+                        div { class: "muted", "3 guardians online" }
                     }
                     div { class: "metric",
-                        strong { "未备份内容" }
+                        strong { "Unbacked content" }
                         span { "0" }
-                        div { class: "muted", "全部已加密上传" }
+                        div { class: "muted", "Everything is uploaded encrypted" }
                     }
                     div { class: "metric",
-                        strong { "最近一次演练" }
-                        span { "14 天前" }
-                        div { class: "muted", "建议每 30 天演练一次" }
+                        strong { "Last rehearsal" }
+                        span { "14 days ago" }
+                        div { class: "muted", "Rehearse at least every 30 days" }
                     }
                 }
             }
@@ -50,77 +59,77 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
             // Encrypted Cloud Vault — devices-and-auth §4.1
             div { class: "event", "data-testid": "vault-section",
                 div { class: "event-head",
-                    span { "加密云保险箱" }
+                    span { "Encrypted Cloud Vault" }
                     span { "client-side encrypted blob" }
-                    HelpTip { text: "客户端用强口令派生密钥（Argon2id 默认 m=128MiB, t=3, p=4）后，使用 AEAD 加密主钥、recovery key 与未备份的 MLS 状态再上传。FIPS profile 可降级为 PBKDF2 + AES-GCM，但必须在 backup metadata 中显式声明。" }
+                    HelpTip { text: "A strong passphrase is stretched on-device (Argon2id by default: m=128MiB, t=3, p=4) and the resulting key is used to encrypt your master key, recovery key, and any unbacked MLS state before upload. FIPS deployments can drop down to PBKDF2 + AES-GCM, recorded in the backup metadata." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
-                        strong { "KDF" }
+                        strong { "Key derivation" }
                         span { "Argon2id (m=128MiB, t=3, p=4)" }
-                        div { class: "muted", "PBKDF2 仅作为 fallback / constrained" }
+                        div { class: "muted", "PBKDF2 only as a constrained fallback" }
                     }
                     div { class: "metric",
-                        strong { "AEAD" }
+                        strong { "Encryption" }
                         span { "xchacha20poly1305" }
-                        div { class: "muted", "FIPS profile 可切到 AES-GCM" }
+                        div { class: "muted", "FIPS profile may switch to AES-GCM" }
                     }
                     div { class: "metric",
-                        strong { "存储" }
+                        strong { "Storage" }
                         span { "did:web:vault.contrix.social" }
-                        div { class: "muted", "ciphertext blob; 不可被服务端解密" }
+                        div { class: "muted", "Ciphertext blob; the server cannot decrypt it" }
                     }
                     div { class: "metric",
-                        strong { "Passphrase 强度" }
+                        strong { "Passphrase strength" }
                         span { "4.6 / 5" }
-                        div { class: "muted", "本地估测；entropy 不上传" }
+                        div { class: "muted", "Estimated locally; entropy is not uploaded" }
                     }
                 }
                 div { class: "actions",
-                    button { class: "primary", "data-testid": "vault-rekey", "立即重新加密上传" }
-                    button { class: "secondary", "data-testid": "vault-export", "导出 .keystore.json" }
-                    button { class: "secondary", "data-testid": "vault-rotate-passphrase", "更换口令" }
+                    button { class: "primary", "data-testid": "vault-rekey", disabled: true, title: "Preview — recovery write path is not yet wired", "Re-encrypt and upload" }
+                    button { class: "secondary", "data-testid": "vault-export", disabled: true, title: "Preview", "Export .keystore.json" }
+                    button { class: "secondary", "data-testid": "vault-rotate-passphrase", disabled: true, title: "Preview", "Rotate passphrase" }
                 }
             }
 
             // Social recovery — devices-and-auth §4.2
             div { class: "event", "data-testid": "social-recovery-section",
                 div { class: "event-head",
-                    span { "社交恢复 · Shamir's Secret Sharing" }
-                    span { "3 / 5 阈值" }
-                    HelpTip { text: "Recovery key 切成 5 份，3 份即可重构。Guardian 可以是个人、组织 IT、家人或受信 HSM。轮换 polynomial 即作废所有旧 share。" }
+                    span { "Social Recovery · Shamir's Secret Sharing" }
+                    span { "3 of 5 threshold" }
+                    HelpTip { text: "The recovery key is split into 5 shares; any 3 can reconstruct it. Guardians can be individuals, an organization's IT, family, or a trusted HSM. Rotating the polynomial invalidates every prior share." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Mei" }
                         span { "did:plc:8djrfj4…" }
-                        div { class: "muted", "个人 · 已确认 share" }
+                        div { class: "muted", "Person · share confirmed" }
                     }
                     div { class: "metric",
                         strong { "Carlos" }
                         span { "did:plc:cl91fr…" }
-                        div { class: "muted", "个人 · 已确认 share" }
+                        div { class: "muted", "Person · share confirmed" }
                     }
                     div { class: "metric",
                         strong { "acme.example IT" }
                         span { "did:web:it.acme.example" }
-                        div { class: "muted", "组织 guardian · 已确认" }
+                        div { class: "muted", "Organization guardian · confirmed" }
                     }
                     div { class: "metric",
                         strong { "Mom" }
                         span { "did:plc:mum2x…" }
-                        div { class: "muted", "家人 · share 未签收" }
+                        div { class: "muted", "Family · share not yet acknowledged" }
                     }
                     div { class: "metric",
                         strong { "Backup HSM" }
                         span { "did:web:hsm.contrix.social" }
-                        div { class: "muted", "受信服务 · 1 次/年配额" }
+                        div { class: "muted", "Trusted service · 1 use per year" }
                     }
                 }
                 div { class: "actions",
-                    button { class: "primary", "data-testid": "social-add-guardian", "＋ 新增 guardian" }
-                    button { class: "secondary", "data-testid": "social-rotate", "重新分发碎片（轮换 polynomial）" }
-                    button { class: "secondary", "data-testid": "social-recover-now", "演练社交恢复" }
+                    button { class: "primary", "data-testid": "social-add-guardian", disabled: true, title: "Preview — guardian onboarding is not yet wired", "+ Add guardian" }
+                    button { class: "secondary", "data-testid": "social-rotate", disabled: true, title: "Preview", "Rotate share polynomial" }
+                    button { class: "secondary", "data-testid": "social-recover-now", disabled: true, title: "Preview", "Rehearse social recovery" }
                 }
             }
 
@@ -128,38 +137,38 @@ pub fn RecoveryPanel(base_url: String, token: Signal<String>) -> Element {
             div { class: "event", "data-testid": "recovery-key-section",
                 div { class: "event-head",
                     span { "Recovery Key" }
-                    span { "高熵字符串 · 物理介质保存" }
+                    span { "high-entropy string · keep offline" }
                 }
                 div { class: "muted",
-                    "全部设备丢失 + guardian 不可达时回退使用。Contrix 不在服务端存它；建议打印或写在物理介质保存。"
+                    "A fallback for when every device is lost and no guardian is reachable. Contrix never stores this on the server — print it or write it down and keep it somewhere physically safe."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
-                        strong { "当前 Recovery Key" }
+                        strong { "Current Recovery Key" }
                         span { "EAGLE—HARP—SUNDAY—ROOK—9F2C—Q1A0" }
-                        div { class: "muted", "高熵；本地生成；可随时重生成" }
+                        div { class: "muted", "High entropy, generated locally, regeneratable anytime" }
                     }
                     div { class: "metric",
-                        strong { "上次轮换" }
-                        span { "32 天前" }
-                        div { class: "muted", "≥90 天建议轮换" }
+                        strong { "Last rotated" }
+                        span { "32 days ago" }
+                        div { class: "muted", "Recommended: rotate at least every 90 days" }
                     }
                 }
                 div { class: "actions",
-                    button { class: "primary", "data-testid": "recovery-key-copy", "复制" }
-                    button { class: "secondary", "data-testid": "recovery-key-print", "打印备份" }
-                    button { class: "secondary", "data-testid": "recovery-key-regenerate", "重新生成" }
+                    button { class: "primary", "data-testid": "recovery-key-copy", disabled: true, title: "Preview", "Copy" }
+                    button { class: "secondary", "data-testid": "recovery-key-print", disabled: true, title: "Preview", "Print" }
+                    button { class: "secondary", "data-testid": "recovery-key-regenerate", disabled: true, title: "Preview", "Regenerate" }
                 }
             }
 
             // Recovery write path
             div { class: "event", "data-testid": "recovery-writeback-explainer",
                 div { class: "event-head",
-                    span { "恢复成功后的写入路径" }
+                    span { "What happens when recovery succeeds" }
                     span { "method-specific evidence" }
                 }
                 div { class: "muted",
-                    "新设备生成 device key → cx.identity.recovery → DID/key-log 更新（method-specific evidence）→ cx.device.authorized → MLS 重新加入旧 group（必要时 epoch++）。其它设备会收到撤销通知。"
+                    "The new device generates its own key, the recovery is recorded against your account, your DID/key log is updated with method-specific evidence, the new device is re-authorized, and your encrypted Spaces roll their epoch to include it. Existing devices are notified."
                 }
             }
         }

@@ -280,9 +280,61 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.retry", "Retry");
     dict.set("common.close", "Close");
     dict.set("common.confirm", "Confirm");
+    dict.set("common.cancel", "Cancel");
+    dict.set("common.save", "Save");
+    dict.set("common.delete", "Delete");
+    dict.set("common.edit", "Edit");
+    dict.set("common.send", "Send");
+    dict.set("common.refresh", "Refresh");
+    dict.set("common.back", "Back");
+    dict.set("common.next", "Next");
     dict.set("common.online", "online");
     dict.set("common.offline", "offline");
     dict.set("common.reconnecting", "reconnecting");
+
+    // R-i18n-002 extra keys for the highest-visibility surfaces.
+    dict.set("topbar.search_placeholder", "Jump to a space, view or action…");
+    dict.set("topbar.notifications", "Notifications");
+    dict.set("topbar.new_space", "New Space");
+    dict.set("topbar.account_menu", "Account menu");
+
+    dict.set("login.continue", "Continue");
+    dict.set("login.working", "Working...");
+    dict.set("login.signed_in_as", "Signed in as");
+
+    dict.set("dashboard.home", "Home");
+    dict.set("dashboard.notifications_label", "Notifications");
+    dict.set("dashboard.notifications_delta_unread", "Unread and approvals");
+    dict.set("dashboard.notifications_delta_signin", "Sign in required");
+    dict.set("dashboard.spaces_label", "Spaces");
+    dict.set("dashboard.spaces_delta_search", "Search or join a Space");
+    dict.set("dashboard.spaces_delta_signin", "Sign in to load spaces");
+    dict.set("dashboard.current_space", "Current Space");
+    dict.set("dashboard.workspace_setup", "Workspace Setup");
+    dict.set("dashboard.workspace_setup_delta", "Bootstrap your first Space and initial policy");
+    dict.set("dashboard.onboarding", "Onboarding");
+    dict.set("dashboard.onboarding_steps", "4 steps");
+    dict.set("dashboard.onboarding_delta", "Identity, device, and recovery setup");
+    dict.set("dashboard.recent_spaces", "Recent Spaces");
+    dict.set("dashboard.no_spaces", "No spaces loaded");
+    dict.set("dashboard.no_spaces_help", "The connected server did not return spaces yet.");
+    dict.set("dashboard.no_session_help", "The client is not showing placeholder spaces.");
+
+    dict.set("notifications.archived", "Show archived");
+    dict.set("notifications.mark_all_read", "Mark all read");
+    dict.set("notifications.empty_state", "No notifications loaded.");
+
+    dict.set("composer.send", "Send");
+    dict.set("composer.encrypted_toggle", "Encrypt locally");
+    dict.set("composer.plaintext_warning", "Plaintext messages may be visible to the configured server.");
+
+    dict.set("command_palette.spaces", "Spaces");
+    dict.set("command_palette.jump_to", "Jump to");
+    dict.set("command_palette.empty", "No matching spaces or views. Press Esc to close.");
+    dict.set("command_palette.close", "Close (Esc)");
+
+    dict.set("mobile.filter_spaces", "Filter spaces…");
+    dict.set("mobile.no_match", "No spaces match.");
 
     dict
 }
@@ -343,9 +395,61 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.retry", "重试");
     dict.set("common.close", "关闭");
     dict.set("common.confirm", "确认");
+    dict.set("common.cancel", "取消");
+    dict.set("common.save", "保存");
+    dict.set("common.delete", "删除");
+    dict.set("common.edit", "编辑");
+    dict.set("common.send", "发送");
+    dict.set("common.refresh", "刷新");
+    dict.set("common.back", "返回");
+    dict.set("common.next", "下一步");
     dict.set("common.online", "在线");
     dict.set("common.offline", "离线");
     dict.set("common.reconnecting", "重连中");
+
+    // R-i18n-002 mirrored keys.
+    dict.set("topbar.search_placeholder", "跳转到空间、视图或操作…");
+    dict.set("topbar.notifications", "通知");
+    dict.set("topbar.new_space", "新建空间");
+    dict.set("topbar.account_menu", "账号菜单");
+
+    dict.set("login.continue", "继续");
+    dict.set("login.working", "处理中...");
+    dict.set("login.signed_in_as", "已登录为");
+
+    dict.set("dashboard.home", "主页");
+    dict.set("dashboard.notifications_label", "通知");
+    dict.set("dashboard.notifications_delta_unread", "未读与待审批");
+    dict.set("dashboard.notifications_delta_signin", "需要登录");
+    dict.set("dashboard.spaces_label", "空间");
+    dict.set("dashboard.spaces_delta_search", "搜索或加入空间");
+    dict.set("dashboard.spaces_delta_signin", "登录后加载空间");
+    dict.set("dashboard.current_space", "当前空间");
+    dict.set("dashboard.workspace_setup", "工作区设置");
+    dict.set("dashboard.workspace_setup_delta", "创建第一个空间与初始策略");
+    dict.set("dashboard.onboarding", "引导");
+    dict.set("dashboard.onboarding_steps", "4 步");
+    dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
+    dict.set("dashboard.recent_spaces", "最近空间");
+    dict.set("dashboard.no_spaces", "暂无空间");
+    dict.set("dashboard.no_spaces_help", "服务器尚未返回空间列表。");
+    dict.set("dashboard.no_session_help", "客户端不会展示占位空间。");
+
+    dict.set("notifications.archived", "显示已归档");
+    dict.set("notifications.mark_all_read", "全部标记已读");
+    dict.set("notifications.empty_state", "暂无通知。");
+
+    dict.set("composer.send", "发送");
+    dict.set("composer.encrypted_toggle", "本地加密");
+    dict.set("composer.plaintext_warning", "明文消息对所配置的服务器可见。");
+
+    dict.set("command_palette.spaces", "空间");
+    dict.set("command_palette.jump_to", "跳转到");
+    dict.set("command_palette.empty", "未找到匹配的空间或视图。按 Esc 关闭。");
+    dict.set("command_palette.close", "关闭 (Esc)");
+
+    dict.set("mobile.filter_spaces", "筛选空间…");
+    dict.set("mobile.no_match", "未找到匹配空间。");
 
     dict
 }
@@ -385,6 +489,11 @@ pub fn arabic_translations() -> TranslationDict {
 
 /// Initialize the i18n system with default translations.
 pub fn init_i18n() -> I18nSignal {
+    init_i18n_with_locale(Locale::En)
+}
+
+/// Initialize i18n preloaded with a specific locale.
+pub fn init_i18n_with_locale(locale: Locale) -> I18nSignal {
     let mut dicts = HashMap::new();
     let en = english_translations();
     let zh = chinese_translations();
@@ -392,7 +501,26 @@ pub fn init_i18n() -> I18nSignal {
     dicts.insert("en".to_owned(), en);
     dicts.insert("zh".to_owned(), zh);
     dicts.insert("ar".to_owned(), ar);
-    Signal::new((Locale::En, dicts))
+    Signal::new((locale, dicts))
+}
+
+/// Switch the active locale on an existing signal without rebuilding the
+/// translation tables. Call this from the Settings language picker.
+pub fn set_locale(signal: &mut I18nSignal, locale: Locale) {
+    let dicts = signal.read().1.clone();
+    signal.set((locale, dicts));
+}
+
+/// Convenience: pull the current i18n signal from Dioxus context and
+/// translate `key`. Views call this once they have been wrapped in a
+/// `provide_context(init_i18n_with_locale(...))` ancestor — currently
+/// `WorkspaceView`. Falls back to the key itself when no context is
+/// installed (e.g. unit tests outside Dioxus runtime).
+pub fn tr(key: &str) -> String {
+    match try_consume_context::<I18nSignal>() {
+        Some(signal) => t(&signal, key),
+        None => key.to_owned(),
+    }
 }
 
 #[cfg(test)]

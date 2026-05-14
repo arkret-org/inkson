@@ -332,6 +332,53 @@ pub mod cx_ops {
             })))
     }
 
+    /// Build a `cx.flow.create` for a document Flow.
+    ///
+    /// Document content travels on the Flow's synthesis track in
+    /// `body.fields.document` (an opaque JSON blob defined by the
+    /// client). The synthesis track is the spec-blessed home for
+    /// human-authored long-form content; see `models/flow-and-message.md`
+    /// §synthesis_track.
+    pub fn document_flow_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        title: &str,
+        document_body: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(space_id)
+            .body(json!({
+                "list_id": space_id,
+                "flow_id": flow_id,
+                "title": title,
+                "rank": "r0",
+                "kind": "document",
+                "fields": {
+                    "document": document_body,
+                },
+            }))
+    }
+
+    /// Build a `cx.flow.update` carrying a new document body on the
+    /// synthesis track. `flow_id` must already exist on the server (i.e.
+    /// the corresponding `cx.flow.create` has been accepted).
+    pub fn document_flow_update(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        document_body: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.update")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "fields": {
+                    "document": document_body,
+                },
+            }))
+    }
+
     pub fn invite_create_structured(
         space_id: &str,
         actor: &str,
@@ -393,6 +440,38 @@ mod tests {
         let json = serde_json::to_string(&op).unwrap();
         let parsed: OperationEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(op, parsed);
+    }
+
+    #[test]
+    fn document_flow_create_carries_synthesis_body() {
+        let op = cx_ops::document_flow_create(
+            "cx:space:doc-test",
+            "did:web:alice",
+            "cx:flow:doc-1",
+            "Untitled Document",
+            json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
+        )
+        .build("test_node");
+
+        assert_eq!(op.op_type, "cx.flow.create");
+        assert_eq!(op.body["flow_id"], "cx:flow:doc-1");
+        assert_eq!(op.body["kind"], "document");
+        assert_eq!(op.body["fields"]["document"]["blocks"][0]["kind"], "Heading");
+    }
+
+    #[test]
+    fn document_flow_update_targets_existing_flow_id() {
+        let op = cx_ops::document_flow_update(
+            "cx:space:doc-test",
+            "did:web:alice",
+            "cx:flow:doc-1",
+            json!({"blocks": []}),
+        )
+        .build("test_node");
+
+        assert_eq!(op.op_type, "cx.flow.update");
+        assert_eq!(op.body["flow_id"], "cx:flow:doc-1");
+        assert!(op.body["fields"]["document"]["blocks"].is_array());
     }
 
     #[test]

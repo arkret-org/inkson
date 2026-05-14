@@ -22,9 +22,52 @@ use dioxus_router::Link;
 
 use crate::{
     api::ContrixApi,
+    local_state::LocalStateStore,
     routes::Route,
     views::helpers::{authed_api, handle_from_did},
 };
+
+/// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
+const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
+
+/// Render a `did:key:zXXXX...XX` shorthand for display. Keeps the
+/// `ed25519/` prefix style so the metric tile remains compact.
+fn shorten_device_key(did_key: &str) -> String {
+    if let Some(rest) = did_key.strip_prefix("did:key:") {
+        if rest.len() > 10 {
+            format!("ed25519/{}…{}", &rest[..6], &rest[rest.len() - 4..])
+        } else {
+            format!("ed25519/{rest}")
+        }
+    } else if did_key.is_empty() {
+        "(not generated yet)".to_owned()
+    } else {
+        did_key.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::shorten_device_key;
+
+    #[test]
+    fn shortens_long_did_key() {
+        let s = shorten_device_key("did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH");
+        assert!(s.starts_with("ed25519/"));
+        assert!(s.contains("…"));
+        assert!(s.len() < "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH".len());
+    }
+
+    #[test]
+    fn falls_back_for_empty() {
+        assert_eq!(shorten_device_key(""), "(not generated yet)");
+    }
+
+    #[test]
+    fn passes_through_non_did_key() {
+        assert_eq!(shorten_device_key("custom-id-42"), "custom-id-42");
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OnboardingStep {
@@ -60,12 +103,24 @@ pub fn OnboardingPanel(
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
+    state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut step = use_signal(|| OnboardingStep::DidMethod);
     let mut did_method = use_signal(|| "did:web".to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
     let mut handle_domain = use_signal(|| "users.contrix.social".to_owned());
-    let mut recovery_choice = use_signal(|| "vault".to_owned());
+
+    let initial_choice = state_store
+        .read()
+        .load_private_data(&account_did(), ONBOARDING_RECOVERY_CHOICE_KEY)
+        .unwrap_or_default();
+    let mut recovery_choice = use_signal(|| initial_choice);
+
+    let device_key_display = state_store
+        .read()
+        .local_identity_record()
+        .map(|record| shorten_device_key(&record.did_key))
+        .unwrap_or_else(|| shorten_device_key(""));
     let mut register_did = use_signal(|| account_did());
     let mut register_handle = use_signal(|| handle_from_did(&account_did()));
     let mut register_display_name = use_signal(|| "yougen".to_owned());
@@ -81,7 +136,7 @@ pub fn OnboardingPanel(
                     span { "step {step().index()} / 4 · {step().label()}" }
                 }
                 div { class: "muted",
-                    "建立可恢复身份。每步对应一组 canonical event；账号注册与找回在 coauth 登录流程中完成。"
+                    "Establish a recoverable identity. Account registration and account recovery happen in the coauth sign-in flow; these four steps configure the on-device identity surface."
                 }
                 div { class: "actions", "data-testid": "onboarding-progress", role: "tablist",
                     for s in [OnboardingStep::DidMethod, OnboardingStep::Handle, OnboardingStep::Device, OnboardingStep::Recovery] {
@@ -200,18 +255,18 @@ pub fn OnboardingPanel(
                         span { "identity-did.md §3" }
                     }
                     div { class: "muted",
-                        "v1 core 默认 principal method 是 did:web；high-trust 升级到 did:webvh；did:plc / did:key / did:pkh / KERI / TSP 都是 v1.1+ interop extension。"
+                        "v1 core defaults to did:web for the principal identifier. did:webvh raises trust with an audit-log chain; did:plc / did:key / did:pkh / KERI / TSP are v1.1+ interop extensions."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "did:web" }
                             span { class: if did_method() == "did:web" { "badge accent" } else { "badge" }, "v1 core default" }
-                            div { class: "muted", "HTTPS + 域名；Auth Server 可在子域代为托管" }
+                            div { class: "muted", "HTTPS + domain; the Auth Server can host on a subdomain" }
                         }
                         div { class: "metric",
                             strong { "did:webvh" }
                             span { class: if did_method() == "did:webvh" { "badge accent" } else { "badge" }, "high-trust" }
-                            div { class: "muted", "did:web + did.jsonl 历史 + SCID + witness" }
+                            div { class: "muted", "did:web + did.jsonl history + SCID + witness" }
                         }
                         div { class: "metric",
                             strong { "did:plc" }
@@ -220,8 +275,8 @@ pub fn OnboardingPanel(
                         }
                         div { class: "metric",
                             strong { "did:key / did:pkh / did:keri" }
-                            span { class: "badge muted", "受限 / extension" }
-                            div { class: "muted", "临时 / 钱包 / KERI interop" }
+                            span { class: "badge muted", "Limited / extension" }
+                            div { class: "muted", "Ephemeral / wallet / KERI interop" }
                         }
                     }
                     div { class: "actions",
@@ -250,7 +305,7 @@ pub fn OnboardingPanel(
                         span { "identity-handles.md" }
                     }
                     div { class: "muted",
-                        "Handle 是人类可读入口，不是权限主键。绑定后可被反向解析回你的 DID。"
+                        "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
                     }
                     div { class: "workflow-form",
                         label { "Local part" }
@@ -270,7 +325,7 @@ pub fn OnboardingPanel(
                         "= @{handle_local}@{handle_domain} → {did_method}:{handle_domain}:{handle_local}"
                     }
                     div { class: "muted",
-                        "Handle 反向解析回 DID 的证据通过 cx.did.proof event 在公共 directory 中保留（content-addressed proof）。"
+                        "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
                     }
                     div { class: "actions",
                         button { class: "secondary", onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
@@ -287,28 +342,28 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §1-§3" }
                     }
                     div { class: "muted",
-                        "本设备生成 device key（ed25519，本地仅）。授权 device set 是独立步骤，登录因子只能签发短期 cx.session.grant；改变长期 device set 必须 cx.device.authorized。"
+                        "This device generates its own signing key locally (ed25519). The private key never leaves the device. Authorizing the device into your long-term set is a separate step; signing in alone only gives this device a short-lived session."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Device key" }
-                            span { "ed25519/Q4n…F9" }
-                            div { class: "muted", "本地生成；私钥永不上传" }
+                            span { "data-testid": "onboarding-device-key", "{device_key_display}" }
+                            div { class: "muted", "Generated locally; private key never uploaded" }
                         }
                         div { class: "metric",
-                            strong { "Session grant" }
-                            span { "cx.session.grant" }
-                            div { class: "muted", "ttl=15m；不持有 E2EE 历史密钥" }
+                            strong { "Device id" }
+                            span { class: "mono", "data-testid": "onboarding-device-id", "{device_id()}" }
+                            div { class: "muted", "Stable identifier for this device" }
                         }
                         div { class: "metric",
                             strong { "Device authorization" }
-                            span { "cx.device.authorized" }
-                            div { class: "muted", "改变长期 device set 的唯一 event" }
+                            span { "Required to stay long-term" }
+                            div { class: "muted", "Adds this device's public key to your authorized set" }
                         }
                         div { class: "metric",
                             strong { "Verification" }
-                            span { "cx.key.verification.*" }
-                            div { class: "muted", "可选 SAS / QR ceremony 后由其它成员 cross-sign" }
+                            span { "Optional SAS / QR" }
+                            div { class: "muted", "Your existing devices cross-sign the new one" }
                         }
                     }
                     div { class: "actions",
@@ -326,23 +381,23 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "三层独立可叠加。任一层成功 → 写入 cx.identity.recovery + 新 device 授权。"
+                        "Three independent layers, all stackable. Recovering through any one of them re-authorizes a fresh device on your account."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Encrypted Cloud Vault" }
                             span { class: if recovery_choice() == "vault" { "badge accent" } else { "badge" }, "Argon2id + xchacha20poly1305" }
-                            div { class: "muted", "强口令派生 → 加密 master key + recovery key 上传" }
+                            div { class: "muted", "Strong passphrase stretched on-device, then encrypted master key + recovery key are uploaded" }
                         }
                         div { class: "metric",
                             strong { "Social Recovery (SSS)" }
                             span { class: if recovery_choice() == "social" { "badge accent" } else { "badge" }, "3 / 5 threshold" }
-                            div { class: "muted", "Shamir's Secret Sharing 切片分给 guardian" }
+                            div { class: "muted", "Shamir's Secret Sharing splits the secret across trusted guardians" }
                         }
                         div { class: "metric",
                             strong { "Recovery Key" }
                             span { class: if recovery_choice() == "key" { "badge accent" } else { "badge" }, "high-entropy" }
-                            div { class: "muted", "物理介质保存；服务端不存" }
+                            div { class: "muted", "Keep offline on physical media; the server never stores it" }
                         }
                     }
                     div { class: "actions",
@@ -367,11 +422,30 @@ pub fn OnboardingPanel(
                     }
                     div { class: "actions",
                         button { class: "secondary", onclick: move |_| step.set(OnboardingStep::Device), "← Back" }
-                        Link {
-                            class: "primary",
-                            "data-testid": "onboarding-finish",
-                            to: Route::Dashboard,
-                            "Finish onboarding →"
+                        {
+                            let choice = recovery_choice();
+                            let choice_empty = choice.trim().is_empty();
+                            rsx! {
+                                Link {
+                                    class: if choice_empty { "secondary" } else { "primary" },
+                                    "data-testid": "onboarding-finish",
+                                    to: Route::Dashboard,
+                                    onclick: {
+                                        let actor = account_did();
+                                        let choice = choice.clone();
+                                        move |_| {
+                                            if !choice.trim().is_empty() {
+                                                state_store.write().save_private_data(
+                                                    &actor,
+                                                    ONBOARDING_RECOVERY_CHOICE_KEY,
+                                                    choice.clone(),
+                                                );
+                                            }
+                                        }
+                                    },
+                                    if choice_empty { "Select a recovery option to finish" } else { "Finish onboarding →" }
+                                }
+                            }
                         }
                     }
                 }

@@ -23,6 +23,9 @@ url = "2.5.7"
 ed25519-dalek = { version = "2.1.1", features = ["pem", "pkcs8"] }
 bs58 = "0.5.1"
 tracing = "0.1"
+# QR rendering for device-verification handoff. SVG output keeps the
+# crate pure-Rust with no image / font dependencies.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Round 21: SDK bumped 0.4.0 → 0.5.0 by the parallel SDK agent. Pinned the

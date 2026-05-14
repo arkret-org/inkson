@@ -3,6 +3,8 @@ use dioxus_router::Link;
 
 use crate::{
     components::{HelpTip, UiIcon},
+    i18n::tr,
+    local_state::LocalStateStore,
     models::SpacePreview,
     routes::Route,
     views::helpers::authed_api,
@@ -15,6 +17,7 @@ pub fn DashboardPanel(
     spaces: Signal<Vec<SpacePreview>>,
     selected_space: Signal<String>,
     view: Signal<super::View>,
+    state_store: Signal<LocalStateStore>,
     device_queue: usize,
     frontier_state: String,
     sync_cursor: String,
@@ -27,10 +30,38 @@ pub fn DashboardPanel(
         .find(|space| space.space_id == selected_space())
         .cloned()
         .or_else(|| spaces().first().cloned());
+
+    let unread_notifications: usize = {
+        let snapshot = state_store.read().load();
+        snapshot
+            .notification_projection
+            .iter()
+            .filter(|value| {
+                let id = value
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let client_state = snapshot
+                    .notification_client_state
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_default();
+                let read = value
+                    .get("read")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(client_state.read);
+                let archived = value
+                    .get("archived")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(client_state.archived);
+                !read && !archived
+            })
+            .count()
+    };
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
             div { class: "mb-24", "data-testid": "dashboard-hero",
-                h1 { style: "font-size: 22px; margin: 0; letter-spacing: 0;", "Home" }
+                h1 { style: "font-size: 22px; margin: 0; letter-spacing: 0;", {tr("nav.dashboard")} }
             }
 
             div { class: "metric-grid mb-24", "data-testid": "dashboard-metrics",
@@ -38,17 +69,17 @@ pub fn DashboardPanel(
                     class: "metric",
                     to: Route::Notifications,
                     onclick: move |_| view.set(super::View::Notifications),
-                    div { class: "lbl", "Notifications" }
-                    div { class: "val", "0" }
-                    div { class: "delta", if has_session { "Unread and approvals" } else { "Sign in required" } }
+                    div { class: "lbl", {tr("dashboard.notifications_label")} }
+                    div { class: "val", "{unread_notifications}" }
+                    div { class: "delta", if has_session { {tr("dashboard.notifications_delta_unread")} } else { {tr("dashboard.notifications_delta_signin")} } }
                 }
                 Link {
                     class: "metric",
                     to: Route::Directory,
                     onclick: move |_| view.set(super::View::Directory),
-                    div { class: "lbl", "Spaces" }
+                    div { class: "lbl", {tr("dashboard.spaces_label")} }
                     div { class: "val", "{spaces().len()}" }
-                    div { class: "delta", if has_session { "Search or join a Space" } else { "Sign in to load spaces" } }
+                    div { class: "delta", if has_session { {tr("dashboard.spaces_delta_search")} } else { {tr("dashboard.spaces_delta_signin")} } }
                 }
                 if let Some(space) = active_space.as_ref() {
                     Link {

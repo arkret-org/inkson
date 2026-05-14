@@ -1185,34 +1185,34 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { "Progressive disclosure" }
                         span { "identity-handles §16" }
-                        HelpTip { text: "DID Document 不承担身份画像。Claim / handle / 邮箱等敏感属性按 audience 选择性披露：你设置 disclosure policy，对方发 presentation_request，你回 presentation_response，每次披露由 disclosure_receipt 留痕。" }
+                        HelpTip { text: "Your DID Document is not your identity profile. Sensitive attributes (claims, handle, email) are disclosed selectively per audience: you set a disclosure policy, counterparties send a presentation_request, you reply with a presentation_response, and every disclosure is logged in a disclosure_receipt." }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Disclosure policy" }
                             span { "cx.identity.disclosure_policy" }
-                            div { class: "muted", "声明哪些字段对哪类 audience 可见" }
+                            div { class: "muted", "Declares which fields are visible to which audience" }
                         }
                         div { class: "metric",
                             strong { "Presentation request" }
                             span { "cx.identity.presentation_request" }
-                            div { class: "muted", "对方发起的 claim 请求（含目的与最小字段集）" }
+                            div { class: "muted", "Counterparty-initiated claim request (carries purpose + minimum field set)" }
                         }
                         div { class: "metric",
                             strong { "Presentation response" }
                             span { "cx.identity.presentation_response" }
-                            div { class: "muted", "你回的 verifiable presentation；只暴露被授权字段" }
+                            div { class: "muted", "Your verifiable presentation; only authorized fields are revealed" }
                         }
                         div { class: "metric",
                             strong { "Disclosure receipt" }
                             span { "cx.identity.disclosure_receipt" }
-                            div { class: "muted", "审计留痕；可被 redact 但 hash chain 不变" }
+                            div { class: "muted", "Audit trail; redactable but the hash chain is preserved" }
                         }
                     }
                     div { class: "actions",
-                        button { class: "secondary", "data-testid": "disclosure-policy-edit", "编辑 disclosure policy" }
-                        button { class: "secondary", "data-testid": "disclosure-history-view", "查看 disclosure 历史" }
-                        button { class: "secondary", "data-testid": "presentation-pending", "处理 pending request (0)" }
+                        button { class: "secondary", "data-testid": "disclosure-policy-edit", "Edit disclosure policy" }
+                        button { class: "secondary", "data-testid": "disclosure-history-view", "View disclosure history" }
+                        button { class: "secondary", "data-testid": "presentation-pending", "Handle pending request (0)" }
                     }
                 }
 
@@ -1224,8 +1224,8 @@ pub fn SettingsPanel(
                         HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use cx.account.blocklist." }
                     }
                     div { class: "actions",
-                        button { class: "secondary", "data-testid": "blocklist-edit", "编辑 blocklist" }
-                        span { class: "badge", "2 个 actor 已屏蔽" }
+                        button { class: "secondary", "data-testid": "blocklist-edit", "Edit blocklist" }
+                        span { class: "badge", "2 actors blocked" }
                     }
                 }
 
@@ -1251,7 +1251,7 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { "Account Data (actor-private)" }
                         span { "cx.account_data.set" }
-                        HelpTip { text: "下面这些偏好写入到你账号的 actor-private channel，不会同步给 Space 其它成员；改变共享 View 设置请走该 View 的 Edit 按钮（写 cx.view.update）。" }
+                        HelpTip { text: "The preferences below write to your account's actor-private channel and never sync to other Space members. To change a shared View's settings, use that View's Edit button (which writes cx.view.update)." }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -1272,12 +1272,12 @@ pub fn SettingsPanel(
                         div { class: "metric",
                             strong { "Profile space override" }
                             span { "cx.profile.space_override" }
-                            div { class: "muted", "在某个 Space 内显示不同 profile / handle" }
+                            div { class: "muted", "Show a different profile or handle inside a specific Space" }
                         }
                     }
                     div { class: "actions",
-                        button { class: "secondary", "data-testid": "account-data-export", "导出 account_data" }
-                        button { class: "secondary", "data-testid": "account-data-clear", "清空 actor-private 偏好" }
+                        button { class: "secondary", "data-testid": "account-data-export", "Export account_data" }
+                        button { class: "secondary", "data-testid": "account-data-clear", "Clear actor-private preferences" }
                     }
                 }
                         }

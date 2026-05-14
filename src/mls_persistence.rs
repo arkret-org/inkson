@@ -656,7 +656,8 @@ mod tests {
 
         let identity = ContrixMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),
-            DeviceId::new("dev_alice_1".to_owned()).unwrap(),
+            // SDK 0.7 requires the canonical `cx:device:<uuid7>` form.
+            DeviceId::new("cx:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
         let group = identity.create_group(b"cx:space:round28-snapshot").unwrap();
