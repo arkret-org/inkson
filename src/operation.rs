@@ -398,6 +398,44 @@ pub mod cx_ops {
             .target_ref(invite_id)
             .body(json!({"state": "canceled", "reason": reason}))
     }
+
+    /// Build a `cx.place.archive` operation. The Place transitions from
+    /// `Active` to `Archived`; reversible via [`place_restore`]. Spec:
+    /// `space-and-place.md §4.4`. Soland's `PLACE_LIFECYCLE_REQUIREMENTS`
+    /// validator requires the `place_id` field on the wire.
+    pub fn place_archive(space_id: &str, actor: &str, place_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.place.archive")
+            .target_ref(place_id)
+            .body(json!({ "place_id": place_id }))
+    }
+
+    /// Build a `cx.place.restore` operation. Reverses [`place_archive`]
+    /// (`archived -> active`). The SDK reducer enforces `state == archived`
+    /// at apply time; tombstoned Places MUST NOT be restored. Spec:
+    /// `space-and-place.md §4.4`, `common-fields.md §5`.
+    pub fn place_restore(space_id: &str, actor: &str, place_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.place.restore")
+            .target_ref(place_id)
+            .body(json!({ "place_id": place_id }))
+    }
+
+    /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
+    /// and `common-fields.md §5.1`. Reducer rejects with `flow_not_active`
+    /// when source state is not `active`.
+    pub fn flow_archive(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.archive")
+            .target_ref(flow_id)
+            .body(json!({ "flow_id": flow_id }))
+    }
+
+    /// Build a `cx.flow.restore` operation. Reverses [`flow_archive`]
+    /// (`archived -> active`). SDK reducer rejects with `flow_not_archived`
+    /// when source state is not `archived`.
+    pub fn flow_restore(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.restore")
+            .target_ref(flow_id)
+            .body(json!({ "flow_id": flow_id }))
+    }
 }
 
 #[cfg(test)]
@@ -554,5 +592,37 @@ mod tests {
         .build("node");
         assert_eq!(cancel.op_type, "cx.invite.cancel");
         assert_eq!(cancel.body["reason"], "expired");
+    }
+
+    #[test]
+    fn place_lifecycle_helpers_emit_canonical_kinds() {
+        let place_id = "cx:place:01904100-0000-7000-8000-1fb50799ad42";
+        let archive = cx_ops::place_archive("cx:space:test", "did:web:alice.example", place_id)
+            .build("node");
+        assert_eq!(archive.op_type, "cx.place.archive");
+        assert_eq!(archive.body["place_id"], place_id);
+        assert_eq!(archive.target_ref.as_deref(), Some(place_id));
+
+        let restore = cx_ops::place_restore("cx:space:test", "did:web:alice.example", place_id)
+            .build("node");
+        assert_eq!(restore.op_type, "cx.place.restore");
+        assert_eq!(restore.body["place_id"], place_id);
+        assert_eq!(restore.target_ref.as_deref(), Some(place_id));
+    }
+
+    #[test]
+    fn flow_lifecycle_helpers_emit_canonical_kinds() {
+        let flow_id = "cx:flow:01904100-0000-7000-8000-1fb50799ad50";
+        let archive = cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id)
+            .build("node");
+        assert_eq!(archive.op_type, "cx.flow.archive");
+        assert_eq!(archive.body["flow_id"], flow_id);
+        assert_eq!(archive.target_ref.as_deref(), Some(flow_id));
+
+        let restore = cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id)
+            .build("node");
+        assert_eq!(restore.op_type, "cx.flow.restore");
+        assert_eq!(restore.body["flow_id"], flow_id);
+        assert_eq!(restore.target_ref.as_deref(), Some(flow_id));
     }
 }

@@ -35,6 +35,23 @@ struct KanbanColumn {
     title: String,
     rank: String,
     cards: Vec<KanbanCard>,
+    /// Place lifecycle state. `Active` is the wire default; `Archived` is set
+    /// optimistically after a successful `cx.place.archive` submit and reset
+    /// after `cx.place.restore`. Spec: `space-and-place.md §4.4`.
+    /// `Tombstoned` is irreversible and modeled here for completeness but the
+    /// UI currently has no tombstone affordance — server-only path.
+    state: PlaceLifecycleState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PlaceLifecycleState {
+    #[default]
+    Active,
+    Archived,
+    /// Server-only terminal state. UI never produces this; the variant
+    /// exists so `dispatch_place_lifecycle` can exhaustively match.
+    #[allow(dead_code)]
+    Tombstoned,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +77,24 @@ struct KanbanCard {
     activity_hint: String,
     audit_hint: String,
     state: CardState,
+    /// Flow lifecycle state (orthogonal to `state` above which is
+    /// Move-lifecycle). Spec: `flow-and-message.md §3`,
+    /// `common-fields.md §5.1`. Active cards render in the column;
+    /// Archived cards move to the archived-cards drawer. Tombstoned is
+    /// included for state-machine completeness but UI never emits it.
+    lifecycle: FlowLifecycleState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FlowLifecycleState {
+    #[default]
+    Active,
+    Archived,
+    /// Server-only terminal (`deleted` / `redacted` per the wire enum,
+    /// merged here for UI). The UI never produces this; the variant
+    /// exists so `dispatch_flow_lifecycle` can exhaustively match.
+    #[allow(dead_code)]
+    Tombstoned,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,6 +296,7 @@ fn collection_projection_to_columns(
             title: group.title.clone(),
             rank: group.rank.clone().unwrap_or_default(),
             cards: group.items.iter().map(card_from_projection_item).collect(),
+            state: PlaceLifecycleState::Active,
         })
         .collect()
 }
@@ -373,6 +409,7 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
         activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
         audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
         state: CardState::Synced,
+        lifecycle: FlowLifecycleState::Active,
     }
 }
 
@@ -600,6 +637,7 @@ pub fn KanbanPanel(
                                         title: title.clone(),
                                         rank: rank.clone(),
                                         cards: Vec::new(),
+                                        state: PlaceLifecycleState::Active,
                                     });
                                     let value = json!({
                                         "kind": "list",
@@ -651,7 +689,7 @@ pub fn KanbanPanel(
             }
 
             div { class: "board-grid", "data-testid": "kanban-board-grid",
-                for column in columns().iter() {
+                for column in columns().iter().filter(|c| c.state == PlaceLifecycleState::Active) {
                     div {
                         class: "event board-column",
                         "data-testid": "kanban-column",
@@ -693,9 +731,39 @@ pub fn KanbanPanel(
                         div { class: "event-head",
                             span { class: "space-title", "{column.title}" }
                             span { "rank {column.rank} / {column.cards.len()}" }
+                            button {
+                                class: "secondary",
+                                "data-testid": "list-archive-button",
+                                "data-place-id": "{column.id}",
+                                title: "Archive this list (cx.place.archive)",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let space = selected_space.clone();
+                                    let actor = account_did.clone();
+                                    let place_id = column.id.clone();
+                                    move |_| {
+                                        dispatch_place_lifecycle(
+                                            base.clone(),
+                                            token,
+                                            space.clone(),
+                                            actor.clone(),
+                                            place_id.clone(),
+                                            PlaceLifecycleState::Archived,
+                                            columns,
+                                            board_status,
+                                        );
+                                    }
+                                },
+                                "Archive"
+                            }
                         }
 
-                for (card_index, card) in column.cards.iter().enumerate() {
+                for (card_index, card) in column
+                    .cards
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.lifecycle == FlowLifecycleState::Active)
+                {
                             div {
                                 class: "event board-card",
                                 "data-testid": "kanban-card",
@@ -779,6 +847,34 @@ pub fn KanbanPanel(
                                 if card.locked_flow.is_some() {
                                         span { class: "badge amber", "Locked discussion hidden" }
                                     }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "card-archive-button",
+                                        "data-flow-id": "{card.id}",
+                                        title: "Archive this card (cx.flow.archive)",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let flow_id = card.id.clone();
+                                            move |evt: dioxus::events::MouseEvent| {
+                                                // Stop propagation so the card's parent onclick
+                                                // (which opens the card-detail drawer) doesn't fire.
+                                                evt.stop_propagation();
+                                                dispatch_flow_lifecycle(
+                                                    base.clone(),
+                                                    token,
+                                                    space.clone(),
+                                                    actor.clone(),
+                                                    flow_id.clone(),
+                                                    FlowLifecycleState::Archived,
+                                                    columns,
+                                                    board_status,
+                                                );
+                                            }
+                                        },
+                                        "Archive"
+                                    }
                                 }
                             }
                         }
@@ -848,6 +944,7 @@ pub fn KanbanPanel(
                                                     activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
                                                     audit_hint: "Move record queued locally until submit_move succeeds.".to_owned(),
                                                     state: CardState::Queued,
+                                                    lifecycle: FlowLifecycleState::Active,
                                                 };
                                                 if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {
                                                     col.cards.push(card);
@@ -894,6 +991,143 @@ pub fn KanbanPanel(
                                         move |_| adding_card_to.set(Some(col_id.clone()))
                                     },
                                     "+ Add Card"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Archived lists panel — Place lifecycle `archived` state.
+            // Lists appear here after `cx.place.archive` is accepted and
+            // are removed from the main board-grid above. Each row carries
+            // a Restore button that submits `cx.place.restore` (SDK reducer
+            // enforces `state == archived` server-side / next sync).
+            {
+                let archived: Vec<KanbanColumn> = columns()
+                    .iter()
+                    .filter(|c| c.state == PlaceLifecycleState::Archived)
+                    .cloned()
+                    .collect();
+                let archived_count = archived.len();
+                rsx! {
+                    div { class: "event", "data-testid": "kanban-archived-lists",
+                        div { class: "event-head",
+                            span { "Archived lists" }
+                            span { "{archived_count} list(s)" }
+                        }
+                        if archived_count == 0 {
+                            div { class: "muted", "No archived lists." }
+                        } else {
+                            for column in archived.iter() {
+                                div { class: "event", "data-testid": "kanban-archived-list-row",
+                                    div { class: "event-head",
+                                        span { class: "space-title", "{column.title}" }
+                                        span { "rank {column.rank} / {column.cards.len()} card(s)" }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "list-restore-button",
+                                            "data-place-id": "{column.id}",
+                                            title: "Restore this list (cx.place.restore)",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let space = selected_space.clone();
+                                                let actor = account_did.clone();
+                                                let place_id = column.id.clone();
+                                                move |_| {
+                                                    dispatch_place_lifecycle(
+                                                        base.clone(),
+                                                        token,
+                                                        space.clone(),
+                                                        actor.clone(),
+                                                        place_id.clone(),
+                                                        PlaceLifecycleState::Active,
+                                                        columns,
+                                                        board_status,
+                                                    );
+                                                }
+                                            },
+                                            "Restore"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Archived cards drawer — Flow lifecycle `archived` state.
+            // Cards appear here after `cx.flow.archive` is accepted and
+            // are removed from the column above. Each row carries the
+            // column title (where it came from) + a Restore button that
+            // submits `cx.flow.restore` (SDK reducer enforces
+            // `state == archived` per common-fields.md §5.1).
+            {
+                #[derive(Clone)]
+                struct ArchivedCardRow {
+                    card: KanbanCard,
+                    column_title: String,
+                }
+                let archived_cards: Vec<ArchivedCardRow> = columns()
+                    .iter()
+                    .flat_map(|col| {
+                        let col_title = col.title.clone();
+                        col.cards
+                            .iter()
+                            .filter(|c| c.lifecycle == FlowLifecycleState::Archived)
+                            .cloned()
+                            .map(move |card| ArchivedCardRow {
+                                card,
+                                column_title: col_title.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let archived_count = archived_cards.len();
+                rsx! {
+                    div { class: "event", "data-testid": "kanban-archived-cards",
+                        div { class: "event-head",
+                            span { "Archived cards" }
+                            span { "{archived_count} card(s)" }
+                        }
+                        if archived_count == 0 {
+                            div { class: "muted", "No archived cards." }
+                        } else {
+                            for row in archived_cards.iter() {
+                                div { class: "event", "data-testid": "kanban-archived-card-row",
+                                    div { class: "event-head",
+                                        span { class: "space-title", "{row.card.title}" }
+                                        span { "from list: {row.column_title}" }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "card-restore-button",
+                                            "data-flow-id": "{row.card.id}",
+                                            title: "Restore this card (cx.flow.restore)",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let space = selected_space.clone();
+                                                let actor = account_did.clone();
+                                                let flow_id = row.card.id.clone();
+                                                move |_| {
+                                                    dispatch_flow_lifecycle(
+                                                        base.clone(),
+                                                        token,
+                                                        space.clone(),
+                                                        actor.clone(),
+                                                        flow_id.clone(),
+                                                        FlowLifecycleState::Active,
+                                                        columns,
+                                                        board_status,
+                                                    );
+                                                }
+                                            },
+                                            "Restore"
+                                        }
+                                    }
+                                    if !row.card.description.is_empty() {
+                                        div { class: "muted", "{row.card.description}" }
+                                    }
                                 }
                             }
                         }
@@ -1343,6 +1577,208 @@ fn dispatch_flow_position_move(
         write_records,
         board_status,
     );
+}
+
+/// Pure guard for Place lifecycle transitions. Refuses two illegal cases:
+/// (1) same-state self-transition — UI structure already gates this
+/// (Archive button only renders on Active columns and vice versa), but
+/// keeping a programmatic guard avoids no-op server roundtrips if a future
+/// code path bypasses the UI filter; (2) UI-emitted Tombstone — terminal
+/// state is server-only. Extracted as a pure fn so the policy is unit-tested
+/// without spinning up a Dioxus runtime.
+fn validate_place_lifecycle_transition(
+    place_id: &str,
+    prior: PlaceLifecycleState,
+    target: PlaceLifecycleState,
+) -> Result<(), String> {
+    if matches!(target, PlaceLifecycleState::Tombstoned) {
+        return Err("Tombstone is server-only; UI dispatch refused".to_owned());
+    }
+    if prior == target {
+        return Err(format!(
+            "list {place_id} already in {target:?} state; refused"
+        ));
+    }
+    Ok(())
+}
+
+/// Dispatch a `cx.place.archive` or `cx.place.restore` operation against
+/// the given list (Place) and optimistically update the column's
+/// `PlaceLifecycleState` in the UI signal. Spec:
+/// `space-and-place.md §4.4`. Soland's `PLACE_LIFECYCLE_REQUIREMENTS`
+/// envelope validator and the SDK reducer's `place_not_archived` guard
+/// both enforce wire / state shape; this helper only handles the
+/// submit + local optimistic projection. If the submit fails the local
+/// state is rolled back to the prior value.
+fn dispatch_place_lifecycle(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    place_id: String,
+    target: PlaceLifecycleState,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut board_status: Signal<String>,
+) {
+    // Optimistic state update. Capture prior state for rollback on error
+    // and apply the same-state / Tombstone guard inside the write
+    // critical section so prior is observed atomically.
+    let prior_state = {
+        let mut cols = columns.write();
+        let Some(col) = cols.iter_mut().find(|c| c.id == place_id) else {
+            board_status.set(format!("internal: list {place_id} not in board state"));
+            return;
+        };
+        let prior = col.state;
+        if let Err(msg) = validate_place_lifecycle_transition(&place_id, prior, target) {
+            board_status.set(msg);
+            return;
+        }
+        col.state = target;
+        prior
+    };
+
+    // Only Active <-> Archived reach here (validator rejects Tombstone).
+    let builder = match target {
+        PlaceLifecycleState::Archived => {
+            crate::operation::cx_ops::place_archive(&space_id, &actor_did, &place_id)
+        }
+        PlaceLifecycleState::Active => {
+            crate::operation::cx_ops::place_restore(&space_id, &actor_did, &place_id)
+        }
+        PlaceLifecycleState::Tombstoned => {
+            unreachable!("validate_place_lifecycle_transition rejects Tombstone target")
+        }
+    };
+    let op = builder.build("yougen");
+
+    let kind = op.op_type.clone();
+    let base = base_url.clone();
+    let api_token = token();
+    spawn(async move {
+        let result = with_authed_api(&base, api_token, |api| async move {
+            api.submit_operation_event(&op).await
+        })
+        .await;
+        match result {
+            Ok(_) => {
+                board_status.set(format!(
+                    "{kind} accepted; list optimistic state = {target:?}"
+                ));
+            }
+            Err(err) => {
+                // Rollback optimistic state on submit failure.
+                if let Some(col) = columns.write().iter_mut().find(|c| c.id == place_id) {
+                    col.state = prior_state;
+                }
+                board_status.set(format!("{kind} failed: {}", err.display()));
+            }
+        }
+    });
+}
+
+/// Pure guard for Flow lifecycle transitions. Mirrors
+/// `validate_place_lifecycle_transition` at the Flow layer — refuses
+/// same-state self-transitions and UI-emitted Tombstone targets.
+fn validate_flow_lifecycle_transition(
+    flow_id: &str,
+    prior: FlowLifecycleState,
+    target: FlowLifecycleState,
+) -> Result<(), String> {
+    if matches!(target, FlowLifecycleState::Tombstoned) {
+        return Err("Tombstone is server-only; UI dispatch refused".to_owned());
+    }
+    if prior == target {
+        return Err(format!(
+            "card {flow_id} already in {target:?} state; refused"
+        ));
+    }
+    Ok(())
+}
+
+/// Dispatch `cx.flow.archive` or `cx.flow.restore` for a card and
+/// optimistically update its `FlowLifecycleState`. Mirrors
+/// `dispatch_place_lifecycle` but at the Flow object layer. Spec:
+/// `flow-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
+/// enforces `state == archived` for restore (`flow_not_archived`) and
+/// `state == active` for archive (`flow_not_active` — once SDK round
+/// 10 lands; today only restore is reducer-enforced).
+fn dispatch_flow_lifecycle(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    flow_id: String,
+    target: FlowLifecycleState,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut board_status: Signal<String>,
+) {
+    // Locate the card across columns; capture prior state for rollback
+    // and apply the same-state / Tombstone guard inside the write
+    // critical section.
+    let prior_state = {
+        let mut cols = columns.write();
+        let mut found = None;
+        for col in cols.iter_mut() {
+            if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+                let prior = card.lifecycle;
+                if let Err(msg) = validate_flow_lifecycle_transition(&flow_id, prior, target) {
+                    board_status.set(msg);
+                    return;
+                }
+                card.lifecycle = target;
+                found = Some(prior);
+                break;
+            }
+        }
+        match found {
+            Some(prior) => prior,
+            None => {
+                board_status.set(format!("internal: card {flow_id} not in board state"));
+                return;
+            }
+        }
+    };
+
+    let builder = match target {
+        FlowLifecycleState::Archived => {
+            crate::operation::cx_ops::flow_archive(&space_id, &actor_did, &flow_id)
+        }
+        FlowLifecycleState::Active => {
+            crate::operation::cx_ops::flow_restore(&space_id, &actor_did, &flow_id)
+        }
+        FlowLifecycleState::Tombstoned => {
+            unreachable!("validate_flow_lifecycle_transition rejects Tombstone target")
+        }
+    };
+    let op = builder.build("yougen");
+
+    let kind = op.op_type.clone();
+    let base = base_url.clone();
+    let api_token = token();
+    spawn(async move {
+        let result = with_authed_api(&base, api_token, |api| async move {
+            api.submit_operation_event(&op).await
+        })
+        .await;
+        match result {
+            Ok(_) => {
+                board_status.set(format!(
+                    "{kind} accepted; card optimistic lifecycle = {target:?}"
+                ));
+            }
+            Err(err) => {
+                // Rollback on failure.
+                for col in columns.write().iter_mut() {
+                    if let Some(card) = col.cards.iter_mut().find(|c| c.id == flow_id) {
+                        card.lifecycle = prior_state;
+                        break;
+                    }
+                }
+                board_status.set(format!("{kind} failed: {}", err.display()));
+            }
+        }
+    });
 }
 
 /// Locate `card_id` in `from_column`, remove it, re-insert into
@@ -1911,7 +2347,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
                 audit_hint: "Audit records cx.flow.track.member and cx.message.create without granting discussion access.".to_owned(),
                 state: CardState::Synced,
+                lifecycle: FlowLifecycleState::Active,
             }],
+            state: PlaceLifecycleState::Active,
         },
         KanbanColumn {
             id: "cx:place:01list-progress00000000000000".to_owned(),
@@ -1938,7 +2376,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 activity_hint: "Pending move is visible until the reducer accepts the board event.".to_owned(),
                 audit_hint: "Audit preview will include local pending event and final reducer receipt.".to_owned(),
                 state: CardState::Queued,
+                lifecycle: FlowLifecycleState::Active,
             }],
+            state: PlaceLifecycleState::Active,
         },
         KanbanColumn {
             id: "cx:place:01list-done00000000000000000".to_owned(),
@@ -1968,7 +2408,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 activity_hint: "Conflict banner links to the reducer result and competing event.".to_owned(),
                 audit_hint: "Audit trail preserves rejected cx.flow.move with cas_conflict.".to_owned(),
                 state: CardState::Conflict,
+                lifecycle: FlowLifecycleState::Active,
             }],
+            state: PlaceLifecycleState::Active,
         },
     ]
 }
@@ -1990,6 +2432,132 @@ mod tests {
             result.is_none(),
             "synchronous init MUST return None; async refresh handles real fetch"
         );
+    }
+
+    /// Place lifecycle state defaults to Active per the spec wire
+    /// default; seed columns and projection-mapped columns MUST start
+    /// active so they appear in the main board grid.
+    #[test]
+    fn place_lifecycle_state_default_is_active() {
+        assert_eq!(PlaceLifecycleState::default(), PlaceLifecycleState::Active);
+        // Every seeded column starts Active.
+        for column in seed_columns() {
+            assert_eq!(
+                column.state,
+                PlaceLifecycleState::Active,
+                "seed column {} must start Active",
+                column.id
+            );
+        }
+    }
+
+    /// Place lifecycle validator rejects (a) same-state self-transition
+    /// and (b) UI-emitted Tombstone target. The legal transitions
+    /// (Active → Archived and Archived → Active) MUST be accepted so
+    /// archive / restore continue to work end-to-end.
+    #[test]
+    fn validate_place_lifecycle_transition_rules() {
+        // Same-state refusal — Active → Active.
+        let err = validate_place_lifecycle_transition(
+            "cx:place:test",
+            PlaceLifecycleState::Active,
+            PlaceLifecycleState::Active,
+        )
+        .expect_err("same-state Active→Active must be refused");
+        assert!(err.contains("already in"));
+        assert!(err.contains("cx:place:test"));
+
+        // Same-state refusal — Archived → Archived.
+        validate_place_lifecycle_transition(
+            "cx:place:test",
+            PlaceLifecycleState::Archived,
+            PlaceLifecycleState::Archived,
+        )
+        .expect_err("same-state Archived→Archived must be refused");
+
+        // Tombstone target refusal — UI never emits Tombstone.
+        let err = validate_place_lifecycle_transition(
+            "cx:place:test",
+            PlaceLifecycleState::Active,
+            PlaceLifecycleState::Tombstoned,
+        )
+        .expect_err("UI-emitted Tombstone must be refused");
+        assert!(err.contains("Tombstone"));
+
+        // Legal transitions stay green.
+        validate_place_lifecycle_transition(
+            "cx:place:test",
+            PlaceLifecycleState::Active,
+            PlaceLifecycleState::Archived,
+        )
+        .expect("Active→Archived is a legal transition");
+        validate_place_lifecycle_transition(
+            "cx:place:test",
+            PlaceLifecycleState::Archived,
+            PlaceLifecycleState::Active,
+        )
+        .expect("Archived→Active is a legal transition");
+    }
+
+    /// Symmetric to `validate_place_lifecycle_transition_rules` at the
+    /// Flow layer. Same two refusal cases, same two legal transitions.
+    #[test]
+    fn validate_flow_lifecycle_transition_rules() {
+        let err = validate_flow_lifecycle_transition(
+            "cx:flow:test",
+            FlowLifecycleState::Active,
+            FlowLifecycleState::Active,
+        )
+        .expect_err("same-state Active→Active must be refused");
+        assert!(err.contains("already in"));
+        assert!(err.contains("cx:flow:test"));
+
+        validate_flow_lifecycle_transition(
+            "cx:flow:test",
+            FlowLifecycleState::Archived,
+            FlowLifecycleState::Archived,
+        )
+        .expect_err("same-state Archived→Archived must be refused");
+
+        let err = validate_flow_lifecycle_transition(
+            "cx:flow:test",
+            FlowLifecycleState::Active,
+            FlowLifecycleState::Tombstoned,
+        )
+        .expect_err("UI-emitted Tombstone must be refused");
+        assert!(err.contains("Tombstone"));
+
+        validate_flow_lifecycle_transition(
+            "cx:flow:test",
+            FlowLifecycleState::Active,
+            FlowLifecycleState::Archived,
+        )
+        .expect("Active→Archived is a legal transition");
+        validate_flow_lifecycle_transition(
+            "cx:flow:test",
+            FlowLifecycleState::Archived,
+            FlowLifecycleState::Active,
+        )
+        .expect("Archived→Active is a legal transition");
+    }
+
+    /// Symmetric to `place_lifecycle_state_default_is_active` —
+    /// FlowLifecycleState MUST default to Active and every seeded card
+    /// MUST start Active so the demo board exercises the happy path.
+    #[test]
+    fn flow_lifecycle_state_default_is_active() {
+        assert_eq!(FlowLifecycleState::default(), FlowLifecycleState::Active);
+        for column in seed_columns() {
+            for card in &column.cards {
+                assert_eq!(
+                    card.lifecycle,
+                    FlowLifecycleState::Active,
+                    "seed card {} in column {} must start Active",
+                    card.id,
+                    column.id
+                );
+            }
+        }
     }
 
     /// T20 wire-up — `collection_projection_to_columns` adapter maps the
@@ -2126,6 +2694,7 @@ mod tests {
                     test_card("cx:flow:a1", "U"),
                     test_card("cx:flow:a2", "f"),
                 ],
+                state: PlaceLifecycleState::Active,
             },
             KanbanColumn {
                 id: "cx:place:list-b".to_owned(),
@@ -2135,6 +2704,7 @@ mod tests {
                     test_card("cx:flow:b1", "U"),
                     test_card("cx:flow:b3", "z"),
                 ],
+                state: PlaceLifecycleState::Active,
             },
         ];
         // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
@@ -2167,6 +2737,7 @@ mod tests {
                 test_card("cx:flow:a2", "f"),
                 test_card("cx:flow:a3", "p"),
             ],
+            state: PlaceLifecycleState::Active,
         }];
         // Move a3 to the top of the same list (rank "0" — before "U").
         let moved = relocate_card(&mut cols, "cx:flow:a3", "cx:place:list-a", "cx:place:list-a", "0").unwrap();
@@ -2260,6 +2831,7 @@ mod tests {
             activity_hint: String::new(),
             audit_hint: String::new(),
             state: CardState::Synced,
+            lifecycle: FlowLifecycleState::Active,
         }
     }
 
