@@ -177,20 +177,23 @@ struct BoardWriteRecord {
     rebase_attempts: u8,
 }
 
-/// T20 — Board projection 数据来源。
+/// T20 — Where the board projection data comes from.
 ///
-/// 当 SDK 提供 `client.collection_projection(view_id)` + soland 的
-/// `POST /api/v1/views/:id/projection` endpoint 上线后，UI 会优先消费
-/// API 派生的 board 状态；endpoint 不可用 / probe 失败时退回到本地 seed。
-/// UI 在 board 头部显式展示当前数据来源，避免把 demo 数据当真。
+/// Once `client.collection_projection(view_id)` ships in the SDK and soland's
+/// `POST /api/v1/views/:id/projection` endpoint goes live, the UI will prefer
+/// the API-derived board state; if the endpoint is unavailable or the probe
+/// fails, the UI falls back to local seed data. The board header surfaces
+/// the current source explicitly so demo data is never mistaken for real
+/// data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BoardProjectionSource {
-    /// 来自 Principal Server 的 collection projection 响应。
-    /// 命中条件：API 暴露 view projection endpoint 且 reducer 已 catch up
-    /// 到当前 sync frontier。
+    /// Sourced from the Principal Server's collection projection response.
+    /// Conditions: the API exposes the view-projection endpoint AND the
+    /// reducer has caught up to the current sync frontier.
     ApiDerived,
-    /// 来自本地 `seed_columns()` 的 demo 数据。
-    /// 命中条件：API 不可用 / 该 view 尚未在 spec 中定义 / 无网络。
+    /// Sourced from local `seed_columns()` demo data. Conditions: API
+    /// unavailable, the view is not yet defined in the spec, or the client
+    /// is offline.
     SeedFallback,
 }
 
@@ -221,15 +224,18 @@ impl BoardProjectionSource {
     }
 }
 
-/// T20 — 尝试从 API 获取 board projection；失败 / 不可用时返回 None。
+/// T20 — Attempt to load the board projection from the API; return `None`
+/// on failure or when the endpoint is unavailable.
 ///
-/// 当前 yougen 端 `api.rs` 没有 `collection_projection()` 方法，所以 probe
-/// 永远返回 None，调用方应回退到 `seed_columns()`。一旦 SDK 暴露
-/// `client.collection_projection(view_id)`，把 probe 的实现切换到调用 SDK 即可，
-/// 上层 UI 不需修改。
+/// The current `api.rs` does not expose a `collection_projection()` method,
+/// so this probe always returns `None` and the caller falls back to
+/// `seed_columns()`. Once the SDK exposes `client.collection_projection
+/// (view_id)`, swap the probe's body to call the SDK; the surrounding UI
+/// does not need to change.
 ///
-/// 函数签名带 `_view_id` 是为了固定未来调用形态：UI 持有 saved View 的 cx:view: id，
-/// 调 probe 时传过去。
+/// The `_view_id` parameter is reserved so the future signature is stable:
+/// the UI holds the saved View's `cx:view:` id and threads it in when calling
+/// the probe.
 #[allow(dead_code)]
 fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     // Synchronous init context — always returns None. UI starts with
@@ -475,7 +481,7 @@ pub fn KanbanPanel(
                 }
                 // Multi-renderer switcher — claude-design desktop/board.html
                 // models/views.md §4: View.kind = collection|timeline|graph|document|composite
-                // 当前 board 是 View{kind="collection", renderer="board"}，可切到 list/table/calendar/timeline
+                // The current board is View{kind="collection", renderer="board"} and can switch to list/table/calendar/timeline.
                 div { class: "actions", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
                     span { class: "muted", "View renderer:" }
                     span { class: "badge blue", "data-testid": "renderer-board", role: "tab", "aria-selected": "true", "board" }
@@ -927,7 +933,7 @@ pub fn KanbanPanel(
                         }
                         span { class: card.state.class_name(), "{card.state.label()}" }
                     }
-                    // Branch tabs — current-model.md §3 (synthesis / discussion 双 branch)
+                    // Branch tabs — current-model.md §3 (synthesis / discussion dual branch)
                     div { class: "actions", "data-testid": "card-branch-tabs", role: "tablist", "aria-label": "Flow branches",
                         span { class: "muted", "Branch:" }
                         span { class: "badge blue", role: "tab", "aria-selected": "true", "synthesis · primary" }
@@ -958,11 +964,13 @@ pub fn KanbanPanel(
                         }
                     }
                     // Card vs Room visibility — claude-design desktop/flow-detail.html
-                    // overview/current-model.md §6 (权限与成员边界) — 三条独立判定：
-                    //   1. 能看 Flow synthesis ≠ 能读 discussion（只有有效 access policy
-                    //      继承或授予 discussion 读取时才能读）
-                    //   2. 能读 discussion ≠ 能写 Flow synthesis 字段
-                    //   3. branch-scoped membership ≠ Space membership
+                    // overview/current-model.md §6 (permission and membership boundaries) —
+                    // three independent decisions:
+                    //   1. Seeing the Flow synthesis ≠ being able to read the discussion
+                    //      (reading requires an effective access policy that inherits or
+                    //      explicitly grants discussion read).
+                    //   2. Reading the discussion ≠ being able to write Flow synthesis fields.
+                    //   3. Branch-scoped membership ≠ Space membership.
                     div { class: "event", "data-testid": "card-vs-room-visibility",
                         div { class: "event-head",
                             span { "Card / Room visibility (independent)" }

@@ -1,5 +1,5 @@
-//! C10.D (2026-05-09 十六轮): client-side helpers to construct + sign
-//! `contrix_sdk::Move` values for the cell-driven write paths.
+//! Client-side helpers to construct and sign `contrix_sdk::Move` values
+//! for the cell-driven write paths.
 //!
 //! # When to use a Move (vs a direct event)
 //!

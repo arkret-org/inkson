@@ -3,6 +3,12 @@ name = "yougen"
 version = "0.1.0"
 edition = "2024"
 
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+debug = 0
+strip = "debuginfo"
+
 [dependencies]
 anyhow = "1.0.100"
 base64 = "0.22"
@@ -15,11 +21,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10"
 url = "2.5.7"
-# C10.D (2026-05-09 十六轮) Move signing. ed25519-dalek for signatures;
-# bs58 to encode public keys as did:key multibase (`z<base58btc(0xed01 ||
-# pubkey32)>`). Production deploys integrate OS keychain / WebAuthn /
-# HSM via separate paths and only call `move_builder::sign_move_*` for
-# the canonical-bytes-to-JWS step.
+# Move signing. ed25519-dalek for signatures; bs58 to encode public keys
+# as did:key multibase (`z<base58btc(0xed01 || pubkey32)>`). Production
+# deploys integrate OS keychain / WebAuthn / HSM via separate paths and
+# only call `move_builder::sign_move_*` for the canonical-bytes-to-JWS step.
 ed25519-dalek = { version = "2.1.1", features = ["pem", "pkcs8"] }
 bs58 = "0.5.1"
 tracing = "0.1"

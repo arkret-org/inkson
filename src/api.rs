@@ -285,9 +285,7 @@ impl std::error::Error for ContrixApiError {}
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<ContrixApiError>()
-        .is_some_and(|api_error| {
-            api_error.status == StatusCode::UNAUTHORIZED && api_error.error.code() == "auth_expired"
-        })
+        .is_some_and(|api_error| api_error.status == StatusCode::UNAUTHORIZED)
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
@@ -653,9 +651,9 @@ impl ContrixApi {
         self.delete_json(&format!("api/v1/spaces/{space_id}")).await
     }
 
-    // C10.D (2026-05-09 十六轮) Move/Anchor pipeline — the protocol-canonical
-    // write path for cell-driven state changes (consent, capability, member
-    // state, anchorer cell, MLS epoch, etc.). Non-cell writes use
+    // Move/Anchor pipeline — the protocol-canonical write path for
+    // cell-driven state changes (consent, capability, member state,
+    // anchorer cell, MLS epoch, etc.). Non-cell writes use
     // `POST /api/v1/events` instead.
 
     /// Submit a signed [`contrix_sdk::Move`] for the next anchorer batch.
@@ -2242,6 +2240,17 @@ mod tests {
         }
         .into();
         assert!(is_auth_expired_error(&error));
+
+        // Servers occasionally return 401 without a structured envelope (e.g. a
+        // bare body that fails to parse). By the time a 401 reaches the UI the
+        // built-in refresh in `send_with_retry` has already had its shot, so
+        // any 401 here means the session is dead — surface it as such.
+        let bare: anyhow::Error = ContrixApiError {
+            status: StatusCode::UNAUTHORIZED,
+            error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
+        }
+        .into();
+        assert!(is_auth_expired_error(&bare));
 
         let forbidden: anyhow::Error = ContrixApiError {
             status: StatusCode::FORBIDDEN,

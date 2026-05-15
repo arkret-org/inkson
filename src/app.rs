@@ -2192,6 +2192,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .server-switch {
   position: relative;
   margin-inline: 8px;
+  margin-bottom: 12px;
 }
 
 .server-switch-button {
@@ -2217,6 +2218,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 10%, transparent)),
     var(--nav-soft);
+}
+
+.server-switch-button[aria-expanded="true"] {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
 }
 
 .server-switch-button .server-switch-icon {
@@ -2266,11 +2273,14 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .server-switch-menu {
   display: grid;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 0;
   padding: 10px;
-  border: 1px solid var(--nav-border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--nav-bg-2) 94%, black);
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--accent-2));
+  border-top: 1px dashed color-mix(in srgb, var(--accent) 28%, var(--nav-border));
+  border-radius: 0 0 12px 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 60%),
+    var(--nav-soft);
   box-shadow: var(--shadow-md);
 }
 
@@ -5447,6 +5457,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         last_error.set(None);
         match ContrixApi::new(&base) {
             Ok(api) => {
+                // Probe `/server/describe` for status text, but treat failure
+                // as non-fatal: a transient describe error (CORS preflight,
+                // server warming up, brief 5xx) must not block the sync below
+                // — otherwise an existing session with cached/server-side
+                // spaces silently renders "No spaces loaded" until the user
+                // manually retries.
                 let description = match api.describe().await {
                     Ok(description) => {
                         status.set(format!(
@@ -5461,27 +5477,28 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             description.service_type, description.protocol_version
                         ));
                         server_description.set(Some(description.clone()));
-                        description
+                        Some(description)
                     }
                     Err(error) => {
                         status.set(format!(
-                            "{}: describe failed: {error}",
+                            "{}: describe failed: {error}; trying sync",
                             ConnectionState::Reconnecting.label()
                         ));
                         network_state.set("reconnecting".to_owned());
                         last_error.set(Some(format!("describe: {error}")));
                         server_probe_status.set(format!("server describe failed: {error}"));
                         server_description.set(None);
-                        return;
+                        None
                     }
                 };
 
                 let session_token = token();
                 if session_token.trim().is_empty() {
-                    status.set(format!(
-                        "Refreshed: {} / {}; sign-in required",
-                        description.service_type, description.protocol_version
-                    ));
+                    let probe_label = description
+                        .as_ref()
+                        .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
+                        .unwrap_or_else(|| "server probe unavailable".to_owned());
+                    status.set(format!("Refreshed: {probe_label}; sign-in required"));
                     network_state.set("online".to_owned());
                     sync_cursor.set("-".to_owned());
                     spaces.set(Vec::new());

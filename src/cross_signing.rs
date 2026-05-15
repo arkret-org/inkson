@@ -1,54 +1,60 @@
 //! Cross-signing setup orchestration.
 //!
-//! Spec依据: [`crypto-media/device-lifecycle.md`](../../contrix-spec/spec/v1/zh/crypto-media/device-lifecycle.md)
+//! Spec source: [`crypto-media/device-lifecycle.md`](../../contrix-spec/spec/v1/zh/crypto-media/device-lifecycle.md)
 //! §5 (Signing Hierarchy), §5.1 (Cross-Signing Publish Envelope), §5.2 (Device
 //! Trust Chain), §14 (Cross-Signing Reset).
 //!
-//! 与 [`device_revoke`](super::device_revoke) 一样, 这一层只生成 **可审计的步骤
-//! 计划**, 不直接落地——执行器顺序消费即可。SDK 提供的对应原语:
+//! Like [`device_revoke`](super::device_revoke), this layer only produces an
+//! **auditable step plan** — it does not perform side effects. The executor
+//! consumes the steps in order. Corresponding SDK primitives:
 //!
 //! - `CrossSigningPublishContent` / `SignedCrossSigningKey` /
-//!   `CrossSigningBinding`: spec §5.1 wire envelope。
+//!   `CrossSigningBinding`: spec §5.1 wire envelope.
 //! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorized.cross_signing_binding`
-//!   字段。
-//! - `CrossSigningResetContent`: spec §14.1 reset envelope。
+//!   field.
+//! - `CrossSigningResetContent`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset`
-//!   / `evaluate_trust_chain`: 本地状态机。
+//!   / `evaluate_trust_chain`: local state machine.
 //!
-//! v1.1 之前 yougen UI 用 "Setup Cross-Signing (coming soon)" 占位; 现在 UI
-//! 渲染 [`CrossSigningSetupPlan`] 并显示每个步骤对应的 canonical event kind,
-//! 与 device-revoke 的设计保持一致。
+//! The UI renders [`CrossSigningSetupPlan`] and shows the canonical event kind
+//! for each step, mirroring the device-revoke design.
 
 use serde::{Deserialize, Serialize};
 
-/// 一次完整的 cross-signing setup 步骤。每一步都对应 spec 中某个具体动作或
-/// canonical event。
+/// One step of a complete cross-signing setup. Each variant maps to a specific
+/// action or canonical event in the spec.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "step")]
 pub enum CrossSigningSetupStep {
-    /// 本地 KDF / 硬件 RNG 生成 principal_signing_key 公私钥对。
-    /// 不是 canonical event; private key SHOULD 立刻进入加密 secret storage。
+    /// Generate the principal_signing_key keypair locally via KDF / hardware
+    /// RNG. Not a canonical event; the private key SHOULD be moved into
+    /// encrypted secret storage immediately.
     GeneratePrincipalSigningKey,
-    /// 本地生成 self_signing_key + user_signing_key 公私钥对。
+    /// Generate the self_signing_key + user_signing_key keypairs locally.
     GenerateSelfAndUserSigningKeys,
-    /// 用 PSK 对 SSK / USK 做绑定签名 (spec §5.1 `binding`)。
-    /// canonical input = `cx-cross-signing-bind-v1\n` + canonical_json(...).
+    /// Use the PSK to issue binding signatures over SSK / USK (spec §5.1
+    /// `binding`). canonical input = `cx-cross-signing-bind-v1\n` +
+    /// canonical_json(...).
     SignSubordinateBindings,
-    /// 把 SSK / USK 私钥写入加密 `cx.schema.key_backup.v1` envelope
-    /// (`backup_class="secret_storage"`)。spec §11 + §7.1 域隔离。
+    /// Write the SSK / USK private keys into an encrypted
+    /// `cx.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
+    /// spec §11 + §7.1 domain separation.
     PublishSecretStorageBackup,
-    /// 发布 `cx.cross_signing.publish.v1` 到 principal control space。
+    /// Publish `cx.cross_signing.publish.v1` to the principal control space.
     EmitCrossSigningPublish,
-    /// 用 SSK 对当前设备的 verify_key 签发 `cross_signing_binding`
-    /// (spec §5.2), 并把它附在最新的 `cx.device.authorized` event 上。
+    /// Use the SSK to issue a `cross_signing_binding` over the current
+    /// device's verify_key (spec §5.2), and attach it to the latest
+    /// `cx.device.authorized` event.
     SignCurrentDeviceBinding,
-    /// 触发对该 principal 已知设备的 trust chain 重评估;
-    /// `NeedsReverification` 的设备 UI 上会标记。
+    /// Trigger trust-chain re-evaluation for every known device of this
+    /// principal; devices ending up in `NeedsReverification` are flagged in
+    /// the UI.
     RecomputeDeviceTrustStates,
 }
 
 impl CrossSigningSetupStep {
-    /// 对应的 canonical event kind。无对应 event 的步骤返回 `None`。
+    /// Canonical event kind for this step; steps with no matching event
+    /// return `None`.
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::GeneratePrincipalSigningKey | Self::GenerateSelfAndUserSigningKeys => None,
@@ -60,28 +66,34 @@ impl CrossSigningSetupStep {
         }
     }
 
-    /// 一句话用户描述, 直接渲染给 UI 预览。
+    /// One-line user-facing description, rendered directly in the UI preview.
     pub fn description(&self) -> &'static str {
         match self {
-            Self::GeneratePrincipalSigningKey => "本地生成 principal_signing_key (DID 控制层根签名)",
+            Self::GeneratePrincipalSigningKey => {
+                "Generate principal_signing_key locally (root signature of the DID control layer)"
+            }
             Self::GenerateSelfAndUserSigningKeys => {
-                "本地生成 self_signing_key 与 user_signing_key"
+                "Generate self_signing_key and user_signing_key locally"
             }
-            Self::SignSubordinateBindings => "用 PSK 对 SSK / USK 签名 (spec §5.1)",
+            Self::SignSubordinateBindings => "Sign SSK / USK with PSK (spec §5.1)",
             Self::PublishSecretStorageBackup => {
-                "把 SSK / USK 私钥写入加密 secret_storage backup"
+                "Write SSK / USK private keys into the encrypted secret_storage backup"
             }
-            Self::EmitCrossSigningPublish => "发布 cx.cross_signing.publish.v1 到 control stream",
+            Self::EmitCrossSigningPublish => {
+                "Publish cx.cross_signing.publish.v1 to the control stream"
+            }
             Self::SignCurrentDeviceBinding => {
-                "用 SSK 对当前设备 verify_key 签发 cross_signing_binding"
+                "Use SSK to sign a cross_signing_binding over this device's verify_key"
             }
-            Self::RecomputeDeviceTrustStates => "重新评估每台设备的 trust chain 状态",
+            Self::RecomputeDeviceTrustStates => {
+                "Re-evaluate the trust-chain state for every device"
+            }
         }
     }
 }
 
-/// First-time setup 与 cross-signing reset 共用同一个计划骨架; reset 多带一项
-/// 前置步骤 (写 `cx.cross_signing.reset.v1`)。
+/// Initial setup and cross-signing reset share the same plan skeleton; reset
+/// carries an extra prelude step (writing `cx.cross_signing.reset.v1`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossSigningSetupMode {
@@ -89,7 +101,7 @@ pub enum CrossSigningSetupMode {
     Reset,
 }
 
-/// 完整 cross-signing setup / reset 计划。
+/// Full cross-signing setup / reset plan.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrossSigningSetupPlan {
     pub principal_id: String,
@@ -101,7 +113,7 @@ pub struct CrossSigningSetupPlan {
 }
 
 impl CrossSigningSetupPlan {
-    /// 构造初始 setup 计划 (`generation = 1`)。
+    /// Build the initial setup plan (`generation = 1`).
     pub fn build_initial(principal_id: &str, device_id: &str) -> Self {
         Self {
             principal_id: principal_id.to_owned(),
@@ -121,10 +133,12 @@ impl CrossSigningSetupPlan {
         }
     }
 
-    /// 构造 reset 计划; 多一步 `cx.cross_signing.reset.v1` 前置事件,
-    /// 但不需要重新生成 PSK (PSK 来自 DID 控制链, 不在 reset 范围)。
+    /// Build a reset plan; carries an extra `cx.cross_signing.reset.v1`
+    /// prelude event but does not regenerate the PSK (PSK comes from the DID
+    /// control chain and is out of scope for a cross-signing reset).
     pub fn build_reset(principal_id: &str, device_id: &str, previous_generation: u64) -> Self {
-        // Reset 写入由 prelude 表示; 后面紧接着 setup 主流程。
+        // The reset write is represented by the prelude; the main setup
+        // flow follows immediately after.
         let mut steps = vec![CrossSigningSetupStep::SignSubordinateBindings];
         // The reset event itself is modeled by SDK CrossSigningResetContent,
         // not as a step here — UI surfaces it separately so the reset proof
@@ -150,7 +164,8 @@ impl CrossSigningSetupPlan {
         }
     }
 
-    /// 计划中出现的 canonical event kinds (按出现顺序去重)。
+    /// Canonical event kinds that appear in the plan (deduplicated, in
+    /// order of first appearance).
     pub fn event_kinds(&self) -> Vec<&'static str> {
         let mut seen: Vec<&'static str> = Vec::new();
         if matches!(self.mode, CrossSigningSetupMode::Reset) {

@@ -58,11 +58,11 @@ pub struct SpaceLifecycleResponse {
     pub deleted: bool,
 }
 
-// C10.D (2026-05-09 十六轮) Move/Anchor pipeline response shapes — mirror
-// soland's `routing::move_anchor::SubmitMoveResponse` /
-// `SubmitAnchorResponse` / `SignAnchorResponse`. The DTOs are kept here
-// (not in `contrix-sdk`) because they're soland-server-specific surface
-// shapes, not protocol primitives.
+// Move/Anchor pipeline response shapes — mirror soland's
+// `routing::move_anchor::SubmitMoveResponse` / `SubmitAnchorResponse` /
+// `SignAnchorResponse`. The DTOs are kept here (not in `contrix-sdk`)
+// because they're soland-server-specific surface shapes, not protocol
+// primitives.
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitMoveResponse {

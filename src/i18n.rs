@@ -507,6 +507,9 @@ pub fn init_i18n_with_locale(locale: Locale) -> I18nSignal {
 /// Switch the active locale on an existing signal without rebuilding the
 /// translation tables. Call this from the Settings language picker.
 pub fn set_locale(signal: &mut I18nSignal, locale: Locale) {
+    if signal.read().0 == locale {
+        return;
+    }
     let dicts = signal.read().1.clone();
     signal.set((locale, dicts));
 }

@@ -361,9 +361,9 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     assert_eq!(plaintext, br#"{"msgtype":"m.text","body":"hello via MLS"}"#);
 }
 
-// C10.D (2026-05-09 十六轮) Move/Anchor wire-shape contract tests.
-// These mirror soland's `routing::move_anchor` response shapes so a
-// breaking change there is caught immediately at the yougen test layer.
+// Move/Anchor wire-shape contract tests. These mirror soland's
+// `routing::move_anchor` response shapes so a breaking change there is
+// caught immediately at the yougen test layer.
 
 #[test]
 fn yougen_parses_submit_move_pending_response() {

@@ -201,19 +201,20 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 
 /// Canonical event kinds that yougen claims to emit / consume.
 ///
-/// 该列表用于：
-/// - `views/audit.rs` / `views/space_admin.rs` 的解释面板。
-/// - `claude-design/` 与 `_todos.md` 的 cross-reference。
-/// - 后续 `tests/` 端到端流程的 fixture 锚点。
+/// This list is used by:
+/// - The explanatory panels in `views/audit.rs` / `views/space_admin.rs`.
+/// - Cross-references in `claude-design/` and `_todos.md`.
+/// - Fixture anchors for upcoming `tests/` end-to-end flows.
 ///
-/// 协议来源：`overview/current-model.md`、`models/object-model-core.md`、
-/// `models/object-model-standard.md` §5（Flow / Message / 编辑撤回）、
-/// `crypto-media/device-lifecycle.md`、`authz/capabilities.md`、
-/// `sync/operations-sync.md`、`crypto-media/encryption-and-audit.md`、
-/// `crypto-media/audited-e2ee.md`（attested / disclosed audit profile）、
-/// `crypto-media/webrtc-signaling.md`、`extensions/applet-integration.md`、
-/// `extensions/agent-protocol-interop.md`、`extensions/mimi-interop.md`。
-/// canonical registry: `artifacts/registry/event-kind-registry.json`（110 active kinds）。
+/// Spec sources: `overview/current-model.md`, `models/object-model-core.md`,
+/// `models/object-model-standard.md` §5 (Flow / Message / edit and redact),
+/// `crypto-media/device-lifecycle.md`, `authz/capabilities.md`,
+/// `sync/operations-sync.md`, `crypto-media/encryption-and-audit.md`,
+/// `crypto-media/audited-e2ee.md` (attested / disclosed audit profile),
+/// `crypto-media/webrtc-signaling.md`, `extensions/applet-integration.md`,
+/// `extensions/agent-protocol-interop.md`, `extensions/mimi-interop.md`.
+/// Canonical registry: `artifacts/registry/event-kind-registry.json` (110
+/// active kinds).
 pub fn known_event_kinds() -> Vec<&'static str> {
     // 110 active wire event kinds, mirrored from
     // `artifacts/registry/event-kind-registry.json` (active set, 2026-05-07).
@@ -911,9 +912,12 @@ mod tests {
         for kind in known_event_kinds() {
             assert!(
                 kind.starts_with("cx."),
-                "event kind `{kind}` 必须使用 cx.* 命名空间"
+                "event kind `{kind}` must live in the cx.* namespace"
             );
-            assert!(!kind.contains(' '), "event kind `{kind}` 不应包含空格");
+            assert!(
+                !kind.contains(' '),
+                "event kind `{kind}` must not contain spaces"
+            );
         }
     }
 

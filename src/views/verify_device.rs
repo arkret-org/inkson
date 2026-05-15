@@ -380,7 +380,7 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                 }
                 div { class: "muted", "{cross_signing_state}" }
                 div { class: "muted",
-                    "三层 signing chain: principal_signing_key (DID 控制层) · self_signing_key (本设备) · user_signing_key (跨 principal 信任)。"
+                    "Three-tier signing chain: principal_signing_key (DID control layer) · self_signing_key (this device) · user_signing_key (cross-principal trust)."
                     "Spec: crypto-media/device-lifecycle.md §5."
                 }
                 div { class: "actions",

@@ -2,42 +2,46 @@
 // View modules — protocol / design-doc cross reference
 // =============================================================================
 //
-// 每个 view 都在 `claude-design/`（基于 `contrix-spec/spec/v1/zh/` 的 UI 设计稿）和协议
-// 规范之间承担一个固定的角色。引入新视图前请先核对：
+// Each view plays a fixed role between the `claude-design/` UI mockups and
+// the protocol spec. Before adding a new view, cross-check the table below:
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorized                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
-// | timeline           | desktop/space.html (timeline 视图)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
+// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
-// | document           | (尚无对应；属于 View.kind=document)| models/views §4                                         | cx.flow.update on synthesis track                                  |
+// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
 // | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.space.policy.set, cx.capability.{grant,revoke,delegate}  |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
-// | setup              | (上手流程辅助页)                  | overview/architecture                                  | (workspace bootstrap)                                              |
+// | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
-// 待新增 view（见 `_todos.md`）：
-// - onboarding   → desktop/onboarding.html        (拆出独立步进；T12)
-// - recovery     → desktop/recovery.html          (Argon2id / SSS / Recovery Key；T10)
+// Pending views (see `_todos.md`):
+// - onboarding   → desktop/onboarding.html        (independent stepper; T12)
+// - recovery     → desktop/recovery.html          (Argon2id / SSS / Recovery Key; T10)
 //
-// 共享准则（_todos.md §6）：
-// 1. 任何写入 UI 必须显式标注其 canonical event kind。
-// 2. discoverability / join_rule / history_visibility 三维度必须独立显示，不可互推。
-// 3. 跨 Space 引用默认 lazy_link，不展开标题 / 成员 / 计数。
-// 4. push 路径默认脱敏（background_sync_needed），正文在本地解密。
-// 5. Auth Service 只能签发短期 cx.session.grant；改变长期设备集合必须 cx.device.authorized。
+// Shared rules (`_todos.md` §6):
+// 1. Any write UI must explicitly label the canonical event kind it emits.
+// 2. discoverability / join_rule / history_visibility are independent and
+//    must be displayed independently — none implies the other.
+// 3. Cross-Space references default to lazy_link — never expand title /
+//    members / counts on the consumer side.
+// 4. Push paths default to masked payloads (`background_sync_needed`); the
+//    body is decrypted locally.
+// 5. The Auth Service can only issue short-lived `cx.session.grant`; any
+//    change to the long-lived device set must go through `cx.device.authorized`.
 
 pub mod audit;
 pub mod call;
 pub mod chat;
-/// First end-to-end UI Move-flow PoC (C10.D 续 2026-05-09 十八轮).
+/// First end-to-end UI Move-flow PoC.
 /// "Grant consent" button under settings → Privacy that builds + signs +
 /// POSTs a `cx.consent.grant` Move via the move_builder + api::submit_move
-/// pipeline landed in 十六轮.
+/// pipeline.
 pub mod consent_demo;
 pub mod dashboard;
 pub mod directory;
@@ -87,7 +91,7 @@ pub enum View {
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
     /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
-    /// Onboarding 步进器 — 4 步引导（DID method / Handle / Device / Recovery）。
+    /// Onboarding stepper — 4-step flow (DID method / Handle / Device / Recovery).
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity setup surface.
     /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
     Onboarding,

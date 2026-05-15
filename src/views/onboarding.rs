@@ -1,21 +1,27 @@
-//! Onboarding 步进器 — claude-design `desktop/onboarding.html`.
+//! Onboarding stepper — claude-design `desktop/onboarding.html`.
 //!
 //! Account creation and account recovery are owned by coauth's OIDC pages.
 //! `/onboarding` is a signed-in identity setup surface that breaks the local
 //! DID/device/recovery decisions into four small steps.
 //!
-//! 协议依据：
-//! - `identity/identity-did.md` §3 — v1 core 默认 principal DID method = `did:web`
-//! - `identity/identity-handles.md` — handle 仅作为人类可读入口
-//! - `crypto-media/device-lifecycle.md` §1-§3 — 登录因子 → cx.session.grant；
-//!   设备授权 → cx.device.authorized；设备验证 → cx.key.verification.*
-//! - `crypto-media/device-lifecycle.md` §10-§13 — 加密云保险箱 / SSS / Recovery Key
+//! Spec sources:
+//! - `identity/identity-did.md` §3 — v1 core default principal DID method is
+//!   `did:web`.
+//! - `identity/identity-handles.md` — handles are only human-readable entry
+//!   points.
+//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant;
+//!   device authorization → cx.device.authorized; device verification →
+//!   cx.key.verification.*.
+//! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS /
+//!   recovery key.
 //!
-//! 步骤：
-//!   1. 选择 DID method（v1 core: did:web；high-trust: did:webvh；其它 v1.1+ extension）
-//!   2. 绑定 handle
-//!   3. 生成本设备 device key + cx.device.authorized
-//!   4. 配置恢复策略（vault passphrase / SSS guardian / recovery key）
+//! Steps:
+//!   1. Choose a DID method (v1 core: did:web; high-trust: did:webvh; other
+//!      methods are v1.1+ extensions).
+//!   2. Bind a handle.
+//!   3. Generate the local device key + cx.device.authorized.
+//!   4. Configure a recovery policy (vault passphrase / SSS guardian /
+//!      recovery key).
 
 use dioxus::prelude::*;
 use dioxus_router::Link;

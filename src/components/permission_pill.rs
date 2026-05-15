@@ -4,14 +4,17 @@
 //! - **Join Rule** decides how a subject can join.
 //! - **History Visibility** decides what history a joined subject can read.
 //!
-//! 协议明确指出三者互不替代：`discoverability=public` 不等于 `history_visibility=world_readable`，
-//! 也不等于 `join_rule=public`。任何 UI 在展示一个资源的访问态时都应让这三维度独立可见。
+//! The spec is explicit that none of the three implies the others:
+//! `discoverability=public` does not imply `history_visibility=world_readable`
+//! and does not imply `join_rule=public`. Any UI that surfaces a resource's
+//! access state must keep the three dimensions visible independently.
 //!
-//! 本组件供 `views/directory.rs`、`views/space_admin.rs`、`views/kanban.rs` 等共用。
+//! This component is shared between `views/directory.rs`, `views/space_admin.rs`,
+//! `views/kanban.rs`, and the rest of the UI.
 
 use dioxus::prelude::*;
 
-/// `discoverability` 取值（discovery-directory §2）。
+/// Values for `discoverability` (discovery-directory §2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Discoverability {
     Public,
@@ -56,7 +59,7 @@ impl Discoverability {
     }
 }
 
-/// `join_rule` 取值（authz/event-auth-state-resolution §6 与 discovery §3）。
+/// Values for `join_rule` (authz/event-auth-state-resolution §6 and discovery §3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JoinRule {
     Public,
@@ -102,7 +105,7 @@ impl JoinRule {
     }
 }
 
-/// `history_visibility` 取值（authz/event-auth-state-resolution §6 是 normative source）。
+/// Values for `history_visibility` (authz/event-auth-state-resolution §6 is the normative source).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryVisibility {
     WorldReadable,
@@ -144,7 +147,8 @@ impl HistoryVisibility {
     }
 }
 
-/// 单维度 pill。用 `prefix` 强提示该 pill 表示哪一维度，避免与其它两维混淆。
+/// Single-dimension pill. `prefix` is required so readers can tell which of
+/// the three dimensions this pill represents.
 #[component]
 pub fn PermissionPill(prefix: String, value: String, kind: String) -> Element {
     let class = match kind.as_str() {
@@ -164,7 +168,8 @@ pub fn PermissionPill(prefix: String, value: String, kind: String) -> Element {
     }
 }
 
-/// 同时显示三个维度的紧凑组件。任一维度未设置时显示 `—`。
+/// Compact component that surfaces all three dimensions at once. Unset
+/// dimensions render as `—`.
 #[component]
 pub fn PermissionPillRow(
     discoverability: Option<String>,

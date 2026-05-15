@@ -1371,7 +1371,7 @@ impl LocalStateStore {
     }
 
     /// True when at least one tracked Move in `space_id` is in
-    /// `AnchorerPaused`. Drives the Space-wide "等待 recovery anchorer"
+    /// `AnchorerPaused`. Drives the Space-wide "waiting for recovery anchorer"
     /// banner described in the M4 ticket.
     pub fn space_has_paused_anchorer(&self, space_id: &str) -> bool {
         self.move_submissions_for_space(space_id)

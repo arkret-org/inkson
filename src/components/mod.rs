@@ -153,14 +153,18 @@ pub fn LoadingSpinner(label: Option<String>) -> Element {
 
 /// Cross-Space lazy_link badge.
 ///
-/// 协议规则（`models/object-model-core.md` §2.4.1）：跨 Space Relation 的 `from_ref` / `to_ref`
-/// 可指向其它 Space 的对象，但只发布引用事实，不复制内容、不授予读取权限。Sync / projection
-/// 层不得因为源 Space 可见就 backfill 目标 Space 数据。本组件是 UI 上一致的提示。
+/// Protocol rule (`models/object-model-core.md` §2.4.1): a cross-Space
+/// Relation's `from_ref` / `to_ref` may point at objects in other Spaces, but
+/// only the reference fact is published — content is not copied and read
+/// access is not granted. The sync / projection layer must not backfill the
+/// target Space's data merely because the source Space is visible. This
+/// component renders a consistent UI indicator for that boundary.
 #[component]
 pub fn LazyLinkBadge(
-    /// 目标 Space 的 opaque ref（可以是 sha256 摘要、cx:space:… ID 或省略）。
+    /// Opaque reference to the target Space (sha256 digest, cx:space:… ID,
+    /// or omitted).
     target_ref: Option<String>,
-    /// 简短理由：locked / external / restricted / quarantined。
+    /// Short reason: locked / external / restricted / quarantined.
     reason: Option<String>,
 ) -> Element {
     let reason_text = reason.unwrap_or_else(|| "locked".to_owned());

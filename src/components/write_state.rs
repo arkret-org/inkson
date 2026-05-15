@@ -1,16 +1,19 @@
 //! Write state badge — unified offline / optimistic / accepted / conflict states.
 //!
-//! Yougen 客户端在 Board / Card / Room 三处都需要展示同一个写入生命周期。
-//! 当前 `views/kanban.rs` 内部定义了一个 `CardState`，这里把同一套语义抽出
-//! 成共享组件供 chat / forum / timeline 复用，避免三处 drift。
+//! The yougen client surfaces the same write lifecycle in Board, Card, and
+//! Room views. `views/kanban.rs` originally defined its own `CardState`; this
+//! module pulls the same semantics into a shared component for chat / forum /
+//! timeline reuse, preventing drift across the three call sites.
 //!
-//! 协议依据：
-//! - `sync/operations-sync.md`：offline-first 写入；Event Envelope 是 truth source。
-//! - `authz/event-auth-state-resolution.md`：reducer 拒绝时落入 `state_mismatch` 或
-//!   `cas_conflict`。
-//! - `governance/content-moderation.md`：被 quarantine 的写入仍可见，但走审核队列。
+//! Spec sources:
+//! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is
+//!   the source of truth.
+//! - `authz/event-auth-state-resolution.md`: reducer rejections fall into
+//!   `state_mismatch` or `cas_conflict`.
+//! - `governance/content-moderation.md`: quarantined writes remain visible
+//!   but flow through the moderation queue.
 //!
-//! 状态机：
+//! State machine:
 //! ```text
 //! Optimistic → Queued → Submitted → Accepted | SoftFailed | CasConflict | Quarantined
 //!                                                                    ↑
@@ -21,21 +24,24 @@ use dioxus::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteState {
-    /// 已与 frontier 对齐 — 服务端 reducer 已接受。
+    /// Aligned with the sync frontier — accepted by the server reducer.
     Synced,
-    /// 本地刚乐观应用，尚未提交。
+    /// Applied optimistically on the client; not yet submitted.
     Optimistic,
-    /// 已入本地离线队列，等待网络。
+    /// Sitting in the local offline queue, waiting for the network.
     Queued,
-    /// 已提交给 Principal Server，等待回执。
+    /// Submitted to the Principal Server; awaiting acknowledgement.
     Submitted,
-    /// reducer accept — 与 Synced 等价，但保留以便活动流显示。
+    /// Reducer accepted — equivalent to `Synced` but kept separate so the
+    /// activity stream can render the moment of acceptance.
     Accepted,
-    /// reducer 软失败（schema / capability 通过但 transition 不合法）。
+    /// Reducer soft failure (schema / capability passed but the transition
+    /// is illegal).
     SoftFailed,
-    /// CAS / position-edge 冲突（并发 cx.flow.move）。
+    /// CAS / position-edge conflict (concurrent `cx.flow.move`).
     CasConflict,
-    /// 通过 capability 但被 moderation policy 隔离。
+    /// Capability check passed but the write is quarantined by moderation
+    /// policy.
     Quarantined,
 }
 
@@ -62,21 +68,28 @@ impl WriteState {
         }
     }
 
-    /// 一句话解释状态语义，方便 tooltip / inbox 摘要使用。
+    /// One-line explanation of the state, suitable for tooltips / inbox
+    /// summaries.
     pub fn explanation(self) -> &'static str {
         match self {
-            Self::Synced => "已与 sync frontier 对齐；reducer 已接受。",
-            Self::Optimistic => "本地乐观应用；尚未入队。",
-            Self::Queued => "在本地离线队列等待网络。",
-            Self::Submitted => "已提交给 Principal Server，等待回执。",
-            Self::Accepted => "reducer 已接受；本地状态已合并。",
-            Self::SoftFailed => "reducer 拒绝（schema 通过但 transition 非法）；可重写。",
-            Self::CasConflict => "并发写入 superseded by 更晚 HLC；保留在审计链可恢复。",
-            Self::Quarantined => "通过 capability 但被 moderation 隔离；进入审核队列。",
+            Self::Synced => "Aligned with the sync frontier; reducer has accepted.",
+            Self::Optimistic => "Applied optimistically on the client; not yet queued.",
+            Self::Queued => "Queued in the local offline buffer, waiting for the network.",
+            Self::Submitted => "Submitted to the Principal Server; awaiting acknowledgement.",
+            Self::Accepted => "Reducer accepted; local state has been merged.",
+            Self::SoftFailed => {
+                "Reducer rejected (schema passed but the transition is illegal); rewritable."
+            }
+            Self::CasConflict => {
+                "Concurrent write superseded by a later HLC; retained in the audit log for recovery."
+            }
+            Self::Quarantined => {
+                "Capability check passed but moderation isolated the write into the review queue."
+            }
         }
     }
 
-    /// 列出所有变体（顺序为 UI 推荐展示顺序）。
+    /// All variants, ordered the way the UI prefers to display them.
     pub fn all() -> [Self; 8] {
         [
             Self::Synced,
@@ -91,7 +104,8 @@ impl WriteState {
     }
 }
 
-/// 单个 pill 形式的 write state 标识，可放在 KanbanCard、Message、Flow row 上。
+/// A single pill-shaped write-state marker, suitable for KanbanCard,
+/// Message, or Flow row decorations.
 #[component]
 pub fn WriteStatePill(state: String) -> Element {
     let parsed = parse_write_state(&state);
@@ -107,7 +121,7 @@ pub fn WriteStatePill(state: String) -> Element {
     }
 }
 
-/// 详细解释卡片，用于 audit / debug 抽屉。
+/// Detailed explainer card, used in the audit / debug drawer.
 #[component]
 pub fn WriteStateExplainer(state: String) -> Element {
     let parsed = parse_write_state(&state);

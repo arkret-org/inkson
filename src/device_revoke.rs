@@ -1,63 +1,72 @@
-//! T31 — Device 撤销编排
+//! T31 — Device revocation orchestration.
 //!
-//! 把 "撤销一台设备" 拆成一系列 canonical 事件 + MLS 操作，组成可审计的计划。
-//! UI 展示该计划让用户在确认前看到完整影响范围；执行层按顺序逐步落地。
+//! Breaks "revoke a device" into a sequence of canonical events + MLS
+//! operations, forming an auditable plan. The UI surfaces the plan so the
+//! user sees the full blast radius before confirming; the executor applies
+//! the steps in order.
 //!
-//! 协议依据：
-//! - `crypto-media/device-lifecycle.md` — 三件事分开（登录因子 / 设备授权 / 设备验证），
-//!   `cx.device.revoked` 是改变 device set 的唯一 event。
-//! - `crypto-media/encryption-and-audit.md` — MLS group 的 leaf removal 通过
-//!   `cx.mls.proposal` (Remove) → `cx.mls.commit`（epoch++）→ `cx.mls.welcome`（给
-//!   仍在 group 中的成员，让他们追上新 epoch）链式完成。
+//! Spec sources:
+//! - `crypto-media/device-lifecycle.md` — the three concerns stay separate
+//!   (login factor / device authorization / device verification), and
+//!   `cx.device.revoked` is the only event that mutates the device set.
+//! - `crypto-media/encryption-and-audit.md` — MLS leaf removal is performed
+//!   via the chain `cx.mls.proposal` (Remove) → `cx.mls.commit` (epoch++) →
+//!   `cx.mls.welcome` (to bring still-present members up to the new epoch).
 //!
-//! 当前 SDK 暴露了：
-//! - `DeviceManager::revoke_device(user_id, device_id)` — 标记 revoked。
-//! - `E2eeManager::revoke_device(principal_id, device_id)` — 标记 revoked +
-//!   后续从该 device 的加密写入 fail closed。
-//! - `ContrixMlsGroup::add_member(...)` — 通过 OpenMLS 完成添加 + 派发 Welcome。
-//! - `E2eeManager::remove_member(group_id, did)` — Did 级别移除（model layer）。
+//! Current SDK surface:
+//! - `DeviceManager::revoke_device(user_id, device_id)` — flag revoked.
+//! - `E2eeManager::revoke_device(principal_id, device_id)` — flag revoked
+//!   and fail closed on subsequent encrypted writes from the device.
+//! - `ContrixMlsGroup::add_member(...)` — performs add + Welcome via OpenMLS.
+//! - `E2eeManager::remove_member(group_id, did)` — DID-level removal (model
+//!   layer).
 //!
-//! 缺：基于 LeafNodeIndex 的真实 MLS Remove proposal/commit。该原子能力到位前，
-//! 本编排层先把序列化的事件计划交给 UI 与离线队列，等 SDK 补齐后执行器自动接住。
+//! Missing: a real `LeafNodeIndex`-based MLS Remove proposal/commit. Until
+//! that primitive lands, this orchestration layer hands the serialized event
+//! plan to the UI and offline queue; once the SDK catches up the executor
+//! picks it up automatically.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// 单个撤销步骤。每个变体对应一个 canonical event kind，UI 可按 `description`
-/// 与 `canonical_event_kind` 直接渲染审计预览。
+/// A single revocation step. Each variant maps to one canonical event kind;
+/// the UI can render an audit preview directly from `description` and
+/// `canonical_event_kind`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeviceRevokeStep {
-    /// 在本地 DeviceManager / E2eeManager 中标记 revoked。
-    /// 这一步是本地状态变化，没有对外 event。
+    /// Mark revoked in the local DeviceManager / E2eeManager. Local state
+    /// change only, no outbound event.
     LocalRevoke,
-    /// 写入 actor event chain 的撤销证明。
-    /// canonical event = `cx.device.revoked`。
+    /// Write the revocation proof into the actor event chain.
+    /// canonical event = `cx.device.revoked`.
     CxDeviceRevoked,
-    /// 对受影响的每个 MLS group 发起 Remove proposal。
-    /// canonical event = `cx.mls.proposal`（type = remove）。
+    /// Issue a Remove proposal in every affected MLS group.
+    /// canonical event = `cx.mls.proposal` (type = remove).
     MlsProposeRemove { group_id: String },
-    /// 把 proposal commit 进 group，epoch 前进 1。
-    /// canonical event = `cx.mls.commit`。
+    /// Commit the proposal into the group; epoch advances by 1.
+    /// canonical event = `cx.mls.commit`.
     MlsCommit { group_id: String },
-    /// 给仍在 group 中的成员发送 Welcome 让他们追上新 epoch（针对错过 commit
-    /// 的 lazy / offline 成员）。
-    /// canonical event = `cx.mls.welcome`。
+    /// Send Welcome to the remaining members so lazy / offline peers can
+    /// catch up to the new epoch.
+    /// canonical event = `cx.mls.welcome`.
     MlsWelcome {
         group_id: String,
         recipient_count: usize,
     },
-    /// 把被撤销设备未被消费的 KeyPackages 从 OTK pool 中作废（避免新成员
-    /// 误把它当作可用 leaf）。
-    /// canonical event = `cx.mls.keypackage`（status = revoked）。
+    /// Invalidate the revoked device's unconsumed KeyPackages in the OTK
+    /// pool so new joiners do not mistake them for usable leaves.
+    /// canonical event = `cx.mls.keypackage` (status = revoked).
     InvalidateKeyPackages,
-    /// 让 push gateway 取消该设备的脱敏唤醒注册，避免继续向 revoked 设备发推送。
-    /// 不是 canonical event；属于 device/key-server 接口的本地控制。
+    /// Ask the push gateway to drop the device's masked wake-up registration
+    /// so we stop pushing to a revoked device. Not a canonical event; this
+    /// is a local control over the device / key-server interface.
     UnregisterPushToken,
 }
 
 impl DeviceRevokeStep {
-    /// 对应的 canonical event kind（`None` 表示纯本地 / 服务接口操作）。
+    /// Canonical event kind for this step (`None` for purely local /
+    /// service-interface operations).
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::LocalRevoke => None,
@@ -70,32 +79,38 @@ impl DeviceRevokeStep {
         }
     }
 
-    /// 一句话解释当前步骤，UI 可直接渲染给用户预览。
+    /// One-line description of this step; rendered directly in the UI
+    /// preview.
     pub fn description(&self) -> String {
         match self {
             Self::LocalRevoke => {
-                "标记本地 DeviceManager + E2eeManager 中的 revoked 状态".to_owned()
+                "Mark revoked in local DeviceManager + E2eeManager".to_owned()
             }
-            Self::CxDeviceRevoked => "写入 cx.device.revoked 到 actor event chain".to_owned(),
+            Self::CxDeviceRevoked => "Write cx.device.revoked to the actor event chain".to_owned(),
             Self::MlsProposeRemove { group_id } => {
-                format!("发起 MLS Remove proposal · group={group_id}")
+                format!("Issue MLS Remove proposal · group={group_id}")
             }
-            Self::MlsCommit { group_id } => format!("提交 commit，epoch++ · group={group_id}"),
+            Self::MlsCommit { group_id } => {
+                format!("Commit proposal, epoch++ · group={group_id}")
+            }
             Self::MlsWelcome {
                 group_id,
                 recipient_count,
             } => {
-                format!("给 {recipient_count} 名仍在 group 中的成员发送 Welcome · group={group_id}")
+                format!("Send Welcome to {recipient_count} remaining members · group={group_id}")
             }
             Self::InvalidateKeyPackages => {
-                "把被撤销设备未消费的 KeyPackages 从 OTK pool 作废".to_owned()
+                "Invalidate the revoked device's unconsumed KeyPackages in the OTK pool".to_owned()
             }
-            Self::UnregisterPushToken => "通知 push gateway 取消该设备的脱敏唤醒注册".to_owned(),
+            Self::UnregisterPushToken => {
+                "Notify push gateway to drop this device's masked wake-up registration".to_owned()
+            }
         }
     }
 }
 
-/// 完整的撤销计划。`steps` 是按依赖顺序排列的步骤集合；执行器顺序消费即可。
+/// Full revocation plan. `steps` lists the steps in dependency order; the
+/// executor consumes them sequentially.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceRevokePlan {
     pub principal_id: String,
@@ -104,9 +119,10 @@ pub struct DeviceRevokePlan {
 }
 
 impl DeviceRevokePlan {
-    /// 生成计划。`affected_groups` 是该设备作为 MLS leaf 的 group_id 集合；
-    /// `survivors_per_group` 给出每个 group 在移除该设备后剩余的成员数（用于
-    /// Welcome 的接收方计数）。
+    /// Build the plan. `affected_groups` is the set of `group_id`s in which
+    /// the device is an MLS leaf; `survivors_per_group` gives the member
+    /// count remaining in each group after the device is removed (used as
+    /// the Welcome recipient count).
     pub fn build(
         principal_id: &str,
         device_id: &str,
@@ -138,8 +154,8 @@ impl DeviceRevokePlan {
         }
     }
 
-    /// 计划中包含的 canonical event kinds 列表（去重，按出现顺序）。
-    /// 用于审计 / inbox / "影响范围" 摘要。
+    /// Canonical event kinds in the plan (deduplicated, in order of first
+    /// appearance). Used for audit / inbox / blast-radius summaries.
     pub fn event_kinds(&self) -> Vec<&'static str> {
         let mut seen: Vec<&'static str> = Vec::new();
         for step in &self.steps {
@@ -152,7 +168,8 @@ impl DeviceRevokePlan {
         seen
     }
 
-    /// 影响的 MLS group 数（从 step 中提取，不依赖输入参数）。
+    /// Number of affected MLS groups, derived from the steps themselves so
+    /// the count does not depend on the input arguments.
     pub fn affected_group_count(&self) -> usize {
         let mut groups: Vec<&str> = Vec::new();
         for step in &self.steps {

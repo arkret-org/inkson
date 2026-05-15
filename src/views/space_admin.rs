@@ -1540,12 +1540,12 @@ pub fn SpaceAdminPanel(
 
             // Space invites — sync/third-party-invites.md + invite event family
             // 6 canonical events drive the invite lifecycle:
-            //   cx.invite.create        — 创建 invite（主动邀请已知 DID）
-            //   cx.invite.third_party   — 邀请 3PID（邮箱 / 手机号），未知 DID 时使用
-            //   cx.invite.claim         — 受邀人接收 invite proof（绑定到他们的 DID）
-            //   cx.invite.accept        — 受邀人正式接受（写入 membership）
-            //   cx.invite.cancel        — 邀请方撤销（receiver 未 claim 前）
-            //   cx.invite.revoke        — 邀请方撤销（receiver 已 claim 但未 accept）
+            //   cx.invite.create        — create an invite (proactively invite a known DID)
+            //   cx.invite.third_party   — invite a 3PID (email / phone) when the DID is unknown
+            //   cx.invite.claim         — invitee receives the invite proof (bound to their DID)
+            //   cx.invite.accept        — invitee formally accepts (writes membership)
+            //   cx.invite.cancel        — inviter cancels (before the receiver has claimed)
+            //   cx.invite.revoke        — inviter revokes (receiver claimed but has not accepted)
             div { class: "event", "data-testid": "invite-lifecycle-banner",
                 div { class: "event-head",
                     span { "Invite lifecycle" }
@@ -1897,8 +1897,8 @@ pub fn SpaceAdminPanel(
                 }
             }
 
-            // Capability grant / revoke Move-flow card (P0 M-capability /
-            // 第二十轮). Mirrors the consent grant/revoke PoC but targets
+            // Capability grant / revoke Move-flow card (P0 M-capability).
+            // Mirrors the consent grant/revoke PoC but targets
             // cx.component.capability.grant.v1 (OrSet add/remove). Signed
             // with the demo session key (TODO real-key-management) and
             // POST'd to /api/v1/moves. Anchor frontier is threaded from
@@ -2156,8 +2156,9 @@ pub fn SpaceAdminPanel(
 
             if active_section == SpaceAdminSection::Governance {
             // Organization governance — identity/identity-did.md §6 + content-moderation
-            // Organization 作为 Principal（不是 Space）。一个 Space 可以由多个 organization
-            // 共同治理，Space 的 organization 关系通过 cx.space.organization event 维护。
+            // An Organization is a Principal (not a Space). A single Space can be
+            // jointly governed by multiple organizations; the Space's organization
+            // relationships are maintained via the cx.space.organization event.
             div { class: "event", "data-testid": "organization-governance",
                 div { class: "event-head",
                     span { "Organization governance" }
@@ -2191,10 +2192,10 @@ pub fn SpaceAdminPanel(
             }
 
             // Policy events — authz/policy-server.md
-            // cx.policy.{rule,action,set} 三个 event 是 reducer 决策输入：
-            //   cx.policy.rule    — 单条规则（match condition + effect + scope）
-            //   cx.policy.action  — 单条 action 模板（被 rule 引用）
-            //   cx.policy.set     — 把 rule + action 打包发布为 policy version
+            // The three cx.policy.{rule,action,set} events feed the reducer's decision:
+            //   cx.policy.rule    — a single rule (match condition + effect + scope)
+            //   cx.policy.action  — a single action template (referenced by rules)
+            //   cx.policy.set     — bundles rules + actions into one published policy version
             div { class: "event", "data-testid": "policy-event-family",
                 div { class: "event-head",
                     span { "Policy authoring" }
@@ -2214,9 +2215,9 @@ pub fn SpaceAdminPanel(
 
             // Moderation events — governance/content-moderation.md
             // Two canonical events drive content-level moderation:
-            //   cx.moderation.report — actor 提交举报（针对 message / flow / morph / actor）
-            //   cx.moderation.frank  — E2EE franking proof（让加密内容也可被审核）
-            // Quarantine / require_review 等是 reducer 决策结果，不是独立 event。
+            //   cx.moderation.report — an actor files a report (against a message / flow / morph / actor)
+            //   cx.moderation.frank  — E2EE franking proof (so encrypted content remains reviewable)
+            // Outcomes like quarantine / require_review are reducer decisions, not separate events.
             div { class: "event", "data-testid": "moderation-events",
                 div { class: "event-head",
                     span { "Moderation events" }

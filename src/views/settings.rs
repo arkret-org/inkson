@@ -1217,7 +1217,7 @@ pub fn SettingsPanel(
                 }
 
                 // Personal blocklist — discovery/client-preferences.md
-                // Block 是 actor-private filter，不影响其它 actor 客户端。
+                // Blocks are actor-private filters; they do not affect other actors' clients.
                             div { class: "event", "data-testid": "personal-blocklist",
                     div { class: "event-head",
                         span { "Personal blocklist" }
@@ -1229,7 +1229,7 @@ pub fn SettingsPanel(
                     }
                 }
 
-                        // ── Move-flow PoC: Grant consent (C10.D 续 2026-05-09 十八轮) ────
+                        // ── Move-flow PoC: Grant consent ────
                         // First user-facing button on the Move/Anchor pipeline. Builds a
                         // cx.consent.grant Move via move_builder, signs with a deterministic
                         // demo ed25519 key (TODO real-key-management), POSTs /api/v1/moves.
@@ -1244,9 +1244,11 @@ pub fn SettingsPanel(
 
                         // ── Account Data (actor-private View preferences) ─────
                         // models/views.md §2.6 + identity/account-lifecycle.md
-                        // 共享 View 改 filter / sort / columns 写 cx.view.update（所有人可见）；
-                        // 个人 View 偏好（折叠状态、临时 filter、列宽）写 cx.account_data.set
-                        // 到 actor-private channel，不广播到 Space。
+                        // Edits to a shared View's filter / sort / columns are written via
+                        // cx.view.update (visible to everyone). Personal View preferences
+                        // (collapsed state, ad-hoc filter, column widths) are written via
+                        // cx.account_data.set to the actor-private channel and never
+                        // broadcast to the Space.
                         div { class: "event", "data-testid": "account-data-prefs",
                     div { class: "event-head",
                         span { "Account Data (actor-private)" }

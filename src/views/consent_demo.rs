@@ -1,7 +1,7 @@
-//! C10.D 续 (2026-05-09 十八轮): first end-to-end UI Move-flow PoC.
+//! First end-to-end UI Move-flow PoC.
 //!
 //! Wires a single user-facing button — "Grant consent" — to the
-//! `move_builder` + `api::submit_move` infrastructure landed in 十六轮.
+//! `move_builder` + `api::submit_move` infrastructure.
 //! The flow is:
 //!
 //! 1. user types `consent_id` + `tag` in the form;
@@ -42,10 +42,9 @@ use crate::{
 /// field). SHA-256 of empty bytes — soland's MoveStore accepts this as
 /// the "no predecessor" tag for tests / first-Move-in-Space scenarios.
 ///
-/// 2026-05-09 二十轮: kept as a public constant for tests; production UI
-/// callers now pull the resolved anchor_ref from
-/// [`LocalStateStore::anchor_ref_for_move`] which threads in the latest
-/// frontier head when sync has surfaced one.
+/// Kept as a public constant for tests; production UI callers now pull the
+/// resolved anchor_ref from [`LocalStateStore::anchor_ref_for_move`], which
+/// threads in the latest frontier head when sync has surfaced one.
 #[cfg(test)]
 pub(crate) const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
