@@ -836,6 +836,31 @@ export async function mockContrixApi(page: Page) {
       return json(route, { report_id: "cx:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
+    // Encrypted Cloud Vault — the recovery view uploads a backup body whose
+    // ciphertext was sealed client-side with Argon2id + XChaCha20-Poly1305.
+    // The server only ever sees the opaque ciphertext blob + metadata; this
+    // mock echoes that contract so the recovery rekey e2e (D1) can assert
+    // the server never witnessed a plaintext recovery key.
+    const keyBackupMatch = url.pathname.match(/^\/api\/v1\/keys\/backups\/([^/]+)$/);
+    if (keyBackupMatch) {
+      if (route.request().method() === "PUT") {
+        return json(route, {
+          backup_id: keyBackupMatch[1],
+          status: "stored",
+        });
+      }
+      if (route.request().method() === "GET") {
+        return json(route, {
+          backup_id: keyBackupMatch[1],
+          status: "stored",
+          ciphertext: "BASE64URL_OPAQUE_BLOB",
+        });
+      }
+    }
+    if (url.pathname === "/api/v1/keys/backups") {
+      return json(route, { backups: [] });
+    }
+
     return json(route, { ok: false, error: { errcode: "not_found", error: `No e2e mock for ${url.pathname}` } }, 404);
   });
 }

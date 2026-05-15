@@ -18,7 +18,7 @@ use serde_json::json;
 use crate::{
     local_state::LocalStateStore,
     operation::cx_ops,
-    views::helpers::authed_api,
+    views::helpers::with_authed_api,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -287,16 +287,11 @@ pub fn DocumentPanel(
                                     }
                                     .build("yougen");
 
-                                    let api = match authed_api(&base, token_val) {
-                                        Ok(api) => api,
-                                        Err(err) => {
-                                            sync_state.set(SyncState::Failed);
-                                            save_status.set(format!("invalid server URL: {err}"));
-                                            return;
-                                        }
-                                    };
-
-                                    match api.submit_operation_event(&op).await {
+                                    match with_authed_api(&base, token_val, |api| async move {
+                                        api.submit_operation_event(&op).await
+                                    })
+                                    .await
+                                    {
                                         Ok(resp) => {
                                             if is_create {
                                                 store_for_sync.write().save_private_data(
@@ -313,7 +308,7 @@ pub fn DocumentPanel(
                                         }
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
-                                            save_status.set(format!("sync failed: {err}"));
+                                            save_status.set(format!("sync: {}", err.display()));
                                         }
                                     }
                                 });

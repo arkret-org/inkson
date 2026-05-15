@@ -1,9 +1,11 @@
 use dioxus::prelude::*;
 
+pub mod empty_state;
 pub mod permission_pill;
 pub mod sync_badge;
 pub mod write_state;
 
+pub use empty_state::{EmptyState, EmptyStateKind};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
@@ -123,15 +125,9 @@ pub fn HelpTip(text: String) -> Element {
     }
 }
 
-#[component]
-pub fn EmptyState(message: String) -> Element {
-    rsx! {
-        div { class: "event",
-            div { class: "event-head", span { "Empty" } span { "" } }
-            div { class: "muted", "{message}" }
-        }
-    }
-}
+// `EmptyState` lives in `components/empty_state.rs` — see the
+// re-export above. The richer typed version replaced the old
+// single-prop placeholder that was previously here.
 
 #[component]
 pub fn ErrorBanner(message: String) -> Element {

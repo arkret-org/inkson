@@ -4787,6 +4787,9 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     token,
                                     device_id: device_id(),
+                                    account_did: account_did(),
+                                    selected_space: selected_space(),
+                                    state_store,
                                 }
                             }
                         } else {

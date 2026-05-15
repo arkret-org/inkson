@@ -3,7 +3,7 @@ use dioxus_router::Link;
 use serde_json::Value;
 
 use crate::{
-    components::{HelpTip, UiIcon},
+    components::{EmptyState, EmptyStateKind, HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
     routes::Route,
     views::helpers::with_authed_api,
@@ -112,30 +112,30 @@ pub fn NotificationsPanel(
                         button {
                             class: if group_by() == NotificationGroup::All { "segment active" } else { "segment" },
                             onclick: move |_| group_by.set(NotificationGroup::All),
-                            "All"
+                            {crate::i18n::tr("notifications.group.all")}
                         }
                         button {
                             class: if group_by() == NotificationGroup::BySpace { "segment active" } else { "segment" },
                             onclick: move |_| group_by.set(NotificationGroup::BySpace),
-                            "Space"
+                            {crate::i18n::tr("notifications.group.space")}
                         }
                         button {
                             class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
                             onclick: move |_| group_by.set(NotificationGroup::ByType),
-                            "Type"
+                            {crate::i18n::tr("notifications.group.type")}
                         }
                         button {
                             class: if group_by() == NotificationGroup::ByTime { "segment active" } else { "segment" },
                             onclick: move |_| group_by.set(NotificationGroup::ByTime),
-                            "Time"
+                            {crate::i18n::tr("notifications.group.time")}
                         }
                     }
                     div { class: "icon-actions",
                         button {
                             class: "btn icon sm ghost",
                             "data-testid": "mark-all-read",
-                            title: "Mark all read",
-                            "aria-label": "Mark all read",
+                            title: crate::i18n::tr("notifications.tooltip.mark_all_read"),
+                            "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
                             onclick: move |_| {
                                 let ids = notifications().iter().map(|notification| notification.id.clone()).collect::<Vec<_>>();
                                 for notification in notifications.write().iter_mut() {
@@ -152,8 +152,8 @@ pub fn NotificationsPanel(
                         button {
                             class: "btn icon sm ghost",
                             "data-testid": "toggle-archived",
-                            title: if show_archived() { "Hide archived" } else { "Show archived" },
-                            "aria-label": if show_archived() { "Hide archived" } else { "Show archived" },
+                            title: if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
+                            "aria-label": if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
                             onclick: move |_| show_archived.set(!show_archived()),
                             UiIcon { name: "archive" }
                         }
@@ -162,8 +162,8 @@ pub fn NotificationsPanel(
                     button {
                         class: "btn icon sm ghost",
                         "data-testid": "refresh-notifications",
-                        title: "Refresh notifications",
-                        "aria-label": "Refresh notifications",
+                        title: crate::i18n::tr("notifications.tooltip.refresh"),
+                        "aria-label": crate::i18n::tr("notifications.tooltip.refresh"),
                         onclick: move |_| {
                             refresh_notifications(
                                 base_url.clone(),
@@ -286,33 +286,35 @@ pub fn NotificationsPanel(
             }
 
             if total_notifications == 0 {
-                div { class: "event",
-                    div { class: "event-head", span { "Notifications" } span { "empty" } }
-                    div { class: "muted", "No server-derived notifications loaded yet." }
+                EmptyState {
+                    title: crate::i18n::tr("notifications.title"),
+                    kind: EmptyStateKind::Empty,
+                    message: Some(crate::i18n::tr("notifications.empty_body")),
+                    test_id: Some("notifications-empty".to_owned()),
                 }
             } else if visible_notifications.is_empty() {
-                div { class: "event", "data-testid": "notifications-muted-empty",
-                    div { class: "event-head", span { "Notifications" } span { "filtered" } }
-                    div { class: "muted",
-                        "All loaded notifications are currently hidden by archive, type, or per-space mute rules."
-                    }
+                EmptyState {
+                    title: crate::i18n::tr("notifications.title"),
+                    kind: EmptyStateKind::Filtered,
+                    message: Some(crate::i18n::tr("notifications.filtered_body")),
+                    test_id: Some("notifications-muted-empty".to_owned()),
                 }
             }
 
             div { class: "event", "data-testid": "notifications-settings-hint",
                 div { class: "event-head",
-                    span { "Notification settings" }
-                    span { "managed in Settings" }
+                    span { {crate::i18n::tr("notifications.settings_card")} }
+                    span { {crate::i18n::tr("notifications.settings_card_hint")} }
                 }
                 div { class: "muted",
-                    "Notification rules, muted spaces, and push delivery preferences now live in Settings."
+                    {crate::i18n::tr("notifications.settings_card_body")}
                 }
                 div { class: "actions",
                     Link {
                         class: "secondary",
                         to: Route::SettingsSection { section: "notifications".to_owned() },
                         UiIcon { name: "settings" }
-                        "Open settings"
+                        {crate::i18n::tr("notifications.settings_card_open")}
                     }
                 }
             }

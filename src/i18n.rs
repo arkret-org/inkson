@@ -336,6 +336,67 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mobile.filter_spaces", "Filter spaces…");
     dict.set("mobile.no_match", "No spaces match.");
 
+    // Kanban / Board view (header + section labels)
+    dict.set("kanban.board_header", "Launch Board");
+    dict.set("kanban.board_title", "Board");
+    dict.set(
+        "kanban.board_hint",
+        "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available.",
+    );
+
+    // Directory view (tabs share the existing `directory.tab.*` keys).
+    dict.set("directory.org_empty_body", "No organizations found. Try a search.");
+    dict.set("directory.actors_empty_body", "No actors found. Try a search.");
+
+    // Recovery view (top-level section headers)
+    dict.set("recovery.title", "Recovery");
+    dict.set("recovery.vault_section", "Encrypted Cloud Vault");
+    dict.set("recovery.recovery_key_section", "Recovery Key");
+    dict.set("recovery.social_section", "Social Recovery");
+
+    // Space-admin view (section labels)
+    dict.set("space_admin.title", "Space Admin");
+    dict.set("space_admin.governance", "Governance");
+    dict.set("space_admin.devices", "Devices");
+
+    // Chat / Discussion view (panel headers + key buttons; reuse common.* for
+    // generic verbs like Save/Cancel/Retry/Edit/Confirm).
+    dict.set("chat.discussions_header", "Discussions");
+    dict.set("chat.users_header", "Users");
+    dict.set("chat.settings_header", "Settings");
+    dict.set("chat.new_discussion", "New discussion");
+    dict.set("chat.hide_list", "Hide discussion list");
+    dict.set("chat.label.title", "Title");
+    dict.set("chat.label.summary", "Summary");
+    dict.set("chat.label.users", "Users");
+    dict.set("chat.button.create", "Create");
+    dict.set("chat.button.reply", "Reply");
+    dict.set("chat.button.react", "React");
+    dict.set("chat.button.redact", "Redact");
+    dict.set("chat.you_badge", "You");
+
+    // Notifications panel (group tabs + toolbar tooltips)
+    dict.set("notifications.group.all", "All");
+    dict.set("notifications.group.space", "Space");
+    dict.set("notifications.group.type", "Type");
+    dict.set("notifications.group.time", "Time");
+    dict.set("notifications.tooltip.mark_all_read", "Mark all read");
+    dict.set("notifications.tooltip.show_archived", "Show archived");
+    dict.set("notifications.tooltip.hide_archived", "Hide archived");
+    dict.set("notifications.tooltip.refresh", "Refresh notifications");
+    dict.set("notifications.settings_card", "Notification settings");
+    dict.set("notifications.settings_card_hint", "managed in Settings");
+    dict.set(
+        "notifications.settings_card_body",
+        "Notification rules, muted spaces, and push delivery preferences now live in Settings.",
+    );
+    dict.set("notifications.settings_card_open", "Open settings");
+    dict.set("notifications.empty_body", "No server-derived notifications loaded yet.");
+    dict.set(
+        "notifications.filtered_body",
+        "All loaded notifications are currently hidden by archive, type, or per-space mute rules.",
+    );
+
     // Verify Device (cross-signing / SAS)
     dict.set("verify_device.title", "Device Verification");
     dict.set("verify_device.choose_method", "choose method");
@@ -465,6 +526,66 @@ pub fn chinese_translations() -> TranslationDict {
 
     dict.set("mobile.filter_spaces", "筛选空间…");
     dict.set("mobile.no_match", "未找到匹配空间。");
+
+    // Kanban / Board view
+    dict.set("kanban.board_header", "启动看板");
+    dict.set("kanban.board_title", "看板");
+    dict.set(
+        "kanban.board_hint",
+        "拖动卡片到不同列以排队 cx.flow.move 写入；服务端 view 接口可用时刷新会替换种子数据。",
+    );
+
+    // Directory view
+    dict.set("directory.org_empty_body", "未找到组织，可尝试搜索。");
+    dict.set("directory.actors_empty_body", "未找到 actor，可尝试搜索。");
+
+    // Recovery view
+    dict.set("recovery.title", "恢复");
+    dict.set("recovery.vault_section", "加密云保险箱");
+    dict.set("recovery.recovery_key_section", "恢复密钥");
+    dict.set("recovery.social_section", "社交恢复");
+
+    // Space-admin view
+    dict.set("space_admin.title", "Space 管理");
+    dict.set("space_admin.governance", "治理");
+    dict.set("space_admin.devices", "设备");
+
+    // Chat / Discussion view
+    dict.set("chat.discussions_header", "讨论");
+    dict.set("chat.users_header", "用户");
+    dict.set("chat.settings_header", "设置");
+    dict.set("chat.new_discussion", "新建讨论");
+    dict.set("chat.hide_list", "隐藏讨论列表");
+    dict.set("chat.label.title", "标题");
+    dict.set("chat.label.summary", "概述");
+    dict.set("chat.label.users", "用户");
+    dict.set("chat.button.create", "创建");
+    dict.set("chat.button.reply", "回复");
+    dict.set("chat.button.react", "回应");
+    dict.set("chat.button.redact", "撤回");
+    dict.set("chat.you_badge", "我");
+
+    // Notifications panel
+    dict.set("notifications.group.all", "全部");
+    dict.set("notifications.group.space", "按空间");
+    dict.set("notifications.group.type", "按类型");
+    dict.set("notifications.group.time", "按时间");
+    dict.set("notifications.tooltip.mark_all_read", "全部标为已读");
+    dict.set("notifications.tooltip.show_archived", "显示已归档");
+    dict.set("notifications.tooltip.hide_archived", "隐藏已归档");
+    dict.set("notifications.tooltip.refresh", "刷新通知");
+    dict.set("notifications.settings_card", "通知设置");
+    dict.set("notifications.settings_card_hint", "在「设置」中管理");
+    dict.set(
+        "notifications.settings_card_body",
+        "通知规则、静音空间、推送偏好现在统一在「设置」中管理。",
+    );
+    dict.set("notifications.settings_card_open", "打开设置");
+    dict.set("notifications.empty_body", "尚未加载到任何服务端通知。");
+    dict.set(
+        "notifications.filtered_body",
+        "已加载的通知全部被归档、类型或空间静音规则过滤掉了。",
+    );
 
     // Verify Device
     dict.set("verify_device.title", "设备验证");

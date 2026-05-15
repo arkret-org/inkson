@@ -31,6 +31,8 @@ use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
 use crate::move_builder::encode_ed25519_did_key_multibase;
+use crate::operation::{OperationBuilder, OperationEnvelope};
+use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 /// One step of a complete cross-signing setup. Each variant maps to a specific
 /// action or canonical event in the spec.
@@ -279,6 +281,156 @@ pub struct CrossSigningSetupOutput {
     pub publish_content: CrossSigningPublishContent,
 }
 
+/// One of the three cross-signing private keys; used as the namespace
+/// suffix in [`secure_key_store_key`] so a single OS keychain can host
+/// every role without collisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossSigningKeyRole {
+    PrincipalSigning,
+    SelfSigning,
+    UserSigning,
+}
+
+impl CrossSigningKeyRole {
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::PrincipalSigning => "psk",
+            Self::SelfSigning => "ssk",
+            Self::UserSigning => "usk",
+        }
+    }
+}
+
+/// Stable [`SecureKeyStore`] key for a cross-signing private key.
+///
+/// Format: `cross_signing.{principal_did}.gen-{generation}.{role}`.
+/// The generation is included so a reset (which mints fresh keys with
+/// `generation = prev + 1`) does not clobber the previous keys until
+/// the rollover is complete — both can coexist and a UI can revoke the
+/// previous generation once the new publish is server-accepted.
+pub fn secure_key_store_key(
+    principal_did: &str,
+    generation: u64,
+    role: CrossSigningKeyRole,
+) -> String {
+    format!(
+        "cross_signing.{principal_did}.gen-{generation}.{}",
+        role.suffix()
+    )
+}
+
+impl CrossSigningSetupOutput {
+    /// Hand the three private keys to a [`SecureKeyStore`] under stable
+    /// per-generation keys. Each value is the **hex** of the 32-byte
+    /// Ed25519 seed (`SigningKey::to_bytes()`); callers reload via
+    /// [`load_signing_key`].
+    ///
+    /// Hex is intentional: hex-encoded values are 7-bit-safe and round-
+    /// trip through the OS keychain backends without padding nuance. The
+    /// secret is still secret — the backend keeps it encrypted at rest;
+    /// hex only fixes the wire shape between yougen and the backend.
+    pub fn persist_private_keys(
+        &self,
+        store: &dyn SecureKeyStore,
+        principal_did: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        let generation = self.publish_content.generation;
+        store.store_secret(
+            &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::PrincipalSigning),
+            &hex_encode(&self.principal_signing_key.to_bytes()),
+        )?;
+        store.store_secret(
+            &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::SelfSigning),
+            &hex_encode(&self.self_signing_key.to_bytes()),
+        )?;
+        store.store_secret(
+            &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::UserSigning),
+            &hex_encode(&self.user_signing_key.to_bytes()),
+        )?;
+        Ok(())
+    }
+
+    /// Construct the [`OperationEnvelope`] yougen submits to write the
+    /// `cx.cross_signing.publish.v1` event. The caller supplies the
+    /// `space_id` of the principal's control space and the `actor` DID
+    /// (typically the same as the principal). The envelope is unsigned;
+    /// callers attach a `proof` via the standard signing pipeline before
+    /// `submit_operation_event`.
+    pub fn build_publish_envelope(
+        &self,
+        space_id: &str,
+        actor: &str,
+    ) -> anyhow::Result<OperationEnvelope> {
+        let body = serde_json::to_value(&self.publish_content)
+            .context("serialize cross_signing publish content")?;
+        Ok(OperationBuilder::new(space_id, actor, "cx.cross_signing.publish.v1")
+            .target_ref(self.publish_content.principal_id.as_str())
+            .body(body)
+            .build("yougen"))
+    }
+}
+
+/// Reload a previously persisted Ed25519 signing key. Returns `Ok(None)`
+/// when the store has no entry for this `(principal, generation, role)`
+/// tuple (e.g. the user has not run setup yet on this device). `Err`
+/// covers backend failures + corrupted hex.
+pub fn load_signing_key(
+    store: &dyn SecureKeyStore,
+    principal_did: &str,
+    generation: u64,
+    role: CrossSigningKeyRole,
+) -> anyhow::Result<Option<SigningKey>> {
+    let key = secure_key_store_key(principal_did, generation, role);
+    let Some(value) = store
+        .get_secret(&key)
+        .map_err(|err| anyhow::anyhow!("secure key store get: {err}"))?
+    else {
+        return Ok(None);
+    };
+    let bytes = hex_decode(&value)
+        .ok_or_else(|| anyhow::anyhow!("cross_signing key hex decode failed for role {role:?}"))?;
+    if bytes.len() != SECRET_KEY_LENGTH {
+        anyhow::bail!(
+            "cross_signing key for role {role:?} has wrong length: expected {SECRET_KEY_LENGTH}, got {}",
+            bytes.len()
+        );
+    }
+    let mut seed = [0u8; SECRET_KEY_LENGTH];
+    seed.copy_from_slice(&bytes);
+    Ok(Some(SigningKey::from_bytes(&seed)))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    for chunk in bytes.chunks(2) {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 impl CrossSigningExecutor {
     pub fn new(plan: CrossSigningSetupPlan, principal_did: Did) -> Self {
         Self {
@@ -503,6 +655,93 @@ mod tests {
             a.user_signing_key.to_bytes(),
             b.user_signing_key.to_bytes()
         );
+    }
+
+    #[test]
+    fn persist_and_load_round_trip_three_keys() {
+        use crate::secure_key_store::MemorySecureKeyStore;
+
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let out = executor.run().unwrap();
+
+        let store = MemorySecureKeyStore::new();
+        out.persist_private_keys(&store, principal.as_str()).unwrap();
+
+        let generation = out.publish_content.generation;
+        let psk = load_signing_key(
+            &store,
+            principal.as_str(),
+            generation,
+            CrossSigningKeyRole::PrincipalSigning,
+        )
+        .unwrap()
+        .expect("PSK present after persist");
+        assert_eq!(psk.to_bytes(), out.principal_signing_key.to_bytes());
+
+        let ssk = load_signing_key(
+            &store,
+            principal.as_str(),
+            generation,
+            CrossSigningKeyRole::SelfSigning,
+        )
+        .unwrap()
+        .expect("SSK present after persist");
+        assert_eq!(ssk.to_bytes(), out.self_signing_key.to_bytes());
+
+        let usk = load_signing_key(
+            &store,
+            principal.as_str(),
+            generation,
+            CrossSigningKeyRole::UserSigning,
+        )
+        .unwrap()
+        .expect("USK present after persist");
+        assert_eq!(usk.to_bytes(), out.user_signing_key.to_bytes());
+
+        // A different generation MUST be absent — the keystore namespace
+        // is per-generation so reset can mint fresh keys without
+        // clobbering the pre-rollover set.
+        assert!(
+            load_signing_key(
+                &store,
+                principal.as_str(),
+                generation + 1,
+                CrossSigningKeyRole::PrincipalSigning,
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn publish_envelope_carries_validated_publish_content() {
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let out = executor.run().unwrap();
+
+        let envelope = out
+            .build_publish_envelope(
+                "cx:space:01964137-0000-7000-8000-000000000aaa",
+                principal.as_str(),
+            )
+            .unwrap();
+        assert_eq!(envelope.op_type, "cx.cross_signing.publish.v1");
+        assert_eq!(
+            envelope.target_ref.as_deref(),
+            Some(principal.as_str()),
+            "target_ref must point at the principal whose keys these are"
+        );
+        // The full publish content body must round-trip — losing any
+        // field here is the same as publishing a malformed event, which
+        // the SDK validator would reject on the receiver side.
+        let body_principal = envelope.body["principal_id"]
+            .as_str()
+            .expect("body.principal_id is a string");
+        assert_eq!(body_principal, principal.as_str());
+        assert_eq!(envelope.body["generation"].as_u64(), Some(1));
     }
 
     #[test]

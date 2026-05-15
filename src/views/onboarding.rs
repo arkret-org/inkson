@@ -30,7 +30,7 @@ use crate::{
     api::ContrixApi,
     local_state::LocalStateStore,
     routes::Route,
-    views::helpers::{authed_api, handle_from_did},
+    views::helpers::{handle_from_did, with_authed_api},
 };
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
@@ -231,12 +231,15 @@ pub fn OnboardingPanel(
                                 let api_token = token();
                                 let base = base.clone();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.account_me().await {
-                                            Ok(account) => account_state.set(format!("me {}", account.did)),
-                                            Err(error) => account_state.set(format!("me failed: {error}")),
-                                        },
-                                        Err(error) => account_state.set(format!("invalid server URL: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.account_me().await
+                                    })
+                                    .await
+                                    {
+                                        Ok(account) => account_state
+                                            .set(format!("me {}", account.did)),
+                                        Err(err) => account_state
+                                            .set(format!("me: {}", err.display())),
                                     }
                                 });
                             }

@@ -14,7 +14,7 @@ use crate::{
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
     routes::Route,
-    views::helpers::authed_api,
+    views::helpers::{authed_api, with_authed_api},
 };
 
 /// Fallback Board Place id used by the demo seed data. Production
@@ -439,11 +439,11 @@ pub fn KanbanPanel(
             }
             bootstrapped.set(true);
             let api_token = auto_token();
-            let api = match crate::views::helpers::authed_api(&base, api_token) {
-                Ok(api) => api,
-                Err(_) => return,
-            };
-            match api.collection_projection(view_id).await {
+            match with_authed_api(&base, api_token, |api| async move {
+                api.collection_projection(view_id).await
+            })
+            .await
+            {
                 Ok(projection) => {
                     let cols = collection_projection_to_columns(&projection);
                     if !cols.is_empty() {
@@ -456,8 +456,11 @@ pub fn KanbanPanel(
                         projection.view_id.as_str()
                     ));
                 }
-                Err(error) => {
-                    board_status.set(format!("API projection unavailable on mount: {error}"));
+                Err(err) => {
+                    board_status.set(format!(
+                        "API projection unavailable on mount: {}",
+                        err.display()
+                    ));
                 }
             }
         }
@@ -467,12 +470,12 @@ pub fn KanbanPanel(
         div { class: "timeline", "data-testid": "kanban-panel",
             div { class: "event board-header",
                 div { class: "event-head",
-                    span { "Launch Board" }
+                    span { {crate::i18n::tr("kanban.board_header")} }
                     span { "{scope_label} / writes to {selected_space}" }
                 }
-                div { class: "space-title", "Board" }
+                div { class: "space-title", {crate::i18n::tr("kanban.board_title")} }
                 div { class: "muted",
-                    "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available."
+                    {crate::i18n::tr("kanban.board_hint")}
                 }
                 div { class: "actions", "data-testid": "board-write-states",
                     for state in write_state_samples() {

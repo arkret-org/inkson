@@ -26,7 +26,6 @@ use dioxus::prelude::*;
 use ed25519_dalek::SigningKey;
 
 use crate::{
-    api::ContrixApi,
     hlc::Hlc,
     local_state::{LocalIdentity, LocalStateStore},
     models::SubmitMoveResponse,
@@ -34,7 +33,7 @@ use crate::{
         UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
         did_key_verification_method, sign_unsigned_move,
     },
-    views::helpers::authed_api,
+    views::helpers::with_authed_api,
 };
 
 /// Sentinel anchor reference used when the local store hasn't seen any
@@ -215,18 +214,14 @@ pub fn ConsentGrantDemoCard(
                         let move_id = signed.id.as_str().to_owned();
                         last_move_id.set(move_id.clone());
                         spawn(async move {
-                            let api: ContrixApi = match authed_api(&base, api_token) {
-                                Ok(api) => api,
-                                Err(error) => {
-                                    status.set(format!("API client unavailable: {error}"));
-                                    return;
-                                }
-                            };
-                            match api.submit_move(&signed).await {
+                            match with_authed_api(&base, api_token, |api| async move {
+                                api.submit_move(&signed).await
+                            })
+                            .await
+                            {
                                 Ok(response) => status.set(format_submit_response(&response)),
-                                Err(error) => {
-                                    status.set(format!("submit_move {move_id} failed: {error}"))
-                                }
+                                Err(err) => status
+                                    .set(format!("submit_move {move_id}: {}", err.display())),
                             }
                         });
                     },
@@ -274,20 +269,16 @@ pub fn ConsentGrantDemoCard(
                         let move_id = signed.id.as_str().to_owned();
                         last_move_id.set(move_id.clone());
                         spawn(async move {
-                            let api: ContrixApi = match authed_api(&base, api_token) {
-                                Ok(api) => api,
-                                Err(error) => {
-                                    status.set(format!("API client unavailable: {error}"));
-                                    return;
-                                }
-                            };
-                            match api.submit_move(&signed).await {
+                            match with_authed_api(&base, api_token, |api| async move {
+                                api.submit_move(&signed).await
+                            })
+                            .await
+                            {
                                 Ok(response) => status.set(format_submit_response(&response)),
-                                Err(error) => {
-                                    status.set(format!(
-                                        "submit_move (revoke) {move_id} failed: {error}"
-                                    ))
-                                }
+                                Err(err) => status.set(format!(
+                                    "submit_move (revoke) {move_id}: {}",
+                                    err.display()
+                                )),
                             }
                         });
                     },

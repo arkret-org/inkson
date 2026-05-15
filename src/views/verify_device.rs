@@ -3,9 +3,11 @@ use qrcode::{render::svg, EcLevel, QrCode};
 use serde_json::json;
 
 use crate::{
-    cross_signing::CrossSigningSetupPlan,
+    cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan},
+    local_state::LocalStateStore,
     models::*,
-    views::helpers::authed_api,
+    secure_key_store::default_secure_key_store,
+    views::helpers::{authed_api, with_authed_api},
 };
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
@@ -50,13 +52,39 @@ mod qr_tests {
 }
 
 #[component]
-pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: String) -> Element {
+pub fn VerifyDevicePanel(
+    base_url: String,
+    token: Signal<String>,
+    device_id: String,
+    account_did: String,
+    selected_space: String,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
+    // B2e wires `state_store` to persist the cross-signing publish content;
+    // `selected_space` is kept on the prop list so the route binding in
+    // `app.rs` stays uniform with other panel signatures.
+    let _ = (&selected_space,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(|| String::new());
     let mut trust_devices = use_signal(Vec::<DeviceTrustEntry>::new);
-    let cross_signing_state = use_signal(|| "Not configured".to_owned());
-    let cross_signing_plan = use_signal(|| Option::<CrossSigningSetupPlan>::None);
+    // Hydrate the latest persisted cross-signing publish (B2e) so the
+    // panel reflects the device's cross-signed state across reloads.
+    let persisted_publish_label = state_store
+        .read()
+        .load_private_data(&account_did, "cross_signing.publish.latest")
+        .and_then(|json| serde_json::from_str::<contrix_sdk::CrossSigningPublishContent>(&json).ok())
+        .map(|p| {
+            format!(
+                "Last cross-signing publish for {} (generation {})",
+                p.principal_id.as_str(),
+                p.generation,
+            )
+        })
+        .unwrap_or_else(|| "Not configured".to_owned());
+    let mut cross_signing_state = use_signal(move || persisted_publish_label);
+    let mut cross_signing_plan = use_signal(|| Option::<CrossSigningSetupPlan>::None);
+    let mut cross_signing_publish_id = use_signal(String::new);
     let mut sas_code = use_signal(|| String::new());
     let mut qr_data = use_signal(|| String::new());
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
@@ -431,6 +459,152 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                 }
                             }
                         }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "run-cross-signing-setup",
+                            disabled: account_did.trim().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                let actor = account_did.clone();
+                                let plan = plan.clone();
+                                move |_| {
+                                    let base = base.clone();
+                                    let actor = actor.clone();
+                                    let plan = plan.clone();
+                                    let api_token = token();
+                                    // Construct the principal DID from the
+                                    // current account DID — the plan was
+                                    // built with a placeholder ("did:webvh:
+                                    // current-principal") because the
+                                    // build_initial caller had no actor
+                                    // context; the executor uses this
+                                    // canonical DID instead.
+                                    let principal = match contrix_sdk::Did::new(actor.clone()) {
+                                        Ok(d) => d,
+                                        Err(err) => {
+                                            cross_signing_state.set(format!(
+                                                "Invalid actor DID: {err:?}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    spawn(async move {
+                                        // 1. Run the executor: generate
+                                        //    PSK/SSK/USK + sign bindings +
+                                        //    validate the publish content.
+                                        let executor = CrossSigningExecutor::new(
+                                            plan,
+                                            principal.clone(),
+                                        );
+                                        let output = match executor.run() {
+                                            Ok(out) => out,
+                                            Err(err) => {
+                                                cross_signing_state.set(format!(
+                                                    "Setup failed during key generation: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        // 2. Persist the private keys to
+                                        //    the OS keychain (or the in-
+                                        //    memory fallback on wasm).
+                                        let store = default_secure_key_store("yougen");
+                                        if let Err(err) = output
+                                            .persist_private_keys(
+                                                store.as_ref(),
+                                                principal.as_str(),
+                                            )
+                                        {
+                                            cross_signing_state.set(format!(
+                                                "Setup failed to persist keys: {err}"
+                                            ));
+                                            return;
+                                        }
+                                        // 3. Submit the publish event. Per
+                                        //    spec key-management.md §4.1 +
+                                        //    device-lifecycle.md §5.1,
+                                        //    cross-signing publish + device
+                                        //    authorization events MUST live
+                                        //    in the principal control
+                                        //    space, derived as
+                                        //    `cx:space:control:<did>`. The
+                                        //    SDK exposes the canonical
+                                        //    derivation; we route through
+                                        //    it so the server-side pinning
+                                        //    check accepts the write.
+                                        let control_space =
+                                            contrix_sdk::auth::principal_control_space_id(
+                                                &principal,
+                                            );
+                                        let envelope = match output
+                                            .build_publish_envelope(&control_space, &actor)
+                                        {
+                                            Ok(env) => env,
+                                            Err(err) => {
+                                                cross_signing_state.set(format!(
+                                                    "Setup failed to build publish envelope: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        match with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.submit_operation_event(&envelope).await
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(resp) => {
+                                                cross_signing_publish_id
+                                                    .set(resp.event_id.clone());
+                                                cross_signing_state.set(format!(
+                                                    "Cross-signing publish accepted as {} (generation {})",
+                                                    resp.event_id,
+                                                    output.publish_content.generation,
+                                                ));
+                                                // B2e: persist the publish content into
+                                                // LocalStateStore.private_data (XOR-
+                                                // encrypted with the account DID) so a
+                                                // subsequent mount, refresh, or device-
+                                                // trust panel can re-read the cross-
+                                                // signed state without rerunning the
+                                                // executor. Failures here are non-
+                                                // fatal — the server accepted the
+                                                // publish, and the in-memory output
+                                                // is still valid for this session.
+                                                if let Ok(serialized) =
+                                                    serde_json::to_string(&output.publish_content)
+                                                {
+                                                    state_store.write().save_private_data(
+                                                        &actor,
+                                                        "cross_signing.publish.latest",
+                                                        serialized,
+                                                    );
+                                                }
+                                                // Plan consumed — clear so
+                                                // the UI does not invite a
+                                                // duplicate submit.
+                                                cross_signing_plan.set(None);
+                                            }
+                                            Err(err) => cross_signing_state.set(format!(
+                                                "Setup submitted but server rejected publish: {}",
+                                                err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Run setup"
+                        }
+                    }
+                }
+                if !cross_signing_publish_id().is_empty() {
+                    div { class: "muted", "data-testid": "cross-signing-publish-id",
+                        "Last publish event id: {cross_signing_publish_id}"
                     }
                 }
             }

@@ -3,7 +3,7 @@ use dioxus_router::Link;
 use serde_json::Value;
 
 use crate::{
-    components::HelpTip,
+    components::{EmptyState, EmptyStateKind, HelpTip},
     models::*,
     routes::Route,
     views::helpers::{authed_api, with_authed_api},
@@ -660,9 +660,11 @@ pub fn DirectoryPanel(
                     }
                 }
                 if org_results().is_empty() {
-                    div { class: "event",
-                        div { class: "event-head", span { "Organizations" } span { "empty" } }
-                        div { class: "muted", "No organizations found. Try a search." }
+                    EmptyState {
+                        title: crate::i18n::tr("directory.tab.organizations"),
+                        kind: EmptyStateKind::Empty,
+                        message: Some(crate::i18n::tr("directory.org_empty_body")),
+                        test_id: Some("directory-organizations-empty".to_owned()),
                     }
                 }
                 if pagination().orgs_cursor.is_some() {
@@ -716,9 +718,11 @@ pub fn DirectoryPanel(
                     }
                 }
                 if actor_results().is_empty() {
-                    div { class: "event",
-                        div { class: "event-head", span { "Actors" } span { "empty" } }
-                        div { class: "muted", "No actors found. Try a search." }
+                    EmptyState {
+                        title: crate::i18n::tr("directory.tab.actors"),
+                        kind: EmptyStateKind::Empty,
+                        message: Some(crate::i18n::tr("directory.actors_empty_body")),
+                        test_id: Some("directory-actors-empty".to_owned()),
                     }
                 }
                 if pagination().actors_cursor.is_some() {

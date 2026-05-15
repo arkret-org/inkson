@@ -11,7 +11,10 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{components::HelpTip, local_state::LocalStateStore};
+use crate::{
+    components::{EmptyState, EmptyStateKind, HelpTip},
+    local_state::LocalStateStore,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 struct AuditRow {
@@ -89,10 +92,14 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
             }
             if rows.is_empty() {
-                div { class: "event", "data-testid": "audit-empty",
-                    div { class: "muted",
+                EmptyState {
+                    title: "Audit".to_owned(),
+                    kind: EmptyStateKind::Empty,
+                    message: Some(
                         "No audit events recorded yet. Audit emission depends on the active Space policy; if no Space you are in is under an attested or disclosed audit profile, nothing will show up here."
-                    }
+                            .to_owned(),
+                    ),
+                    test_id: Some("audit-empty".to_owned()),
                 }
             } else {
                 for row in rows.iter() {

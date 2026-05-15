@@ -61,6 +61,89 @@ test.describe("feature coverage placeholders", () => {
     expect(true).toBe(true);
   });
 
+  test("cross-signing: Run setup submits cx.cross_signing.publish.v1 into the principal control space", async ({
+    page,
+  }) => {
+    // D2 — formerly unwritten. The verify-device panel now runs the
+    // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
+    // binding signatures + persist to a SecureKeyStore), then submits
+    // the publish content as `cx.cross_signing.publish.v1` into the
+    // principal control space (`cx:space:control:<did>`). This test
+    // catches regressions in: (a) the executor's wire-shape contract,
+    // (b) the control-space pinning, (c) the SDK binding alg field, and
+    // (d) the local-state writeback that keeps the panel's status line
+    // hydrated across reloads.
+    await page.addInitScript(() => {
+      if (localStorage.getItem("yougen.config.v1")) {
+        return;
+      }
+      localStorage.setItem(
+        "yougen.config.v1",
+        JSON.stringify({
+          server_url: "https://local.host",
+          account_did: "did:web:alice.example",
+          device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+          session_token: "sx:e2e-token",
+        }),
+      );
+    });
+    await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await expect(page.getByTestId("verify-device-panel")).toBeVisible({ timeout: 60_000 });
+
+    // Step 1: build the plan. The panel populates the steps list and
+    // unlocks the Run setup button below.
+    await page.getByTestId("setup-cross-signing").click();
+    await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
+
+    // Step 2: capture the cx.cross_signing.publish.v1 submission before
+    // it fires so we don't race the spawn task.
+    const publishPromise = page.waitForRequest((request) => {
+      if (request.method() !== "POST" || !request.url().endsWith("/api/v1/events")) {
+        return false;
+      }
+      const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
+      return body?.kind === "cx.cross_signing.publish.v1";
+    });
+
+    await page.getByTestId("run-cross-signing-setup").click();
+
+    const publishRequest = await publishPromise;
+    const body = publishRequest.postDataJSON() as Record<string, unknown>;
+    expect(body.kind).toBe("cx.cross_signing.publish.v1");
+
+    // The envelope MUST target the principal control space (spec
+    // key-management.md §4.1). Yougen derives it via
+    // `cx:space:control:<actor_did>`.
+    expect(body.space_id).toBe("cx:space:control:did:web:alice.example");
+
+    // Drill into the publish content payload: the executor MUST emit a
+    // structurally complete publish (3 keys + binding + generation).
+    const payload = body.payload as Record<string, unknown>;
+    expect(payload.principal_id).toBe("did:web:alice.example");
+    expect(payload.generation).toBe(1);
+    const psk = payload.principal_signing_key as Record<string, unknown>;
+    expect(psk.alg).toBe("EdDSA");
+    expect(typeof psk.public_key).toBe("string");
+    expect((psk.public_key as string).startsWith("z")).toBe(true); // multibase btc58
+    const ssk = payload.self_signing_key as Record<string, unknown>;
+    const sskBinding = ssk.binding as Record<string, unknown>;
+    expect(sskBinding.alg).toBe("EdDSA");
+    expect(typeof sskBinding.signature).toBe("string");
+    expect((sskBinding.signature as string).length).toBeGreaterThan(0);
+    const usk = payload.user_signing_key as Record<string, unknown>;
+    const uskBinding = usk.binding as Record<string, unknown>;
+    expect(uskBinding.alg).toBe("EdDSA");
+
+    // SSK and USK MUST be distinct keys; reusing one for both breaks
+    // the trust chain.
+    const sskKey = ssk as Record<string, unknown>;
+    const uskKey = usk as Record<string, unknown>;
+    expect(sskKey.public_key).not.toBe(uskKey.public_key);
+
+    // After submit, the UI shows the publish event id.
+    await expect(page.getByTestId("cross-signing-publish-id")).toBeVisible({ timeout: 60_000 });
+  });
+
   test.skip("session grant alone never reads E2EE history", async ({ page }) => {
     // A browser session that only holds cx.session.grant: entering the
     // discussion shows ciphertext locked and decryption is disallowed;
@@ -72,10 +155,57 @@ test.describe("feature coverage placeholders", () => {
   // ---- Recovery — three layers ----
   // claude-design: desktop/recovery.html
   // spec: crypto-media/devices-and-auth.md §4
-  test.skip("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
-    // /recovery → vault-rekey → simulate that the server only ever sees a
-    // ciphertext blob, never plaintext.
-    expect(true).toBe(true);
+  test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
+    // D1 — formerly skipped. The recovery view stretches the passphrase
+    // with Argon2id on the device and uploads ONLY the ciphertext blob
+    // (+ random salt + nonce) to PUT /api/v1/keys/backups/{id}. The
+    // server never witnesses the plaintext passphrase. We assert this
+    // by intercepting the upload and checking the wire body.
+    const PASSPHRASE = "correct-horse-battery-staple-7";
+
+    await page.goto("/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await expect(page.getByTestId("vault-section")).toBeVisible({ timeout: 60_000 });
+
+    // Watch for the PUT before we trigger it so we don't race the
+    // browser. The mock above returns `{status: "stored"}` so the UI
+    // reaches the success branch.
+    const uploadPromise = page.waitForRequest((request) => {
+      return (
+        request.method() === "PUT" && /\/api\/v1\/keys\/backups\//.test(request.url())
+      );
+    });
+
+    await page.getByTestId("vault-passphrase").fill(PASSPHRASE);
+    await page.getByTestId("vault-passphrase-confirm").fill(PASSPHRASE);
+    await page.getByTestId("vault-rekey").click();
+
+    const request = await uploadPromise;
+    const raw = request.postData() ?? "";
+    expect(raw, "upload body must not be empty").not.toBe("");
+    const body = JSON.parse(raw);
+
+    // Wire-shape sanity: the body MUST declare Argon2id + XChaCha20-
+    // Poly1305 and carry a ciphertext + digest. Without these the
+    // recovery layer is not in spec.
+    expect(body.encryption?.kdf?.name).toBe("argon2id");
+    expect(body.encryption?.aead?.name).toBe("xchacha20_poly1305");
+    expect(typeof body.ciphertext).toBe("string");
+    expect(body.ciphertext.length).toBeGreaterThan(0);
+    expect(typeof body.ciphertext_digest).toBe("string");
+
+    // The core privacy claim: the passphrase MUST NOT appear anywhere in
+    // the upload. Argon2id is one-way + the AEAD blob is random-keyed,
+    // so any substring match would indicate a leak.
+    expect(raw).not.toContain(PASSPHRASE);
+    // Equally, the placeholder demo salt/nonce from the deprecated
+    // builder must not leak through if a regression swaps back to it.
+    expect(raw).not.toContain("yougen_demo_salt");
+    expect(raw).not.toContain("yougen_demo_nonce");
+    expect(raw).not.toContain("BASE64URL_OPAQUE_BLOB_PLACEHOLDER");
+
+    await expect(page.getByTestId("vault-status")).toContainText(/Uploaded backup|stored/i, {
+      timeout: 60_000,
+    });
   });
 
   test.skip("recovery: social recovery 3 of 5 reconstruct triggers cx.identity.recovery", async ({ page }) => {

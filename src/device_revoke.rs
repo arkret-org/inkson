@@ -239,6 +239,53 @@ pub struct DeviceRevokeMlsRemoveOutput {
     pub commit_operation: contrix_sdk::Operation,
 }
 
+/// Native-only convenience: hydrate the MLS group from a persisted
+/// snapshot envelope, run [`execute_mls_remove`], and re-serialize the
+/// post-commit group state so the caller can persist it back through
+/// [`crate::mls_persistence::encrypt_state`].
+///
+/// This wraps the three pieces of a real-world revocation flow (read,
+/// mutate, write) so views and orchestrators only need to deal with the
+/// `(envelope, passphrase, target)` triple. Web (wasm32) builds don't
+/// have the OpenMLS runtime available; callers there must either ship
+/// the revocation through a desktop companion or surface a "device
+/// revocation requires the desktop client" notice.
+///
+/// Returns the canonical `mls_commit` Operation envelope and the
+/// SDK-typed [`contrix_sdk::MlsGroupStateRecord`] that the caller MUST
+/// re-encrypt + persist before submitting the operation — otherwise a
+/// crash between submit and persist leaves the local cache one epoch
+/// behind the server.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn execute_mls_remove_from_snapshot(
+    envelope: &crate::mls_persistence::MlsSnapshotEnvelope,
+    passphrase: &str,
+    target: &contrix_sdk::Did,
+    operation_id: contrix_sdk::OperationId,
+    space_id: contrix_sdk::SpaceId,
+) -> anyhow::Result<DeviceRevokeFullSnapshot> {
+    let mut group = crate::mls_persistence::restore_envelope(envelope, passphrase, 0)
+        .map_err(|err| anyhow::anyhow!("restore mls snapshot: {err}"))?;
+    let output = execute_mls_remove(&mut group, target, operation_id, space_id)?;
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| anyhow::anyhow!("export mls state record: {err:?}"))?;
+    Ok(DeviceRevokeFullSnapshot {
+        output,
+        post_state,
+    })
+}
+
+/// Combined result of [`execute_mls_remove_from_snapshot`]: the
+/// submission envelope + the post-commit group state record that MUST
+/// be re-encrypted via [`crate::mls_persistence::encrypt_state`] and
+/// persisted before the commit is submitted to the server.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct DeviceRevokeFullSnapshot {
+    pub output: DeviceRevokeMlsRemoveOutput,
+    pub post_state: contrix_sdk::MlsGroupStateRecord,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Round 25 (R4): chained MLS Remove + epoch-advance Move tracker.
 //

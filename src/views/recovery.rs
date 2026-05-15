@@ -33,7 +33,7 @@ use crate::{
         encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key,
         generate_recovery_key,
     },
-    views::helpers::authed_api,
+    views::helpers::{authed_api, with_authed_api},
 };
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
@@ -873,17 +873,21 @@ pub fn RecoveryPanel(
                                 let base = base.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.list_key_backups().await {
-                                            Ok(payload) => {
-                                                let rows = parse_backup_list(&payload);
-                                                let len = rows.len();
-                                                backup_rows.set(rows);
-                                                restore_status.set(format!("Loaded {len} backup(s) from the server"));
-                                            }
-                                            Err(err) => restore_status.set(format!("List failed: {err}")),
-                                        },
-                                        Err(err) => restore_status.set(format!("API unavailable: {err}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.list_key_backups().await
+                                    })
+                                    .await
+                                    {
+                                        Ok(payload) => {
+                                            let rows = parse_backup_list(&payload);
+                                            let len = rows.len();
+                                            backup_rows.set(rows);
+                                            restore_status.set(format!(
+                                                "Loaded {len} backup(s) from the server"
+                                            ));
+                                        }
+                                        Err(err) => restore_status
+                                            .set(format!("List: {}", err.display())),
                                     }
                                     restore_loading.set(false);
                                 });

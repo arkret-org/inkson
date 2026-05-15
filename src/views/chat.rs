@@ -14,6 +14,7 @@ use crate::{
     routes::Route,
     views::helpers::{
         StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
+        with_authed_api_with_sync,
     },
 };
 
@@ -1279,21 +1280,21 @@ pub fn ChatPanel(
                 aside { class: "discussion-panel discussion-sidebar-panel", "data-testid": "discussion-list-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
-                            h2 { "Discussions" }
+                            h2 { {crate::i18n::tr("chat.discussions_header")} }
                             HelpTip { text: "Only discussion tracks under this Space are listed. Use the alternate filter to include other flows that expose a discussion track." }
                         }
                         div { class: "discussion-panel-head-actions",
                             button {
                                 class: "primary icon-button",
-                                "aria-label": "New discussion",
-                                title: "New discussion",
+                                "aria-label": crate::i18n::tr("chat.new_discussion"),
+                                title: crate::i18n::tr("chat.new_discussion"),
                                 "data-testid": "open-channel-dialog",
                                 onclick: move |_| create_dialog_open.set(true),
                                 UiIcon { name: "plus" }
                             }
                             button {
                                 class: "secondary icon-button",
-                                "aria-label": "Hide discussion list",
+                                "aria-label": crate::i18n::tr("chat.hide_list"),
                                 "data-testid": "collapse-discussion-list",
                                 onclick: move |_| left_panel_open.set(false),
                                 UiIcon { name: "panel-left-close" }
@@ -1375,21 +1376,21 @@ pub fn ChatPanel(
                             }
                         }
                         div { class: "discussion-modal-body workflow-form",
-                            label { "Title" }
+                            label { {crate::i18n::tr("chat.label.title")} }
                             input {
                                 "data-testid": "new-channel-name",
                                 value: "{new_channel_name}",
                                 placeholder: "Discussion title",
                                 oninput: move |evt| new_channel_name.set(evt.value()),
                             }
-                            label { "Summary" }
+                            label { {crate::i18n::tr("chat.label.summary")} }
                             input {
                                 "data-testid": "new-channel-topic",
                                 value: "{new_channel_topic}",
                                 placeholder: "Short purpose or context",
                                 oninput: move |evt| new_channel_topic.set(evt.value()),
                             }
-                            label { "Users" }
+                            label { {crate::i18n::tr("chat.label.users")} }
                             textarea {
                                 "data-testid": "new-channel-members",
                                 value: "{new_channel_members}",
@@ -1475,7 +1476,7 @@ pub fn ChatPanel(
                                 class: "secondary",
                                 "data-testid": "cancel-channel-create",
                                 onclick: move |_| create_dialog_open.set(false),
-                                "Cancel"
+                                {crate::i18n::tr("common.cancel")}
                             }
                             button {
                                 class: "primary",
@@ -1601,7 +1602,7 @@ pub fn ChatPanel(
                                             });
                                         }
                                     },
-                                "Create"
+                                {crate::i18n::tr("chat.button.create")}
                             }
                         }
                     }
@@ -1850,7 +1851,7 @@ pub fn ChatPanel(
                                                     });
                                                 }
                                             },
-                                            "Retry"
+                                            {crate::i18n::tr("common.retry")}
                                         }
                                     }
                                 }
@@ -1863,7 +1864,7 @@ pub fn ChatPanel(
                                                 let msg_id = msg.id.clone();
                                                 move |_| reply_to_message.set(Some(msg_id.clone()))
                                             },
-                                            "Reply"
+                                            {crate::i18n::tr("chat.button.reply")}
                                         }
                                         button {
                                             class: "chat-message-action",
@@ -1875,7 +1876,7 @@ pub fn ChatPanel(
                                                     reaction_picker.set(if current == Some(msg_id.clone()) { None } else { Some(msg_id.clone()) });
                                                 }
                                             },
-                                            "React"
+                                            {crate::i18n::tr("chat.button.react")}
                                         }
                                         button {
                                             class: "chat-message-action",
@@ -1888,7 +1889,7 @@ pub fn ChatPanel(
                                                     edit_draft.set(body.clone());
                                                 }
                                             },
-                                            "Edit"
+                                            {crate::i18n::tr("common.edit")}
                                         }
                                         button {
                                             class: "chat-message-action",
@@ -1897,7 +1898,7 @@ pub fn ChatPanel(
                                                 let msg_id = msg.id.clone();
                                                 move |_| redact_confirm.set(Some(msg_id.clone()))
                                             },
-                                            "Redact"
+                                            {crate::i18n::tr("chat.button.redact")}
                                         }
                                     }
                                 }
@@ -1930,10 +1931,18 @@ pub fn ChatPanel(
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(&sync_cursor());
                                                         spawn(async move {
-                                                            if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                                                let op = chat_reaction_add_operation(&space, &actor, &msg_id, &emoji);
-                                                                let _ = api.submit_operation_event(&op).await;
-                                                            }
+                                                            let _ = with_authed_api_with_sync(
+                                                                &base,
+                                                                api_token,
+                                                                wait_for,
+                                                                |api| async move {
+                                                                    let op = chat_reaction_add_operation(
+                                                                        &space, &actor, &msg_id, &emoji,
+                                                                    );
+                                                                    api.submit_operation_event(&op).await
+                                                                },
+                                                            )
+                                                            .await;
                                                         });
                                                         reaction_picker.set(None);
                                                     }
@@ -2074,7 +2083,7 @@ pub fn ChatPanel(
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-users-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
-                            h2 { "Users" }
+                            h2 { {crate::i18n::tr("chat.users_header")} }
                         }
                     }
                     div { class: "discussion-detail-section",
@@ -2088,7 +2097,7 @@ pub fn ChatPanel(
                                     strong { class: "mono participant-did", "{participant.did}" }
                                     div { class: "participant-badges",
                                         if participant.is_self {
-                                            span { class: "badge participant-badge self", "You" }
+                                            span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
                                         }
                                         span {
                                             class: match participant.role {
@@ -2110,7 +2119,7 @@ pub fn ChatPanel(
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
-                            h2 { "Settings" }
+                            h2 { {crate::i18n::tr("chat.settings_header")} }
                         }
                     }
                     div { class: "discussion-detail-section",
@@ -2343,10 +2352,8 @@ pub fn ChatPanel(
                                         // maps to pending_mls_binding.
                                         "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
                                     });
-                                let new_epoch = anchor_view
-                                    .mls_epoch
-                                    .map(|e| e + 1)
-                                    .unwrap_or(1);
+                                let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
+                                let new_epoch = prev_epoch + 1;
                                 let identity =
                                     match state_store.write().ensure_local_identity() {
                                         Ok(id) => id,
@@ -2363,29 +2370,72 @@ pub fn ChatPanel(
                                 // 1) MLS commit Move bumps the epoch +
                                 //    records covered_frontier.
                                 //
-                                // TODO (B3b follow-up): when this chat
-                                // path is migrated onto a real MLS group
-                                // (with persisted ContrixMlsGroup state +
-                                // a real key-schedule hash + prev_epoch
-                                // tracked alongside the new_epoch), swap
-                                // this call for
+                                // B3c: when the anchor view carries every
+                                // input required by
+                                // `mls_governance_binding.full.v1` (typed
+                                // SpaceId, the prior key-schedule hash,
+                                // and a frontier anchor id), build the
+                                // commit through
                                 // `build_mls_commit_move_with_governance_binding`
-                                // and feed it a
-                                // `GovernanceBindingPayload::from_anchor(...)`
-                                // so the server can enforce
-                                // `mls_governance_binding.full.v1`. The
-                                // current path writes only the local
-                                // epoch cas-register because we don't
-                                // have a real key schedule to attest.
-                                let commit_unsigned = match build_mls_commit_move(
-                                    &did,
-                                    &space,
-                                    &space,
-                                    new_epoch,
-                                    &covered_frontier,
-                                    &anchor_ref,
-                                    &hlc,
-                                ) {
+                                // so the server can enforce the binding.
+                                // If anything is missing — typically a
+                                // brand-new Space with no observed key
+                                // schedule — we fall back to the legacy
+                                // single-effect commit so the chat flow
+                                // still works against servers that have
+                                // not turned on the hardening profile.
+                                let mls_binding = (|| -> anyhow::Result<
+                                    crate::mls_governance::GovernanceBindingPayload,
+                                > {
+                                    use contrix_sdk::{AnchorId, Hash, SpaceId};
+                                    let space_id = SpaceId::new(space.clone()).map_err(|e| {
+                                        anyhow::anyhow!("invalid space id: {e:?}")
+                                    })?;
+                                    let anchor_id = AnchorId::new(anchor_ref.clone())
+                                        .map_err(|e| {
+                                            anyhow::anyhow!("invalid anchor ref: {e:?}")
+                                        })?;
+                                    let schedule_hash_str = anchor_view
+                                        .key_schedule_hash
+                                        .as_ref()
+                                        .ok_or_else(|| {
+                                            anyhow::anyhow!("no prior key schedule observed")
+                                        })?;
+                                    let schedule = Hash::new(schedule_hash_str.clone())
+                                        .map_err(|e| {
+                                            anyhow::anyhow!("invalid schedule hash: {e:?}")
+                                        })?;
+                                    crate::mls_governance::GovernanceBindingPayload::from_anchor(
+                                        &space,
+                                        &space_id,
+                                        prev_epoch,
+                                        new_epoch,
+                                        &schedule,
+                                        &anchor_id,
+                                    )
+                                })()
+                                .ok();
+                                let commit_unsigned_result = match &mls_binding {
+                                    Some(binding) => {
+                                        crate::move_builder::build_mls_commit_move_with_governance_binding(
+                                            &did,
+                                            &space,
+                                            binding,
+                                            &anchor_ref,
+                                            &hlc,
+                                        )
+                                    }
+                                    None => build_mls_commit_move(
+                                        &did,
+                                        &space,
+                                        &space,
+                                        new_epoch,
+                                        &covered_frontier,
+                                        &anchor_ref,
+                                        &hlc,
+                                    ),
+                                };
+                                let commit_unsigned = match commit_unsigned_result {
                                     Ok(u) => u,
                                     Err(err) => {
                                         status_msg.set(format!(
@@ -2421,6 +2471,17 @@ pub fn ChatPanel(
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
                                 let actor_for_audit = actor.clone();
+                                // B6b: feed the audit receipt with the
+                                // set of devices the commit was delivered
+                                // to. Without a real ContrixMlsGroup
+                                // membership snapshot at this layer, the
+                                // only device we can prove was reached is
+                                // the local one (the sender), via its
+                                // did:key. When the chat path migrates to
+                                // real MLS the list will expand to the
+                                // post-commit member device DIDs from
+                                // `MlsAddMemberResult` / group state.
+                                let device_did_for_audit = did.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit first; if
@@ -2490,16 +2551,22 @@ pub fn ChatPanel(
                                             // operation and the audit timeline
                                             // can still surface it.
                                             //
-                                            // `delivered_to_devices` is empty
-                                            // for now: a real MLS path would
-                                            // pass the post-commit member
-                                            // device list so an auditor can
-                                            // verify message-to-device fan-out.
+                                            // B6b: at minimum surface the
+                                            // local device DID — that's the
+                                            // device we provably reached
+                                            // (it sent the commit). A real
+                                            // MLS commit yields the full
+                                            // post-commit member device set
+                                            // through `MlsAddMemberResult`
+                                            // / `MlsRemoveMemberResult`; the
+                                            // executor will replace this
+                                            // single-element fallback when
+                                            // the group state path lands.
                                             let audit_op = build_audit_ryw_receipt(
                                                 &space_for_record,
                                                 &actor_for_audit,
                                                 &resp.event_id,
-                                                Vec::new(),
+                                                vec![device_did_for_audit.clone()],
                                             )
                                             .build("yougen");
                                             let _ = api.submit_operation_event(&audit_op).await;

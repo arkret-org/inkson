@@ -726,26 +726,30 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.mimi_provider_directory().await {
-                                                Ok(directory) => {
-                                                    let features = directory.mimi.features.join(", ");
-                                                    mimi_directory.set(format!(
-                                                        "{}\n{}\n{}\n{}",
-                                                        directory.mimi.provider_id,
-                                                        directory.supported_profiles.join(", "),
-                                                        directory.mimi.protocol_draft,
-                                                        features
-                                                    ));
-                                                    status.set("MIMI provider directory refreshed".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let message = format!("MIMI directory failed: {error}");
-                                                    mimi_directory.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.mimi_provider_directory().await
+                                        })
+                                        .await
+                                        {
+                                            Ok(directory) => {
+                                                let features = directory.mimi.features.join(", ");
+                                                mimi_directory.set(format!(
+                                                    "{}\n{}\n{}\n{}",
+                                                    directory.mimi.provider_id,
+                                                    directory.supported_profiles.join(", "),
+                                                    directory.mimi.protocol_draft,
+                                                    features,
+                                                ));
+                                                status.set(
+                                                    "MIMI provider directory refreshed".to_owned(),
+                                                );
+                                            }
+                                            Err(err) => {
+                                                let message =
+                                                    format!("MIMI directory: {}", err.display());
+                                                mimi_directory.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }

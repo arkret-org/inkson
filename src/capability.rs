@@ -24,6 +24,7 @@ impl ActionGroup {
                 "place.create",
                 "place.update",
                 "place.archive",
+                "place.restore",
                 "place.tombstone",
                 "flow.create",
                 "flow.read",
@@ -65,6 +66,7 @@ impl ActionGroup {
                 "morph.read",
                 "morph.update",
                 "morph.archive",
+                "morph.restore",
                 "morph.tombstone",
             ],
             Self::Administrative => &[
@@ -835,6 +837,21 @@ mod tests {
         assert!(ActionGroup::Conversation.contains("message.create"));
         assert!(ActionGroup::Administrative.contains("capability.grant"));
         assert!(!ActionGroup::Common.contains("message.create"));
+    }
+
+    #[test]
+    fn test_lifecycle_archive_restore_symmetry() {
+        // Spec contract: every lifecycle family with `*.archive` MUST also
+        // expose `*.restore` (canonical archived -> active transition). The
+        // pre-existing Common group already had flow.archive + flow.restore;
+        // place.restore and morph.restore were missing — these asserts pin
+        // the symmetry so future trims won't reintroduce the gap.
+        assert!(ActionGroup::Common.contains("flow.archive"));
+        assert!(ActionGroup::Common.contains("flow.restore"));
+        assert!(ActionGroup::Common.contains("place.archive"));
+        assert!(ActionGroup::Common.contains("place.restore"));
+        assert!(ActionGroup::Morph.contains("morph.archive"));
+        assert!(ActionGroup::Morph.contains("morph.restore"));
     }
 
     #[test]

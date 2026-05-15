@@ -459,6 +459,13 @@ pub struct LocalAnchorView {
     /// — UI treats that as "no alert".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier_lag: Option<u64>,
+    /// MLS key-schedule content hash (`sha256:<hex>`) from the
+    /// `cx.component.key_schedule.v1` cas-register cell. The MLS commit
+    /// path uses this as `prev_schedule`; the new commit computes a
+    /// fresh schedule on top of it. `None` means the Space has not
+    /// published a key schedule yet (no prior MLS commit observed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_schedule_hash: Option<String>,
 }
 
 impl LocalAnchorView {
@@ -674,6 +681,19 @@ impl LocalAnchorView {
                     view.covered_frontier = value.as_str().map(str::to_owned).or_else(|| {
                         value
                             .get("frontier")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned)
+                    });
+                }
+                // B3c: surface the MLS key schedule hash so the next
+                // commit's `GovernanceBindingPayload` can carry the
+                // SDK-canonical "advance schedule" effect on it.
+                if cell_ref.starts_with("cx:cell:cx.component.key_schedule.v1")
+                    && let Some(value) = value_for(status)
+                {
+                    view.key_schedule_hash = value.as_str().map(str::to_owned).or_else(|| {
+                        value
+                            .get("hash")
                             .and_then(|v| v.as_str())
                             .map(str::to_owned)
                     });
@@ -2303,6 +2323,7 @@ mod tests {
                     mls_epoch: None,
                     covered_frontier: None,
                     covered_frontier_lag: None,
+                    key_schedule_hash: None,
                 },
             );
         }
