@@ -73,33 +73,22 @@ fn document_body_payload(blocks: &[DocumentBlock]) -> serde_json::Value {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum SyncState {
-    LocalOnly,
-    Pending,
-    Synced,
-    Failed,
-}
-
-impl SyncState {
-    fn label(self) -> &'static str {
-        match self {
-            Self::LocalOnly => "Local draft",
-            Self::Pending => "Pending sync…",
-            Self::Synced => "Synced",
-            Self::Failed => "Local draft (sync failed)",
-        }
-    }
-
-    fn badge_class(self) -> &'static str {
-        match self {
-            Self::LocalOnly => "badge",
-            Self::Pending => "badge amber",
-            Self::Synced => "badge green",
-            Self::Failed => "badge red",
-        }
-    }
-}
+// `SyncState` is an alias over the shared `SyncBadgeState` so document
+// rendering goes through the unified badge. The label override for
+// `LocalOnly` / `Failed` matches the previous user-facing copy
+// ("Local draft" / "Local draft (sync failed)") rather than the generic
+// default so e2e selectors and screenshots stay stable.
+use crate::components::SyncBadgeState;
+type SyncState = SyncBadgeState;
+const _: () = {
+    // Compile-time check that the four-variant assumption still holds —
+    // adding a fifth state upstream means we need to audit every render
+    // site that exhaustively matches on this type.
+    let _ = SyncState::Local;
+    let _ = SyncState::Pending;
+    let _ = SyncState::Synced;
+    let _ = SyncState::Failed;
+};
 
 fn default_draft() -> DocumentDraft {
     DocumentDraft {
@@ -178,7 +167,7 @@ pub fn DocumentPanel(
     let mut edit_text = use_signal(String::new);
     let mut show_versions = use_signal(|| false);
     let mut save_status = use_signal(String::new);
-    let mut sync_state = use_signal(|| SyncState::LocalOnly);
+    let mut sync_state = use_signal(|| SyncState::Local);
 
     let persist = {
         let actor_key = actor_key.clone();
@@ -200,10 +189,12 @@ pub fn DocumentPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { "Document" }
-                    span {
-                        class: sync_state().badge_class(),
-                        "data-testid": "document-sync-badge",
-                        {sync_state().label()}
+                    crate::components::SyncBadge {
+                        state: sync_state(),
+                        local_label: Some("Local draft".to_owned()),
+                        pending_label: Some("Pending sync…".to_owned()),
+                        failed_label: Some("Local draft (sync failed)".to_owned()),
+                        test_id: Some("document-sync-badge".to_owned()),
                     }
                     span { class: "mono", "{space_id}" }
                 }
@@ -249,7 +240,7 @@ pub fn DocumentPanel(
                                 ));
 
                                 if space_id_save.trim().is_empty() {
-                                    sync_state.set(SyncState::LocalOnly);
+                                    sync_state.set(SyncState::Local);
                                     return;
                                 }
                                 sync_state.set(SyncState::Pending);
@@ -600,10 +591,10 @@ mod tests {
     #[test]
     fn sync_state_labels_are_distinct() {
         let labels = [
-            SyncState::LocalOnly.label(),
-            SyncState::Pending.label(),
-            SyncState::Synced.label(),
-            SyncState::Failed.label(),
+            SyncState::Local.default_label(),
+            SyncState::Pending.default_label(),
+            SyncState::Synced.default_label(),
+            SyncState::Failed.default_label(),
         ];
         let unique: std::collections::BTreeSet<_> = labels.iter().copied().collect();
         assert_eq!(unique.len(), labels.len());

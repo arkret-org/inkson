@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::{ContrixApi, normalize_wait_for_sync_token},
+    api::{ContrixApi, is_auth_expired_error, normalize_wait_for_sync_token},
     config::{ClientConfig, LocalConfigStore},
 };
 
@@ -69,6 +69,104 @@ pub fn persist_config(
 
 pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
+}
+
+/// Reason a view-side API call failed. Roughly mirrors `connect()`'s
+/// three-way error split:
+///
+/// * `Unavailable` — `ContrixApi::new` rejected the base URL (bad
+///   scheme, parse error, etc.). The session is intact; the user
+///   should fix the server URL.
+/// * `AuthExpired` — the server returned a definitive session-death
+///   code (per [`is_auth_expired_error`]). The caller MUST clear the
+///   session and bounce to login, exactly as the connect path does.
+/// * `Failed` — every other error. Caller surfaces to status / last_error
+///   so the user sees a retriable reason without losing the session.
+#[derive(Debug)]
+pub enum ApiCallError {
+    Unavailable(anyhow::Error),
+    AuthExpired(anyhow::Error),
+    Failed(anyhow::Error),
+}
+
+impl ApiCallError {
+    /// `true` when the error carries an explicit session-death signal
+    /// from the server; the caller should wipe its session bundle.
+    pub fn is_auth_expired(&self) -> bool {
+        matches!(self, Self::AuthExpired(_))
+    }
+
+    /// Human-readable rendering suitable for `status` / `last_error`
+    /// signals.
+    pub fn display(&self) -> String {
+        match self {
+            Self::Unavailable(err) => format!("API unavailable: {err}"),
+            Self::AuthExpired(err) => format!("Session expired: {err}"),
+            Self::Failed(err) => format!("{err}"),
+        }
+    }
+}
+
+/// Build an authenticated [`ContrixApi`] and pass it to the closure,
+/// folding `ContrixApi::new` errors + auth-expired errors + generic
+/// API errors into a single [`ApiCallError`] so call sites can write:
+///
+/// ```ignore
+/// match with_authed_api(&base, token, |api| async move {
+///     api.list_key_backups().await
+/// }).await {
+///     Ok(value) => status.set(format!("{value}")),
+///     Err(e) if e.is_auth_expired() => { /* redirect_to_login */ }
+///     Err(e) => last_error.set(Some(e.display())),
+/// }
+/// ```
+///
+/// instead of the three-deep nested `match`. Doesn't perform side
+/// effects of its own — auth-expired cleanup (token reset, navigator
+/// redirect) stays with the caller because those signals live in the
+/// surrounding component scope.
+pub async fn with_authed_api<F, Fut, T>(
+    base_url: &str,
+    access_token: String,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(ContrixApi) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let api = authed_api(base_url, access_token).map_err(ApiCallError::Unavailable)?;
+    f(api).await.map_err(|err| {
+        if is_auth_expired_error(&err) {
+            ApiCallError::AuthExpired(err)
+        } else {
+            ApiCallError::Failed(err)
+        }
+    })
+}
+
+/// Same as [`with_authed_api`] but also forwards a sync-cursor token to
+/// the resulting `ContrixApi` so any subsequent read is fenced behind
+/// the latest write (read-your-writes consistency). Pass the result of
+/// [`active_sync_token`] as `wait_for_sync_token`.
+pub async fn with_authed_api_with_sync<F, Fut, T>(
+    base_url: &str,
+    access_token: String,
+    wait_for_sync_token: Option<String>,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(ContrixApi) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token)
+        .map_err(ApiCallError::Unavailable)?;
+    f(api).await.map_err(|err| {
+        if is_auth_expired_error(&err) {
+            ApiCallError::AuthExpired(err)
+        } else {
+            ApiCallError::Failed(err)
+        }
+    })
 }
 
 pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {

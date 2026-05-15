@@ -6,11 +6,15 @@ use crate::{
     components::{HelpTip, UiIcon},
     config::LocalConfigStore,
     i18n::Locale,
-    key_backup::build_key_backup_put_body,
+    key_backup::build_recovery_vault_backup_body,
     local_state::LocalStateStore,
     models::AccountDataSetOutcome,
+    recovery_crypto::{
+        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
+        estimate_passphrase_strength,
+    },
     routes::Route,
-    views::helpers::authed_api,
+    views::helpers::{authed_api, with_authed_api},
     workflows::blocked_release_workflows,
 };
 
@@ -258,6 +262,7 @@ pub fn SettingsPanel(
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id =
         use_signal(|| "cx:backup:01964137-0000-7000-8000-000000000000".to_owned());
+    let mut key_backup_passphrase = use_signal(String::new);
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
@@ -512,11 +517,32 @@ pub fn SettingsPanel(
                     div { class: "muted", "Current: {crypto_state}" }
                     label { "Key Backup" }
                     div { class: "muted", "{key_backup_status}" }
+                    {
+                        // Inline strength meter so users notice when the
+                        // passphrase is too short to protect the backup.
+                        let strength = estimate_passphrase_strength(&key_backup_passphrase());
+                        let strength_label = match strength {
+                            0 => "(passphrase required)",
+                            1..=2 => "weak",
+                            3 => "fair",
+                            _ => "strong",
+                        };
+                        rsx! { div { class: "muted",
+                            "Passphrase strength: {strength_label}"
+                        } }
+                    }
                     div { class: "actions",
                         input {
                             "data-testid": "key-backup-id-input",
                             value: "{key_backup_id}",
                             oninput: move |evt| key_backup_id.set(evt.value()),
+                        }
+                        input {
+                            "data-testid": "key-backup-passphrase-input",
+                            r#type: "password",
+                            value: "{key_backup_passphrase}",
+                            placeholder: "Vault passphrase",
+                            oninput: move |evt| key_backup_passphrase.set(evt.value()),
                         }
                         button {
                             class: "secondary",
@@ -527,20 +553,80 @@ pub fn SettingsPanel(
                                 let backup_id = key_backup_id();
                                 let actor = account_did();
                                 let device = device_id();
+                                let passphrase = key_backup_passphrase();
+                                if passphrase.trim().is_empty() {
+                                    key_backup_status.set(
+                                        "Enter a vault passphrase before storing the backup."
+                                            .to_owned(),
+                                    );
+                                    return;
+                                }
+                                // Backup body schema mirrors the recovery vault
+                                // payload (see views/recovery.rs) so the same
+                                // restore flow recovers backups created here.
+                                // The plaintext carries identity refs only —
+                                // device signing key + MLS state are stored in
+                                // separate scoped backups by future flows.
+                                let payload_plaintext = serde_json::json!({
+                                    "schema_version": 1,
+                                    "actor_did": actor,
+                                    "device_id": device,
+                                    "minted_at": chrono::Utc::now().to_rfc3339(),
+                                    "source": "settings.encryption.store_backup",
+                                })
+                                .to_string();
+                                let pass_bytes = passphrase.into_bytes();
                                 spawn(async move {
-                                    let body = build_key_backup_put_body(
+                                    let kek = match derive_vault_kek(&pass_bytes) {
+                                        Ok(k) => k,
+                                        Err(err) => {
+                                            key_backup_status.set(format!(
+                                                "Argon2id stretch failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let ct = match encrypt_vault(
+                                        &kek,
+                                        payload_plaintext.as_bytes(),
+                                    ) {
+                                        Ok(c) => c,
+                                        Err(err) => {
+                                            key_backup_status.set(format!(
+                                                "AEAD encrypt failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                    let body = build_recovery_vault_backup_body(
                                         &backup_id,
                                         &actor,
                                         &device,
-                                        "BASE64URL_OPAQUE_BLOB_PLACEHOLDER",
-                                        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                                        &ct.ciphertext_b64,
+                                        &ct.digest_sha256,
+                                        &ct.salt_b64,
+                                        &ct.nonce_b64,
+                                        VAULT_ARGON2_M_KIB,
+                                        VAULT_ARGON2_T,
+                                        VAULT_ARGON2_P,
                                     );
                                     match authed_api(&base, api_token) {
-                                        Ok(api) => match api.put_key_backup(&backup_id, body).await {
-                                            Ok(response) => key_backup_status.set(format!("Backup stored: {response}")),
-                                            Err(error) => key_backup_status.set(format!("Backup store failed: {error}")),
+                                        Ok(api) => match api
+                                            .put_key_backup(&backup_id, body)
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                key_backup_status.set(format!(
+                                                    "Backup {backup_id} stored ({} bytes ciphertext)",
+                                                    ct.ciphertext.len()
+                                                ));
+                                                key_backup_passphrase.set(String::new());
+                                            }
+                                            Err(error) => key_backup_status
+                                                .set(format!("Backup store failed: {error}")),
                                         },
-                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                        Err(error) => key_backup_status
+                                            .set(format!("Backup API unavailable: {error}")),
                                     }
                                 });
                             },
@@ -553,12 +639,15 @@ pub fn SettingsPanel(
                                 let base = base_url();
                                 let api_token = token();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.list_key_backups().await {
-                                            Ok(response) => key_backup_status.set(format!("Backups: {response}")),
-                                            Err(error) => key_backup_status.set(format!("Backup list failed: {error}")),
-                                        },
-                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.list_key_backups().await
+                                    })
+                                    .await
+                                    {
+                                        Ok(response) => key_backup_status
+                                            .set(format!("Backups: {response}")),
+                                        Err(err) => key_backup_status
+                                            .set(format!("Backup list: {}", err.display())),
                                     }
                                 });
                             },
@@ -572,12 +661,17 @@ pub fn SettingsPanel(
                                 let api_token = token();
                                 let backup_id = key_backup_id();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.get_key_backup(&backup_id).await {
-                                            Ok(response) => key_backup_status.set(format!("Backup {backup_id}: {response}")),
-                                            Err(error) => key_backup_status.set(format!("Backup load failed: {error}")),
-                                        },
-                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    let backup_id_for_msg = backup_id.clone();
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.get_key_backup(&backup_id).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(response) => key_backup_status.set(format!(
+                                            "Backup {backup_id_for_msg}: {response}"
+                                        )),
+                                        Err(err) => key_backup_status
+                                            .set(format!("Backup load: {}", err.display())),
                                     }
                                 });
                             },
@@ -591,12 +685,15 @@ pub fn SettingsPanel(
                                 let api_token = token();
                                 let backup_id = key_backup_id();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.delete_key_backup(&backup_id).await {
-                                            Ok(response) => key_backup_status.set(format!("Backup deleted: {response}")),
-                                            Err(error) => key_backup_status.set(format!("Backup delete failed: {error}")),
-                                        },
-                                        Err(error) => key_backup_status.set(format!("Backup API unavailable: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.delete_key_backup(&backup_id).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(response) => key_backup_status
+                                            .set(format!("Backup deleted: {response}")),
+                                        Err(err) => key_backup_status
+                                            .set(format!("Backup delete: {}", err.display())),
                                     }
                                 });
                             },

@@ -282,10 +282,32 @@ impl fmt::Display for ContrixApiError {
 
 impl std::error::Error for ContrixApiError {}
 
+/// True when the server has *definitively* told us the session is dead.
+///
+/// We require both:
+///   - HTTP 401 Unauthorized, AND
+///   - an explicit error envelope code that names session loss
+///     (`auth_expired`, `M_UNKNOWN_TOKEN`, `invalid_token`, `token_expired`).
+///
+/// A bare 401 with no structured envelope is treated as a transient denial
+/// — the caller should surface it to the user and let them retry rather
+/// than wiping their session, persisted config, and bouncing them to the
+/// sign-in page. The auto-retry layer in `send_with_retry` has already had
+/// its shot before any error reaches the UI, so the residual 401 is most
+/// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
+/// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<ContrixApiError>()
-        .is_some_and(|api_error| api_error.status == StatusCode::UNAUTHORIZED)
+        .is_some_and(|api_error| {
+            if api_error.status != StatusCode::UNAUTHORIZED {
+                return false;
+            }
+            matches!(
+                api_error.error.code(),
+                "auth_expired" | "M_UNKNOWN_TOKEN" | "invalid_token" | "token_expired"
+            )
+        })
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
@@ -2058,16 +2080,103 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
     }
 }
 
+/// Best-effort decoding of a server error response into an SDK
+/// [`ErrorEnvelope`]. We try three on-the-wire shapes in order:
+///
+///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what
+///      our principal server emits when its inner handler bubbles a
+///      typed envelope through the outer `ApiErrorBody`).
+///   2. A bare envelope `{ "ok": false, "error": { code, message },
+///      request_id? }` — same shape, no wrapping. The SDK's
+///      [`ErrorEnvelope`] requires `request_id`, so we tolerate its
+///      absence via a local shadow type that defaults it to
+///      `"unknown"`.
+///   3. The Matrix-style legacy shape `{ "errcode": "...", "error":
+///      "..." }` — older co-deployed services still surface this form.
+///
+/// If none match, we synthesise a minimal envelope tagged
+/// `cx.error.http_status` so downstream code always has something
+/// well-formed to surface.
 pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
-    serde_json::from_slice::<ApiErrorBody>(bytes)
-        .map(|body| body.error)
-        .or_else(|_| serde_json::from_slice::<ErrorEnvelope>(bytes))
-        .unwrap_or_else(|_| {
-            ErrorEnvelope::new(
-                "cx.error.http_status",
-                format!("HTTP request failed with status {status}"),
-            )
-        })
+    #[derive(serde::Deserialize)]
+    struct PlainEnvelope {
+        #[serde(default)]
+        ok: bool,
+        error: contrix_sdk::ErrorDetail,
+        #[serde(default = "default_request_id")]
+        request_id: String,
+    }
+    fn default_request_id() -> String {
+        "unknown".to_owned()
+    }
+    impl From<PlainEnvelope> for ErrorEnvelope {
+        fn from(value: PlainEnvelope) -> Self {
+            ErrorEnvelope {
+                ok: value.ok,
+                error: value.error,
+                request_id: value.request_id,
+            }
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LegacyMatrixEnvelope {
+        errcode: String,
+        #[serde(default)]
+        error: String,
+    }
+    impl From<LegacyMatrixEnvelope> for ErrorEnvelope {
+        fn from(value: LegacyMatrixEnvelope) -> Self {
+            ErrorEnvelope::new(value.errcode, value.error)
+        }
+    }
+
+    /// `{ok, error: { errcode, error, retry_after_ms?, ...extras }}` — the
+    /// soland Move/Anchor pipeline wraps Matrix-style envelopes this way
+    /// for conflict responses (expected_head_mismatch, etc.). Extra
+    /// fields beyond errcode/error/retry_after_ms are surfaced via the
+    /// envelope `details` map so callers (e.g. conflict UI) can read
+    /// per-cell / per-frontier hints the server attaches.
+    #[derive(serde::Deserialize)]
+    struct WrappedLegacyMatrixEnvelope {
+        #[serde(default)]
+        error: WrappedLegacyMatrixDetail,
+    }
+    #[derive(Default, serde::Deserialize)]
+    struct WrappedLegacyMatrixDetail {
+        #[serde(default)]
+        errcode: String,
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        retry_after_ms: Option<u64>,
+        #[serde(flatten)]
+        extras: std::collections::BTreeMap<String, serde_json::Value>,
+    }
+
+    if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
+        return body.error;
+    }
+    if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
+        return plain.into();
+    }
+    if let Ok(wrapped) = serde_json::from_slice::<WrappedLegacyMatrixEnvelope>(bytes)
+        && !wrapped.error.errcode.is_empty()
+    {
+        let mut envelope = ErrorEnvelope::new(wrapped.error.errcode, wrapped.error.error)
+            .with_retry_after_ms(wrapped.error.retry_after_ms);
+        for (key, value) in wrapped.error.extras {
+            envelope = envelope.with_detail(key, value);
+        }
+        return envelope;
+    }
+    if let Ok(legacy) = serde_json::from_slice::<LegacyMatrixEnvelope>(bytes) {
+        return legacy.into();
+    }
+    ErrorEnvelope::new(
+        "http_status",
+        format!("HTTP request failed with status {status}"),
+    )
 }
 
 fn is_retryable_method(method: &Method) -> bool {
@@ -2241,16 +2350,43 @@ mod tests {
         .into();
         assert!(is_auth_expired_error(&error));
 
-        // Servers occasionally return 401 without a structured envelope (e.g. a
-        // bare body that fails to parse). By the time a 401 reaches the UI the
-        // built-in refresh in `send_with_retry` has already had its shot, so
-        // any 401 here means the session is dead — surface it as such.
+        // A bare 401 with no structured envelope (parse failure or a
+        // reverse-proxy-injected 401 page) must NOT be treated as session
+        // death. Without a body the server has not told us the token is
+        // permanently invalid — it may just be a transient deny. The UI
+        // surfaces the error and lets the user retry rather than wiping
+        // the session and forcing a fresh sign-in.
         let bare: anyhow::Error = ContrixApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
         }
         .into();
-        assert!(is_auth_expired_error(&bare));
+        assert!(!is_auth_expired_error(&bare));
+
+        // Common aliases for the same condition should all trigger.
+        for code in ["M_UNKNOWN_TOKEN", "invalid_token", "token_expired"] {
+            let body = format!(
+                r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#
+            );
+            let aliased: anyhow::Error = ContrixApiError {
+                status: StatusCode::UNAUTHORIZED,
+                error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            }
+            .into();
+            assert!(is_auth_expired_error(&aliased), "code {code} should match");
+        }
+
+        // A 401 carrying an unrelated error code (rate-limit, policy_denied
+        // wrapped in 401, etc.) must not be misclassified as session death.
+        let unrelated: anyhow::Error = ContrixApiError {
+            status: StatusCode::UNAUTHORIZED,
+            error: decode_contrix_error(
+                StatusCode::UNAUTHORIZED,
+                br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
+            ),
+        }
+        .into();
+        assert!(!is_auth_expired_error(&unrelated));
 
         let forbidden: anyhow::Error = ContrixApiError {
             status: StatusCode::FORBIDDEN,

@@ -1,11 +1,13 @@
 use dioxus::prelude::*;
 
 pub mod permission_pill;
+pub mod sync_badge;
 pub mod write_state;
 
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
+pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use write_state::{WriteState, WriteStateExplainer, WriteStatePill};
 
 // LazyLinkBadge is declared below.

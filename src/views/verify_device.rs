@@ -65,19 +65,22 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
         div { class: "timeline", "data-testid": "verify-device-panel",
             // Verification method selector
             div { class: "event", "data-testid": "verify-method",
-                div { class: "event-head", span { "Device Verification" } span { "choose method" } }
+                div { class: "event-head",
+                    span { {crate::i18n::tr("verify_device.title")} }
+                    span { {crate::i18n::tr("verify_device.choose_method")} }
+                }
                 div { class: "actions",
                     button {
                         class: if verify_method() == VerifyMethod::QrCode { "primary" } else { "secondary" },
                         "data-testid": "qr-verify-button",
                         onclick: move |_| verify_method.set(VerifyMethod::QrCode),
-                        "QR Code"
+                        {crate::i18n::tr("verify_device.qr_code")}
                     }
                     button {
                         class: if verify_method() == VerifyMethod::Sas { "primary" } else { "secondary" },
                         "data-testid": "sas-verify-button",
                         onclick: move |_| verify_method.set(VerifyMethod::Sas),
-                        "SAS (Emoji)"
+                        {crate::i18n::tr("verify_device.sas_emoji")}
                     }
                 }
             }
@@ -85,13 +88,16 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
             // QR Code verification flow
             if verify_method() == VerifyMethod::QrCode {
                 div { class: "event", "data-testid": "qr-verify-flow",
-                    div { class: "event-head", span { "QR Verification" } span { "scan or display" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("verify_device.qr_section")} }
+                        span { {crate::i18n::tr("verify_device.qr_section_hint")} }
+                    }
                     div { class: "workflow-form",
-                        label { "Target Device ID" }
+                        label { {crate::i18n::tr("verify_device.target_device_id")} }
                         input {
                             "data-testid": "qr-target-device",
                             value: "{target_device}",
-                            placeholder: "Device ID to verify",
+                            placeholder: crate::i18n::tr("verify_device.target_device_placeholder"),
                             oninput: move |evt| target_device.set(evt.value()),
                         }
                         div { class: "actions",
@@ -107,7 +113,7 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                         ));
                                     }
                                 },
-                                "Generate QR Data"
+                                {crate::i18n::tr("verify_device.generate_qr")}
                             }
                         }
                         if !qr_data().is_empty() {
@@ -146,13 +152,16 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
             // SAS verification flow
             if verify_method() == VerifyMethod::Sas {
                 div { class: "event", "data-testid": "sas-verify-flow",
-                    div { class: "event-head", span { "SAS Verification" } span { "emoji comparison" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("verify_device.sas_section")} }
+                        span { {crate::i18n::tr("verify_device.sas_section_hint")} }
+                    }
                     div { class: "workflow-form",
-                        label { "Target Device ID" }
+                        label { {crate::i18n::tr("verify_device.target_device_id")} }
                         input {
                             "data-testid": "sas-target-device",
                             value: "{target_device}",
-                            placeholder: "Device ID to verify",
+                            placeholder: crate::i18n::tr("verify_device.target_device_placeholder"),
                             oninput: move |evt| target_device.set(evt.value()),
                         }
                         div { class: "actions",
@@ -178,12 +187,12 @@ pub fn VerifyDevicePanel(base_url: String, token: Signal<String>, device_id: Str
                                         });
                                     }
                                 },
-                                "Start SAS Verification"
+                                {crate::i18n::tr("verify_device.start_sas")}
                             }
                         }
                         if !sas_code().is_empty() {
                             div { class: "event", "data-testid": "sas-display",
-                                div { class: "space-title", "Short Authentication String" }
+                                div { class: "space-title", {crate::i18n::tr("verify_device.short_auth_string")} }
                                 div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
                                 // SAS emoji row — claude-design desktop/verify-device.html
                                 div { class: "actions", "data-testid": "sas-emoji-row",

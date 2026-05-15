@@ -38,33 +38,11 @@ use crate::{
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SyncBadge {
-    Local,
-    Pending,
-    Synced,
-    Failed,
-}
-
-impl SyncBadge {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Local => "Local only",
-            Self::Pending => "Uploading…",
-            Self::Synced => "Synced",
-            Self::Failed => "Sync failed",
-        }
-    }
-
-    fn class(self) -> &'static str {
-        match self {
-            Self::Local => "badge",
-            Self::Pending => "badge amber",
-            Self::Synced => "badge green",
-            Self::Failed => "badge red",
-        }
-    }
-}
+// SyncBadge / SyncBadgeState are now shared in `crate::components::sync_badge`.
+// The Recovery view uses the bare enum for signal state and renders via
+// the shared component, overriding the "Pending" label to "Uploading…" to
+// keep the existing copy. See C1 — unified sync badge.
+use crate::components::SyncBadgeState as SyncBadge;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Guardian {
@@ -407,7 +385,11 @@ pub fn RecoveryPanel(
             div { class: "event", "data-testid": "vault-section",
                 div { class: "event-head",
                     span { "Encrypted Cloud Vault" }
-                    span { class: vault_sync().class(), "data-testid": "vault-sync-badge", {vault_sync().label()} }
+                    crate::components::SyncBadge {
+                        state: vault_sync(),
+                        pending_label: Some("Uploading…".to_owned()),
+                        test_id: Some("vault-sync-badge".to_owned()),
+                    }
                     HelpTip { text: "Your passphrase is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and the resulting key encrypts the recovery payload with XChaCha20-Poly1305 before it leaves the device. The salt and nonce travel with the ciphertext; the passphrase does not." }
                 }
                 div { class: "workflow-form",

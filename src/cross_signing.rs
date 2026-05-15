@@ -19,7 +19,18 @@
 //! The UI renders [`CrossSigningSetupPlan`] and shows the canonical event kind
 //! for each step, mirroring the device-revoke design.
 
+use anyhow::Context;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
+use chrono::Utc;
+use contrix_sdk::{
+    CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
+    SignedCrossSigningKey,
+};
+use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
+
+use crate::move_builder::encode_ed25519_did_key_multibase;
 
 /// One step of a complete cross-signing setup. Each variant maps to a specific
 /// action or canonical event in the spec.
@@ -220,6 +231,174 @@ impl CrossSigningTrustState {
     }
 }
 
+/// Executor for [`CrossSigningSetupPlan`]. Generates the three keypairs
+/// locally, computes the PSK-signed bindings for SSK / USK, and assembles
+/// the [`CrossSigningPublishContent`] body the caller must submit as a
+/// `cx.cross_signing.publish.v1` operation.
+///
+/// What this executor **does** (per spec §5.1):
+///   * Generates Ed25519 keypairs for PSK, SSK, USK via the platform RNG.
+///   * Encodes each public key as multibase (`z` + base58btc with the
+///     `0xed 0x01` Ed25519 multicodec prefix), matching the
+///     `did:key:` / multikey wire format the SDK validates.
+///   * Computes `canonical_cross_signing_binding_input` bytes for SSK
+///     and USK via the SDK's helper, then signs them with the PSK
+///     private key. Signatures are emitted base64-encoded (the SDK's
+///     declared encoding for the `binding.signature` field).
+///   * Assembles a full `CrossSigningPublishContent`, runs the SDK's
+///     `validate_structure()` so the publish event body MUST round-trip
+///     through SDK validation before the API call is even constructed.
+///
+/// What this executor deliberately does **not** do:
+///   * Persist the generated private keys to disk. The caller decides
+///     whether to push them through `secure_key_store::SecureKeyStore`
+///     (preferred) or hand them to the recovery vault for backup. Both
+///     paths are downstream consumers of [`CrossSigningSetupOutput`].
+///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish.v1`, or
+///     `cx.device.authorized` to the server. Those are API-bound side
+///     effects; the executor returns the canonical event bodies and the
+///     caller (a view handler / orchestrator) drives the API.
+///   * Recompute device trust states. That requires reading the device
+///     manager state and is a separate concern; `recompute_trust_states`
+///     consumes this executor's output but lives in the device manager.
+pub struct CrossSigningExecutor {
+    plan: CrossSigningSetupPlan,
+    principal_did: Did,
+}
+
+/// Materials produced by [`CrossSigningExecutor::run`]. The PSK / SSK /
+/// USK private signing keys MUST be moved into a secure store or the
+/// recovery vault immediately; dropping them strands the publish event
+/// (no subsequent device can be cross-signed without the PSK + SSK).
+pub struct CrossSigningSetupOutput {
+    pub principal_signing_key: SigningKey,
+    pub self_signing_key: SigningKey,
+    pub user_signing_key: SigningKey,
+    /// The fully validated publish content the caller submits as
+    /// `cx.cross_signing.publish.v1`.
+    pub publish_content: CrossSigningPublishContent,
+}
+
+impl CrossSigningExecutor {
+    pub fn new(plan: CrossSigningSetupPlan, principal_did: Did) -> Self {
+        Self {
+            plan,
+            principal_did,
+        }
+    }
+
+    /// Run the local generation + signing steps of the plan. Returns the
+    /// generated keypairs + the validated publish content body.
+    pub fn run(&self) -> anyhow::Result<CrossSigningSetupOutput> {
+        let psk = generate_ed25519_signing_key().context("generate principal_signing_key")?;
+        let ssk = generate_ed25519_signing_key().context("generate self_signing_key")?;
+        let usk = generate_ed25519_signing_key().context("generate user_signing_key")?;
+
+        // Spec §5: kid is a DID-URL pointing at a specific verification
+        // method on the principal DID. Stable suffixes mirror the
+        // `cx_principal_signing_v1` / `cx_self_signing_v1` / `cx_user_signing_v1`
+        // names recommended by the v1 core registry.
+        let psk_kid = format!("{}#cx_principal_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
+        let ssk_kid = format!("{}#cx_self_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
+        let usk_kid = format!("{}#cx_user_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
+
+        let psk_record = CrossSigningKeyRecord {
+            kid: psk_kid.clone(),
+            alg: "EdDSA".to_owned(),
+            public_key: encode_ed25519_did_key_multibase(&psk.verifying_key()),
+            key_format: "multibase".to_owned(),
+        };
+        let ssk_record = CrossSigningKeyRecord {
+            kid: ssk_kid,
+            alg: "EdDSA".to_owned(),
+            public_key: encode_ed25519_did_key_multibase(&ssk.verifying_key()),
+            key_format: "multibase".to_owned(),
+        };
+        let usk_record = CrossSigningKeyRecord {
+            kid: usk_kid,
+            alg: "EdDSA".to_owned(),
+            public_key: encode_ed25519_did_key_multibase(&usk.verifying_key()),
+            key_format: "multibase".to_owned(),
+        };
+
+        // Sign the SSK and USK bindings with PSK. We assemble a draft
+        // publish so the SDK's canonical-binding helpers produce the exact
+        // bytes the server will compare against.
+        let draft = CrossSigningPublishContent {
+            principal_id: self.principal_did.clone(),
+            principal_signing_key: psk_record.clone(),
+            self_signing_key: SignedCrossSigningKey {
+                key: ssk_record.clone(),
+                binding: CrossSigningBinding {
+                    signed_by: psk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    signature: String::new(),
+                },
+            },
+            user_signing_key: SignedCrossSigningKey {
+                key: usk_record.clone(),
+                binding: CrossSigningBinding {
+                    signed_by: psk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    signature: String::new(),
+                },
+            },
+            generation: self.plan.new_generation,
+            issued_at: Utc::now(),
+        };
+        let ssk_input = draft
+            .self_signing_binding_input()
+            .map_err(|e| anyhow::anyhow!("self_signing_binding_input: {e:?}"))?;
+        let usk_input = draft
+            .user_signing_binding_input()
+            .map_err(|e| anyhow::anyhow!("user_signing_binding_input: {e:?}"))?;
+
+        let ssk_sig = psk.sign(&ssk_input);
+        let usk_sig = psk.sign(&usk_input);
+
+        let publish_content = CrossSigningPublishContent {
+            principal_id: draft.principal_id,
+            principal_signing_key: draft.principal_signing_key,
+            self_signing_key: SignedCrossSigningKey {
+                key: draft.self_signing_key.key,
+                binding: CrossSigningBinding {
+                    signed_by: psk_kid.clone(),
+                    alg: "EdDSA".to_owned(),
+                    signature: B64.encode(ssk_sig.to_bytes()),
+                },
+            },
+            user_signing_key: SignedCrossSigningKey {
+                key: draft.user_signing_key.key,
+                binding: CrossSigningBinding {
+                    signed_by: psk_kid,
+                    alg: "EdDSA".to_owned(),
+                    signature: B64.encode(usk_sig.to_bytes()),
+                },
+            },
+            generation: draft.generation,
+            issued_at: draft.issued_at,
+        };
+
+        publish_content
+            .validate_structure()
+            .map_err(|e| anyhow::anyhow!("publish content failed SDK validation: {e:?}"))?;
+
+        Ok(CrossSigningSetupOutput {
+            principal_signing_key: psk,
+            self_signing_key: ssk,
+            user_signing_key: usk,
+            publish_content,
+        })
+    }
+}
+
+/// Generate a fresh Ed25519 signing key via the platform-correct RNG.
+fn generate_ed25519_signing_key() -> anyhow::Result<SigningKey> {
+    let mut seed = [0u8; SECRET_KEY_LENGTH];
+    getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
+    Ok(SigningKey::from_bytes(&seed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +438,71 @@ mod tests {
             assert!(!state.label().is_empty());
             assert!(state.badge_class().starts_with("badge"));
         }
+    }
+
+    #[test]
+    fn executor_produces_validated_publish_content() {
+        use ed25519_dalek::{Signature, Verifier};
+
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let out = executor.run().expect("local steps must succeed");
+
+        // SDK validation runs inside `run()`; reaching here means the
+        // publish content already passed the structural check (distinct
+        // SSK / USK keys, non-empty kids, binding.signed_by matches PSK
+        // kid, generation >= 1). Additionally verify the signatures
+        // cryptographically using the PSK's verifying key — this is the
+        // exact computation the server will run to accept the publish.
+        let pub_content = &out.publish_content;
+        assert_eq!(pub_content.generation, 1);
+        assert_eq!(
+            pub_content.principal_signing_key.public_key,
+            encode_ed25519_did_key_multibase(&out.principal_signing_key.verifying_key())
+        );
+
+        let psk_verifying = out.principal_signing_key.verifying_key();
+        let ssk_input = pub_content.self_signing_binding_input().unwrap();
+        let ssk_sig_bytes = B64
+            .decode(&pub_content.self_signing_key.binding.signature)
+            .expect("ssk signature base64");
+        let ssk_sig = Signature::from_slice(&ssk_sig_bytes).expect("ssk signature 64 bytes");
+        psk_verifying
+            .verify(&ssk_input, &ssk_sig)
+            .expect("ssk binding signature must verify against PSK");
+
+        let usk_input = pub_content.user_signing_binding_input().unwrap();
+        let usk_sig_bytes = B64
+            .decode(&pub_content.user_signing_key.binding.signature)
+            .expect("usk signature base64");
+        let usk_sig = Signature::from_slice(&usk_sig_bytes).expect("usk signature 64 bytes");
+        psk_verifying
+            .verify(&usk_input, &usk_sig)
+            .expect("usk binding signature must verify against PSK");
+    }
+
+    #[test]
+    fn executor_picks_distinct_keys_on_every_run() {
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let executor = CrossSigningExecutor::new(plan, principal);
+        let a = executor.run().unwrap();
+        let b = executor.run().unwrap();
+        // Re-runs MUST mint fresh randomness for all three keys; reusing
+        // any one of them across runs would be a critical entropy bug.
+        assert_ne!(
+            a.principal_signing_key.to_bytes(),
+            b.principal_signing_key.to_bytes()
+        );
+        assert_ne!(
+            a.self_signing_key.to_bytes(),
+            b.self_signing_key.to_bytes()
+        );
+        assert_ne!(
+            a.user_signing_key.to_bytes(),
+            b.user_signing_key.to_bytes()
+        );
     }
 
     #[test]

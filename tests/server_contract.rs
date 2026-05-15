@@ -2,8 +2,8 @@ use reqwest::StatusCode;
 use serde_json::json;
 use yougen::{
     api::{
-        decode_contrix_error, parse_directory_describe, parse_resolve_space,
-        parse_server_description, parse_sync, parse_sync_describe,
+        ContrixApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
+        parse_resolve_space, parse_server_description, parse_sync, parse_sync_describe,
     },
     config::{ClientConfig, LocalConfigStore},
 };
@@ -444,4 +444,90 @@ fn yougen_parses_submit_anchor_response_with_rejected_moves() {
     assert_eq!(parsed.accepted_move_ids.len(), 1);
     assert_eq!(parsed.rejected_moves.len(), 1);
     assert!(parsed.rejected_moves[0].reason.contains("FSM"));
+}
+
+/// Regression for A3 (Sprint Q1, 2026-05-15). `is_auth_expired_error`
+/// MUST treat a bare 401 (server returned 401 with no parseable error
+/// envelope, e.g. a reverse-proxy injected HTML page) as a *transient*
+/// denial — not as session death. Otherwise a brief upstream hiccup
+/// wipes the user's persisted session and forces a fresh sign-in.
+#[test]
+fn bare_401_does_not_count_as_session_loss() {
+    let bare: anyhow::Error = ContrixApiError {
+        status: StatusCode::UNAUTHORIZED,
+        error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
+    }
+    .into();
+    assert!(!is_auth_expired_error(&bare));
+
+    // A 401 with an unrelated error code (e.g. rate-limit / policy_denied
+    // wrapped at the 401 layer) must also stay transient. Only explicit
+    // session-death codes from the spec — auth_expired / M_UNKNOWN_TOKEN /
+    // invalid_token / token_expired — should drop the session.
+    for code in ["auth_expired", "M_UNKNOWN_TOKEN", "invalid_token", "token_expired"] {
+        let body = format!(
+            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#
+        );
+        let envelope: anyhow::Error = ContrixApiError {
+            status: StatusCode::UNAUTHORIZED,
+            error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+        }
+        .into();
+        assert!(
+            is_auth_expired_error(&envelope),
+            "code {code} should be classified as expired"
+        );
+    }
+
+    let unrelated: anyhow::Error = ContrixApiError {
+        status: StatusCode::UNAUTHORIZED,
+        error: decode_contrix_error(
+            StatusCode::UNAUTHORIZED,
+            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
+        ),
+    }
+    .into();
+    assert!(!is_auth_expired_error(&unrelated));
+}
+
+/// Regression for the Sprint Q1 decoder fix. `decode_contrix_error` MUST
+/// tolerate three on-the-wire shapes (canonical wrapped, plain envelope
+/// without `request_id`, Matrix-style legacy `errcode`) and synthesise a
+/// stable `http_status` envelope when none match. A regression here
+/// silently degrades every error message in the UI.
+#[test]
+fn decoder_handles_all_envelope_shapes() {
+    // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints
+    //    (e.g. the cell ref the server is reporting the conflict on)
+    //    must flow through the `details` map so the conflict UI can
+    //    surface them.
+    let wrapped = decode_contrix_error(
+        StatusCode::CONFLICT,
+        br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"head mismatch","retry_after_ms":250,"cell":"cx:cell:cx.component.flow.position.v1:demo"}}"#,
+    );
+    assert_eq!(wrapped.code(), "expected_head_mismatch");
+    assert_eq!(wrapped.retry_after_ms(), Some(250));
+    assert_eq!(
+        wrapped.details()["cell"],
+        "cx:cell:cx.component.flow.position.v1:demo"
+    );
+
+    // 2. Plain envelope without `request_id`.
+    let plain = decode_contrix_error(
+        StatusCode::BAD_REQUEST,
+        br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"}}"#,
+    );
+    assert_eq!(plain.code(), "invalid_param");
+
+    // 3. Legacy Matrix-style.
+    let legacy = decode_contrix_error(
+        StatusCode::BAD_REQUEST,
+        br#"{"errcode":"invalid_param","error":"bad did"}"#,
+    );
+    assert_eq!(legacy.code(), "invalid_param");
+
+    // 4. Garbage / non-JSON: synthesised fallback.
+    let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
+    assert_eq!(fallback.code(), "http_status");
+    assert!(fallback.message().contains("503"));
 }

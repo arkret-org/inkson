@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use contrix_sdk::{
-    FederationTransaction, TrustAnchor, WellKnownContrixServer,
+    FederationManager, FederationTransaction, TrustAnchor, WellKnownContrixServer,
 };
 use serde::{Deserialize, Serialize};
 
@@ -93,12 +93,19 @@ impl TrustBundle {
                 expected: local_domain.to_owned(),
             };
         }
-        // For now we treat the signature as opaque; the SDK's
-        // `FederationManager::verify_transaction` is the canonical verifier.
-        // Yougen consumes a pre-validated transaction from the Principal
-        // Server and uses this bundle to enforce the additional pinning rule.
-        // A future P3 task replaces this with the SDK verifier directly.
+        // Delegate signature verification to the SDK's canonical verifier
+        // (`FederationManager::verify_transaction`), feeding it just this
+        // anchor. Yougen pins the trust anchor; the SDK owns the signing
+        // algorithm (today a SHA-256 chained MAC, in the future an Ed25519
+        // detached signature). Routing through the SDK means yougen's
+        // verification automatically tracks whatever wire-format the SDK
+        // upgrades to, with no protocol drift between sender and receiver.
         if anchor.public_key.is_empty() || transaction.signature.is_empty() {
+            return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
+        }
+        let mut sdk_mgr = FederationManager::new();
+        sdk_mgr.add_trust_anchor(anchor.clone());
+        if !sdk_mgr.verify_transaction(transaction) {
             return TrustCheck::SignatureMismatch(transaction.transaction_id.clone());
         }
         TrustCheck::Trusted
@@ -180,19 +187,64 @@ mod tests {
 
     #[test]
     fn pinned_origin_with_signature_passes() {
+        // Use the SDK to produce a transaction whose signature matches the
+        // verifier — yougen must accept exactly the same bytes the SDK
+        // peer emits, otherwise federation breaks at the boundary.
+        let mut sdk_mgr = FederationManager::new();
+        let signing_key = "shared-secret-for-bob";
+        sdk_mgr.add_trust_anchor(anchor("bob.example", signing_key));
+        let tx = sdk_mgr.create_transaction(
+            "bob.example",
+            "alice.example",
+            Vec::new(),
+            signing_key,
+        );
+
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
-        let tx = FederationTransaction {
-            transaction_id: "t1".into(),
-            origin: "bob.example".into(),
-            destination: "alice.example".into(),
-            events: Vec::new(),
-            signature: "sig".into(),
-        };
+        bundle.add_anchor(anchor("bob.example", signing_key));
         assert_eq!(
             bundle.verify_transaction("alice.example", &tx),
             TrustCheck::Trusted
         );
+    }
+
+    #[test]
+    fn pinned_origin_with_forged_signature_is_rejected() {
+        let mut bundle = TrustBundle::new();
+        bundle.add_anchor(anchor("bob.example", "bob-key"));
+        // Hand-rolled signature that does NOT match the SDK's algorithm.
+        let tx = FederationTransaction {
+            transaction_id: "t-forged".into(),
+            origin: "bob.example".into(),
+            destination: "alice.example".into(),
+            events: Vec::new(),
+            signature: "obviously-wrong".into(),
+        };
+        match bundle.verify_transaction("alice.example", &tx) {
+            TrustCheck::SignatureMismatch(id) => assert_eq!(id, "t-forged"),
+            other => panic!("expected SignatureMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pinned_origin_with_wrong_key_is_rejected() {
+        // Sender used `wrong-key`; we pinned `right-key`. The signatures
+        // mix the key into the hash chain, so they diverge.
+        let mut sdk_mgr = FederationManager::new();
+        sdk_mgr.add_trust_anchor(anchor("bob.example", "wrong-key"));
+        let tx = sdk_mgr.create_transaction(
+            "bob.example",
+            "alice.example",
+            Vec::new(),
+            "wrong-key",
+        );
+
+        let mut bundle = TrustBundle::new();
+        bundle.add_anchor(anchor("bob.example", "right-key"));
+        match bundle.verify_transaction("alice.example", &tx) {
+            TrustCheck::SignatureMismatch(_) => {}
+            other => panic!("expected SignatureMismatch, got {other:?}"),
+        }
     }
 
     #[test]

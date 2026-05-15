@@ -336,6 +336,21 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mobile.filter_spaces", "Filter spaces…");
     dict.set("mobile.no_match", "No spaces match.");
 
+    // Verify Device (cross-signing / SAS)
+    dict.set("verify_device.title", "Device Verification");
+    dict.set("verify_device.choose_method", "choose method");
+    dict.set("verify_device.qr_code", "QR Code");
+    dict.set("verify_device.sas_emoji", "SAS (Emoji)");
+    dict.set("verify_device.qr_section", "QR Verification");
+    dict.set("verify_device.qr_section_hint", "scan or display");
+    dict.set("verify_device.sas_section", "SAS Verification");
+    dict.set("verify_device.sas_section_hint", "emoji comparison");
+    dict.set("verify_device.target_device_id", "Target Device ID");
+    dict.set("verify_device.target_device_placeholder", "Device ID to verify");
+    dict.set("verify_device.generate_qr", "Generate QR Data");
+    dict.set("verify_device.start_sas", "Start SAS Verification");
+    dict.set("verify_device.short_auth_string", "Short Authentication String");
+
     dict
 }
 
@@ -450,6 +465,21 @@ pub fn chinese_translations() -> TranslationDict {
 
     dict.set("mobile.filter_spaces", "筛选空间…");
     dict.set("mobile.no_match", "未找到匹配空间。");
+
+    // Verify Device
+    dict.set("verify_device.title", "设备验证");
+    dict.set("verify_device.choose_method", "选择方式");
+    dict.set("verify_device.qr_code", "二维码");
+    dict.set("verify_device.sas_emoji", "SAS（表情）");
+    dict.set("verify_device.qr_section", "二维码验证");
+    dict.set("verify_device.qr_section_hint", "扫描或显示");
+    dict.set("verify_device.sas_section", "SAS 验证");
+    dict.set("verify_device.sas_section_hint", "表情对比");
+    dict.set("verify_device.target_device_id", "目标设备 ID");
+    dict.set("verify_device.target_device_placeholder", "要验证的设备 ID");
+    dict.set("verify_device.generate_qr", "生成二维码");
+    dict.set("verify_device.start_sas", "开始 SAS 验证");
+    dict.set("verify_device.short_auth_string", "短认证串");
 
     dict
 }

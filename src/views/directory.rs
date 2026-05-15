@@ -2,7 +2,12 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::Value;
 
-use crate::{components::HelpTip, models::*, routes::Route, views::helpers::authed_api};
+use crate::{
+    components::HelpTip,
+    models::*,
+    routes::Route,
+    views::helpers::{authed_api, with_authed_api},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
@@ -194,12 +199,17 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 let target = contact_target_did();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.request_contact(&target).await {
-                                            Ok(contact) => contact_state.set(format!("request {} -> {} {}", contact.requester, contact.target, contact.status)),
-                                            Err(error) => contact_state.set(format!("request failed: {error}")),
-                                        },
-                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.request_contact(&target).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(contact) => contact_state.set(format!(
+                                            "request {} -> {} {}",
+                                            contact.requester, contact.target, contact.status
+                                        )),
+                                        Err(err) => contact_state
+                                            .set(format!("request: {}", err.display())),
                                     }
                                 });
                             }
@@ -216,12 +226,17 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 let requester = contact_requester_did();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.respond_contact(&requester, "accept").await {
-                                            Ok(contact) => contact_state.set(format!("respond {} -> {} {}", contact.requester, contact.target, contact.status)),
-                                            Err(error) => contact_state.set(format!("accept failed: {error}")),
-                                        },
-                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.respond_contact(&requester, "accept").await
+                                    })
+                                    .await
+                                    {
+                                        Ok(contact) => contact_state.set(format!(
+                                            "respond {} -> {} {}",
+                                            contact.requester, contact.target, contact.status
+                                        )),
+                                        Err(err) => contact_state
+                                            .set(format!("accept: {}", err.display())),
                                     }
                                 });
                             }
@@ -238,12 +253,17 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 let requester = contact_requester_did();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.respond_contact(&requester, "reject").await {
-                                            Ok(contact) => contact_state.set(format!("respond {} -> {} {}", contact.requester, contact.target, contact.status)),
-                                            Err(error) => contact_state.set(format!("reject failed: {error}")),
-                                        },
-                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.respond_contact(&requester, "reject").await
+                                    })
+                                    .await
+                                    {
+                                        Ok(contact) => contact_state.set(format!(
+                                            "respond {} -> {} {}",
+                                            contact.requester, contact.target, contact.status
+                                        )),
+                                        Err(err) => contact_state
+                                            .set(format!("reject: {}", err.display())),
                                     }
                                 });
                             }

@@ -1,6 +1,16 @@
 use chrono::SecondsFormat;
 use serde_json::{Value, json};
 
+/// Legacy placeholder-only backup body. Carries the demo salt /
+/// nonce that no real client can decrypt — kept only so the existing
+/// unit-test vectors continue to compile. New code MUST use
+/// [`build_recovery_vault_backup_body`], which threads real Argon2id
+/// salt + XChaCha20-Poly1305 nonce values produced by
+/// [`crate::recovery_crypto::encrypt_vault`].
+#[deprecated(
+    since = "0.2.0",
+    note = "use build_recovery_vault_backup_body with real recovery_crypto outputs"
+)]
 pub fn build_key_backup_put_body(
     backup_id: &str,
     actor_did: &str,
@@ -113,6 +123,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)]
     fn build_key_backup_put_body_round_trips_required_fields() {
         let body = build_key_backup_put_body(
             "cx:backup:01964137-0000-7000-8000-000000000000",
@@ -174,6 +185,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn build_key_backup_put_body_uses_recipient_key_ref() {
         let body = build_key_backup_put_body(
             "cx:backup:01964137-0000-7000-8000-000000000000",

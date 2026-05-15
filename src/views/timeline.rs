@@ -3,12 +3,13 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::{
+    audit::build_audit_accessed,
     conformance::PlaintextBoundary,
     crypto::compose_local_encrypted_message,
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
     operation::{OperationBuilder, OperationEnvelope, uuid_v7},
-    views::helpers::{active_sync_token, authed_api_with_sync},
+    views::helpers::{active_sync_token, authed_api_with_sync, with_authed_api_with_sync},
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
@@ -337,8 +338,13 @@ pub fn TimelinePanel(
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
         spawn(async move {
-            if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for)
-                && let Ok(sync) = api.sync(None).await
+            if let Ok(sync) = with_authed_api_with_sync(
+                &base,
+                api_token,
+                wait_for,
+                |api| async move { api.sync(None).await },
+            )
+            .await
             {
                 let events = timeline_events_from_sync_spaces(&sync.spaces);
                 if !events.is_empty() {
@@ -531,31 +537,64 @@ pub fn TimelinePanel(
                                             let receipt_space = marker.body.space_id.clone();
                                             let receipt_event_id = marker.body.event_id.clone();
                                             let actor_for_status = marker.actor.clone();
+                                            let actor_for_audit = marker.actor.clone();
+                                            let device_for_audit = marker.device_id.clone();
                                             spawn(async move {
                                                 match authed_api_with_sync(&base, api_token, wait_for) {
-                                                    Ok(api) => match api
-                                                        .send_receipt(
-                                                            &receipt_space,
-                                                            &receipt_event_id,
-                                                            "cx.receipt.read",
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(receipt) if receipt.ok => {
-                                                            read_receipts.write().push(format!(
-                                                                "{actor_for_status} -> {receipt_event_id}"
-                                                            ));
-                                                            receipt_status.set(format!(
-                                                                "Read receipt: sent cx.receipt.read for {receipt_event_id}"
-                                                            ));
+                                                    Ok(api) => {
+                                                        match api
+                                                            .send_receipt(
+                                                                &receipt_space,
+                                                                &receipt_event_id,
+                                                                "cx.receipt.read",
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(receipt) if receipt.ok => {
+                                                                read_receipts.write().push(format!(
+                                                                    "{actor_for_status} -> {receipt_event_id}"
+                                                                ));
+                                                                receipt_status.set(format!(
+                                                                    "Read receipt: sent cx.receipt.read for {receipt_event_id}"
+                                                                ));
+                                                            }
+                                                            Ok(_) => receipt_status.set(format!(
+                                                                "Read receipt: server returned not ok for {receipt_event_id}"
+                                                            )),
+                                                            Err(error) => receipt_status.set(format!(
+                                                                "Read receipt failed: {error}"
+                                                            )),
                                                         }
-                                                        Ok(_) => receipt_status.set(format!(
-                                                            "Read receipt: server returned not ok for {receipt_event_id}"
-                                                        )),
-                                                        Err(error) => receipt_status.set(format!(
-                                                            "Read receipt failed: {error}"
-                                                        )),
-                                                    },
+
+                                                        // Attested-audit hardening
+                                                        // (`cx.profile.attested_audit.e2ee.v1`):
+                                                        // record that this reader
+                                                        // observed the event. Spec
+                                                        // says the trigger is a
+                                                        // successful MLS decrypt;
+                                                        // until yougen has a real
+                                                        // decrypt path this fires
+                                                        // on the user-initiated
+                                                        // Mark Read instead, which
+                                                        // is the closest "I have
+                                                        // observed this event"
+                                                        // signal we have. The
+                                                        // event is fire-and-forget
+                                                        // — non-attested servers
+                                                        // store it as a normal
+                                                        // operation and ignore it
+                                                        // policy-wise.
+                                                        let audit_op = build_audit_accessed(
+                                                            &receipt_space,
+                                                            &actor_for_audit,
+                                                            &receipt_event_id,
+                                                            &device_for_audit,
+                                                        )
+                                                        .build("yougen");
+                                                        let _ = api
+                                                            .submit_operation_event(&audit_op)
+                                                            .await;
+                                                    }
                                                     Err(error) => receipt_status.set(format!(
                                                         "Read receipt failed: {error}"
                                                     )),
@@ -1287,10 +1326,24 @@ pub fn TimelinePanel(
                             let space = sc.clone();
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
-                                if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                    let _ = api.report_moderation(&space, "local:event", "spam", &actor).await;
-                                    let _ = api.send_to_device(&actor, &dev).await;
-                                }
+                                let _ = with_authed_api_with_sync(
+                                    &base,
+                                    api_token,
+                                    wait_for,
+                                    |api| async move {
+                                        let _ = api
+                                            .report_moderation(
+                                                &space,
+                                                "local:event",
+                                                "spam",
+                                                &actor,
+                                            )
+                                            .await;
+                                        let _ = api.send_to_device(&actor, &dev).await;
+                                        Ok(())
+                                    },
+                                )
+                                .await;
                             });
                         }
                     },

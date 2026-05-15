@@ -356,6 +356,63 @@ pub fn build_mls_commit_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
+/// Build an MLS commit Move that carries the canonical
+/// [`mls_governance_binding.full.v1`] preconditions + effects from a
+/// [`crate::mls_governance::GovernanceBindingPayload`].
+///
+/// Unlike [`build_mls_commit_move`] (which writes only the local epoch
+/// cas-register and leaves preconditions empty), this builder threads
+/// the SDK-derived precondition + effect tuples verbatim — the server
+/// enforces `mls_governance_binding.full.v1` by checking that the Move's
+/// `preconditions[]` and `effects[]` arrays match the SDK shape exactly,
+/// so any drift here is server-rejected. The binding's canonical hash
+/// is also added to the Move's `refs[]` so the proof chain is auditable.
+///
+/// Caller-supplied `prev_epoch` / `new_epoch` / `new_schedule` / etc.
+/// live inside the binding — see
+/// [`crate::mls_governance::GovernanceBindingPayload::from_anchor`] for
+/// the constructor that validates those typed ids.
+pub fn build_mls_commit_move_with_governance_binding(
+    issuer: &str,
+    space_id: &str,
+    binding: &crate::mls_governance::GovernanceBindingPayload,
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
+    let preconditions: Vec<serde_json::Value> = binding
+        .preconditions
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<_, _>>()
+        .context("serialize governance binding preconditions")?;
+    let effects: Vec<serde_json::Value> = binding
+        .effects
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<_, _>>()
+        .context("serialize governance binding effects")?;
+    let binding_hash = binding
+        .canonical_hash()
+        .context("hash governance binding payload")?;
+    // Carry the binding hash as a SemanticRef so the typed `Move.refs`
+    // field round-trips it on the wire. `critical: true` tells the
+    // reducer it MUST check this ref (the binding constitutes part of
+    // the proof, not a hint).
+    build_move_inner_with_preconditions_and_refs(
+        issuer,
+        space_id,
+        preconditions,
+        effects,
+        anchor_ref,
+        hlc,
+        vec![serde_json::json!({
+            "id": binding_hash,
+            "role": "mls_governance_binding",
+            "critical": true,
+        })],
+    )
+}
+
 /// Round 24 (F1): construct a `cx.component.flow.position.v1` Move that
 /// records a Flow's position inside its containing list. Used for the
 /// canonical Move path of board-level entity create + move / position
@@ -685,13 +742,37 @@ fn build_move_inner_with_preconditions(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
+    build_move_inner_with_preconditions_and_refs(
+        issuer,
+        space_id,
+        preconditions,
+        effects,
+        anchor_ref,
+        hlc,
+        vec![],
+    )
+}
+
+/// Variant of [`build_move_inner_with_preconditions`] that accepts an
+/// explicit `refs[]` array. Used by builders that bind a Move to an
+/// auxiliary canonical proof (e.g. a governance binding hash) the
+/// reducer needs to validate alongside the preconditions/effects.
+fn build_move_inner_with_preconditions_and_refs(
+    issuer: &str,
+    space_id: &str,
+    preconditions: Vec<serde_json::Value>,
+    effects: Vec<serde_json::Value>,
+    anchor_ref: &str,
+    hlc: &str,
+    refs: Vec<serde_json::Value>,
+) -> Result<UnsignedMove> {
     let body = serde_json::json!({
         "issuer": issuer,
         "space_id": space_id,
         "preconditions": preconditions,
         "effects": effects,
         "anchor_ref": anchor_ref,
-        "refs": [],
+        "refs": refs,
         "hlc": hlc,
     });
     let canonical_bytes =
@@ -716,7 +797,7 @@ fn build_move_inner_with_preconditions(
         effects: parse_effects(&effects)?,
         anchor_ref: AnchorId::new(anchor_ref.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid anchor_ref: {e}"))?,
-        refs: vec![],
+        refs: parse_refs(&refs)?,
         hlc: Hlc::new(hlc.to_owned()).map_err(|e| anyhow::anyhow!("invalid hlc: {e}"))?,
         sig: MoveSignature {
             alg: "EdDSA".to_owned(),
@@ -731,6 +812,19 @@ fn build_move_inner_with_preconditions(
         move_obj,
         canonical_bytes,
     })
+}
+
+/// Re-parse the refs JSON array into typed [`contrix_sdk::SemanticRef`]
+/// records. Refs carry auxiliary proof bindings (e.g. an MLS governance
+/// binding hash) that the reducer validates alongside preconditions /
+/// effects.
+fn parse_refs(refs: &[serde_json::Value]) -> Result<Vec<contrix_sdk::SemanticRef>> {
+    refs.iter()
+        .map(|r| {
+            serde_json::from_value::<contrix_sdk::SemanticRef>(r.clone())
+                .map_err(|e| anyhow::anyhow!("invalid ref: {e}"))
+        })
+        .collect()
 }
 
 /// Re-parse the preconditions JSON array into typed
@@ -1217,6 +1311,53 @@ mod tests {
         assert_eq!(
             value.get("covered_frontier").and_then(|v| v.as_str()),
             Some("cx:state:sha256:cffrontier01")
+        );
+    }
+
+    #[test]
+    fn mls_commit_move_with_binding_attaches_sdk_preconditions_and_effects() {
+        use crate::mls_governance::GovernanceBindingPayload;
+        use contrix_sdk::{AnchorId, Hash, SpaceId};
+
+        let space_id =
+            SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
+        let anchor =
+            AnchorId::new(format!("cx:anchor:sha256:{}", "a".repeat(64))).unwrap();
+        let schedule =
+            Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
+        let binding = GovernanceBindingPayload::from_anchor(
+            "mls-group-chat", &space_id, 11, 12, &schedule, &anchor,
+        )
+        .unwrap();
+
+        let unsigned = build_mls_commit_move_with_governance_binding(
+            "did:web:admin.example",
+            space_id.as_str(),
+            &binding,
+            fixed_anchor_ref(),
+            fixed_hlc(),
+        )
+        .unwrap();
+
+        // Preconditions: SDK gives us two (epoch HeadEq + frontier
+        // Contains). Effects: three (epoch set + schedule set + frontier
+        // add). The reducer requires the wire shape match the SDK tuples
+        // exactly; trimming or reordering would server-reject.
+        assert_eq!(unsigned.move_obj.preconditions.len(), 2);
+        assert_eq!(unsigned.move_obj.effects.len(), 3);
+
+        // The binding's canonical hash MUST appear in the typed
+        // Move.refs[] so the proof chain is auditable. `critical: true`
+        // tells the reducer it MUST validate the binding ref (this is
+        // proof material, not a hint).
+        let binding_hash = binding.canonical_hash().unwrap();
+        assert!(
+            unsigned.move_obj.refs.iter().any(|r| {
+                r.role == "mls_governance_binding"
+                    && r.id == binding_hash
+                    && r.critical
+            }),
+            "governance binding hash must be referenced in Move.refs"
         );
     }
 

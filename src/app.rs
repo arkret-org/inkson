@@ -3588,12 +3588,18 @@ pub fn RouterView() -> Element {
     // results live only in the in-memory `spaces` signal, so without
     // this kick we'd render "No spaces loaded" until the user clicks
     // Refresh.
+    //
+    // The flag is consumed only after we confirm base+session are both
+    // populated. Otherwise a fresh user who lands without a session and
+    // then signs in (on the same mount) would never auto-connect, since
+    // the one-shot would have already been spent during the empty-session
+    // first render.
     let mut auto_refresh_pending = use_signal(|| true);
     if auto_refresh_pending() {
-        auto_refresh_pending.set(false);
         let base = base_url();
         let session = token();
         if !base.trim().is_empty() && !session.trim().is_empty() {
+            auto_refresh_pending.set(false);
             connect(
                 base,
                 account_did(),
@@ -4159,6 +4165,45 @@ pub fn RouterView() -> Element {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "space-empty-state",
                             span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                             span { class: "grow truncate", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
+                        }
+                        // Diagnostic line: when an authenticated user sees an
+                        // empty sidebar, surface the latest connect status and
+                        // (if any) last_error directly so QA / users can tell
+                        // "sync failed" from "no spaces yet" without opening
+                        // devtools. Truncated to keep the sidebar tidy.
+                        if has_session && !sidebar_is_collapsed {
+                            div { class: "sidebar-nav-meta",
+                                "data-testid": "space-empty-state-status",
+                                style: "padding: 4px 12px; font-size: 11px; line-height: 1.4; opacity: 0.7;",
+                                {
+                                    let status_text = status();
+                                    let error_text = last_error();
+                                    let trimmed_status = if status_text.len() > 96 {
+                                        format!("{}…", &status_text[..96])
+                                    } else {
+                                        status_text
+                                    };
+                                    let trimmed_error = error_text
+                                        .as_ref()
+                                        .map(|err| if err.len() > 96 {
+                                            format!("{}…", &err[..96])
+                                        } else {
+                                            err.clone()
+                                        });
+                                    rsx! {
+                                        div { "data-testid": "space-empty-state-status-line",
+                                            "{trimmed_status}"
+                                        }
+                                        if let Some(err) = trimmed_error {
+                                            div {
+                                                "data-testid": "space-empty-state-error-line",
+                                                style: "color: var(--danger, #d33);",
+                                                "{err}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else {
                         for item in space_tree.iter() {
@@ -5516,8 +5561,25 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 }
 
                 let authed = api.clone().with_bearer(session_token.clone());
+                // Resolve the canonical actor DID from `/account/me`. Three
+                // outcomes:
+                //   1. Ok with non-empty DID -> use it as canonical_actor.
+                //   2. Err that looks like auth expiry -> wipe session, bounce
+                //      to login. The session is provably dead.
+                //   3. Anything else (Ok with empty DID, transient 5xx, parse
+                //      error, network failure) -> fall back to the locally
+                //      stored actor, log a diagnostic to last_error so the
+                //      sidebar/status surface can show it, and keep going so
+                //      sync still has a chance to populate spaces.
                 let canonical_actor = match authed.account_me().await {
                     Ok(account) if !account.did.trim().is_empty() => account.did,
+                    Ok(_) => {
+                        last_error.set(Some(
+                            "account_me: server returned empty actor DID; reusing local actor"
+                                .to_owned(),
+                        ));
+                        actor.clone()
+                    }
                     Err(error) if is_auth_expired_error(&error) => {
                         token.set(String::new());
                         persist_config(
@@ -5539,7 +5601,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         redirect_to_login(navigator);
                         return;
                     }
-                    _ => actor.clone(),
+                    Err(error) => {
+                        last_error.set(Some(format!("account_me: {error}")));
+                        actor.clone()
+                    }
                 };
                 if canonical_actor != actor {
                     account_did.set(canonical_actor.clone());
@@ -5572,6 +5637,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     crate::local_state::LocalAnchorView::from_sync_body(body);
                                 store.set_anchor_view(id.clone(), view);
                             }
+                            // Force a synchronous flush so that if the user
+                            // refreshes the tab immediately after a successful
+                            // sync the next mount's `initial_state_store.load()`
+                            // sees the new projections + cursor. Without this
+                            // we rely on the per-call `flush()` inside each
+                            // setter (which is best-effort on wasm) and on the
+                            // WriteGuard's Drop, neither of which is guaranteed
+                            // before the browser tears down the page.
+                            if let Err(error) = store.flush() {
+                                last_error
+                                    .set(Some(format!("state_store flush failed: {error}")));
+                            }
                         }
                         let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
                         let synced_previews = space_previews_from_sync_spaces(&sync.spaces);
@@ -5586,11 +5663,13 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             ));
                         }
                         let first_space = merged.first().map(|space| space.space_id.clone());
+                        let current = selected_space();
+                        let trimmed = current.trim();
+                        let needs_reset = trimmed.is_empty()
+                            || !merged.iter().any(|s| s.space_id == trimmed);
                         spaces.set(merged);
-                        if selected_space().trim().is_empty() {
-                            if let Some(space_id) = first_space {
-                                selected_space.set(space_id);
-                            }
+                        if needs_reset {
+                            selected_space.set(first_space.unwrap_or_default());
                         }
                         timeline.set(synced_timeline);
                         device_queue.set(sync.to_device.len());
@@ -5631,18 +5710,51 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             );
                         }
                         let first_space = merged.first().map(|space| space.space_id.clone());
+                        let current = selected_space();
+                        let trimmed = current.trim();
+                        let needs_reset = trimmed.is_empty()
+                            || !merged.iter().any(|s| s.space_id == trimmed);
                         spaces.set(merged);
-                        if selected_space().trim().is_empty() {
-                            if let Some(space_id) = first_space {
-                                selected_space.set(space_id);
-                            }
+                        if needs_reset {
+                            selected_space.set(first_space.unwrap_or_default());
                         }
                         last_error.set(Some(format!("sync: {error}")));
                     }
                 }
-                if let Ok(events) = authed.events_describe().await {
-                    if let Some(frontier) = frontier_label(&events.frontier) {
-                        frontier_state.set(frontier);
+                match authed.events_describe().await {
+                    Ok(events) => {
+                        if let Some(frontier) = frontier_label(&events.frontier) {
+                            frontier_state.set(frontier);
+                        }
+                    }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        // Same definitive-session-loss handling as the sync 401
+                        // branch above. Without this, an expired token that
+                        // passed sync (because sync was served from a cache or
+                        // a misrouted path) could silently leave the user with
+                        // a stale frontier and no session-expiry redirect.
+                        token.set(String::new());
+                        persist_config(
+                            config_store,
+                            base.clone(),
+                            canonical_actor.clone(),
+                            device.clone(),
+                            String::new(),
+                        );
+                        sync_cursor.set("-".to_owned());
+                        selected_space.set(String::new());
+                        spaces.set(Vec::new());
+                        timeline.set(Vec::new());
+                        device_queue.set(0);
+                        crypto_state.set("Session expired".to_owned());
+                        status.set("Session expired; sign in again".to_owned());
+                        network_state.set("online".to_owned());
+                        last_error.set(Some("auth_expired: session expired".to_owned()));
+                        redirect_to_login(navigator);
+                        return;
+                    }
+                    Err(error) => {
+                        last_error.set(Some(format!("events_describe: {error}")));
                     }
                 }
             }

@@ -6,7 +6,7 @@ use crate::{
     components::{HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
     routes::Route,
-    views::helpers::authed_api,
+    views::helpers::with_authed_api,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,28 +329,31 @@ fn refresh_notifications(
     mut server_unread: Signal<usize>,
 ) {
     spawn(async move {
-        match authed_api(&base_url, access_token) {
-            Ok(api) => match api.sync(None).await {
-                Ok(response) => {
-                    let raw_notifications = response
-                        .account_data
-                        .into_iter()
-                        .filter(is_notification_account_data)
-                        .collect::<Vec<_>>();
-                    server_unread.set(raw_notifications.len());
-                    let hydrated = {
-                        let mut store = state_store.write();
-                        store.save_notification_projection(raw_notifications.clone());
-                        let local_state = store.load();
-                        hydrate_notifications(raw_notifications, &local_state)
-                    };
-                    let loaded_count = hydrated.len();
-                    notifications.set(hydrated);
-                    status_msg.set(format!("Loaded {loaded_count} notification projection(s)."));
-                }
-                Err(error) => status_msg.set(format!("Notification refresh failed: {error}")),
-            },
-            Err(error) => status_msg.set(format!("Invalid URL: {error}")),
+        match with_authed_api(&base_url, access_token, |api| async move {
+            api.sync(None).await
+        })
+        .await
+        {
+            Ok(response) => {
+                let raw_notifications = response
+                    .account_data
+                    .into_iter()
+                    .filter(is_notification_account_data)
+                    .collect::<Vec<_>>();
+                server_unread.set(raw_notifications.len());
+                let hydrated = {
+                    let mut store = state_store.write();
+                    store.save_notification_projection(raw_notifications.clone());
+                    let local_state = store.load();
+                    hydrate_notifications(raw_notifications, &local_state)
+                };
+                let loaded_count = hydrated.len();
+                notifications.set(hydrated);
+                status_msg.set(format!("Loaded {loaded_count} notification projection(s)."));
+            }
+            Err(err) => {
+                status_msg.set(format!("Notification refresh: {}", err.display()));
+            }
         }
     });
 }

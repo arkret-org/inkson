@@ -22,11 +22,20 @@ use contrix_sdk::mls_move::{
     covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects,
     mls_commit_preconditions,
 };
-use contrix_sdk::{AnchorId, Hash, SpaceId};
+use contrix_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
 
 /// Serializable view of the MLS Governance Binding payload that travels with
 /// an `cx.mls.commit` event. Keeps yougen call sites typed without forcing
 /// every UI module to depend on `contrix_sdk::Precondition` / `Effect`.
+///
+/// Both the human-readable summary fields (epoch / schedule / anchor /
+/// frontier cell) and the **full SDK Precondition + Effect tuples** are
+/// carried. The summary fields make Audit / Conflict UIs cheap to render;
+/// the tuples are what `cx.mls.commit` events MUST attach so the server
+/// can enforce `mls_governance_binding.full.v1` (spec §10) without the
+/// client re-deriving them. Both flow into `canonical_hash`, so changes
+/// to either fork yield a distinct binding hash — exactly what we want
+/// when threading the binding through Move proof refs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceBindingPayload {
     /// MLS group id (Space-scoped).
@@ -45,6 +54,10 @@ pub struct GovernanceBindingPayload {
     pub covered_frontier_cell: String,
     /// Tag string written into the `covered_frontier_cell` or-set entry.
     pub covered_frontier_tag: String,
+    /// Canonical SDK preconditions the server MUST enforce.
+    pub preconditions: Vec<Precondition>,
+    /// Canonical SDK effects the commit applies on success.
+    pub effects: Vec<Effect>,
 }
 
 impl GovernanceBindingPayload {
@@ -59,16 +72,19 @@ impl GovernanceBindingPayload {
         attested_governance_anchor: &AnchorId,
     ) -> anyhow::Result<Self> {
         let group_id = group_id.into();
-        // Force the SDK builders to validate inputs even though we don't
-        // serialize the Precondition / Effect structures directly.
-        let _ = mls_commit_preconditions(
+        // Capture (do not discard) the SDK's canonical precondition + effect
+        // tuples so the resulting commit body carries them verbatim. The
+        // server enforces `mls_governance_binding.full.v1` by checking that
+        // the submitted Move's preconditions/effects EXACTLY match these
+        // SDK-derived shapes — yougen must not re-derive or shorten them.
+        let preconditions = mls_commit_preconditions(
             &group_id,
             space_id,
             prev_epoch,
             attested_governance_anchor,
         )
         .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;
-        let _ = mls_commit_effects(
+        let effects = mls_commit_effects(
             &group_id,
             space_id,
             new_epoch,
@@ -89,6 +105,8 @@ impl GovernanceBindingPayload {
             attested_governance_anchor: attested_governance_anchor.as_str().to_owned(),
             covered_frontier_cell: frontier_cell.as_str().to_owned(),
             covered_frontier_tag: governance_frontier_tag(attested_governance_anchor),
+            preconditions,
+            effects,
         })
     }
 
@@ -96,6 +114,25 @@ impl GovernanceBindingPayload {
     /// MLS commit event's proof / refs.
     pub fn canonical_hash(&self) -> anyhow::Result<String> {
         crate::canonical::canonical_sha256(self)
+    }
+
+    /// Render the binding as the JSON shape committed alongside a
+    /// `cx.mls.commit` event. The server reads `preconditions` and
+    /// `effects` from this body and refuses commits that do not match
+    /// the SDK's canonical tuples.
+    pub fn to_commit_body(&self) -> serde_json::Value {
+        serde_json::json!({
+            "group_id": &self.group_id,
+            "space_id": &self.space_id,
+            "prev_epoch": self.prev_epoch,
+            "new_epoch": self.new_epoch,
+            "new_schedule_hash": &self.new_schedule_hash,
+            "attested_governance_anchor": &self.attested_governance_anchor,
+            "covered_frontier_cell": &self.covered_frontier_cell,
+            "covered_frontier_tag": &self.covered_frontier_tag,
+            "preconditions": &self.preconditions,
+            "effects": &self.effects,
+        })
     }
 }
 
@@ -143,6 +180,31 @@ mod tests {
             payload.covered_frontier_tag,
             anchor().as_str()
         );
+    }
+
+    #[test]
+    fn payload_carries_sdk_preconditions_and_effects() {
+        let payload = GovernanceBindingPayload::from_anchor(
+            "mls-group-1",
+            &space_id(),
+            7,
+            8,
+            &schedule_hash(),
+            &anchor(),
+        )
+        .unwrap();
+        // Spec §10 requires exactly two preconditions (epoch + frontier)
+        // and three effects (epoch set / schedule set / frontier add).
+        // The server enforces this shape verbatim — if either side trims
+        // a tuple the commit MUST fail validation.
+        assert_eq!(payload.preconditions.len(), 2);
+        assert_eq!(payload.effects.len(), 3);
+        let body = payload.to_commit_body();
+        assert_eq!(
+            body["preconditions"].as_array().map(|a| a.len()),
+            Some(2)
+        );
+        assert_eq!(body["effects"].as_array().map(|a| a.len()), Some(3));
     }
 
     #[test]

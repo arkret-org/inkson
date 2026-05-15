@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     api::{ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error},
+    audit::build_audit_ryw_receipt,
     components::{HelpTip, UiIcon},
     hlc::{Hlc, observe_seq},
     local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
@@ -2361,6 +2362,21 @@ pub fn ChatPanel(
                                     did_key_verification_method(&identity.signing_key.verifying_key());
                                 // 1) MLS commit Move bumps the epoch +
                                 //    records covered_frontier.
+                                //
+                                // TODO (B3b follow-up): when this chat
+                                // path is migrated onto a real MLS group
+                                // (with persisted ContrixMlsGroup state +
+                                // a real key-schedule hash + prev_epoch
+                                // tracked alongside the new_epoch), swap
+                                // this call for
+                                // `build_mls_commit_move_with_governance_binding`
+                                // and feed it a
+                                // `GovernanceBindingPayload::from_anchor(...)`
+                                // so the server can enforce
+                                // `mls_governance_binding.full.v1`. The
+                                // current path writes only the local
+                                // epoch cas-register because we don't
+                                // have a real key schedule to attest.
                                 let commit_unsigned = match build_mls_commit_move(
                                     &did,
                                     &space,
@@ -2404,6 +2420,7 @@ pub fn ChatPanel(
                                 let base = base.clone();
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
+                                let actor_for_audit = actor.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit first; if
@@ -2445,7 +2462,7 @@ pub fn ChatPanel(
                                                     store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
                                                         msg_op.operation_id.clone(),
-                                                        Some(space_for_record),
+                                                        Some(space_for_record.clone()),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
                                                             "kind": "cx.message.create",
@@ -2458,6 +2475,34 @@ pub fn ChatPanel(
                                             status_msg.set(format!(
                                                 "Encrypted message sent"
                                             ));
+
+                                            // Disclosed-audit hardening profile
+                                            // (`cx.profile.disclosed_audit.e2ee.v1`):
+                                            // emit a per-actor read-your-write
+                                            // receipt right after a successful
+                                            // E2EE commit. The receipt is
+                                            // actor-private (only the sender
+                                            // can audit their own writes), so
+                                            // this is fire-and-forget — if the
+                                            // server isn't running the
+                                            // disclosed-audit profile, it will
+                                            // store the event as a regular
+                                            // operation and the audit timeline
+                                            // can still surface it.
+                                            //
+                                            // `delivered_to_devices` is empty
+                                            // for now: a real MLS path would
+                                            // pass the post-commit member
+                                            // device list so an auditor can
+                                            // verify message-to-device fan-out.
+                                            let audit_op = build_audit_ryw_receipt(
+                                                &space_for_record,
+                                                &actor_for_audit,
+                                                &resp.event_id,
+                                                Vec::new(),
+                                            )
+                                            .build("yougen");
+                                            let _ = api.submit_operation_event(&audit_op).await;
                                         }
                                         Err(err) => status_msg.set(format!(
                                             "Message send failed: {err}"
