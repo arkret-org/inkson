@@ -847,6 +847,14 @@ pub struct IndexedDbSecureKeyStore {
     /// (currently theoretical) future where multiple wasm threads can
     /// share JS values.
     crypto_key: IndexedDbSendBoundary<wasm_bindgen::JsValue>,
+    /// Sprint Q1 第二十五增量 (R-Opt-1): cached `IdbDatabase` handle
+    /// reused across every persistence write/delete. Before R-Opt-1
+    /// each `spawn_local` callback inside `store_secret` /
+    /// `delete_secret` called `Self::open_db` afresh — opening a new
+    /// IndexedDB connection (and re-running `onupgradeneeded` checks)
+    /// on every write. With the cache the connection is opened once
+    /// at `new_async` time and shared for the lifetime of the store.
+    db: IndexedDbSendBoundary<web_sys::IdbDatabase>,
 }
 
 /// wasm32-only wrapper that asserts Send + Sync on a value that is
@@ -892,6 +900,7 @@ impl IndexedDbSecureKeyStore {
             db_name,
             cache: Arc::new(Mutex::new(cache)),
             crypto_key: IndexedDbSendBoundary(Arc::new(crypto_key)),
+            db: IndexedDbSendBoundary(Arc::new(db)),
         })
     }
 
@@ -1495,16 +1504,17 @@ impl IndexedDbSecureKeyStore {
     }
 
     /// Persist `(iv, ct)` against `key` in the entries object store.
-    /// Called from sync trait paths via `spawn_local`.
+    /// Called from sync trait paths via `spawn_local`. Sprint Q1
+    /// 第二十五增量 (R-Opt-1): takes a borrowed `IdbDatabase` so the
+    /// cached connection is reused instead of re-opening per write.
     async fn persist_entry_value(
-        db_name: &str,
+        db: &web_sys::IdbDatabase,
         crypto_key: &wasm_bindgen::JsValue,
         key: &str,
         plain: &str,
     ) -> Result<(), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::JsValue;
-        let db = Self::open_db(db_name).await?;
         let (iv, ct) = Self::subtle_encrypt(crypto_key, plain.as_bytes()).await?;
         let entry = Object::new();
         let iv_array = Uint8Array::new_with_length(iv.len() as u32);
@@ -1515,7 +1525,7 @@ impl IndexedDbSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("entry iv: {err:?}")))?;
         Reflect::set(&entry, &JsValue::from_str("ct"), &ct_array)
             .map_err(|err| SecureKeyStoreError::Backend(format!("entry ct: {err:?}")))?;
-        Self::idb_put_value(&db, Self::OBJECT_STORE_ENTRIES, key, entry.as_ref()).await
+        Self::idb_put_value(db, Self::OBJECT_STORE_ENTRIES, key, entry.as_ref()).await
     }
 }
 
@@ -1547,13 +1557,17 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         // Fire-and-forget persistence. Failures are logged; the cache
         // already has the new value so subsequent reads succeed even
         // if the write loses out to a page-unload race.
-        let db_name = self.db_name.clone();
+        //
+        // Sprint Q1 第二十五增量 (R-Opt-1): reuse the cached
+        // `IdbDatabase` handle instead of opening a fresh one per
+        // write.
         let key_for_async = key.to_owned();
         let value_for_async = value.to_owned();
         let crypto_key = self.crypto_key.clone();
+        let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(err) =
-                Self::persist_entry_value(&db_name, &crypto_key.0, &key_for_async, &value_for_async)
+                Self::persist_entry_value(&db.0, &crypto_key.0, &key_for_async, &value_for_async)
                     .await
             {
                 tracing::warn!(?err, key=%key_for_async, "indexedDB persist failed");
@@ -1578,18 +1592,14 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.remove(key);
         }
-        let db_name = self.db_name.clone();
+        // Sprint Q1 第二十五增量 (R-Opt-1): reuse the cached
+        // `IdbDatabase` handle for the spawned delete (was opening a
+        // fresh connection per call before R-Opt-1).
         let key_for_async = key.to_owned();
+        let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let db = match Self::open_db(&db_name).await {
-                Ok(d) => d,
-                Err(err) => {
-                    tracing::warn!(?err, "indexedDB delete: open failed");
-                    return;
-                }
-            };
             if let Err(err) =
-                Self::idb_delete_value(&db, Self::OBJECT_STORE_ENTRIES, &key_for_async).await
+                Self::idb_delete_value(&db.0, Self::OBJECT_STORE_ENTRIES, &key_for_async).await
             {
                 tracing::warn!(?err, key=%key_for_async, "indexedDB delete failed");
             }

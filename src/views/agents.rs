@@ -78,16 +78,19 @@ impl AuditVerifyStatus {
 /// out of the event payload itself and dispatches by `binding_kind`:
 ///   * `ed25519_v1` → verify via SDK Ed25519 helper using the
 ///     `public_key_b64` carried in the envelope.
-///   * `hmac_sha256_v1` → verify via SDK HMAC helper using the
-///     `REFERENCE_AGENT_AUDIT_HMAC_KEY` (legacy deployments).
-fn verify_agent_audit_binding(
-    payload: &Value,
-    hmac_key: &[u8],
-) -> AuditVerifyStatus {
+///   * anything else → `Unsupported`. The HMAC path was removed in
+///     第二十五增量 (R-Legacy-1) when the soland bridge stopped
+///     writing HMAC bindings; deployments wanting symmetric
+///     authentication can ship their own `binding_kind` and extend
+///     this dispatcher.
+fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
     let Some(binding) = payload.get("audit_binding") else {
         return AuditVerifyStatus::Absent;
     };
     let kind = binding.get("binding_kind").and_then(Value::as_str).unwrap_or("");
+    if kind != "ed25519_v1" {
+        return AuditVerifyStatus::Unsupported;
+    }
     let session_id = match payload.get("session_id").and_then(Value::as_str) {
         Some(s) => s,
         None => return AuditVerifyStatus::Malformed,
@@ -108,73 +111,35 @@ fn verify_agent_audit_binding(
         .and_then(Value::as_str)
         .unwrap_or("");
     let signature = binding.get("signature").and_then(Value::as_str).unwrap_or("");
-
-    match kind {
-        "ed25519_v1" => {
-            let public_key_b64 = match binding.get("public_key_b64").and_then(Value::as_str) {
-                Some(s) => s,
-                None => return AuditVerifyStatus::Malformed,
-            };
-            let outcome = contrix_sdk::agent_binding::verify_ed25519_audit_binding(
-                public_key_b64,
-                session_id,
-                agent_did,
-                &echo,
-                actor,
-                signature,
-                canonical_subject,
-            );
-            match outcome {
-                contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::Valid => {
-                    AuditVerifyStatus::Valid
-                }
-                contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SubjectMismatch => {
-                    AuditVerifyStatus::SubjectMismatch
-                }
-                contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SignatureMismatch => {
-                    AuditVerifyStatus::SignatureMismatch
-                }
-                contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedSignature
-                | contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedPublicKey => {
-                    AuditVerifyStatus::Malformed
-                }
-            }
+    let public_key_b64 = match binding.get("public_key_b64").and_then(Value::as_str) {
+        Some(s) => s,
+        None => return AuditVerifyStatus::Malformed,
+    };
+    let outcome = contrix_sdk::agent_binding::verify_ed25519_audit_binding(
+        public_key_b64,
+        session_id,
+        agent_did,
+        &echo,
+        actor,
+        signature,
+        canonical_subject,
+    );
+    match outcome {
+        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::Valid => {
+            AuditVerifyStatus::Valid
         }
-        "hmac_sha256_v1" => {
-            let outcome = contrix_sdk::agent_binding::verify_reference_audit_binding(
-                hmac_key,
-                session_id,
-                agent_did,
-                &echo,
-                actor,
-                signature,
-                canonical_subject,
-            );
-            match outcome {
-                contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
-                    AuditVerifyStatus::Valid
-                }
-                contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
-                    AuditVerifyStatus::SubjectMismatch
-                }
-                contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
-                    AuditVerifyStatus::SignatureMismatch
-                }
-                contrix_sdk::agent_binding::AuditBindingVerifyOutcome::MalformedSignature => {
-                    AuditVerifyStatus::Malformed
-                }
-            }
+        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SubjectMismatch => {
+            AuditVerifyStatus::SubjectMismatch
         }
-        _ => AuditVerifyStatus::Unsupported,
+        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SignatureMismatch => {
+            AuditVerifyStatus::SignatureMismatch
+        }
+        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedSignature
+        | contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedPublicKey => {
+            AuditVerifyStatus::Malformed
+        }
     }
 }
-
-/// Reference HMAC key used by legacy soland deployments that still
-/// sign `audit_binding` with HMAC-SHA256 (pre-第二十一增量 B4g). The
-/// reference Ed25519 path carries its public key in-band so no
-/// matching constant is needed for that path.
-const REFERENCE_AGENT_AUDIT_HMAC_KEY: &[u8] =
-    b"soland.reference.agent_echo.audit_binding.v1";
 
 #[component]
 pub fn AgentsPanel(
@@ -552,10 +517,7 @@ pub fn AgentsPanel(
                                 .and_then(Value::as_str)
                                 .unwrap_or("-")
                                 .to_owned();
-                            let verify = verify_agent_audit_binding(
-                                payload,
-                                REFERENCE_AGENT_AUDIT_HMAC_KEY,
-                            );
+                            let verify = verify_agent_audit_binding(payload);
                             let badge_class = verify.badge_class();
                             let badge_label = verify.badge_label();
                             rsx! {
@@ -617,9 +579,7 @@ mod tests {
     // Sprint Q1 第二十一增量 (V3): pin the verify helper's outcomes
     // for each canonical wire shape the panel can encounter.
 
-    use super::{
-        AuditVerifyStatus, REFERENCE_AGENT_AUDIT_HMAC_KEY, verify_agent_audit_binding,
-    };
+    use super::{AuditVerifyStatus, verify_agent_audit_binding};
     use serde_json::{Value, json};
 
     fn build_ed25519_result_payload(
@@ -661,7 +621,7 @@ mod tests {
             &seed,
         );
         assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
+            verify_agent_audit_binding(&payload),
             AuditVerifyStatus::Valid
         );
     }
@@ -676,12 +636,9 @@ mod tests {
             "did:web:alice.example",
             &seed,
         );
-        // Mutate the echo body — the canonical_subject embedded in
-        // the envelope still references the original, so verify
-        // MUST flip to SubjectMismatch.
         payload["result"]["echo"] = json!({"op": "tampered"});
         assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
+            verify_agent_audit_binding(&payload),
             AuditVerifyStatus::SubjectMismatch
         );
     }
@@ -695,7 +652,7 @@ mod tests {
             "error": {"code": "unknown_agent"},
         });
         assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
+            verify_agent_audit_binding(&payload),
             AuditVerifyStatus::Absent
         );
     }
@@ -714,7 +671,31 @@ mod tests {
             },
         });
         assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
+            verify_agent_audit_binding(&payload),
+            AuditVerifyStatus::Unsupported
+        );
+    }
+
+    /// 第二十五增量 (R-Legacy-1): `hmac_sha256_v1` was the
+    /// pre-第二十一增量 binding kind. The verify helper now treats
+    /// it as `Unsupported` — no special-case path. The SDK HMAC
+    /// helper was also removed.
+    #[test]
+    fn verify_helper_returns_unsupported_for_legacy_hmac_binding() {
+        let payload = json!({
+            "session_id": "cx:session:legacy-hmac",
+            "status": "completed",
+            "result": {"echo": {"op": "ping"}, "agent_did": "did:web:agent.example"},
+            "audit_binding": {
+                "binding_kind": "hmac_sha256_v1",
+                "actor": "did:web:alice.example",
+                "key_id": "soland.reference.agent_echo.v1",
+                "signature": "00".repeat(32),
+                "canonical_subject": "",
+            },
+        });
+        assert_eq!(
+            verify_agent_audit_binding(&payload),
             AuditVerifyStatus::Unsupported
         );
     }
@@ -731,39 +712,8 @@ mod tests {
         );
         payload["audit_binding"]["signature"] = json!("!!!not-base64!!!");
         assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
+            verify_agent_audit_binding(&payload),
             AuditVerifyStatus::Malformed
-        );
-    }
-
-    #[test]
-    fn verify_helper_validates_legacy_hmac_binding_under_reference_key() {
-        let session = "cx:session:v6";
-        let agent_did = "did:web:agent.example";
-        let actor = "did:web:alice.example";
-        let echo = json!({"op": "ping"});
-        let signed = contrix_sdk::agent_binding::sign_reference_audit_binding(
-            REFERENCE_AGENT_AUDIT_HMAC_KEY,
-            session,
-            agent_did,
-            &echo,
-            actor,
-        );
-        let payload = json!({
-            "session_id": session,
-            "status": "completed",
-            "result": {"echo": echo, "agent_did": agent_did},
-            "audit_binding": {
-                "binding_kind": "hmac_sha256_v1",
-                "actor": actor,
-                "key_id": "soland.reference.agent_echo.v1",
-                "signature": signed.signature_hex,
-                "canonical_subject": signed.canonical_subject,
-            },
-        });
-        assert_eq!(
-            verify_agent_audit_binding(&payload, REFERENCE_AGENT_AUDIT_HMAC_KEY),
-            AuditVerifyStatus::Valid
         );
     }
 }
