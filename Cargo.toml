@@ -99,3 +99,8 @@ web-sys = { version = "0.3.82", features = [
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+# `tokio::time` is unsupported on wasm32-unknown-unknown — it calls
+# `std::time::Instant::now()` and panics with "time not implemented on this
+# platform". `gloo-timers` routes through `setTimeout` instead, which is what
+# `sleep_for` uses for HTTP retry backoff in the wasm build.
+gloo-timers = { version = "0.3", features = ["futures"] }

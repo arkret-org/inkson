@@ -293,7 +293,7 @@ pub fn SpaceAdminPanel(
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(|| String::new());
-    let members = use_signal(Vec::<String>::new);
+    let mut members = use_signal(Vec::<String>::new);
     let mut space_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
@@ -404,6 +404,11 @@ pub fn SpaceAdminPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "space-admin-panel",
+            // E2E debug: surface active_section value so tests can assert what
+            // the component actually saw, not what the URL claims.
+            div { class: "muted", "data-testid": "space-admin-active-section",
+                "{active_section.label()}"
+            }
             div { class: "actions", "data-testid": "space-admin-sections",
                 for section in SpaceAdminSection::all() {
                     if let Some(slug) = section.slug() {
@@ -1182,6 +1187,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
+            } // closes `if active_section == SpaceAdminSection::Access`
 
             // Invite member
             div { class: "event", "data-testid": "admin-discussion-admission",
@@ -1212,6 +1218,7 @@ pub fn SpaceAdminPanel(
             }
 
             if active_section == SpaceAdminSection::Members {
+            div { class: "muted", "data-testid": "dbg-members-block-entered", "members section entered" }
             // Invite member
             div { class: "event", "data-testid": "invite-member",
                 div { class: "event-head", span { "Invite Member" } span { "" } }
@@ -1346,9 +1353,15 @@ pub fn SpaceAdminPanel(
                                 let api_token = token();
                                 spawn(async move {
                                     if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.resolve_space(&space).await {
-                                            Ok(_) => status_msg.set("Space resolved".to_owned()),
-                                            Err(e) => status_msg.set(format!("resolve failed: {e}")),
+                                        match api.get_space(&space).await {
+                                            Ok(resp) => {
+                                                members.set(resp.members.clone());
+                                                status_msg.set(format!(
+                                                    "members refreshed ({})",
+                                                    resp.members.len()
+                                                ));
+                                            }
+                                            Err(e) => status_msg.set(format!("members refresh failed: {e}")),
                                         }
                                     }
                                 });
@@ -2151,7 +2164,6 @@ pub fn SpaceAdminPanel(
                         "Revoke capability (Move)"
                     }
                 }
-            }
             }
 
             if active_section == SpaceAdminSection::Governance {

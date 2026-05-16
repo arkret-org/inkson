@@ -2049,23 +2049,57 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   padding: 0;
 }
 
+.workspace-header {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
 .workspace-header .actions {
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.workspace-header .actions > * {
+  flex-shrink: 0;
+}
+
+.workspace-header .actions > .search {
+  flex: 0 1 auto;
+  min-width: 140px;
 }
 
 .workspace-header > .sidebar-collapse-toggle {
   margin-inline-end: 4px;
+  flex-shrink: 0;
 }
 
 .workspace-header .crumbs {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+.workspace-header .crumbs > * {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-header .crumbs > .sep {
+  flex-shrink: 0;
 }
 
 .workspace-header .actions .btn,
 .workspace-header .actions .pill {
   height: 34px;
+}
+
+.topbar-create-button .topbar-new-space-label {
+  display: inline;
 }
 
 .workspace-header .actions .btn {
@@ -2969,6 +3003,25 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   }
 }
 
+@media (max-width: 1200px) {
+  .workspace-header .crumbs .crumb-tag,
+  .workspace-header .crumbs .id.muted.mono {
+    display: none;
+  }
+
+  .workspace-header .search {
+    width: min(26vw, 240px);
+  }
+
+  .topbar-create-button .topbar-new-space-label {
+    display: none;
+  }
+
+  .topbar-create-button {
+    padding-inline: 10px;
+  }
+}
+
 @media (max-width: 860px) {
   .auth-shell {
     padding: 16px;
@@ -3594,6 +3647,69 @@ pub fn RouterView() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
+    // Background session-refresh poller. Re-mints the principal
+    // `access_token` from the persisted coauth `session_grant` before it
+    // dies, so an idle user doesn't get bounced to the login page on
+    // their next interaction. The decision logic + IO live in
+    // `session_refresh`; this future is just the dioxus driver.
+    use_future({
+        let mut token = token;
+        let mut state_store = state_store;
+        let mut status = status;
+        let mut last_error = last_error;
+        let navigator = navigator.clone();
+        let config_store = config_store;
+        let base_url = base_url;
+        let account_did = account_did;
+        let device_id = device_id;
+        move || async move {
+            loop {
+                let outcome = {
+                    let mut store = state_store.write();
+                    crate::session_refresh::run_refresh(&mut store).await
+                };
+                match outcome {
+                    crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+                        token.set(access_token.clone());
+                        persist_config(
+                            config_store,
+                            base_url(),
+                            account_did(),
+                            device_id(),
+                            access_token,
+                        );
+                    }
+                    crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
+                        token.set(String::new());
+                        persist_config(
+                            config_store,
+                            base_url(),
+                            account_did(),
+                            device_id(),
+                            String::new(),
+                        );
+                        status.set("Session expired; sign in again".to_owned());
+                        last_error.set(Some(format!("session refresh: {reason}")));
+                        redirect_to_login(navigator.clone());
+                    }
+                    crate::session_refresh::RefreshOutcome::Transient { reason } => {
+                        // Don't disturb the UI — log to last_error so a
+                        // developer poking at the dev tools can see the
+                        // last refresh issue, but keep the token alive
+                        // for the next retry.
+                        last_error.set(Some(format!("session refresh transient: {reason}")));
+                    }
+                    crate::session_refresh::RefreshOutcome::NoGrant
+                    | crate::session_refresh::RefreshOutcome::Fresh => {}
+                }
+                crate::api::sleep_for(std::time::Duration::from_secs(
+                    crate::session_refresh::POLL_INTERVAL_SECS,
+                ))
+                .await;
+            }
+        }
+    });
+
     let mut auto_refresh_pending = use_signal(|| true);
     if auto_refresh_pending() {
         let base = base_url();
@@ -3823,6 +3939,7 @@ pub fn RouterView() -> Element {
                                 token,
                                 status,
                                 config_store,
+                                state_store,
                                 auto_capture_callback: true,
                                 on_login: move |_| { let _ = callback_navigator.push(Route::Dashboard); },
                             }
@@ -3835,6 +3952,7 @@ pub fn RouterView() -> Element {
                                 token,
                                 status,
                                 config_store,
+                                state_store,
                                 auto_capture_callback: false,
                                 on_login: move |_| { let _ = login_navigator.push(Route::Dashboard); },
                             }
@@ -4219,10 +4337,27 @@ pub fn RouterView() -> Element {
                                 } else {
                                     "sidebar-nav-item space-tree-item"
                                 };
+                                // Spec client-preferences.md §3.7: when the
+                                // user has a private Space remark, prefer its
+                                // local_name; fall back to the public title.
+                                // Use a "(remark)" badge so duplicate-titled
+                                // Spaces can be distinguished without leaking
+                                // the remark beyond this device.
+                                let remark = state_store
+                                    .read()
+                                    .space_remark(&item_space.space_id);
+                                let display_name = remark
+                                    .as_ref()
+                                    .map(|r| r.display_name(&item_space.name).to_owned())
+                                    .unwrap_or_else(|| item_space.name.clone());
+                                let has_remark = remark
+                                    .as_ref()
+                                    .is_some_and(|r| !r.local_name.trim().is_empty());
                                 rsx! {
                             Link {
                                 class: "{item_class}",
                                 "data-testid": "space-button",
+                                title: "{item_space.name}",
                                 style: "padding-left: calc(10px + {depth_px}px);",
                                 to: Route::Space { space_id: item_space.space_id.clone() },
                                 onclick: {
@@ -4230,7 +4365,15 @@ pub fn RouterView() -> Element {
                                     move |_| selected_space.set(id.clone())
                                 },
                                 span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
-                                span { class: "grow truncate", "{item_space.name}" }
+                                span { class: "grow truncate", "{display_name}" }
+                                if has_remark {
+                                    span {
+                                        class: "pill muted xs",
+                                        "data-testid": "space-remark-badge",
+                                        title: "Local remark (private to this account)",
+                                        "备注"
+                                    }
+                                }
                                 if item.descendant_count > 0 {
                                     span { class: "pill muted xs", "{item.descendant_count}" }
                                 } else {
@@ -4367,11 +4510,13 @@ pub fn RouterView() -> Element {
                             span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
                         Link {
-                            class: "btn sm primary",
+                            class: "btn sm primary topbar-create-button",
                             "data-testid": "topbar-create-button",
                             to: Route::SetupSection { section: "spaces".to_owned() },
+                            title: crate::i18n::tr("topbar.new_space"),
+                            "aria-label": crate::i18n::tr("topbar.new_space"),
                             UiIcon { name: "plus" }
-                            {crate::i18n::tr("topbar.new_space")}
+                            span { class: "topbar-new-space-label", {crate::i18n::tr("topbar.new_space")} }
                         }
                         div { class: "account-menu-wrap",
                             button {
@@ -4522,6 +4667,7 @@ pub fn RouterView() -> Element {
                                                     // resurrect the session if the server-side
                                                     // logout call later fails or is cancelled.
                                                     state_store.write().set_oidc_tokens(None);
+                                                    state_store.write().set_session_grant(None);
                                                     let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                     spawn(async move {
                                                         let api_result = ContrixApi::new(&base)
@@ -4596,6 +4742,7 @@ pub fn RouterView() -> Element {
                             token,
                             status,
                             config_store,
+                            state_store,
                             auto_capture_callback: false,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
@@ -4608,6 +4755,7 @@ pub fn RouterView() -> Element {
                             token,
                             status,
                             config_store,
+                            state_store,
                             auto_capture_callback: true,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
@@ -5639,6 +5787,42 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 let view =
                                     crate::local_state::LocalAnchorView::from_sync_body(body);
                                 store.set_anchor_view(id.clone(), view);
+                            }
+                            // Hydrate Space remarks from the actor-private
+                            // account_data projection (spec
+                            // client-preferences.md §3.7). soland keys these
+                            // entries by `cx.contacts.space.<space_id>` and
+                            // returns the canonical SpaceRemark JSON in
+                            // `content`. Entries for other namespaces are
+                            // ignored here.
+                            for entry in &sync.account_data {
+                                let Some(data_type) = entry
+                                    .get("data_type")
+                                    .and_then(serde_json::Value::as_str)
+                                else {
+                                    continue;
+                                };
+                                let Some(space_id) = crate::account_data::
+                                    space_id_from_space_remark_key(data_type)
+                                else {
+                                    continue;
+                                };
+                                let Some(content) = entry.get("content") else {
+                                    continue;
+                                };
+                                match serde_json::from_value::<
+                                    crate::account_data::SpaceRemark,
+                                >(content.clone())
+                                {
+                                    Ok(remark) => {
+                                        store.set_space_remark(space_id.to_owned(), remark);
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "ignoring malformed Space remark for {space_id}: {error}"
+                                        );
+                                    }
+                                }
                             }
                             // Force a synchronous flush so that if the user
                             // refreshes the tab immediately after a successful

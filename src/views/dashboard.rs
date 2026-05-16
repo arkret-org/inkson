@@ -158,23 +158,53 @@ pub fn DashboardPanel(
                                 }
                             } else {
                                 for space in spaces() {
-                                    Link {
-                                        class: "m-list-item",
-                                        "data-testid": "dashboard-space-card",
-                                        to: Route::Space { space_id: space.space_id.clone() },
-                                        onclick: {
-                                            let id = space.space_id.clone();
-                                            move |_| {
-                                                selected_space.set(id.clone());
-                                                view.set(super::View::Timeline);
+                                    {
+                                        // Spec client-preferences.md §3.7:
+                                        // prefer the actor-private Space
+                                        // remark `local_name` over the public
+                                        // `Space.title` when set.
+                                        let remark = state_store
+                                            .read()
+                                            .space_remark(&space.space_id);
+                                        let display_name = remark
+                                            .as_ref()
+                                            .map(|r| r.display_name(&space.name).to_owned())
+                                            .unwrap_or_else(|| space.name.clone());
+                                        let avatar_seed = display_name
+                                            .chars()
+                                            .next()
+                                            .unwrap_or('S');
+                                        let has_remark = remark
+                                            .as_ref()
+                                            .is_some_and(|r| !r.local_name.trim().is_empty());
+                                        rsx! {
+                                        Link {
+                                            class: "m-list-item",
+                                            "data-testid": "dashboard-space-card",
+                                            title: "{space.name}",
+                                            to: Route::Space { space_id: space.space_id.clone() },
+                                            onclick: {
+                                                let id = space.space_id.clone();
+                                                move |_| {
+                                                    selected_space.set(id.clone());
+                                                    view.set(super::View::Timeline);
+                                                }
+                                            },
+                                            span { class: "avatar org", "{avatar_seed}" }
+                                            span { class: "grow",
+                                                span { class: "title", "{display_name}" }
+                                                span { class: "sub mono", "{space.space_id}" }
                                             }
-                                        },
-                                        span { class: "avatar org", "{space.name.chars().next().unwrap_or('S')}" }
-                                        span { class: "grow",
-                                            span { class: "title", "{space.name}" }
-                                            span { class: "sub mono", "{space.space_id}" }
+                                            if has_remark {
+                                                span {
+                                                    class: "pill muted xs",
+                                                    "data-testid": "dashboard-space-remark-badge",
+                                                    "备注"
+                                                }
+                                            }
+                                            span { class: "pill muted xs", "Space" }
                                         }
-                                        span { class: "pill muted xs", "Space" }
+                                        }
                                     }
                                 }
                             }

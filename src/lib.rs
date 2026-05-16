@@ -33,6 +33,7 @@ pub mod offline;
 pub mod oidc_callback;
 pub mod oidc_lifecycle;
 pub mod operation;
+pub mod session_refresh;
 pub mod push;
 pub mod push_registration;
 pub mod rank;

@@ -921,11 +921,13 @@ fn candidate_has_track(candidate: &Value, track: &str) -> bool {
         .get("tracks")
         .and_then(|tracks| tracks.get(track))
         .is_some()
-        || candidate
-            .get("flow")
-            .and_then(|flow| flow.get("tracks"))
-            .and_then(|tracks| tracks.get(track))
-            .is_some()
+        || ["object", "flow"].iter().any(|wrapper| {
+            candidate
+                .get(*wrapper)
+                .and_then(|inner| inner.get("tracks"))
+                .and_then(|tracks| tracks.get(track))
+                .is_some()
+        })
 }
 
 fn flow_create_has_discussion_track(candidates: &[&Value]) -> bool {
@@ -941,6 +943,7 @@ fn flow_create_has_synthesis_track(candidates: &[&Value]) -> bool {
         || candidates.iter().any(|candidate| {
             bool_at_path(candidate, &["create_card"]).unwrap_or(false)
                 || bool_at_path(candidate, &["fields", "has_synthesis"]).unwrap_or(false)
+                || bool_at_path(candidate, &["object", "fields", "has_synthesis"]).unwrap_or(false)
                 || bool_at_path(candidate, &["flow", "fields", "has_synthesis"]).unwrap_or(false)
         })
 }
@@ -967,6 +970,8 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
         &[
             &["flow_id"],
             &["target_ref"],
+            &["object", "id"],
+            &["object", "flow_id"],
             &["flow", "id"],
             &["flow", "flow_id"],
         ],
@@ -978,7 +983,14 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
 
     let name = first_string_in_candidate_paths(
         &candidates,
-        &[&["title"], &["name"], &["flow", "title"], &["flow", "name"]],
+        &[
+            &["title"],
+            &["name"],
+            &["object", "title"],
+            &["object", "name"],
+            &["flow", "title"],
+            &["flow", "name"],
+        ],
     )
     .unwrap_or(flow_id)
     .to_owned();
@@ -987,6 +999,7 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
         &[
             &["category"],
             &["fields", "category"],
+            &["object", "fields", "category"],
             &["flow", "fields", "category"],
         ],
     )
@@ -998,6 +1011,9 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
             &["summary"],
             &["topic"],
             &["description"],
+            &["object", "summary"],
+            &["object", "topic"],
+            &["object", "description"],
             &["flow", "summary"],
             &["flow", "topic"],
             &["flow", "description"],
@@ -1515,25 +1531,25 @@ pub fn ChatPanel(
                                                 op.body["fields"]["category"] = json!(category.clone());
                                                 op.body["fields"]["participants"] = json!(participants.clone());
                                                 op.body["fields"]["has_synthesis"] = json!(create_card);
-                                                if !op.body["flow"]
+                                                if !op.body["object"]
                                                     .get("fields")
                                                     .is_some_and(|fields| fields.is_object())
                                                 {
-                                                    op.body["flow"]["fields"] = json!({});
+                                                    op.body["object"]["fields"] = json!({});
                                                 }
-                                                op.body["flow"]["fields"]["category"] =
+                                                op.body["object"]["fields"]["category"] =
                                                     json!(category.clone());
-                                                op.body["flow"]["fields"]["participants"] =
+                                                op.body["object"]["fields"]["participants"] =
                                                     json!(participants.clone());
-                                                op.body["flow"]["fields"]["has_synthesis"] =
+                                                op.body["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
                                                 op.body["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
                                                     op.body["summary"] = json!(summary.clone());
-                                                    op.body["flow"]["summary"] = json!(summary.clone());
+                                                    op.body["object"]["summary"] = json!(summary.clone());
                                                 }
                                                 if !create_card {
-                                                    if let Some(tracks) = op.body["flow"]["tracks"].as_object_mut() {
+                                                    if let Some(tracks) = op.body["object"]["tracks"].as_object_mut() {
                                                         tracks.remove("synthesis");
                                                     }
                                                 }
@@ -1583,7 +1599,7 @@ pub fn ChatPanel(
                                                                         "category": category,
                                                                         "summary": channel_topic,
                                                                         "create_card": create_card,
-                                                                        "flow": op.body["flow"].clone(),
+                                                                        "object": op.body["object"].clone(),
                                                                         "event_id": submitted.event_id,
                                                                     }),
                                                                 );

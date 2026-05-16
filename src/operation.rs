@@ -294,6 +294,11 @@ pub mod cx_ops {
 
     /// Build a canonical `cx.flow.create` discussion operation with the full
     /// typed Flow payload expected by the current reducers.
+    ///
+    /// The full Flow lives under the spec-canonical `object` key —
+    /// see soland `routing/events/operations.rs::FLOW_CREATE_REQUIREMENTS`
+    /// and SDK `crates/core/src/schema/payloads.rs` which both gate
+    /// `cx.flow.create` on `payload.object`.
     pub fn discussion_flow_create(
         space_id: &str,
         actor: &str,
@@ -315,7 +320,7 @@ pub mod cx_ops {
                 "flow_id": flow_id,
                 "title": title,
                 "rank": "r0",
-                "flow": flow_value,
+                "object": flow_value,
             })))
     }
 
@@ -333,6 +338,17 @@ pub mod cx_ops {
         title: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
+        let object = json!({
+            "schema": "cx.schema.flow.v1",
+            "id": flow_id,
+            "space_id": space_id,
+            "title": title,
+            "tracks": { "synthesis": {} },
+            "fields": { "document": document_body.clone() },
+            "created_by": actor,
+            "created_at": chrono::Utc::now()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        });
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(space_id)
             .body(json!({
@@ -344,6 +360,7 @@ pub mod cx_ops {
                 "fields": {
                     "document": document_body,
                 },
+                "object": object,
             }))
     }
 
@@ -515,11 +532,11 @@ mod tests {
             "cx:flow:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(
-            op.body["flow"]["tracks"]["discussion"]["profile"],
+            op.body["object"]["tracks"]["discussion"]["profile"],
             "discussion"
         );
-        assert_eq!(op.body["flow"]["tracks"]["discussion"]["is_primary"], true);
-        assert!(op.body["flow"].get("kind").is_none());
+        assert_eq!(op.body["object"]["tracks"]["discussion"]["is_primary"], true);
+        assert!(op.body["object"].get("kind").is_none());
     }
 
     #[test]

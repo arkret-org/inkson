@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
         session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
+    local_state::{LocalStateStore, PersistedSessionGrant},
     views::helpers::persist_config,
 };
 
@@ -21,6 +23,9 @@ struct CompletedLogin {
     actor: String,
     device_id: String,
     access_token: String,
+    /// Coauth session_grant payload to persist so the refresh poller
+    /// can re-mint principal sessions without a fresh login round-trip.
+    grant: PersistedSessionGrant,
 }
 
 #[component]
@@ -31,6 +36,7 @@ pub fn LoginPanel(
     token: Signal<String>,
     status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
+    state_store: Signal<LocalStateStore>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
 ) -> Element {
@@ -43,6 +49,7 @@ pub fn LoginPanel(
     });
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
+    let mut state_store_write = state_store;
 
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
@@ -66,6 +73,9 @@ pub fn LoginPanel(
                     completed.device_id,
                     completed.access_token,
                 );
+                state_store_write
+                    .write()
+                    .set_session_grant(Some(completed.grant));
                 status.set("Online".to_owned());
                 auth_status.set("Signed in".to_owned());
                 on_login.call(());
@@ -323,10 +333,31 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
     };
     let _ = clear_persisted_oidc_scaffold();
 
+    let persisted_grant = PersistedSessionGrant {
+        grant_jwt: grant.grant_jwt.clone(),
+        session_private_key_pem: grant.session_private_key_pem.clone(),
+        grant_id: grant_id.to_owned(),
+        audience: grant_audience.to_owned(),
+        principal_did: principal_did.clone(),
+        device_id: session.device_id.clone(),
+        principal_server_url: principal_target.clone(),
+        session_grant_exchange_path: bridge.auth.session_grant_exchange_path.clone(),
+        grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
+        session_expires_at: parse_rfc3339_utc(&session.expires_at),
+        stored_at: Utc::now(),
+    };
+
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor,
         device_id: session.device_id,
         access_token: session.access_token,
+        grant: persisted_grant,
     })
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
 }

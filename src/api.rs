@@ -648,6 +648,10 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn get_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
+        self.get_json(&format!("api/v1/spaces/{space_id}")).await
+    }
+
     pub async fn add_space_member(
         &self,
         space_id: &str,
@@ -773,6 +777,31 @@ impl ContrixApi {
                              keeping local state authoritative until soland wires it"
                         );
                         return Ok(AccountDataSetOutcome::Unsupported { status });
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// DELETE an account_data entry. Same graceful-degradation contract as
+    /// [`Self::set_account_data`] — 404 means the row was already absent
+    /// (treated as success) and is logged at debug level; other errors
+    /// propagate.
+    pub async fn delete_account_data(&self, type_key: &str) -> anyhow::Result<()> {
+        let path = format!("api/v1/account_data/{type_key}");
+        let result: anyhow::Result<Value> = self.delete_json(&path).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(api_error) = error.downcast_ref::<ContrixApiError>() {
+                    if matches!(
+                        api_error.status,
+                        StatusCode::NOT_FOUND
+                            | StatusCode::NOT_IMPLEMENTED
+                            | StatusCode::METHOD_NOT_ALLOWED
+                    ) {
+                        return Ok(());
                     }
                 }
                 Err(error)
@@ -2212,7 +2241,7 @@ fn canonical_space_policy_join_rule(join_rule: &str) -> &str {
 }
 
 async fn sleep_backoff(initial: Duration, attempt: usize) {
-    tokio::time::sleep(backoff_duration(initial, attempt)).await;
+    sleep_for(backoff_duration(initial, attempt)).await;
 }
 
 fn backoff_duration(initial: Duration, attempt: usize) -> Duration {
@@ -2222,7 +2251,22 @@ fn backoff_duration(initial: Duration, attempt: usize) -> Duration {
 
 async fn sleep_retry_delay(headers: &HeaderMap, initial: Duration, attempt: usize) {
     let delay = parse_retry_after(headers).unwrap_or_else(|| backoff_duration(initial, attempt));
+    sleep_for(delay).await;
+}
+
+// `tokio::time::sleep` reads `std::time::Instant::now()` and panics on
+// wasm32-unknown-unknown ("time not implemented on this platform"). Route the
+// wasm build through `gloo_timers::future::TimeoutFuture`, which is backed by
+// `setTimeout`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn sleep_for(delay: Duration) {
     tokio::time::sleep(delay).await;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn sleep_for(delay: Duration) {
+    let ms = u32::try_from(delay.as_millis()).unwrap_or(u32::MAX);
+    gloo_timers::future::TimeoutFuture::new(ms).await;
 }
 
 fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {

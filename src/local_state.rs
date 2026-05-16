@@ -779,6 +779,12 @@ pub struct ClientLocalState {
     /// short-lived bearer + the longer-lived refresh handle.
     #[serde(default)]
     pub oidc_tokens: Option<OidcTokenBundle>,
+    /// Persisted coauth `session_grant` payload. Lets the refresh
+    /// poller re-mint a principal session without bouncing the user
+    /// through OIDC again. Cleared on logout or when a re-exchange
+    /// surfaces a definitive "grant is dead" error.
+    #[serde(default)]
+    pub session_grant: Option<PersistedSessionGrant>,
     /// Round 27: client-side telemetry log buffer. Mirrors sodmin's
     /// `utils/audit.rs` shape — each entry is a structured "user
     /// action" record (actor / action / outcome / timestamp). Written
@@ -798,6 +804,15 @@ pub struct ClientLocalState {
     /// envelope rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope>,
+    /// Actor-private Space remarks per
+    /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
+    /// `/sync` `account_data[]` projection (entries with
+    /// `data_type == "cx.contacts.space.<space_id>"`) and from user edits
+    /// in settings. Keyed by Space id so the sidebar / dashboard can join
+    /// it against the public `SpacePreview.name` at render time and prefer
+    /// `local_name` when set.
+    #[serde(default)]
+    pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,
 }
 
 /// Hard cap on the number of buffered telemetry entries kept in
@@ -829,6 +844,52 @@ pub struct UserActionLogEntry {
     /// RFC 3339 timestamp at which the action was recorded. Set by
     /// the helper, not by the caller.
     pub recorded_at: DateTime<Utc>,
+}
+
+/// Persisted coauth `session_grant` returned by the auth-server during
+/// login. Keeping this on disk lets the client re-run
+/// `exchange_session_grant_at_with_proof` to mint a fresh principal
+/// `access_token` after the previous one expires — no user-visible
+/// re-login as long as the grant itself is still valid.
+///
+/// The fields mirror the inputs needed by
+/// [`crate::api::ContrixApi::exchange_session_grant_at_with_proof`] plus
+/// the `session_private_key_pem` the introspection proof is signed with.
+/// The private key here is the ephemeral session-grant key (coauth's
+/// `session_public_key` registration), not the long-lived device
+/// identity — losing it only invalidates the current grant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedSessionGrant {
+    /// The signed grant JWT (long-lived, signed by coauth).
+    pub grant_jwt: String,
+    /// PKCS8 PEM of the ephemeral session signing key. Decoded with
+    /// [`crate::coauth::session_grant_signing_key_from_pem`] before
+    /// signing a fresh introspection proof.
+    pub session_private_key_pem: String,
+    /// Grant id assigned by coauth. Embedded in introspection proof claims.
+    pub grant_id: String,
+    /// Audience the grant is bound to (typically the principal-server URL).
+    pub audience: String,
+    /// Principal DID the grant authorizes.
+    pub principal_did: String,
+    /// Device id bound to the grant.
+    pub device_id: String,
+    /// Principal-server base URL where the grant is exchanged.
+    pub principal_server_url: String,
+    /// `session_grant_exchange_path` discovered from the principal
+    /// auth-bridge `/api/v1/auth/bridge/describe`.
+    pub session_grant_exchange_path: String,
+    /// When the grant itself stops being usable. Once we pass this the
+    /// next refresh attempt will fail and the user must re-login.
+    #[serde(default)]
+    pub grant_expires_at: Option<DateTime<Utc>>,
+    /// When the *current* minted principal session token expires (per
+    /// the most recent exchange response). Used by the refresh poller
+    /// to decide whether a re-exchange is due.
+    #[serde(default)]
+    pub session_expires_at: Option<DateTime<Utc>>,
+    /// RFC 3339 timestamp of when this record was last written.
+    pub stored_at: DateTime<Utc>,
 }
 
 /// Round 24 (A1): persisted OIDC token bundle. Stored next to the
@@ -882,8 +943,10 @@ impl Default for ClientLocalState {
             private_data: BTreeMap::new(),
             read_markers: BTreeMap::new(),
             oidc_tokens: None,
+            session_grant: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
+            space_remarks: BTreeMap::new(),
         }
     }
 }
@@ -1186,6 +1249,65 @@ impl LocalStateStore {
         self.load().read_receipt_flow_overrides
     }
 
+    // ── Space remarks (spec client-preferences.md §3.7) ─
+
+    /// Return the stored remark for `space_id`, if any. `None` means the
+    /// user has not set a local override and the public `Space.title`
+    /// should be rendered.
+    pub fn space_remark(&self, space_id: &str) -> Option<crate::account_data::SpaceRemark> {
+        self.load().space_remarks.get(space_id).cloned()
+    }
+
+    /// All known Space remarks. The settings UI uses this to render the
+    /// edit list; callers MUST NOT publish this map to other Space
+    /// members — it is actor-private per §3.7.
+    pub fn space_remarks(&self) -> BTreeMap<String, crate::account_data::SpaceRemark> {
+        self.load().space_remarks
+    }
+
+    /// Upsert a remark for `space_id`. Passing a remark whose
+    /// [`SpaceRemark::is_empty`] returns true tombstones the entry
+    /// (equivalent to `remove_space_remark`). Persists synchronously to
+    /// disk; the caller is responsible for pushing the same payload to
+    /// soland via `PUT /api/v1/account_data/{key}`.
+    pub fn set_space_remark(
+        &mut self,
+        space_id: impl Into<String>,
+        remark: crate::account_data::SpaceRemark,
+    ) {
+        self.ensure_cached_loaded();
+        let space_id = space_id.into();
+        if remark.is_empty() {
+            self.cached.space_remarks.remove(&space_id);
+        } else {
+            self.cached.space_remarks.insert(space_id, remark);
+        }
+        let _ = self.flush();
+    }
+
+    /// Delete the remark for `space_id`. No-op if none is stored.
+    pub fn remove_space_remark(&mut self, space_id: &str) {
+        self.ensure_cached_loaded();
+        self.cached.space_remarks.remove(space_id);
+        let _ = self.flush();
+    }
+
+    /// Best-effort name for `space_id`: trimmed `local_name` from the
+    /// stored remark if set, otherwise `public_title`. Mirrors the §3.7
+    /// "UI MUST prefer local_name" rule so the sidebar / dashboard /
+    /// dashboard cards all agree.
+    pub fn display_name_for_space(&self, space_id: &str, public_title: &str) -> String {
+        match self
+            .load()
+            .space_remarks
+            .get(space_id)
+            .map(|r| r.display_name(public_title).to_owned())
+        {
+            Some(name) => name,
+            None => public_title.to_owned(),
+        }
+    }
+
     /// Get the server-declared read-receipt policy for a Space (when known).
     /// `None` means the client hasn't synced a policy snapshot yet and the
     /// user's override is still authoritative.
@@ -1485,6 +1607,30 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.cached.oidc_tokens = bundle;
         let _ = self.flush();
+    }
+
+    /// Read the persisted coauth `session_grant` if any.
+    pub fn session_grant(&self) -> Option<PersistedSessionGrant> {
+        self.load().session_grant
+    }
+
+    /// Persist (or clear via `None`) the coauth `session_grant`.
+    pub fn set_session_grant(&mut self, grant: Option<PersistedSessionGrant>) {
+        self.ensure_cached_loaded();
+        self.cached.session_grant = grant;
+        let _ = self.flush();
+    }
+
+    /// Update only the `session_expires_at` timestamp on the persisted
+    /// grant — used after a successful re-exchange when the grant body
+    /// itself didn't change but the minted access token's expiry did.
+    pub fn update_session_expires_at(&mut self, session_expires_at: Option<DateTime<Utc>>) {
+        self.ensure_cached_loaded();
+        if let Some(grant) = self.cached.session_grant.as_mut() {
+            grant.session_expires_at = session_expires_at;
+            grant.stored_at = Utc::now();
+            let _ = self.flush();
+        }
     }
 
     /// Round 24 (A1): true when a persisted access_token exists AND has
@@ -2798,5 +2944,91 @@ mod tests {
         assert!(not_wired.to_string().contains("404"));
         let other = crate::api::AuditPostError::Other("conn refused".to_owned());
         assert!(other.to_string().contains("conn refused"));
+    }
+
+    // ── Space remarks (spec client-preferences.md §3.7) ─
+
+    #[test]
+    fn space_remark_set_and_display_name_prefers_local_name() {
+        let path = temp_state_path("space-remark-set");
+        let mut store = LocalStateStore::with_path(path);
+        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        assert!(store.space_remark(space_id).is_none());
+        assert_eq!(
+            store.display_name_for_space(space_id, "Engineering"),
+            "Engineering",
+            "no remark → public title"
+        );
+
+        let remark = crate::account_data::SpaceRemark::new(space_id, "Acme · Eng");
+        store.set_space_remark(space_id, remark);
+        assert_eq!(
+            store.display_name_for_space(space_id, "Engineering"),
+            "Acme · Eng",
+            "remark → local_name"
+        );
+        assert!(store.space_remarks().contains_key(space_id));
+    }
+
+    #[test]
+    fn space_remark_empty_value_tombstones_entry() {
+        let path = temp_state_path("space-remark-tombstone");
+        let mut store = LocalStateStore::with_path(path);
+        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        store.set_space_remark(
+            space_id,
+            crate::account_data::SpaceRemark::new(space_id, "x"),
+        );
+        assert!(store.space_remark(space_id).is_some());
+
+        // Whitespace-only local_name is treated as tombstone — see
+        // SpaceRemark::is_empty.
+        store.set_space_remark(
+            space_id,
+            crate::account_data::SpaceRemark {
+                local_name: "   ".into(),
+                ..crate::account_data::SpaceRemark::default()
+            },
+        );
+        assert!(
+            store.space_remark(space_id).is_none(),
+            "empty remark must remove the entry"
+        );
+    }
+
+    #[test]
+    fn space_remark_remove_clears_only_target_space() {
+        let path = temp_state_path("space-remark-remove");
+        let mut store = LocalStateStore::with_path(path);
+        let a = "cx:space:00000000-0000-7000-8000-000000000001";
+        let b = "cx:space:00000000-0000-7000-8000-000000000002";
+        store.set_space_remark(a, crate::account_data::SpaceRemark::new(a, "A"));
+        store.set_space_remark(b, crate::account_data::SpaceRemark::new(b, "B"));
+
+        store.remove_space_remark(a);
+        assert!(store.space_remark(a).is_none());
+        assert_eq!(
+            store.space_remark(b).map(|r| r.local_name),
+            Some("B".to_owned()),
+            "removing one Space remark must not touch the other"
+        );
+    }
+
+    #[test]
+    fn space_remark_persists_to_disk_between_instances() {
+        let path = temp_state_path("space-remark-persist");
+        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        {
+            let mut writer = LocalStateStore::with_path(path.clone());
+            writer.set_space_remark(
+                space_id,
+                crate::account_data::SpaceRemark::new(space_id, "Acme · Eng"),
+            );
+        }
+        let reader = LocalStateStore::with_path(path);
+        assert_eq!(
+            reader.display_name_for_space(space_id, "Engineering"),
+            "Acme · Eng"
+        );
     }
 }

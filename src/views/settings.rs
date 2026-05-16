@@ -75,6 +75,52 @@ fn push_read_receipt_account_data(
     });
 }
 
+/// Spec client-preferences.md §3.7: push (or tombstone) a Space remark to
+/// soland via `cx.account_data.set`. Same graceful-degradation contract as
+/// [`push_read_receipt_account_data`] — local state is authoritative; the
+/// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
+/// row tombstones cleanly across devices.
+fn push_space_remark_account_data(
+    base_url: String,
+    api_token: String,
+    space_id: String,
+    remark: crate::account_data::SpaceRemark,
+) {
+    let key = crate::account_data::space_remark_account_data_key(&space_id);
+    spawn(async move {
+        let api = match authed_api(&base_url, api_token) {
+            Ok(api) => api,
+            Err(_) => return,
+        };
+        if remark.is_empty() {
+            if let Err(error) = api.delete_account_data(&key).await {
+                tracing::debug!(
+                    "account_data DELETE for {key} failed: {error}; local state still authoritative"
+                );
+            }
+            return;
+        }
+        let body = match serde_json::to_value(&remark) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("space remark serialisation failed: {error}");
+                return;
+            }
+        };
+        match api.set_account_data(&key, body).await {
+            Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT for {key} returned {status}; local state still authoritative"
+                );
+            }
+            Err(error) => {
+                tracing::warn!("account_data PUT for {key} failed: {error}");
+            }
+        }
+    });
+}
+
 fn render_notification_kind_toggle(
     kind: &'static str,
     label: &'static str,
@@ -258,6 +304,25 @@ pub fn SettingsPanel(
     let mut read_receipt_space_overrides =
         use_signal(|| state_store.read().read_receipt_space_overrides());
     let mut read_receipt_override_input = use_signal(String::new);
+    // Space remarks editor state (spec client-preferences.md §3.7).
+    // `space_remarks_snapshot` is the resolved BTreeMap rendered for the
+    // list; `space_remark_inputs` keeps unsaved text edits keyed by
+    // space_id so users can type without round-tripping through soland.
+    // `new_space_remark_id` / `new_space_remark_name` drive the "Add by
+    // Space ID" row for Spaces the user has joined but isn't yet
+    // tracking locally.
+    let mut space_remarks_snapshot =
+        use_signal(|| state_store.read().space_remarks());
+    let mut space_remark_inputs = use_signal(|| {
+        state_store
+            .read()
+            .space_remarks()
+            .into_iter()
+            .map(|(id, r)| (id, r.local_name))
+            .collect::<std::collections::BTreeMap<String, String>>()
+    });
+    let mut new_space_remark_id = use_signal(String::new);
+    let mut new_space_remark_name = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id =
@@ -1268,6 +1333,195 @@ pub fn SettingsPanel(
                                 );
                             },
                             "Add (send)"
+                        }
+                    }
+                }
+
+                // ── Space remarks (spec discovery/client-preferences.md §3.7) ─
+                // Actor-private local alias / note / pin for each Space the
+                // user has joined. Lets users disambiguate duplicate-titled
+                // Spaces without leaking the remark beyond this account.
+                // Pushed to soland via `cx.account_data.set` under
+                // `cx.contacts.space.<space_id>`; soland echoes the same
+                // entries back on the next `/sync` so other devices pick
+                // them up.
+                div { class: "event", "data-testid": "space-remarks-editor",
+                    div { class: "event-head",
+                        span { "Space remarks" }
+                        span { "cx.contacts.space.<space_id>" }
+                        HelpTip { text: "Private to this account. The remark replaces the public Space title in the sidebar / dashboard. Other Space members never see it." }
+                    }
+                    {
+                        let remarks = space_remarks_snapshot();
+                        if remarks.is_empty() {
+                            rsx! {
+                                div {
+                                    class: "muted",
+                                    "data-testid": "space-remarks-empty",
+                                    "No remarks yet. Add one below to distinguish duplicate-titled Spaces."
+                                }
+                            }
+                        } else {
+                            rsx! {
+                                for (space_id, remark) in remarks {
+                                    div {
+                                        class: "actions",
+                                        "data-testid": "space-remark-row",
+                                        "data-space-id": "{space_id}",
+                                        span { class: "mono", "{space_id}" }
+                                        input {
+                                            r#type: "text",
+                                            "data-testid": "space-remark-input",
+                                            placeholder: "Local name (private)",
+                                            value: "{space_remark_inputs().get(&space_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                            oninput: {
+                                                let id = space_id.clone();
+                                                move |evt: FormEvent| {
+                                                    let mut current = space_remark_inputs();
+                                                    current.insert(id.clone(), evt.value());
+                                                    space_remark_inputs.set(current);
+                                                }
+                                            },
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "space-remark-save",
+                                            onclick: {
+                                                let id = space_id.clone();
+                                                let existing = remark.clone();
+                                                move |_| {
+                                                    let id = id.clone();
+                                                    let next_name = space_remark_inputs()
+                                                        .get(&id)
+                                                        .cloned()
+                                                        .unwrap_or_default();
+                                                    let mut next = existing.clone();
+                                                    next.local_name = next_name.trim().to_owned();
+                                                    next.updated_at = Some(
+                                                        chrono::Utc::now()
+                                                            .to_rfc3339_opts(
+                                                                chrono::SecondsFormat::Secs,
+                                                                true,
+                                                            ),
+                                                    );
+                                                    state_store
+                                                        .write()
+                                                        .set_space_remark(id.clone(), next.clone());
+                                                    space_remarks_snapshot.set(
+                                                        state_store.read().space_remarks(),
+                                                    );
+                                                    if next.is_empty() {
+                                                        status.set(format!(
+                                                            "Space remark cleared for {id}"
+                                                        ));
+                                                    } else {
+                                                        status.set(format!(
+                                                            "Space remark saved: {} → {}",
+                                                            id, next.local_name
+                                                        ));
+                                                    }
+                                                    push_space_remark_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        id,
+                                                        next,
+                                                    );
+                                                }
+                                            },
+                                            "Save"
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "space-remark-delete",
+                                            onclick: {
+                                                let id = space_id.clone();
+                                                move |_| {
+                                                    let id = id.clone();
+                                                    state_store.write().remove_space_remark(&id);
+                                                    let mut inputs = space_remark_inputs();
+                                                    inputs.remove(&id);
+                                                    space_remark_inputs.set(inputs);
+                                                    space_remarks_snapshot.set(
+                                                        state_store.read().space_remarks(),
+                                                    );
+                                                    status.set(format!(
+                                                        "Space remark cleared for {id}"
+                                                    ));
+                                                    push_space_remark_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        id,
+                                                        crate::account_data::SpaceRemark::default(),
+                                                    );
+                                                }
+                                            },
+                                            "Delete"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "actions", "data-testid": "space-remark-add-row",
+                        input {
+                            r#type: "text",
+                            "data-testid": "space-remark-add-id",
+                            placeholder: "cx:space:...",
+                            value: "{new_space_remark_id()}",
+                            oninput: move |evt| new_space_remark_id.set(evt.value()),
+                        }
+                        input {
+                            r#type: "text",
+                            "data-testid": "space-remark-add-name",
+                            placeholder: "Local name",
+                            value: "{new_space_remark_name()}",
+                            oninput: move |evt| new_space_remark_name.set(evt.value()),
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "space-remark-add-save",
+                            onclick: move |_| {
+                                let space_id = new_space_remark_id().trim().to_owned();
+                                let local_name = new_space_remark_name().trim().to_owned();
+                                if space_id.is_empty() || local_name.is_empty() {
+                                    status.set(
+                                        "Enter both a Space ID and a local name".to_owned(),
+                                    );
+                                    return;
+                                }
+                                if !space_id.starts_with("cx:space:") {
+                                    status.set(
+                                        "Space ID must start with cx:space:".to_owned(),
+                                    );
+                                    return;
+                                }
+                                let now_rfc3339 = chrono::Utc::now()
+                                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                                let remark = crate::account_data::SpaceRemark {
+                                    version: 1,
+                                    space_id: space_id.clone(),
+                                    local_name: local_name.clone(),
+                                    saved_at: Some(now_rfc3339.clone()),
+                                    updated_at: Some(now_rfc3339),
+                                    ..crate::account_data::SpaceRemark::default()
+                                };
+                                state_store
+                                    .write()
+                                    .set_space_remark(space_id.clone(), remark.clone());
+                                space_remarks_snapshot.set(state_store.read().space_remarks());
+                                new_space_remark_id.set(String::new());
+                                new_space_remark_name.set(String::new());
+                                status.set(format!(
+                                    "Space remark saved: {space_id} → {local_name}"
+                                ));
+                                push_space_remark_account_data(
+                                    base_url(),
+                                    token(),
+                                    space_id,
+                                    remark,
+                                );
+                            },
+                            "Add remark"
                         }
                     }
                 }
