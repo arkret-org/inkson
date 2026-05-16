@@ -3664,9 +3664,25 @@ pub fn RouterView() -> Element {
         let device_id = device_id;
         move || async move {
             loop {
-                let outcome = {
+                // Drive prepare/exchange/commit by hand so the
+                // `state_store` WriteGuard is *not* held across the
+                // network await. Holding it crashes every concurrent
+                // signal mutation with `AlreadyBorrowedMut` — clicking
+                // the sidebar scope toggle, persisting drafts, anything
+                // that calls `state_store.write()` while the exchange
+                // is in flight.
+                let prepared = {
                     let mut store = state_store.write();
-                    crate::session_refresh::run_refresh(&mut store).await
+                    crate::session_refresh::prepare_refresh(&mut store)
+                };
+                let outcome = match prepared {
+                    crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
+                    crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
+                        let result =
+                            crate::session_refresh::exchange_refresh(&grant, &proof).await;
+                        let mut store = state_store.write();
+                        crate::session_refresh::commit_refresh(&mut store, result)
+                    }
                 };
                 match outcome {
                     crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
@@ -6010,12 +6026,15 @@ fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Spac
 }
 
 fn projection_looks_like_flow(body: &Value) -> bool {
+    // Real-Space projections embed their primary flow under
+    // `summary.flow` (with `flow_id` etc. inside it) — so peeking into
+    // `summary` to spot a flow is a false positive. Only the body's own
+    // top-level `flow_id` / `flow` / `tracks` / `kind`, or a
+    // `summary.category` that is itself a flow category, identify a
+    // flow-as-space projection.
     body.get("flow_id").is_some()
         || body.get("flow").is_some()
         || body.get("tracks").is_some()
-        || body.get("summary").is_some_and(|summary| {
-            summary.get("flow_id").is_some() || summary.get("flow").is_some()
-        })
         || matches!(
             body.get("kind").and_then(Value::as_str),
             Some("cx.flow.create" | "discussion" | "flow")
@@ -6255,6 +6274,50 @@ mod tests {
 
         assert_eq!(previews.len(), 1);
         assert_eq!(previews[0].space_id, "cx:space:root");
+    }
+
+    /// Regression: soland inlines the primary flow under `summary.flow`
+    /// for legitimate Spaces (so the client can render the room title
+    /// without joining a separate fanout). A previous filter treated
+    /// any `summary.flow` as a flow-as-space projection and dropped the
+    /// Space from the sidebar entirely. Only top-level `flow*`/`tracks`
+    /// or a flow-shaped `summary.category` should reject a `cx:space:`.
+    #[test]
+    fn sync_projection_keeps_real_space_with_inlined_primary_flow() {
+        let mut spaces = BTreeMap::new();
+        spaces.insert(
+            "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+            json!({
+                "ephemeral": [],
+                "flows": [{
+                    "flow_id": "cx:flow:0196419b-0000-7000-8000-000000000000",
+                    "title": "Contrix Demo Space",
+                }],
+                "summary": {
+                    "category": "collaboration",
+                    "title": "Contrix Demo Space",
+                    "summary": "Shared demo Space served by soland",
+                    "tags": ["demo"],
+                    "flow": {
+                        "flow_id": "cx:flow:0196419b-0000-7000-8000-000000000000",
+                        "title": "Contrix Demo Space",
+                        "tracks": { "discussion": { "enabled": true } },
+                    },
+                },
+                "timeline": { "events": [], "limited": false },
+                "unread": { "highlight_count": 0, "notification_count": 0 },
+            }),
+        );
+
+        let previews = space_previews_from_sync_spaces(&spaces);
+
+        assert_eq!(previews.len(), 1);
+        assert_eq!(
+            previews[0].space_id,
+            "cx:space:0196419b-0000-7000-8000-000000000000"
+        );
+        assert_eq!(previews[0].name, "Contrix Demo Space");
+        assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
     }
 
     #[test]

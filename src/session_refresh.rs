@@ -28,11 +28,12 @@
 use chrono::{DateTime, Utc};
 
 use crate::{
-    api::ContrixApi,
+    api::{ContrixApi, SessionGrantIntrospectionProof},
     coauth::{
         build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
     },
     local_state::{LocalStateStore, PersistedSessionGrant},
+    models::DevLoginResponse,
 };
 
 /// Window before the current `session_expires_at` at which the
@@ -114,37 +115,56 @@ pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
     RefreshDecision::Fresh
 }
 
-/// Run the refresh policy + IO. Reads the persisted grant, performs a
-/// fresh exchange against the principal server when one is due, and
-/// updates persistence on either side of the result.
+/// Outcome of the synchronous prep step. Either the refresh is already
+/// resolved (no grant, fresh enough, grant dead) or the caller has the
+/// materials it needs to run the async exchange.
 ///
-/// The caller is responsible for surfacing the resulting access_token
-/// to the rest of the UI (signal + `LocalConfigStore`). This function
-/// only owns the `LocalStateStore` side.
-pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
+/// The split exists so the caller can drop its `LocalStateStore` borrow
+/// before awaiting the network round-trip. Holding the borrow across
+/// the await crashes any concurrent signal mutation with
+/// `AlreadyBorrowedMut` — typical victims are UI handlers that persist
+/// user preferences (e.g. the sidebar scope toggle).
+pub enum RefreshPrepared {
+    /// Refresh is already resolved — caller turns this directly into
+    /// the outcome and skips the network call.
+    Done(RefreshOutcome),
+    /// Caller should run [`exchange_refresh`] with these materials and
+    /// then feed the result into [`commit_refresh`].
+    Ready {
+        grant: PersistedSessionGrant,
+        proof: SessionGrantIntrospectionProof,
+    },
+}
+
+/// Synchronous prep: read the persisted grant, decide whether to
+/// refresh, and (when due) build the introspection proof. Writes
+/// happen only inside this function or [`commit_refresh`], so the
+/// caller can release its `LocalStateStore` borrow before awaiting the
+/// network exchange.
+pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
     match refresh_decision(store) {
-        RefreshDecision::NoGrant => return RefreshOutcome::NoGrant,
-        RefreshDecision::Fresh => return RefreshOutcome::Fresh,
+        RefreshDecision::NoGrant => return RefreshPrepared::Done(RefreshOutcome::NoGrant),
+        RefreshDecision::Fresh => return RefreshPrepared::Done(RefreshOutcome::Fresh),
         RefreshDecision::GrantExpired => {
             store.set_session_grant(None);
-            return RefreshOutcome::LoginRequired {
+            return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
                 reason: "session grant has expired".to_owned(),
-            };
+            });
         }
         RefreshDecision::Due => {}
     }
 
     let Some(grant) = store.session_grant() else {
-        return RefreshOutcome::NoGrant;
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
     };
 
     let signing_key = match session_grant_signing_key_from_pem(&grant.session_private_key_pem) {
         Ok(key) => key,
         Err(error) => {
             store.set_session_grant(None);
-            return RefreshOutcome::LoginRequired {
+            return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
                 reason: format!("session grant signing key invalid: {error}"),
-            };
+            });
         }
     };
 
@@ -156,31 +176,39 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
     ) {
         Ok(value) => value,
         Err(error) => {
-            return RefreshOutcome::Transient {
+            return RefreshPrepared::Done(RefreshOutcome::Transient {
                 reason: format!("could not build introspection proof: {error}"),
-            };
+            });
         }
     };
 
-    let api = match ContrixApi::new(&grant.principal_server_url) {
-        Ok(api) => api,
-        Err(error) => {
-            return RefreshOutcome::Transient {
-                reason: format!("invalid principal server URL: {error}"),
-            };
-        }
-    };
+    RefreshPrepared::Ready { grant, proof }
+}
 
-    match api
-        .exchange_session_grant_at_with_proof(
-            &grant.session_grant_exchange_path,
-            &grant.grant_jwt,
-            &grant.principal_did,
-            &grant.device_id,
-            Some(&proof),
-        )
-        .await
-    {
+/// Pure async exchange. Holds no `LocalStateStore` borrow.
+pub async fn exchange_refresh(
+    grant: &PersistedSessionGrant,
+    proof: &SessionGrantIntrospectionProof,
+) -> anyhow::Result<DevLoginResponse> {
+    let api = ContrixApi::new(&grant.principal_server_url)?;
+    api.exchange_session_grant_at_with_proof(
+        &grant.session_grant_exchange_path,
+        &grant.grant_jwt,
+        &grant.principal_did,
+        &grant.device_id,
+        Some(proof),
+    )
+    .await
+}
+
+/// Synchronous commit: persist the outcome (fresh expiry on success,
+/// cleared grant on definitive failure) and translate into a
+/// `RefreshOutcome` the caller can act on.
+pub fn commit_refresh(
+    store: &mut LocalStateStore,
+    result: anyhow::Result<DevLoginResponse>,
+) -> RefreshOutcome {
+    match result {
         Ok(session) => {
             let session_expires_at = parse_rfc3339(&session.expires_at);
             store.update_session_expires_at(session_expires_at);
@@ -202,6 +230,23 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
             }
         }
     }
+}
+
+/// Convenience wrapper that drives the full prep → exchange → commit
+/// flow against a single `&mut LocalStateStore`. Holds the borrow
+/// across the network await, so callers backed by a Dioxus
+/// `Signal<LocalStateStore>` must orchestrate the three phases by hand
+/// (see the session-refresh `use_future` in `app.rs`). Test code that
+/// owns the store directly can keep using this entrypoint.
+#[cfg(test)]
+pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
+    let prepared = prepare_refresh(store);
+    let (grant, proof) = match prepared {
+        RefreshPrepared::Done(outcome) => return outcome,
+        RefreshPrepared::Ready { grant, proof } => (grant, proof),
+    };
+    let result = exchange_refresh(&grant, &proof).await;
+    commit_refresh(store, result)
 }
 
 fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
