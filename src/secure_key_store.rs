@@ -709,7 +709,11 @@ impl LocalStorageSecureKeyStore {
         })
     }
 
-    fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
+    // Sprint Q1 第二十四增量 (H6-migrate): visibility bumped to
+    // module-scope so `migrate_localstorage_entries_to_indexeddb`
+    // can reuse the same getter without re-implementing the window
+    // / Storage probe.
+    pub(super) fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
         let window = web_sys::window().ok_or_else(|| {
             SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
         })?;
@@ -721,7 +725,7 @@ impl LocalStorageSecureKeyStore {
             })
     }
 
-    fn wrapping_seed_key(service_name: &str) -> String {
+    pub(super) fn wrapping_seed_key(service_name: &str) -> String {
         format!(
             "yougen.secret.{service_name}{}",
             Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
@@ -1638,10 +1642,125 @@ pub async fn upgrade_wasm_secure_key_store_async(
         tracing::info!("IndexedDB or SubtleCrypto unavailable; keeping LocalStorage store");
         return Ok(None);
     }
-    match IndexedDbSecureKeyStore::new_async(service_name).await {
-        Ok(store) => Ok(Some(Arc::new(store))),
-        Err(err) => Err(err),
+    let store = IndexedDbSecureKeyStore::new_async(service_name).await?;
+    // Sprint Q1 第二十四增量 (H6-migrate): one-shot migration of any
+    // pre-existing LocalStorage entries (H2 era) into the new
+    // IndexedDB store, then prune the LocalStorage side so a future
+    // disk dump can't recover the seed alongside the ciphertext.
+    let migrated = migrate_localstorage_entries_to_indexeddb(service_name, &store)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(?err, "H6 LocalStorage→IndexedDB migration failed");
+            0
+        });
+    if migrated > 0 {
+        tracing::info!(
+            "H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB"
+        );
     }
+    Ok(Some(Arc::new(store)))
+}
+
+/// Sprint Q1 第二十四增量 (H6-migrate): walk `localStorage` looking
+/// for keys under the `yougen.secret.<service_name>.*` prefix written
+/// by H2's [`LocalStorageSecureKeyStore`], decrypt each via the
+/// existing AEAD wrapping seed, re-store under the IndexedDB tier
+/// via [`IndexedDbSecureKeyStore::store_secret`], then `removeItem`
+/// the original localStorage key plus the wrapping seed itself.
+///
+/// Returns the count of migrated entries. Silently skips entries
+/// that fail to decrypt — they're either corrupted or written by a
+/// different installation (different wrapping_seed). A
+/// `Ok(_)` return means migration ran (possibly with skipped
+/// entries); `Err` indicates an environmental failure like no
+/// `window.localStorage` (private-mode Firefox, file:// origin).
+///
+/// Idempotent: a second run finds nothing to migrate and returns 0.
+#[cfg(target_arch = "wasm32")]
+pub async fn migrate_localstorage_entries_to_indexeddb(
+    service_name: &str,
+    indexed_store: &IndexedDbSecureKeyStore,
+) -> Result<usize, SecureKeyStoreError> {
+    let storage = match LocalStorageSecureKeyStore::storage() {
+        Ok(s) => s,
+        Err(_) => return Ok(0),
+    };
+    // Read the H2 wrapping seed (still bytes in localStorage — that
+    // is the threat model H6 is moving away from). When absent
+    // there's nothing to migrate.
+    let seed_key = LocalStorageSecureKeyStore::wrapping_seed_key(service_name);
+    let wrapping_seed_b64 = match storage.get_item(&seed_key) {
+        Ok(Some(b)) => b,
+        Ok(None) => return Ok(0),
+        Err(err) => {
+            return Err(SecureKeyStoreError::Backend(format!(
+                "migrate read seed: {err:?}"
+            )));
+        }
+    };
+    let wrapping_seed_bytes = match STANDARD_NO_PAD.decode(wrapping_seed_b64.as_bytes()) {
+        Ok(b) => b,
+        Err(_) => return Ok(0),
+    };
+    if wrapping_seed_bytes.len() != 32 {
+        return Ok(0);
+    }
+    let mut wrapping_key = [0u8; 32];
+    wrapping_key.copy_from_slice(&wrapping_seed_bytes);
+
+    // Enumerate localStorage entries whose key matches the H2
+    // prefix `yougen.secret.<service_name>.*` (excluding the
+    // wrap_seed key itself).
+    let prefix = format!("yougen.secret.{service_name}.");
+    let length = storage
+        .length()
+        .map_err(|err| SecureKeyStoreError::Backend(format!("ls length: {err:?}")))?;
+    let mut candidates: Vec<String> = Vec::new();
+    for i in 0..length {
+        let key = match storage.key(i) {
+            Ok(Some(k)) => k,
+            _ => continue,
+        };
+        if key == seed_key {
+            continue;
+        }
+        if !key.starts_with(&prefix) {
+            continue;
+        }
+        candidates.push(key);
+    }
+    let mut migrated = 0usize;
+    for full_key in &candidates {
+        let entry_name = full_key
+            .strip_prefix(&prefix)
+            .unwrap_or(full_key.as_str())
+            .to_owned();
+        let wrapped = match storage.get_item(full_key) {
+            Ok(Some(v)) => v,
+            _ => continue,
+        };
+        let Ok(Some(plain)) = unwrap_secret(&wrapped, &wrapping_key) else {
+            tracing::warn!(key=%entry_name, "H6 migrate: decrypt failed; skipping");
+            continue;
+        };
+        if let Err(err) = indexed_store.store_secret(&entry_name, &plain) {
+            tracing::warn!(?err, key=%entry_name, "H6 migrate: IDB write failed");
+            continue;
+        }
+        // Remove the LocalStorage copy only after the IDB write
+        // returns Ok. The IDB persistence task is fire-and-forget
+        // (see `IndexedDbSecureKeyStore::store_secret` doc-comment),
+        // so we accept a small window where both sides could exist
+        // — the next migration run will reconcile.
+        let _ = storage.remove_item(full_key);
+        migrated += 1;
+    }
+    // Finally drop the wrapping seed too, so a future disk dump
+    // only carries the IndexedDB's non-extractable CryptoKey.
+    if migrated > 0 {
+        let _ = storage.remove_item(&seed_key);
+    }
+    Ok(migrated)
 }
 
 #[cfg(target_arch = "wasm32")]

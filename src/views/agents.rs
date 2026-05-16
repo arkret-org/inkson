@@ -189,13 +189,16 @@ pub fn AgentsPanel(
     let mut capabilities = use_signal(|| "flow.read".to_owned());
     let mut status = use_signal(String::new);
 
-    // Sprint Q1 第二十一增量 (V3): incoming agent
-    // `protocol_session.result` events fetched from soland. Each
-    // entry is a (event_id, payload) pair so the render side can
-    // call `verify_agent_audit_binding` on each payload and show
-    // the resulting badge.
+    // Sprint Q1 第二十一增量 (V3) + 第二十四增量 (V3-poll):
+    // incoming agent `protocol_session.result` events polled from
+    // soland every 4s. Each entry is a (event_id, payload) pair so
+    // the render side can call `verify_agent_audit_binding` on each
+    // payload and show the resulting badge. The poll loop self-
+    // bounds at 900 ticks (~1h) to keep cost predictable; operator
+    // can refresh the page to restart it.
     let mut incoming_results = use_signal(Vec::<(String, Value)>::new);
     let mut incoming_status = use_signal(String::new);
+    let mut incoming_last_poll_at = use_signal(String::new);
     {
         let base = base_url.clone();
         let space = selected_space.clone();
@@ -204,52 +207,75 @@ pub fn AgentsPanel(
             let base = base.clone();
             let space = space.clone();
             async move {
-                if token_for_fetch().trim().is_empty() {
-                    return;
-                }
-                if space.trim().is_empty() {
-                    return;
-                }
-                let api_token = token_for_fetch();
-                let resp = match with_authed_api(&base, api_token, |api| async move {
-                    api.backfill(&space).await
-                })
-                .await
-                {
-                    Ok(r) => r,
-                    Err(err) => {
+                let mut ticks: u32 = 0;
+                loop {
+                    if ticks > 900 {
                         incoming_status.set(format!(
-                            "agent results fetch failed: {}",
-                            err.display()
+                            "{} result event(s); polling stopped after 1h (refresh to resume)",
+                            incoming_results.read().len()
                         ));
-                        return;
+                        break;
                     }
-                };
-                let mut collected: Vec<(String, Value)> = Vec::new();
-                for event in resp.events.iter() {
-                    let kind = event
-                        .get("event_kind")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    if kind != "cx.agent.protocol_session.result" {
+                    ticks += 1;
+                    if token_for_fetch().trim().is_empty() || space.trim().is_empty() {
+                        crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
                         continue;
                     }
-                    let event_id = event
-                        .get("event_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("?")
-                        .to_owned();
-                    let payload = event
-                        .get("payload")
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                    collected.push((event_id, payload));
+                    let api_token = token_for_fetch();
+                    let base_for_call = base.clone();
+                    let space_for_call = space.clone();
+                    let resp = match with_authed_api(&base_for_call, api_token, |api| async move {
+                        api.backfill(&space_for_call).await
+                    })
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(err) => {
+                            incoming_status.set(format!(
+                                "agent results fetch failed: {}",
+                                err.display()
+                            ));
+                            crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
+                            continue;
+                        }
+                    };
+                    let mut collected: Vec<(String, Value)> = Vec::new();
+                    for event in resp.events.iter() {
+                        let kind = event
+                            .get("event_kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if kind != "cx.agent.protocol_session.result" {
+                            continue;
+                        }
+                        let event_id = event
+                            .get("event_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("?")
+                            .to_owned();
+                        let payload = event
+                            .get("payload")
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        collected.push((event_id, payload));
+                    }
+                    let new_count = collected.len();
+                    // Diff against the previous snapshot so the UI
+                    // status line shows "+2 new" when fresh
+                    // results land, not just the cumulative count.
+                    let prev_count = incoming_results.read().len();
+                    let delta = new_count.saturating_sub(prev_count);
+                    incoming_status.set(if delta > 0 {
+                        format!(
+                            "{new_count} result event(s) ({delta} new since last poll)"
+                        )
+                    } else {
+                        format!("{new_count} result event(s) fetched")
+                    });
+                    incoming_last_poll_at.set(format!("tick {ticks}"));
+                    incoming_results.set(collected);
+                    crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
                 }
-                incoming_status.set(format!(
-                    "{} agent result event(s) fetched from soland",
-                    collected.len()
-                ));
-                incoming_results.set(collected);
             }
         });
     }
@@ -496,6 +522,11 @@ pub fn AgentsPanel(
                 }
                 if !incoming_status().is_empty() {
                     div { class: "muted", "data-testid": "agent-incoming-status", "{incoming_status}" }
+                }
+                if !incoming_last_poll_at().is_empty() {
+                    div { class: "muted", "data-testid": "agent-incoming-poll-tick",
+                        "Last poll: {incoming_last_poll_at}"
+                    }
                 }
                 if incoming_results.read().is_empty() {
                     div { class: "muted", "data-testid": "agent-incoming-empty",
