@@ -15,6 +15,15 @@
 //!    exposes `export_state_record()` / `restore_from_state_record()`
 //!    so the openmls provider storage can be round-tripped through a
 //!    typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record
+//! Sprint Q1 第十三增量: also exposes the multi-device Welcome shuttle
+//! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
+//! used to ship a typed `MlsWelcomeEnvelope` over soland's
+//! `/api/v1/device_messages` (with `type = "cx.mls.welcome"`). The
+//! payload is the canonical SDK serialization — JSON serialize the
+//! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
+//! can round-trip it via `serde_json::from_value` and feed it into
+//! [`contrix_sdk::ContrixMlsGroup::join_from_welcome`].
+//!
 //!    in [`MlsSnapshotEnvelope`] which adds a passphrase-mediated
 //!    confidentiality layer + a SHA-256 MAC so a stolen state.json
 //!    doesn't leak the openmls provider keys.

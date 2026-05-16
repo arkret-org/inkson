@@ -6,7 +6,7 @@ use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     models::*,
     routes::Route,
-    views::helpers::{authed_api, with_authed_api},
+    views::helpers::with_authed_api,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,25 +279,26 @@ pub fn DirectoryPanel(
                                 let api_token = token();
                                 let base = base.clone();
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api.contacts().await {
-                                            Ok(result) => {
-                                                let summary = result
-                                                    .contacts
-                                                    .iter()
-                                                    .map(|contact| format!("{} -> {} {}", contact.requester, contact.target, contact.status))
-                                                    .collect::<Vec<_>>()
-                                                    .join(", ");
-                                                contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
-                                            }
-                                            Err(error) => contact_state.set(format!("list failed: {error}")),
-                                        },
-                                        Err(error) => contact_state.set(format!("invalid server URL: {error}")),
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.contacts().await
+                                    })
+                                    .await
+                                    {
+                                        Ok(result) => {
+                                            let summary = result
+                                                .contacts
+                                                .iter()
+                                                .map(|contact| format!("{} -> {} {}", contact.requester, contact.target, contact.status))
+                                                .collect::<Vec<_>>()
+                                                .join(", ");
+                                            contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
+                                        }
+                                        Err(err) => contact_state.set(format!("list failed: {}", err.display())),
                                     }
                                 });
                             }
                         },
-                        "List"
+                        {crate::i18n::tr("directory.list_contacts")}
                     }
                 }
             }
@@ -342,7 +343,7 @@ pub fn DirectoryPanel(
                                 pagination.write().orgs_cursor = None;
                                 pagination.write().actors_cursor = None;
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
+                                    let _ = with_authed_api(&base, api_token, |api| async move {
                                         match tab {
                                             DirectoryTab::ProtocolObjects => {
                                                 object_results.set(protocol_object_results(&q));
@@ -384,7 +385,9 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                         }
-                                    }
+                                        Ok::<_, anyhow::Error>(())
+                                    })
+                                    .await;
                                 });
                             }
                         },
@@ -404,7 +407,7 @@ pub fn DirectoryPanel(
                                     pagination.write().orgs_cursor = None;
                                     pagination.write().actors_cursor = None;
                                     spawn(async move {
-                                        if let Ok(api) = authed_api(&base, api_token) {
+                                        let _ = with_authed_api(&base, api_token, |api| async move {
                                             match tab {
                                                 DirectoryTab::ProtocolObjects => {
                                                     object_results.set(protocol_object_results(&q));
@@ -446,11 +449,13 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                             }
-                                        }
+                                            Ok::<_, anyhow::Error>(())
+                                        })
+                                        .await;
                                     });
                                 }
                             },
-                            "Search"
+                            {crate::i18n::tr("directory.search_button")}
                         }
                         if active_tab() == DirectoryTab::Spaces {
                             button {
@@ -463,19 +468,23 @@ pub fn DirectoryPanel(
                                         let id = selected_space();
                                         let api_token = token();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.resolve_space(&id).await {
-                                                    Ok(resolved) => {
-                                                        selected_space.set(resolved.space_preview.space_id);
-                                                        status.set(format!("resolved {}", resolved.join_rule));
-                                                    }
-                                                    Err(error) => status.set(format!("resolve failed: {error}")),
+                                            match with_authed_api(&base, api_token, |api| async move {
+                                                api.resolve_space(&id).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(resolved) => {
+                                                    selected_space.set(resolved.space_preview.space_id);
+                                                    status.set(format!("resolved {}", resolved.join_rule));
                                                 }
+                                                Err(err) => status.set(format!(
+                                                    "resolve failed: {}", err.display()
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Resolve Selected"
+                                {crate::i18n::tr("directory.resolve_selected")}
                             }
                         }
                     }
@@ -566,16 +575,20 @@ pub fn DirectoryPanel(
                                             let cursor = pagination.read().spaces_cursor.clone();
                                             pagination.write().loading_more = true;
                                             spawn(async move {
-                                                if let Ok(api) = authed_api(&base, api_token) {
-                                                    match api.search_spaces(&q, cursor.as_deref()).await {
-                                                        Ok(search) => {
-                                                            pagination.write().spaces_cursor = search.next_cursor.clone();
-                                                            let mut current = spaces();
-                                                            current.extend(search.results);
-                                                            spaces.set(current);
-                                                        }
-                                                        Err(error) => status.set(format!("load more failed: {error}")),
+                                                match with_authed_api(&base, api_token, |api| async move {
+                                                    api.search_spaces(&q, cursor.as_deref()).await
+                                                })
+                                                .await
+                                                {
+                                                    Ok(search) => {
+                                                        pagination.write().spaces_cursor = search.next_cursor.clone();
+                                                        let mut current = spaces();
+                                                        current.extend(search.results);
+                                                        spaces.set(current);
                                                     }
+                                                    Err(err) => status.set(format!(
+                                                        "load more failed: {}", err.display()
+                                                    )),
                                                 }
                                                 pagination.write().loading_more = false;
                                             });
@@ -683,16 +696,18 @@ pub fn DirectoryPanel(
                                         let cursor = pagination.read().orgs_cursor.clone();
                                         pagination.write().loading_more = true;
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.search_organizations(&q, cursor.as_deref()).await {
-                                                    Ok(search) => {
-                                                        pagination.write().orgs_cursor = search.next_cursor.clone();
-                                                        let mut current = org_results();
-                                                        current.extend(search.results);
-                                                        org_results.set(current);
-                                                    }
-                                                    Err(error) => status.set(format!("load more failed: {error}")),
+                                            match with_authed_api(&base, api_token, |api| async move {
+                                                api.search_organizations(&q, cursor.as_deref()).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(search) => {
+                                                    pagination.write().orgs_cursor = search.next_cursor.clone();
+                                                    let mut current = org_results();
+                                                    current.extend(search.results);
+                                                    org_results.set(current);
                                                 }
+                                                Err(err) => status.set(format!("load more failed: {}", err.display())),
                                             }
                                             pagination.write().loading_more = false;
                                         });
@@ -741,16 +756,18 @@ pub fn DirectoryPanel(
                                         let cursor = pagination.read().actors_cursor.clone();
                                         pagination.write().loading_more = true;
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.search_actors(&q, cursor.as_deref()).await {
-                                                    Ok(search) => {
-                                                        pagination.write().actors_cursor = search.next_cursor.clone();
-                                                        let mut current = actor_results();
-                                                        current.extend(search.results);
-                                                        actor_results.set(current);
-                                                    }
-                                                    Err(error) => status.set(format!("load more failed: {error}")),
+                                            match with_authed_api(&base, api_token, |api| async move {
+                                                api.search_actors(&q, cursor.as_deref()).await
+                                            })
+                                            .await
+                                            {
+                                                Ok(search) => {
+                                                    pagination.write().actors_cursor = search.next_cursor.clone();
+                                                    let mut current = actor_results();
+                                                    current.extend(search.results);
+                                                    actor_results.set(current);
                                                 }
+                                                Err(err) => status.set(format!("load more failed: {}", err.display())),
                                             }
                                             pagination.write().loading_more = false;
                                         });

@@ -7,7 +7,7 @@ use crate::{
     local_state::LocalStateStore,
     models::*,
     secure_key_store::default_secure_key_store,
-    views::helpers::{authed_api, with_authed_api},
+    views::helpers::with_authed_api,
 };
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
@@ -31,6 +31,122 @@ fn render_qr_svg(payload: &str) -> String {
 enum VerifyMethod {
     QrCode,
     Sas,
+}
+
+/// Sprint Q1 第十八增量 (B2-UI-poll): walk a
+/// `DeviceMessagesReceiveResponse` JSON representation and return the
+/// first non-empty `body.key` (or `content.key`) string carried by a
+/// `cx.key.verification.key` typed envelope.
+///
+/// Soland's wire shape is either `{ "events": [...] }` (flat) or
+/// `{ "messages": { actor: { device_id: { type, content|body, ... } } } }`
+/// (per-recipient batching). Both are accepted; the helper returns
+/// `None` if no matching envelope is present so the poll loop can keep
+/// retrying without surfacing noise.
+fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
+    fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
+        if entry.get("type").and_then(|t| t.as_str()) != Some("cx.key.verification.key") {
+            return None;
+        }
+        let body = entry
+            .get("body")
+            .or_else(|| entry.get("content"))
+            .and_then(|v| v.as_object())?;
+        let key = body.get("key").and_then(|v| v.as_str())?;
+        if key.trim().is_empty() {
+            return None;
+        }
+        Some(key.trim().to_owned())
+    }
+    if let Some(events) = value.get("events").and_then(|v| v.as_array()) {
+        for entry in events {
+            if let Some(k) = key_from_entry(entry) {
+                return Some(k);
+            }
+        }
+    }
+    if let Some(messages) = value.get("messages").and_then(|v| v.as_object()) {
+        for actor_map in messages.values() {
+            let Some(actor_obj) = actor_map.as_object() else {
+                continue;
+            };
+            for device_value in actor_obj.values() {
+                if let Some(list) = device_value.as_array() {
+                    for entry in list {
+                        if let Some(k) = key_from_entry(entry) {
+                            return Some(k);
+                        }
+                    }
+                } else if let Some(k) = key_from_entry(device_value) {
+                    return Some(k);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod verification_key_poll_tests {
+    use super::extract_peer_verification_key;
+    use serde_json::json;
+
+    #[test]
+    fn picks_key_out_of_flat_events_list() {
+        let resp = json!({
+            "events": [
+                {"type": "cx.mls.welcome", "body": {"unrelated": true}},
+                {
+                    "type": "cx.key.verification.key",
+                    "body": {"key": "bob-pub-b64==", "from_device": "cx:device:abc"},
+                },
+            ]
+        });
+        assert_eq!(
+            extract_peer_verification_key(&resp).as_deref(),
+            Some("bob-pub-b64==")
+        );
+    }
+
+    #[test]
+    fn picks_key_out_of_batched_messages_map() {
+        let resp = json!({
+            "messages": {
+                "did:web:alice.example": {
+                    "cx:device:01": [
+                        {
+                            "type": "cx.key.verification.key",
+                            "content": {"key": "alice-pub-b64==", "from_device": "cx:device:01"},
+                        }
+                    ]
+                }
+            }
+        });
+        assert_eq!(
+            extract_peer_verification_key(&resp).as_deref(),
+            Some("alice-pub-b64==")
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_verification_key_present() {
+        let resp = json!({
+            "events": [
+                {"type": "cx.mls.welcome", "body": {"welcome_blob": "..."}},
+            ]
+        });
+        assert!(extract_peer_verification_key(&resp).is_none());
+    }
+
+    #[test]
+    fn ignores_envelope_with_blank_key() {
+        let resp = json!({
+            "events": [
+                {"type": "cx.key.verification.key", "body": {"key": "   "}}
+            ]
+        });
+        assert!(extract_peer_verification_key(&resp).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -88,6 +204,84 @@ pub fn VerifyDevicePanel(
     let mut sas_code = use_signal(|| String::new());
     let mut qr_data = use_signal(|| String::new());
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
+    // Sprint Q1 第十七增量 (B2-UI): SAS key-exchange state. The
+    // ephemeral keypair is generated lazily on "Generate my key"
+    // click + held in an Arc so a single getrandom call covers the
+    // lifetime of this SAS session. Peer's public key is pasted (or
+    // received via device_message poll once that wiring lands) into
+    // `peer_public_b64`. When both halves are present, the SAS
+    // display block recomputes the emoji + decimal pair from the
+    // real X25519 shared secret instead of the
+    // `target_device_did + sas_code` placeholder info.
+    let mut ephemeral_keypair = use_signal(
+        || Option::<std::sync::Arc<contrix_sdk::key_verification::EphemeralX25519Keypair>>::None,
+    );
+    let mut peer_public_b64 = use_signal(String::new);
+    let mut sas_send_status = use_signal(String::new);
+
+    // Sprint Q1 第十八增量 (B2-UI-poll): once the user generates their
+    // own ephemeral keypair, start polling `/api/v1/device_messages`
+    // every ~3 s looking for a `cx.key.verification.key` envelope from
+    // the peer device. When one arrives, auto-fill `peer_public_b64`
+    // so the SAS pair recomputes from the real X25519 shared secret
+    // without the user copy-pasting. Polling stops once a peer key
+    // lands, once SAS is confirmed (`verify_status` non-empty), or
+    // after ~120 ticks (~6 min) to bound the budget.
+    {
+        let base = base_url.clone();
+        let token_for_poll = token;
+        use_future(move || {
+            let base = base.clone();
+            async move {
+                let mut ticks: u32 = 0;
+                loop {
+                    ticks += 1;
+                    if ticks > 120 {
+                        break;
+                    }
+                    crate::api::sleep_for(std::time::Duration::from_millis(3000)).await;
+                    if verify_method() != VerifyMethod::Sas {
+                        continue;
+                    }
+                    if ephemeral_keypair().is_none() {
+                        continue;
+                    }
+                    if !peer_public_b64().is_empty() {
+                        break;
+                    }
+                    if !verify_status().is_empty() {
+                        break;
+                    }
+                    let api_token = token_for_poll();
+                    if api_token.trim().is_empty() {
+                        continue;
+                    }
+                    let messages = match crate::views::helpers::with_authed_api(
+                        &base,
+                        api_token,
+                        |api| async move { api.receive_device_messages().await },
+                    )
+                    .await
+                    {
+                        Ok(resp) => resp,
+                        Err(_) => continue,
+                    };
+                    let messages_value = match serde_json::to_value(&messages) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if let Some(key) = extract_peer_verification_key(&messages_value) {
+                        peer_public_b64.set(key);
+                        sas_send_status.set(
+                            "peer X25519 public key auto-filled from device_messages poll"
+                                .to_owned(),
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     rsx! {
         div { class: "timeline", "data-testid": "verify-device-panel",
@@ -203,14 +397,20 @@ pub fn VerifyDevicePanel(
                                         let target = target_device();
                                         let api_token = token();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.verify_device(&target, "sas", json!({})).await {
-                                                    Ok(resp) => {
-                                                        sas_code.set(format!("verified: {}", resp.trust_state));
-                                                        verify_status.set(format!("SAS started with {}", resp.device_id));
-                                                    }
-                                                    Err(e) => verify_status.set(format!("SAS failed: {e}")),
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.verify_device(&target, "sas", json!({})).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(resp) => {
+                                                    sas_code.set(format!("verified: {}", resp.trust_state));
+                                                    verify_status.set(format!("SAS started with {}", resp.device_id));
                                                 }
+                                                Err(err) => verify_status.set(format!("SAS failed: {}", err.display())),
                                             }
                                         });
                                     }
@@ -218,21 +418,185 @@ pub fn VerifyDevicePanel(
                                 {crate::i18n::tr("verify_device.start_sas")}
                             }
                         }
+                        // Sprint Q1 第十七增量 (B2-UI): X25519 key
+                        // exchange controls. Generate this side's
+                        // ephemeral keypair, ship the public half via
+                        // `/api/v1/device_messages`(type=
+                        // `cx.key.verification.key`), and accept the
+                        // peer's public key by paste (until the
+                        // device_message poll auto-fills it).
+                        div { class: "event", "data-testid": "sas-x25519-exchange",
+                            div { class: "event-head",
+                                span { "Key exchange (X25519)" }
+                                span { class: "badge",
+                                    if ephemeral_keypair().is_some() { "keypair ready" }
+                                    else { "not generated" }
+                                }
+                            }
+                            div { class: "muted",
+                                "Generate a fresh ephemeral X25519 keypair, send the public half to your other device, and paste its public key here. The SAS pair below recomputes from the real ECDH shared secret as soon as both halves are present."
+                            }
+                            div { class: "actions",
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "sas-generate-keypair-button",
+                                    onclick: move |_| {
+                                        let pair = std::sync::Arc::new(
+                                            contrix_sdk::key_verification::EphemeralX25519Keypair::generate(),
+                                        );
+                                        ephemeral_keypair.set(Some(pair));
+                                        sas_send_status.set(
+                                            "fresh X25519 keypair generated; click Send to push the public half to the peer".to_owned(),
+                                        );
+                                    },
+                                    "Generate my X25519 keypair"
+                                }
+                                button {
+                                    class: "primary",
+                                    "data-testid": "sas-send-public-button",
+                                    disabled: ephemeral_keypair().is_none() || target_device().trim().is_empty(),
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let account = account_did.clone();
+                                        move |_| {
+                                            let Some(pair) = ephemeral_keypair() else {
+                                                sas_send_status.set("generate a keypair first".to_owned());
+                                                return;
+                                            };
+                                            let target = target_device().trim().to_owned();
+                                            if target.is_empty() {
+                                                sas_send_status.set("target device id is required".to_owned());
+                                                return;
+                                            }
+                                            let public_b64 = pair.public_base64();
+                                            let base = base.clone();
+                                            let account = account.clone();
+                                            let api_token = token();
+                                            spawn(async move {
+                                                match crate::views::helpers::with_authed_api(
+                                                    &base,
+                                                    api_token,
+                                                    |api| async move {
+                                                        api.send_device_message_envelope(
+                                                            "yougen-sas-key",
+                                                            &account,
+                                                            &target,
+                                                            "cx.key.verification.key",
+                                                            json!({
+                                                                "key": public_b64.clone(),
+                                                                "from_device": target.clone(),
+                                                            }),
+                                                        )
+                                                        .await
+                                                    },
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => sas_send_status.set(
+                                                        "public key shipped via /device_messages; awaiting peer's key".to_owned(),
+                                                    ),
+                                                    Err(err) => sas_send_status.set(format!(
+                                                        "send failed: {}", err.display()
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Send my public key to peer"
+                                }
+                            }
+                            if let Some(pair) = ephemeral_keypair() {
+                                {
+                                    let pub_b64 = pair.public_base64();
+                                    rsx! {
+                                        div { class: "muted", "data-testid": "sas-local-public",
+                                            "My X25519 public (base64): {pub_b64}"
+                                        }
+                                    }
+                                }
+                            }
+                            input {
+                                "data-testid": "sas-peer-public-input",
+                                value: "{peer_public_b64}",
+                                placeholder: "Paste peer's X25519 public key (base64)",
+                                oninput: move |evt| peer_public_b64.set(evt.value().trim().to_owned()),
+                            }
+                            if !sas_send_status().is_empty() {
+                                div { class: "muted", "data-testid": "sas-send-status", "{sas_send_status}" }
+                            }
+                        }
                         if !sas_code().is_empty() {
+                            {
+                                // Sprint Q1 第十七增量 (B2-UI): when this
+                                // side's `EphemeralX25519Keypair` is
+                                // generated AND the peer's public key
+                                // has been pasted, compute the real
+                                // X25519 shared secret and derive the
+                                // SAS pair from it (Sprint Q1 第十五
+                                // 增量 B2 SDK helper). Two devices
+                                // doing the same exchange produce
+                                // identical emoji + digits — the
+                                // contract verify-device relies on.
+                                //
+                                // Fallback: when peer key is not yet
+                                // pasted, keep the demo
+                                // `(target_device_did, sas_code)` info
+                                // hash so the panel still renders
+                                // something the user can see; UI
+                                // labels that as "(demo, not real)"
+                                // so operators don't mistake it for a
+                                // real cross-device match.
+                                let target = target_device();
+                                let info = format!("{target}|{}", sas_code());
+                                let (sas, sas_source) = match (
+                                    ephemeral_keypair(),
+                                    if peer_public_b64().is_empty() { None } else { Some(peer_public_b64()) },
+                                ) {
+                                    (Some(pair), Some(peer_pub)) => {
+                                        match pair.compute_shared_secret(&peer_pub) {
+                                            Ok(shared) => (
+                                                contrix_sdk::key_verification::derive_sas_bytes(
+                                                    &shared,
+                                                    info.as_bytes(),
+                                                ),
+                                                "real X25519 shared secret",
+                                            ),
+                                            Err(_) => (
+                                                contrix_sdk::key_verification::derive_sas_bytes(
+                                                    target.as_bytes(),
+                                                    info.as_bytes(),
+                                                ),
+                                                "demo info (peer key invalid)",
+                                            ),
+                                        }
+                                    }
+                                    _ => (
+                                        contrix_sdk::key_verification::derive_sas_bytes(
+                                            target.as_bytes(),
+                                            info.as_bytes(),
+                                        ),
+                                        "demo info (paste peer key for real ECDH)",
+                                    ),
+                                };
+                                let emoji_pairs = sas.emoji_pairs();
+                                let digits_text = format!(
+                                    "{:04} {:04} — {:04}",
+                                    sas.decimal_digits[0],
+                                    sas.decimal_digits[1],
+                                    sas.decimal_digits[2],
+                                );
+                                rsx! {
                             div { class: "event", "data-testid": "sas-display",
                                 div { class: "space-title", {crate::i18n::tr("verify_device.short_auth_string")} }
                                 div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
-                                // SAS emoji row — claude-design desktop/verify-device.html
+                                div { class: "muted", "data-testid": "sas-source", "Source: {sas_source}" }
+                                // SAS emoji row — now computed via SDK HKDF.
                                 div { class: "actions", "data-testid": "sas-emoji-row",
-                                    span { class: "badge", "🐬 Dolphin" }
-                                    span { class: "badge", "🌳 Tree" }
-                                    span { class: "badge", "🚀 Rocket" }
-                                    span { class: "badge", "🎩 Hat" }
-                                    span { class: "badge", "🍯 Honey" }
-                                    span { class: "badge", "🦊 Fox" }
-                                    span { class: "badge", "🪐 Saturn" }
+                                    for (codepoint, label) in emoji_pairs {
+                                        span { class: "badge", "{codepoint} {label}" }
+                                    }
                                 }
-                                div { class: "space-title", "data-testid": "sas-digits", "3 7 5 2 — 9 1 0 4" }
+                                div { class: "space-title", "data-testid": "sas-digits", "{digits_text}" }
                                 div { class: "muted", "{sas_code}" }
                                 div { class: "actions",
                                     button {
@@ -285,6 +649,8 @@ pub fn VerifyDevicePanel(
                                     }
                                 }
                             }
+                            }  // close rsx!
+                            }  // close outer let-block
                         }
                     }
                 }
@@ -307,16 +673,20 @@ pub fn VerifyDevicePanel(
                                 let base = base.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.get_device_trust().await {
-                                            Ok(resp) => trust_devices.set(resp.devices),
-                                            Err(e) => verify_status.set(format!("trust fetch failed: {e}")),
-                                        }
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move { api.get_device_trust().await },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => trust_devices.set(resp.devices),
+                                        Err(err) => verify_status.set(format!("trust fetch failed: {}", err.display())),
                                     }
                                 });
                             }
                         },
-                        "Refresh"
+                        {crate::i18n::tr("verify_device.refresh_trust")}
                     }
                 }
                 for entry in trust_devices() {
@@ -343,13 +713,18 @@ pub fn VerifyDevicePanel(
                                         let dev_id = dev_id.clone();
                                         let api_token = token();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                let _ = api.verify_device(&dev_id, "sas", json!({})).await;
-                                            }
+                                            let _ = crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.verify_device(&dev_id, "sas", json!({})).await
+                                                },
+                                            )
+                                            .await;
                                         });
                                     }
                                 },
-                                "Verify"
+                                {crate::i18n::tr("verify_device.verify_action")}
                             }
                             button {
                                 class: "secondary",
@@ -358,12 +733,12 @@ pub fn VerifyDevicePanel(
                                     let dev_id = entry.device_id.clone();
                                     move |_| revoke_confirm.set(Some(dev_id.clone()))
                                 },
-                                "Revoke"
+                                {crate::i18n::tr("verify_device.revoke_action")}
                             }
                         }
                         if revoke_confirm() == Some(entry.device_id.clone()) {
                             div { class: "event", "data-testid": "revoke-confirm",
-                                div { class: "space-title", "Revoke this device?" }
+                                div { class: "space-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
                                 div { class: "muted",
                                     "Revoking removes the device from the authorized set and excludes it from future encrypted messages. This cannot be undone."
                                 }
@@ -380,22 +755,30 @@ pub fn VerifyDevicePanel(
                                                 let api_token = token();
                                                 revoke_confirm.set(None);
                                                 spawn(async move {
-                                                    if let Ok(api) = authed_api(&base, api_token) {
-                                                        match api.revoke_device(&dev_id).await {
-                                                            Ok(_) => verify_status.set(format!("revoked {dev_id}")),
-                                                            Err(e) => verify_status.set(format!("revoke {dev_id} failed: {e}")),
-                                                        }
+                                                    let dev_id_for_err = dev_id.clone();
+                                                    match crate::views::helpers::with_authed_api(
+                                                        &base,
+                                                        api_token,
+                                                        |api| async move { api.revoke_device(&dev_id).await },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(_) => verify_status.set(format!("revoked {dev_id_for_err}")),
+                                                        Err(err) => verify_status.set(format!(
+                                                            "revoke {dev_id_for_err} failed: {}",
+                                                            err.display()
+                                                        )),
                                                     }
                                                 });
                                             }
                                         },
-                                        "Confirm Revoke"
+                                        {crate::i18n::tr("verify_device.revoke_confirm_button")}
                                     }
                                     button {
                                         class: "secondary",
                                         "data-testid": "cancel-revoke-button",
                                         onclick: move |_| revoke_confirm.set(None),
-                                        "Cancel"
+                                        {crate::i18n::tr("common.cancel_button")}
                                     }
                                 }
                             }

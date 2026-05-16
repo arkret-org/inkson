@@ -98,10 +98,35 @@ pub fn evaluate_refresh_policy(store: &LocalStateStore) -> RefreshDecision {
     let Some(bundle) = store.oidc_tokens() else {
         return RefreshDecision::NoBundle;
     };
-    if !due_for_refresh(&bundle) {
+    evaluate_refresh_decision_from_bundle(&bundle)
+}
+
+/// Sprint Q1 第十六增量 (H5): SecureKeyStore-aware variant. Reads the
+/// bundle via [`LocalStateStore::load_oidc_tokens_with_secure_store`]
+/// so the `refresh_token` actually surfaces (the disk-backed bundle
+/// holds `refresh_token: None` after the H3 migration; the live secret
+/// only exists in the SecureKeyStore). Use this from the production
+/// refresh poller; tests that don't care about secure-store wiring keep
+/// using [`evaluate_refresh_policy`].
+pub fn evaluate_refresh_policy_with_secure_store(
+    store: &LocalStateStore,
+    actor_did: &str,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> RefreshDecision {
+    let Some(bundle) = store.load_oidc_tokens_with_secure_store(actor_did, secure_store) else {
+        return RefreshDecision::NoBundle;
+    };
+    evaluate_refresh_decision_from_bundle(&bundle)
+}
+
+/// Shared logic between the two `evaluate_refresh_policy*` entry
+/// points. Pure function over the typed bundle so neither path
+/// touches disk a second time.
+fn evaluate_refresh_decision_from_bundle(bundle: &OidcTokenBundle) -> RefreshDecision {
+    if !due_for_refresh(bundle) {
         return RefreshDecision::Fresh;
     }
-    if !has_refresh_token(&bundle) {
+    if !has_refresh_token(bundle) {
         return RefreshDecision::NoRefreshToken;
     }
     RefreshDecision::Refresh {
@@ -175,7 +200,51 @@ pub async fn refresh_if_due(
     coauth_api: &CoauthApi,
     token_endpoint: &str,
 ) -> OidcLifecycleEvent {
-    let decision = evaluate_refresh_policy(store);
+    refresh_if_due_inner(store, coauth_api, token_endpoint, None).await
+}
+
+/// Sprint Q1 第十六增量 (H5): SecureKeyStore-aware variant of
+/// [`refresh_if_due`]. The refresh poller in production code MUST call
+/// this — it reads the refresh_token via
+/// [`LocalStateStore::load_oidc_tokens_with_secure_store`] and writes
+/// the rotated refresh_token back through
+/// [`LocalStateStore::set_oidc_tokens_with_secure_store`], so the
+/// disk-backed `state.json` never holds the refresh credential in
+/// plaintext. The `actor_did` parameter is the principal whose bundle
+/// is being refreshed; it's woven into the SecureKeyStore key as
+/// `coauth.refresh_token.<actor_did>` so multi-actor devices stay
+/// isolated.
+pub async fn refresh_if_due_with_secure_store(
+    store: &mut LocalStateStore,
+    coauth_api: &CoauthApi,
+    token_endpoint: &str,
+    actor_did: &str,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> OidcLifecycleEvent {
+    refresh_if_due_inner(
+        store,
+        coauth_api,
+        token_endpoint,
+        Some((actor_did, secure_store)),
+    )
+    .await
+}
+
+/// Shared body between `refresh_if_due` and the secure-store-aware
+/// variant. When `actor_did_and_store` is `Some`, reads + writes use
+/// the H3 helpers (refresh_token never lands in `state.json`).
+async fn refresh_if_due_inner(
+    store: &mut LocalStateStore,
+    coauth_api: &CoauthApi,
+    token_endpoint: &str,
+    actor_did_and_store: Option<(&str, &dyn crate::secure_key_store::SecureKeyStore)>,
+) -> OidcLifecycleEvent {
+    let decision = match actor_did_and_store {
+        Some((actor_did, secure_store)) => {
+            evaluate_refresh_policy_with_secure_store(store, actor_did, secure_store)
+        }
+        None => evaluate_refresh_policy(store),
+    };
     let (client_id, refresh_token, audience) = match decision {
         RefreshDecision::NoBundle => return OidcLifecycleEvent::NoBundle,
         RefreshDecision::Fresh => return OidcLifecycleEvent::Fresh,
@@ -192,25 +261,53 @@ pub async fn refresh_if_due(
         .await
     {
         Ok(response) => {
-            let previous = store.oidc_tokens().unwrap_or_else(|| OidcTokenBundle {
-                access_token: String::new(),
-                refresh_token: Some(refresh_token.clone()),
-                token_type: "Bearer".to_owned(),
-                expires_at_unix: None,
-                id_token: None,
-                scope: None,
-                audience: None,
-                stored_at: Utc::now(),
-            });
+            // Read prev bundle through the appropriate helper so the
+            // restored `refresh_token` is honoured when computing the
+            // next bundle (per RFC 6749 §6, the IdP MAY omit the new
+            // refresh_token meaning the old one stays valid).
+            let previous = match actor_did_and_store {
+                Some((actor_did, secure_store)) => store
+                    .load_oidc_tokens_with_secure_store(actor_did, secure_store)
+                    .unwrap_or_else(|| OidcTokenBundle {
+                        access_token: String::new(),
+                        refresh_token: Some(refresh_token.clone()),
+                        token_type: "Bearer".to_owned(),
+                        expires_at_unix: None,
+                        id_token: None,
+                        scope: None,
+                        audience: None,
+                        stored_at: Utc::now(),
+                    }),
+                None => store.oidc_tokens().unwrap_or_else(|| OidcTokenBundle {
+                    access_token: String::new(),
+                    refresh_token: Some(refresh_token.clone()),
+                    token_type: "Bearer".to_owned(),
+                    expires_at_unix: None,
+                    id_token: None,
+                    scope: None,
+                    audience: None,
+                    stored_at: Utc::now(),
+                }),
+            };
             let next = apply_refresh_response(&previous, &response);
-            store.set_oidc_tokens(Some(next));
+            match actor_did_and_store {
+                Some((actor_did, secure_store)) => {
+                    store.set_oidc_tokens_with_secure_store(Some(next), actor_did, secure_store);
+                }
+                None => store.set_oidc_tokens(Some(next)),
+            }
             OidcLifecycleEvent::Refreshed
         }
         Err(error) => {
             // Refresh failed — clear the bundle so the next render
             // routes to the login page rather than re-trying with the
             // dead refresh_token in a tight loop.
-            store.set_oidc_tokens(None);
+            match actor_did_and_store {
+                Some((actor_did, secure_store)) => {
+                    store.set_oidc_tokens_with_secure_store(None, actor_did, secure_store);
+                }
+                None => store.set_oidc_tokens(None),
+            }
             OidcLifecycleEvent::LoginRequired {
                 reason: error.to_string(),
             }
@@ -332,6 +429,38 @@ mod tests {
         assert!(!has_refresh_token(&bundle));
         bundle.refresh_token = None;
         assert!(!has_refresh_token(&bundle));
+    }
+
+    /// Sprint Q1 第十六增量 (H5): with a SecureKeyStore-aware persist
+    /// pre-run, the on-disk bundle's `refresh_token` is `None` — but
+    /// `evaluate_refresh_policy_with_secure_store` MUST surface the
+    /// refresh_token from the secure store so the policy decision is
+    /// `Refresh { refresh_token: "rt-1", .. }` not `NoRefreshToken`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn evaluate_policy_with_secure_store_reattaches_refresh_token_for_due_bundle() {
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let mut store = isolated_store("h5-secure-store-due");
+        let secure = MemorySecureKeyStore::default();
+        let actor = "did:web:alice.example";
+        // Persist a due bundle through the SecureKeyStore helper so
+        // disk-state has `refresh_token: None` and the secret lives
+        // only in `secure`.
+        store.set_oidc_tokens_with_secure_store(Some(fresh_bundle(20)), actor, &secure);
+        // The legacy `evaluate_refresh_policy` MUST see no refresh
+        // token (it only inspects disk) — proving the migration.
+        assert_eq!(
+            evaluate_refresh_policy(&store),
+            RefreshDecision::NoRefreshToken,
+            "legacy poller can't see the migrated refresh_token",
+        );
+        // The new poller MUST reattach + decide Refresh.
+        match evaluate_refresh_policy_with_secure_store(&store, actor, &secure) {
+            RefreshDecision::Refresh { refresh_token, .. } => {
+                assert_eq!(refresh_token, "rt-1");
+            }
+            other => panic!("expected Refresh, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1609,6 +1609,84 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Sprint Q1 第十五增量 (H3): persist a fresh OIDC token bundle and
+    /// **migrate the refresh_token field into the supplied
+    /// `SecureKeyStore`** so the disk-backed `state.json` does not
+    /// hold the refresh credential in plaintext. Returns the bundle
+    /// that ended up serialised (the `refresh_token` field is wiped to
+    /// `None` post-secure-store-write so a corrupt-restore can't leak).
+    ///
+    /// The secure-store key is `coauth.refresh_token.<actor_did>` so a
+    /// device that has signed in as multiple actors keeps them
+    /// isolated. Callers SHOULD use [`load_oidc_tokens_with_secure_store`]
+    /// to reattach the refresh_token at boot before passing the bundle
+    /// into the OIDC refresh poller.
+    pub fn set_oidc_tokens_with_secure_store(
+        &mut self,
+        bundle: Option<OidcTokenBundle>,
+        actor_did: &str,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Option<OidcTokenBundle> {
+        let key = format!("coauth.refresh_token.{actor_did}");
+        let stripped = match bundle {
+            Some(mut bundle) => {
+                if let Some(refresh) = bundle.refresh_token.take() {
+                    if let Err(error) = secure_store.store_secret(&key, &refresh) {
+                        tracing::warn!(
+                            ?error,
+                            actor = actor_did,
+                            "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
+                        );
+                    }
+                }
+                Some(bundle)
+            }
+            None => {
+                if let Err(error) = secure_store.delete_secret(&key) {
+                    tracing::debug!(
+                        ?error,
+                        actor = actor_did,
+                        "secure_key_store refresh_token delete on bundle-clear failed (likely already missing)",
+                    );
+                }
+                None
+            }
+        };
+        self.ensure_cached_loaded();
+        self.cached.oidc_tokens = stripped.clone();
+        let _ = self.flush();
+        stripped
+    }
+
+    /// Sprint Q1 第十五增量 (H3): companion to
+    /// [`set_oidc_tokens_with_secure_store`]. Reads the bundle from
+    /// state.json and reattaches the `refresh_token` from the secure
+    /// store under the per-actor key. Returns `None` when no bundle
+    /// has been persisted yet (same shape as
+    /// [`Self::oidc_tokens`]).
+    pub fn load_oidc_tokens_with_secure_store(
+        &self,
+        actor_did: &str,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Option<OidcTokenBundle> {
+        let mut bundle = self.oidc_tokens()?;
+        if bundle.refresh_token.is_none() {
+            let key = format!("coauth.refresh_token.{actor_did}");
+            match secure_store.get_secret(&key) {
+                Ok(Some(value)) => bundle.refresh_token = Some(value),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_did,
+                        "secure_key_store refresh_token read failed; bundle returned without refresh_token",
+                    );
+                }
+            }
+        }
+        Some(bundle)
+    }
+
     /// Read the persisted coauth `session_grant` if any.
     pub fn session_grant(&self) -> Option<PersistedSessionGrant> {
         self.load().session_grant
@@ -2268,6 +2346,66 @@ mod tests {
 
         reader.clear_push_registration();
         assert!(reader.push_registration().is_none());
+    }
+
+    /// Sprint Q1 第十五增量 (H3): `set_oidc_tokens_with_secure_store`
+    /// MUST move the `refresh_token` out of the disk-backed
+    /// `state.json` into the supplied `SecureKeyStore` keyed by
+    /// `coauth.refresh_token.<actor_did>`. The companion `load_*`
+    /// helper reads it back. The on-disk JSON MUST NOT contain the
+    /// refresh_token after the migration.
+    #[test]
+    fn refresh_token_migrates_into_secure_key_store_and_round_trips() {
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+        let path = temp_state_path("h3-refresh-token");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let secure = MemorySecureKeyStore::default();
+        let actor = "did:web:alice.example";
+
+        let bundle = OidcTokenBundle {
+            access_token: "atok".to_owned(),
+            refresh_token: Some("rtok-secret".to_owned()),
+            token_type: "Bearer".to_owned(),
+            expires_at_unix: Some(2_000_000_000),
+            id_token: None,
+            scope: None,
+            audience: None,
+            stored_at: Utc::now(),
+        };
+        let stripped = store
+            .set_oidc_tokens_with_secure_store(Some(bundle), actor, &secure)
+            .expect("bundle persisted");
+        // Post-migration: in-state bundle MUST NOT carry the refresh
+        // token any more (the secure store is the new authority).
+        assert!(stripped.refresh_token.is_none());
+
+        // The disk-backed bundle agrees.
+        let on_disk = store.oidc_tokens().expect("bundle still on disk");
+        assert!(on_disk.refresh_token.is_none());
+        assert_eq!(on_disk.access_token, "atok");
+
+        // Secure store holds the secret under the per-actor key.
+        let secret = secure
+            .get_secret(&format!("coauth.refresh_token.{actor}"))
+            .expect("read ok")
+            .expect("secret present");
+        assert_eq!(secret, "rtok-secret");
+
+        // Load helper reattaches the refresh_token from the store.
+        let reattached = store
+            .load_oidc_tokens_with_secure_store(actor, &secure)
+            .expect("bundle visible");
+        assert_eq!(reattached.refresh_token.as_deref(), Some("rtok-secret"));
+        assert_eq!(reattached.access_token, "atok");
+
+        // Clearing the bundle deletes the secure-store entry too.
+        store.set_oidc_tokens_with_secure_store(None, actor, &secure);
+        assert!(
+            secure
+                .get_secret(&format!("coauth.refresh_token.{actor}"))
+                .expect("read ok after clear")
+                .is_none()
+        );
     }
 
     fn temp_state_path(name: &str) -> PathBuf {

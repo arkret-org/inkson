@@ -7,7 +7,6 @@ use crate::{
     local_state::LocalStateStore,
     models::SpacePreview,
     routes::Route,
-    views::helpers::authed_api,
 };
 
 #[component]
@@ -325,25 +324,42 @@ pub fn DashboardPanel(
                                         let api_token = token();
                                         health_loading.set(true);
                                         spawn(async move {
-                                            let mut checks = Vec::new();
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.health().await {
-                                                    Ok(h) => checks.push(("Health".to_owned(), format!("OK ({})", h.service))),
-                                                    Err(e) => checks.push(("Health".to_owned(), format!("Error: {e}"))),
-                                                }
-                                                match api.describe().await {
-                                                    Ok(d) => checks.push(("Server".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
-                                                    Err(e) => checks.push(("Server".to_owned(), format!("Error: {e}"))),
-                                                }
-                                                match api.sync_describe().await {
-                                                    Ok(s) => checks.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),
-                                                    Err(e) => checks.push(("Sync".to_owned(), format!("Error: {e}"))),
-                                                }
-                                                match api.identity_describe().await {
-                                                    Ok(i) => checks.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
-                                                    Err(e) => checks.push(("Identity".to_owned(), format!("Error: {e}"))),
-                                                }
-                                            }
+                                            // C2f: fold the four sequential checks into a
+                                            // single `with_authed_api` so an Unavailable or
+                                            // AuthExpired error tags every row at once
+                                            // instead of silently returning an empty Vec.
+                                            let result = crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    let mut rows = Vec::new();
+                                                    match api.health().await {
+                                                        Ok(h) => rows.push(("Health".to_owned(), format!("OK ({})", h.service))),
+                                                        Err(e) => rows.push(("Health".to_owned(), format!("Error: {e}"))),
+                                                    }
+                                                    match api.describe().await {
+                                                        Ok(d) => rows.push(("Server".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
+                                                        Err(e) => rows.push(("Server".to_owned(), format!("Error: {e}"))),
+                                                    }
+                                                    match api.sync_describe().await {
+                                                        Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),
+                                                        Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
+                                                    }
+                                                    match api.identity_describe().await {
+                                                        Ok(i) => rows.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
+                                                        Err(e) => rows.push(("Identity".to_owned(), format!("Error: {e}"))),
+                                                    }
+                                                    Ok::<_, anyhow::Error>(rows)
+                                                },
+                                            )
+                                            .await;
+                                            let checks = match result {
+                                                Ok(rows) => rows,
+                                                Err(err) => vec![(
+                                                    "API".to_owned(),
+                                                    format!("Error: {}", err.display()),
+                                                )],
+                                            };
                                             protocol_health.set(checks);
                                             health_loading.set(false);
                                         });

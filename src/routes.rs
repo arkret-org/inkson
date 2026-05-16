@@ -84,6 +84,12 @@ pub enum Route {
 
     #[route("/quarantine", crate::app::RouterView)]
     Quarantine,
+
+    #[route("/applets", crate::app::RouterView)]
+    Applets,
+
+    #[route("/agents", crate::app::RouterView)]
+    Agents,
 }
 
 #[component]
@@ -162,6 +168,8 @@ impl Route {
             Route::Recovery => View::Recovery,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
+            Route::Applets => View::Applets,
+            Route::Agents => View::Agents,
         }
     }
 
@@ -227,6 +235,8 @@ impl From<View> for Route {
             View::Recovery => Route::Recovery,
             View::Onboarding => Route::Onboarding,
             View::Quarantine => Route::Quarantine,
+            View::Applets => Route::Applets,
+            View::Agents => Route::Agents,
         }
     }
 }

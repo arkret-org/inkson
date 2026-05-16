@@ -3106,8 +3106,53 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 "#;
 
+/// Sprint Q1 第十五增量 (H4): one-shot push-token provider bootstrap.
+///
+/// Runs once on first App render. On wasm32 we install
+/// `WebPushTokenProvider::new()` (drives the service-worker +
+/// `pushManager.subscribe` path described in `push.rs::WebPushTokenProvider`).
+/// On native builds we install `FcmPushTokenProvider` / `ApnsPushTokenProvider`
+/// stubs so `push_token_provider()` is `Some(_)` and the device-summary
+/// `"no PushTokenProvider installed"` warning goes away. Subsequent
+/// renders short-circuit via `OnceLock` semantics inside
+/// `set_push_token_provider`.
+fn ensure_default_push_token_provider() {
+    if crate::push::push_token_provider().is_some() {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::push::set_push_token_provider(std::sync::Arc::new(
+            crate::push::WebPushTokenProvider::new(),
+        ));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
+    {
+        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::FcmPushTokenProvider));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "ios"))]
+    {
+        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::ApnsPushTokenProvider));
+    }
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "android"),
+        not(target_os = "ios")
+    ))]
+    {
+        // Desktop / server builds: install the FCM provider as the
+        // safe default. The default `FcmPushTokenProvider` stub returns
+        // `Ok(None)` from `subscribe()`, which is the "no push token
+        // available on this platform" signal `device-summary` reads —
+        // not a misconfiguration. The point is to install *something*
+        // so `push_token_provider().is_some()`.
+        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::FcmPushTokenProvider));
+    }
+}
+
 #[component]
 pub fn App() -> Element {
+    ensure_default_push_token_provider();
     rsx! {
         Router::<Route> {}
     }
@@ -3622,6 +3667,27 @@ pub fn RouterView() -> Element {
             crate::i18n::set_locale(&mut sig, locale());
         });
     }
+    // Sprint Q1 第十二增量: shared `Signal<MlsPassphraseStore>` for per-Space
+    // MLS snapshot passphrases. Both chat.rs (encrypt path) and timeline.rs
+    // (decrypt-success audit emitter) read from this so a Send Secure
+    // followed by a sync round-trip can be decrypted by the same client.
+    // Default empty — the placeholder/sealed paths still work; once the
+    // user enters a passphrase the real MLS encrypt + decrypt path
+    // engages for that Space.
+    use_context_provider::<Signal<crate::mls_passphrase::MlsPassphraseStore>>(|| {
+        Signal::new(crate::mls_passphrase::MlsPassphraseStore::default())
+    });
+    // Cap-Gate-1: shared `Signal<CapabilityEngine>` for UI-side pre-gates.
+    // Starts empty; views call `engine.ui_gate(...)` which returns an open
+    // gate when no grants for the subject are loaded yet, so the existing
+    // "trust the server" behavior is preserved until something hydrates
+    // grants. The capability-grant hydrate path is a follow-up — once
+    // `cx.capability.grant` projection events ship, the post-login flow
+    // will `engine.write().add_grant(...)` and the kanban Archive /
+    // Restore buttons will start gating themselves.
+    use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
+        Signal::new(crate::capability::CapabilityEngine::new())
+    });
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
@@ -5098,6 +5164,25 @@ pub fn RouterView() -> Element {
                             is_admin: true,
                         }
                     },
+                    // Sprint Q1 第十四增量 V1/V2.
+                    Route::Applets => rsx! {
+                        crate::views::applets::AppletsPanel {
+                            base_url: base_url(),
+                            account_did,
+                            token,
+                            selected_space: selected_space(),
+                            state_store,
+                        }
+                    },
+                    Route::Agents => rsx! {
+                        crate::views::agents::AgentsPanel {
+                            base_url: base_url(),
+                            account_did,
+                            token,
+                            selected_space: selected_space(),
+                            state_store,
+                        }
+                    },
                 }
             }
             }
@@ -5491,6 +5576,8 @@ fn route_label(route: &Route) -> &'static str {
         Route::Recovery => "Recovery",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
+        Route::Applets => "Applets",
+        Route::Agents => "Agents",
     }
 }
 
@@ -6144,6 +6231,31 @@ fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Sprint Q1 第十五增量 (H4): the App component installs a default
+    /// push-token provider on first render so `device-summary` never
+    /// shows the `"no PushTokenProvider installed"` warning in
+    /// production. The helper is idempotent (`OnceLock` inside
+    /// `set_push_token_provider`) — calling it twice in the same
+    /// process is safe.
+    #[test]
+    fn ensure_default_push_token_provider_installs_a_provider_and_is_idempotent() {
+        // Provider state is process-wide via `OnceLock`. We don't
+        // assert which concrete provider was installed (varies by
+        // target_arch / target_os); we only assert the slot becomes
+        // populated and stays populated across a second call.
+        super::ensure_default_push_token_provider();
+        let after_first = crate::push::push_token_provider();
+        assert!(
+            after_first.is_some(),
+            "first ensure call must install a provider"
+        );
+        super::ensure_default_push_token_provider();
+        assert!(
+            crate::push::push_token_provider().is_some(),
+            "second ensure call must keep the provider installed"
+        );
+    }
 
     fn preview(id: &str, name: &str, parent: Option<&str>) -> SpacePreview {
         SpacePreview {

@@ -95,6 +95,405 @@ struct SpaceParticipant {
     is_self: bool,
 }
 
+/// Sprint Q1 第十二增量: hydrate the local MLS group for a Space (or
+/// bootstrap a single-member group when no snapshot exists), encrypt
+/// `plaintext_bytes` against it, persist the post-encrypt group state
+/// back under the same passphrase, and return:
+///
+/// * `Some(schedule_hash)` — the post-encrypt group's `epoch_authenticator`-
+///   derived `Hash`, fed into `GovernanceBindingPayload::from_anchor`.
+/// * `member_dids` — every principal DID in the group (single-element for
+///   solo bootstrap; the full member set for a hydrated multi-device
+///   group). Replaces the prior single-`device_did` audit-receipt
+///   fallback.
+/// * `encrypted_payload` — the typed SDK `EncryptedPayload` serialised as
+///   `serde_json::Value` ready to drop into `content.encrypted_payload`.
+///
+/// On any failure (empty passphrase, restore fails, encrypt fails) the
+/// helper returns `(None, vec![], None)` and the caller falls back to
+/// the legacy placeholder ciphertext path so the rest of the Send
+/// Secure pipeline (commit Move + audit receipt) still works.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_local_mls_encrypt(
+    mut state_store: Signal<LocalStateStore>,
+    space_id: &str,
+    principal_id: &str,
+    device_id: &str,
+    passphrase: &str,
+    plaintext_bytes: &[u8],
+) -> (
+    Option<contrix_sdk::Hash>,
+    Vec<contrix_sdk::Did>,
+    Option<serde_json::Value>,
+    Option<contrix_sdk::MlsCommitEnvelope>,
+) {
+    let empty = (None, Vec::new(), None, None);
+    if passphrase.is_empty() {
+        // No passphrase set this session — legacy placeholder path stays
+        // active. B3d/B6c readers fall back to server-projected hash +
+        // single device.
+        return empty;
+    }
+    let snapshot = state_store.read().mls_snapshot_for(space_id);
+    let mut group = if let Some(env) = snapshot {
+        match crate::mls_persistence::restore_envelope(&env, passphrase, 0) {
+            Ok(group) => group,
+            Err(_) => return empty,
+        }
+    } else {
+        // Bootstrap a fresh single-member group on first Send Secure.
+        // The group lives off the user's `(principal_id, device_id)`
+        // identity; `space_id`'s bytes seed the MLS group_id so two
+        // clients independently bootstrapping the "same" Space land on
+        // identical group ids. Real multi-member flows still require a
+        // dedicated invite / Welcome path (out of scope here).
+        let Ok(principal_did) = contrix_sdk::Did::new(principal_id.to_owned()) else {
+            return empty;
+        };
+        let Ok(typed_device_id) = contrix_sdk::DeviceId::new(device_id.to_owned()) else {
+            return empty;
+        };
+        let Ok(identity) =
+            contrix_sdk::ContrixMlsIdentity::new_basic(principal_did, typed_device_id)
+        else {
+            return empty;
+        };
+        match identity.create_group(space_id.as_bytes()) {
+            Ok(g) => g,
+            Err(_) => return empty,
+        }
+    };
+    // Sprint Q1 第十六增量 (B1): self-update commit BEFORE encrypting so
+    // the payload runs under the rotated epoch — forward secrecy
+    // improves and the Move-pipeline `mls_commit` row can carry the
+    // real `(group_id, epoch, commit_hash)` triple instead of a
+    // synthesized `(space_id, prev_epoch+1, _)` placeholder. Failure
+    // here is non-fatal: we fall back to encrypt-without-commit so a
+    // single Send Secure still succeeds even if `self_update` rejects.
+    let commit_envelope = group.self_update_commit().ok();
+    let encrypted = match group.encrypt_payload(
+        "application/vnd.contrix.message+json",
+        plaintext_bytes,
+    ) {
+        Ok(p) => p,
+        Err(_) => return empty,
+    };
+    let schedule_hash = group.schedule_hash();
+    let member_dids = group.member_principal_dids();
+    let payload_value = match serde_json::to_value(&encrypted) {
+        Ok(v) => v,
+        Err(_) => return empty,
+    };
+    // Re-encrypt + persist the post-encrypt group state so a refresh +
+    // timeline B7 audit hook can hydrate the same group with the same
+    // passphrase. `encrypt_payload` does not advance the epoch but it
+    // mutates the OpenMLS ratchet state, so the snapshot MUST be
+    // refreshed.
+    let post_state = match group.export_state_record() {
+        Ok(state) => state,
+        Err(_) => {
+            return (
+                Some(schedule_hash),
+                member_dids,
+                Some(payload_value),
+                commit_envelope,
+            );
+        }
+    };
+    let mut salt = [0u8; 16];
+    if getrandom::fill(&mut salt).is_err() {
+        return (
+            Some(schedule_hash),
+            member_dids,
+            Some(payload_value),
+            commit_envelope,
+        );
+    }
+    let new_envelope = crate::mls_persistence::encrypt_state(
+        space_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &post_state.serialized_state,
+        passphrase,
+        &salt,
+    );
+    state_store
+        .write()
+        .save_mls_snapshot(space_id.to_owned(), new_envelope);
+    (
+        Some(schedule_hash),
+        member_dids,
+        Some(payload_value),
+        commit_envelope,
+    )
+}
+
+/// Sprint Q1 第十三增量: walk a `DeviceMessagesReceiveResponse` JSON
+/// representation and pull out every `cx.mls.welcome` content payload.
+/// Soland's wire shape for that endpoint is `{ "messages": { actor:
+/// { device_id: { type, content, ... } } } }`; this helper does NOT
+/// assume only one welcome per poll — multiple inviters into multiple
+/// Spaces all flow through the same envelope.
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut welcomes = Vec::new();
+    let Some(messages) = value.get("messages").and_then(|v| v.as_object()) else {
+        return welcomes;
+    };
+    for actor_map in messages.values() {
+        let Some(actor_obj) = actor_map.as_object() else {
+            continue;
+        };
+        for device_value in actor_obj.values() {
+            // Each device entry may be either a single
+            // `{type, content}` map or a list of such maps depending on
+            // soland's batching mode. Handle both shapes.
+            if let Some(list) = device_value.as_array() {
+                for entry in list {
+                    if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome") {
+                        if let Some(content) = entry.get("content") {
+                            welcomes.push(content.clone());
+                        }
+                    }
+                }
+            } else if let Some(entry) = device_value.as_object() {
+                if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome") {
+                    if let Some(content) = entry.get("content") {
+                        welcomes.push(content.clone());
+                    }
+                }
+            }
+        }
+    }
+    welcomes
+}
+
+/// Sprint Q1 第十三增量: multi-device MLS invite handler.
+///
+/// 1. Validate inputs (target actor + device + passphrase non-empty).
+/// 2. Hydrate the local MLS group from the persisted snapshot via the
+///    user-supplied passphrase. Refuse to invite if no snapshot exists
+///    yet (the inviter must have sent at least one Secure message
+///    first, which bootstraps + persists their solo group).
+/// 3. `fetch_mls_key_package(target_actor, target_device)` → typed
+///    `MlsKeyPackageRecord`. Returns early with a clear error when the
+///    target hasn't published one yet.
+/// 4. `group.add_member(&record)` → `MlsAddMemberResult { commit,
+///    welcome }`.
+/// 5. Ship the typed `MlsWelcomeEnvelope` to the target via
+///    `send_device_message_envelope` with `type = "cx.mls.welcome"`.
+/// 6. Submit the SDK-built `commit_operation` via
+///    `submit_operation_event` so other server-side state machines
+///    (epoch / covered_frontier) observe the new epoch.
+/// 7. Re-persist the post-commit group state so the next Send Secure
+///    starts from the new epoch + member set.
+///
+/// Each soft failure surfaces verbatim in `status` for the operator.
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_mls_add_member_and_invite(
+    base_url: String,
+    api_token: String,
+    mut state_store: Signal<LocalStateStore>,
+    space_id: String,
+    target_actor: String,
+    target_device: String,
+    passphrase: String,
+    mut status: Signal<String>,
+) {
+    if target_actor.is_empty() || target_device.is_empty() {
+        status.set("MLS invite needs both target actor DID and device id".to_owned());
+        return;
+    }
+    if passphrase.is_empty() {
+        status.set(
+            "MLS invite needs an active passphrase; set one in this row first".to_owned(),
+        );
+        return;
+    }
+    let Some(envelope) = state_store.read().mls_snapshot_for(&space_id) else {
+        status.set(
+            "no local MLS group for this Space yet; send at least one Secure message to bootstrap"
+                .to_owned(),
+        );
+        return;
+    };
+    let mut group = match crate::mls_persistence::restore_envelope(&envelope, &passphrase, 0) {
+        Ok(g) => g,
+        Err(err) => {
+            status.set(format!("MLS invite: restore_envelope failed: {err}"));
+            return;
+        }
+    };
+
+    // ── 1. fetch target's key package ─────────────────────────────────
+    let target_actor_for_fetch = target_actor.clone();
+    let target_device_for_fetch = target_device.clone();
+    let fetched = crate::views::helpers::with_authed_api(
+        &base_url,
+        api_token.clone(),
+        move |api| async move {
+            api.fetch_mls_key_package(&target_actor_for_fetch, &target_device_for_fetch)
+                .await
+        },
+    )
+    .await;
+    let key_package_record = match fetched {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            status.set(format!(
+                "MLS invite: {target_actor}/{target_device} has not published a key package"
+            ));
+            return;
+        }
+        Err(err) => {
+            status.set(format!(
+                "MLS invite: fetch_mls_key_package failed: {}", err.display()
+            ));
+            return;
+        }
+    };
+
+    // ── 2. add_member + send Welcome ──────────────────────────────────
+    let add_result = match group.add_member(&key_package_record) {
+        Ok(r) => r,
+        Err(err) => {
+            status.set(format!("MLS invite: add_member failed: {err:?}"));
+            return;
+        }
+    };
+    let welcome_value = match serde_json::to_value(&add_result.welcome) {
+        Ok(v) => v,
+        Err(err) => {
+            status.set(format!("MLS invite: welcome serialise failed: {err}"));
+            return;
+        }
+    };
+    let target_actor_for_welcome = target_actor.clone();
+    let target_device_for_welcome = target_device.clone();
+    let welcome_send = crate::views::helpers::with_authed_api(
+        &base_url,
+        api_token.clone(),
+        move |api| async move {
+            api.send_device_message_envelope(
+                "yougen-mls-welcome",
+                &target_actor_for_welcome,
+                &target_device_for_welcome,
+                "cx.mls.welcome",
+                welcome_value,
+            )
+            .await
+        },
+    )
+    .await;
+    if let Err(err) = welcome_send {
+        status.set(format!(
+            "MLS invite: Welcome /device_messages send failed: {}",
+            err.display()
+        ));
+        return;
+    }
+
+    // ── 3. submit commit Operation + persist post-state ───────────────
+    let op_id_str = format!("cx:operation:{}", crate::operation::uuid_v7());
+    let typed_op_id = match contrix_sdk::OperationId::new(op_id_str) {
+        Ok(o) => o,
+        Err(err) => {
+            status.set(format!("MLS invite: operation id mint failed: {err:?}"));
+            return;
+        }
+    };
+    let typed_space = match contrix_sdk::SpaceId::new(space_id.clone()) {
+        Ok(s) => s,
+        Err(err) => {
+            status.set(format!("MLS invite: invalid space id: {err:?}"));
+            return;
+        }
+    };
+    let commit_operation = match add_result
+        .commit_operation(typed_op_id, typed_space)
+    {
+        Ok(op) => op,
+        Err(err) => {
+            status.set(format!("MLS invite: commit_operation build failed: {err:?}"));
+            return;
+        }
+    };
+    let target_ref = commit_operation.object_id.clone();
+    let mut envelope_builder = crate::operation::OperationBuilder::new(
+        space_id.clone(),
+        target_actor.clone(),
+        "mls_commit",
+    )
+    .body(commit_operation.payload.clone());
+    if let Some(tref) = target_ref {
+        envelope_builder = envelope_builder.target_ref(tref);
+    }
+    let envelope = envelope_builder.build("yougen");
+    let submit = crate::views::helpers::with_authed_api(
+        &base_url,
+        api_token,
+        |api| async move { api.submit_operation_event(&envelope).await },
+    )
+    .await;
+    if let Err(err) = submit {
+        status.set(format!(
+            "MLS invite: commit submit failed (Welcome already sent — peer can still join): {}",
+            err.display()
+        ));
+        return;
+    }
+
+    // Re-encrypt + persist the post-commit group state.
+    let post_state = match group.export_state_record() {
+        Ok(s) => s,
+        Err(err) => {
+            status.set(format!(
+                "MLS invite: post-state export failed: {err:?}; snapshot now lags one epoch"
+            ));
+            return;
+        }
+    };
+    let mut salt = [0u8; 16];
+    if let Err(err) = getrandom::fill(&mut salt) {
+        status.set(format!(
+            "MLS invite: rng fill failed: {err}; snapshot now lags one epoch"
+        ));
+        return;
+    }
+    let new_envelope = crate::mls_persistence::encrypt_state(
+        &space_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &post_state.serialized_state,
+        &passphrase,
+        &salt,
+    );
+    state_store
+        .write()
+        .save_mls_snapshot(space_id.clone(), new_envelope);
+    status.set(format!(
+        "MLS invite accepted: {target_actor}/{target_device} added at epoch {}",
+        post_state.epoch
+    ));
+}
+
+/// Sprint Q1 第十三增量: wasm fallback — desktop-only.
+#[cfg(target_arch = "wasm32")]
+async fn run_mls_add_member_and_invite(
+    _base_url: String,
+    _api_token: String,
+    _state_store: Signal<LocalStateStore>,
+    _space_id: String,
+    _target_actor: String,
+    _target_device: String,
+    _passphrase: String,
+    mut status: Signal<String>,
+) {
+    status.set(
+        "MLS invite requires the desktop client (browser build has no OpenMLS runtime).".to_owned(),
+    );
+}
+
 fn chat_message_revise_operation(
     space_id: &str,
     actor: &str,
@@ -517,6 +916,28 @@ fn sender_display_label(
         .find(|participant| participant.did == sender.trim())
         .and_then(|participant| participant.display_name.clone())
         .unwrap_or_else(|| short_principal_label(sender))
+}
+
+fn chat_reply_quote_preview(
+    messages: &[ChatMessage],
+    reply_id: &str,
+    account_did: &str,
+    account_display_name: &str,
+    participants: &[SpaceParticipant],
+) -> Option<(String, String)> {
+    let quoted = messages.iter().find(|m| m.id == reply_id)?;
+    let name = sender_display_label(
+        &quoted.sender,
+        account_did,
+        account_display_name,
+        participants,
+    );
+    let body = if quoted.redacted {
+        "[Message redacted]".to_owned()
+    } else {
+        quoted.body.clone()
+    };
+    Some((name, body))
 }
 
 fn parse_discussion_principals(input: &str) -> Vec<String> {
@@ -1146,6 +1567,30 @@ pub fn ChatPanel(
     let mut selected_channel = use_signal(String::new);
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
+    // Sprint Q1 第十二增量: read the shared per-Space MLS passphrase
+    // store. Set from the new passphrase input the composer renders
+    // above Send Secure; read by the secure-send path to actually
+    // run `group.encrypt_payload()`. When empty for this Space, the
+    // legacy placeholder ciphertext path stays active so non-MLS
+    // users / sealed pages don't break.
+    let mls_passphrase_store =
+        use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    let mut mls_passphrase_draft = use_signal(String::new);
+    // Sprint Q1 第十三增量: multi-device Welcome flow controls. The
+    // `Invite to MLS group` button fetches the target (actor, device)
+    // key package via `fetch_mls_key_package`, runs `group.add_member`
+    // against the hydrated local group, sends the resulting Welcome
+    // via `send_device_message_envelope` (`type = cx.mls.welcome`),
+    // and submits the commit Operation. Bob's app picks up the
+    // Welcome in its periodic `receive_device_messages` poll and runs
+    // `join_from_welcome` → snapshot save.
+    let mut mls_invite_actor_draft = use_signal(String::new);
+    let mut mls_invite_device_draft = use_signal(String::new);
+    // Local publish-state: did we already publish our key package this
+    // session? Used to gate the "Publish my key package" button so a
+    // duplicate click just refreshes status instead of generating a
+    // fresh package every time.
+    let mls_key_package_published = use_signal(|| false);
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_topic = use_signal(String::new);
     let mut new_channel_members = use_signal(String::new);
@@ -1188,7 +1633,8 @@ pub fn ChatPanel(
         .as_ref()
         .map(|channel| channel.unread)
         .unwrap_or(0);
-    let visible_messages = messages()
+    let all_messages_snapshot = messages();
+    let visible_messages = all_messages_snapshot
         .iter()
         .filter(|msg| {
             msg.flow_id == selected_channel_value
@@ -1200,6 +1646,8 @@ pub fn ChatPanel(
         .cloned()
         .collect::<Vec<_>>();
     let visible_message_count = visible_messages.len();
+    let messages_for_reply_lookup = all_messages_snapshot.clone();
+    let messages_for_composer_lookup = all_messages_snapshot.clone();
     let left_open = left_panel_open();
     let active_right_panel = right_panel();
     let right_open = active_right_panel.is_some();
@@ -1286,6 +1734,127 @@ pub fn ChatPanel(
             }
             if !loaded_messages.is_empty() {
                 merge_chat_messages(&mut messages.write(), loaded_messages);
+            }
+        });
+    }
+
+    // Sprint Q1 第十三增量: Welcome receive shuttle. Poll
+    // /api/v1/device_messages once per mount; if any incoming message
+    // carries `type = cx.mls.welcome`, run
+    // `ContrixMlsGroup::join_from_welcome` against the local identity
+    // for that Space and persist the resulting group snapshot under the
+    // user's per-Space passphrase. Subsequent Send Secure / decrypt
+    // hits the multi-member group automatically.
+    let mut welcome_poll_done = use_signal(|| false);
+    {
+        let base = base_url.clone();
+        let space = selected_space.clone();
+        let actor = account_did.clone();
+        let token_for_poll = token;
+        let passphrase_store = mls_passphrase_store;
+        use_future(move || {
+            let base = base.clone();
+            let space = space.clone();
+            let actor = actor.clone();
+            async move {
+                if welcome_poll_done() {
+                    return;
+                }
+                welcome_poll_done.set(true);
+                if token_for_poll().trim().is_empty() {
+                    return;
+                }
+                let api_token = token_for_poll();
+                let messages = match crate::views::helpers::with_authed_api(
+                    &base,
+                    api_token,
+                    |api| async move { api.receive_device_messages().await },
+                )
+                .await
+                {
+                    Ok(resp) => resp,
+                    Err(_) => return,
+                };
+                let mut applied = 0usize;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let messages_value = match serde_json::to_value(&messages) {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+                    let welcome_entries = collect_welcome_entries(&messages_value);
+                    if welcome_entries.is_empty() {
+                        return;
+                    }
+                    let passphrase: String = passphrase_store
+                        .read()
+                        .get(&space)
+                        .map(str::to_owned)
+                        .unwrap_or_default();
+                    let device_did = match state_store.read().local_identity() {
+                        Some(identity) => identity.device_did.clone(),
+                        None => return,
+                    };
+                    for welcome_value in welcome_entries {
+                        let welcome: contrix_sdk::MlsWelcomeEnvelope =
+                            match serde_json::from_value(welcome_value.clone()) {
+                                Ok(w) => w,
+                                Err(_) => continue,
+                            };
+                        let principal_did = match contrix_sdk::Did::new(actor.clone()) {
+                            Ok(d) => d,
+                            Err(_) => continue,
+                        };
+                        let device_id_typed =
+                            match contrix_sdk::DeviceId::new(device_did.clone()) {
+                                Ok(d) => d,
+                                Err(_) => continue,
+                            };
+                        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
+                            principal_did,
+                            device_id_typed,
+                        ) {
+                            Ok(i) => i,
+                            Err(_) => continue,
+                        };
+                        let group = match contrix_sdk::ContrixMlsGroup::join_from_welcome(
+                            identity,
+                            &welcome,
+                        ) {
+                            Ok(g) => g,
+                            Err(_) => continue,
+                        };
+                        let post_state = match group.export_state_record() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
+                        let mut salt = [0u8; 16];
+                        if getrandom::fill(&mut salt).is_err() {
+                            continue;
+                        }
+                        let snapshot = crate::mls_persistence::encrypt_state(
+                            &space,
+                            &post_state.group_id,
+                            post_state.epoch,
+                            &post_state.serialized_state,
+                            &passphrase,
+                            &salt,
+                        );
+                        state_store
+                            .write()
+                            .save_mls_snapshot(space.clone(), snapshot);
+                        applied += 1;
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (messages, passphrase_store, actor);
+                }
+                if applied > 0 {
+                    status_msg.set(format!(
+                        "joined {applied} MLS group(s) from Welcome envelopes"
+                    ));
+                }
             }
         });
     }
@@ -1691,8 +2260,23 @@ pub fn ChatPanel(
                                     }
                                     if msg.edited { span { class: "badge", "edited" } }
                                 }
-                                if msg.reply_to.is_some() {
-                                    div { class: "muted", "data-testid": "chat-reply-indicator", "Replying to a message" }
+                                if let Some(reply_id) = msg.reply_to.as_ref() {
+                                    if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
+                                        &messages_for_reply_lookup,
+                                        reply_id,
+                                        &account_did,
+                                        &account_display_label,
+                                        &participants_for_messages,
+                                    ) {
+                                        div { class: "chat-reply-quote", "data-testid": "chat-reply-indicator",
+                                            span { class: "chat-reply-quote-name", "{quoted_name}" }
+                                            div { class: "chat-reply-quote-body", "{quoted_body}" }
+                                        }
+                                    } else {
+                                        div { class: "chat-reply-quote chat-reply-quote-missing", "data-testid": "chat-reply-indicator",
+                                            "Replying to a message"
+                                        }
+                                    }
                                 }
                                 if msg.redacted {
                                     div { class: "msg-content redacted", "data-testid": "chat-redacted-tombstone", "[Message redacted]" }
@@ -2163,9 +2747,24 @@ pub fn ChatPanel(
             }
 
             div { class: "discussion-composer", "data-testid": "chat-composer",
-                if reply_to_message().is_some() {
-                    div { class: "muted", "data-testid": "chat-reply-banner",
-                        "Replying to a message"
+                if let Some(reply_id) = reply_to_message() {
+                    div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
+                        if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
+                            &messages_for_composer_lookup,
+                            &reply_id,
+                            &account_did,
+                            &account_display_label,
+                            &participants_for_messages,
+                        ) {
+                            div { class: "chat-reply-quote",
+                                span { class: "chat-reply-quote-name", "{quoted_name}" }
+                                div { class: "chat-reply-quote-body", "{quoted_body}" }
+                            }
+                        } else {
+                            div { class: "chat-reply-quote chat-reply-quote-missing",
+                                "Replying to a message"
+                            }
+                        }
                         button {
                             class: "secondary",
                             onclick: move |_| reply_to_message.set(None),
@@ -2335,7 +2934,204 @@ pub fn ChatPanel(
                                 reply_to_message.set(None);
                             }
                         },
-                        "Send"
+                        {crate::i18n::tr("chat.send")}
+                    }
+                    // Sprint Q1 第十二增量: per-Space MLS passphrase
+                    // input. When non-empty, Send Secure switches to the
+                    // real `group.encrypt_payload()` path (typed
+                    // EncryptedPayload + persisted post-encrypt state).
+                    // When empty, the legacy placeholder ciphertext
+                    // path stays active for backwards compatibility.
+                    input {
+                        class: "secondary",
+                        r#type: "password",
+                        "data-testid": "mls-passphrase-input",
+                        placeholder: crate::i18n::tr("chat.mls_passphrase_placeholder"),
+                        value: "{mls_passphrase_draft}",
+                        oninput: move |evt| mls_passphrase_draft.set(evt.value()),
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "mls-passphrase-save-button",
+                        title: crate::i18n::tr("chat.mls_passphrase_save"),
+                        onclick: {
+                            let space_id = selected_space.clone();
+                            let mut store = mls_passphrase_store;
+                            move |_| {
+                                let value = mls_passphrase_draft();
+                                if value.is_empty() {
+                                    store.write().clear(&space_id);
+                                    status_msg.set(
+                                        "MLS passphrase cleared — Send Secure uses placeholder path".to_owned(),
+                                    );
+                                } else {
+                                    store.write().set(space_id.clone(), value);
+                                    status_msg.set(
+                                        "MLS passphrase set — Send Secure now uses real MLS encrypt".to_owned(),
+                                    );
+                                }
+                                mls_passphrase_draft.set(String::new());
+                            }
+                        },
+                        {crate::i18n::tr("chat.mls_passphrase_save")}
+                    }
+                    // Sprint Q1 第十三增量: MLS multi-device invite row.
+                    // Three controls:
+                    //   1. Publish my key package → POST keys/upload with
+                    //      a fresh MlsKeyPackageRecord so peers can
+                    //      fetch + add_member against it.
+                    //   2. Target (actor, device) inputs.
+                    //   3. Invite → fetch_mls_key_package + add_member +
+                    //      send Welcome via /device_messages.
+                    button {
+                        class: "secondary",
+                        "data-testid": "mls-publish-key-package-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let actor = account_did.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let actor = actor.clone();
+                                let api_token = token();
+                                let device_id_for_pub =
+                                    state_store.read().local_identity().map(|i| i.device_did.clone());
+                                let mut published = mls_key_package_published;
+                                spawn(async move {
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        let Some(device_did) = device_id_for_pub else {
+                                            status_msg.set(
+                                                "publish failed: local identity unavailable".to_owned(),
+                                            );
+                                            return;
+                                        };
+                                        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
+                                            match contrix_sdk::Did::new(actor.clone()) {
+                                                Ok(d) => d,
+                                                Err(err) => {
+                                                    status_msg.set(format!(
+                                                        "publish failed: invalid principal DID: {err:?}"
+                                                    ));
+                                                    return;
+                                                }
+                                            },
+                                            match contrix_sdk::DeviceId::new(device_did.clone()) {
+                                                Ok(d) => d,
+                                                Err(err) => {
+                                                    status_msg.set(format!(
+                                                        "publish failed: invalid device id: {err:?}"
+                                                    ));
+                                                    return;
+                                                }
+                                            },
+                                        ) {
+                                            Ok(i) => i,
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "publish failed: identity build: {err:?}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        let record = match identity.key_package_record() {
+                                            Ok(r) => r,
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "publish failed: key_package_record: {err:?}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            move |api| {
+                                                let device_did = device_did.clone();
+                                                let record = record.clone();
+                                                async move {
+                                                    api.publish_mls_key_package(
+                                                        &device_did,
+                                                        &record,
+                                                    )
+                                                    .await
+                                                }
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(_) => {
+                                                published.set(true);
+                                                status_msg.set(
+                                                    "MLS key package published; peers can now add this device".to_owned(),
+                                                );
+                                            }
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "publish failed: {}", err.display()
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        let _ = (base, actor, api_token, device_id_for_pub);
+                                        status_msg.set(
+                                            "MLS publish requires desktop client (no OpenMLS in browser)".to_owned(),
+                                        );
+                                    }
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("chat.mls_publish_key_package")}
+                    }
+                    input {
+                        class: "secondary",
+                        "data-testid": "mls-invite-actor-input",
+                        placeholder: crate::i18n::tr("chat.mls_invite_actor_placeholder"),
+                        value: "{mls_invite_actor_draft}",
+                        oninput: move |evt| mls_invite_actor_draft.set(evt.value()),
+                    }
+                    input {
+                        class: "secondary",
+                        "data-testid": "mls-invite-device-input",
+                        placeholder: crate::i18n::tr("chat.mls_invite_device_placeholder"),
+                        value: "{mls_invite_device_draft}",
+                        oninput: move |evt| mls_invite_device_draft.set(evt.value()),
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "mls-invite-member-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            let _actor_outer = account_did.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let space = space.clone();
+                                let api_token = token();
+                                let target_actor = mls_invite_actor_draft().trim().to_owned();
+                                let target_device = mls_invite_device_draft().trim().to_owned();
+                                let passphrase: String = mls_passphrase_store
+                                    .read()
+                                    .get(&space)
+                                    .map(str::to_owned)
+                                    .unwrap_or_default();
+                                spawn(async move {
+                                    run_mls_add_member_and_invite(
+                                        base,
+                                        api_token,
+                                        state_store,
+                                        space,
+                                        target_actor,
+                                        target_device,
+                                        passphrase,
+                                        status_msg,
+                                    )
+                                    .await;
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("chat.mls_invite_member")}
                     }
                     button {
                         class: "secondary",
@@ -2400,6 +3196,56 @@ pub fn ChatPanel(
                                 // single-effect commit so the chat flow
                                 // still works against servers that have
                                 // not turned on the hardening profile.
+                                // Sprint Q1 第十二增量: real MLS encrypt
+                                // path. When the user has entered a
+                                // passphrase for this Space (or one is
+                                // already persisted via the empty default
+                                // for snapshots written before this
+                                // sprint), hydrate / bootstrap the local
+                                // `ContrixMlsGroup`, encrypt the message
+                                // body via `group.encrypt_payload`, and
+                                // persist the post-encrypt group state so
+                                // a refresh + decrypt round trip can
+                                // recover the same ciphertext. B3d
+                                // (schedule_hash) and B6c (member DIDs)
+                                // now read from the same group instance.
+                                let mls_passphrase: String = mls_passphrase_store
+                                    .read()
+                                    .get(&space)
+                                    .map(str::to_owned)
+                                    .unwrap_or_default();
+                                #[cfg(not(target_arch = "wasm32"))]
+                                let (
+                                    local_schedule_hash,
+                                    local_member_dids,
+                                    encrypted_payload_value,
+                                    real_commit_envelope,
+                                ): (
+                                    Option<contrix_sdk::Hash>,
+                                    Vec<contrix_sdk::Did>,
+                                    Option<serde_json::Value>,
+                                    Option<contrix_sdk::MlsCommitEnvelope>,
+                                ) = run_local_mls_encrypt(
+                                    state_store,
+                                    &space,
+                                    &actor,
+                                    &did,
+                                    &mls_passphrase,
+                                    body.as_bytes(),
+                                );
+                                #[cfg(target_arch = "wasm32")]
+                                let (
+                                    local_schedule_hash,
+                                    local_member_dids,
+                                    encrypted_payload_value,
+                                    real_commit_envelope,
+                                ): (
+                                    Option<contrix_sdk::Hash>,
+                                    Vec<contrix_sdk::Did>,
+                                    Option<serde_json::Value>,
+                                    Option<contrix_sdk::MlsCommitEnvelope>,
+                                ) = (None, Vec::new(), None, None);
+
                                 let mls_binding = (|| -> anyhow::Result<
                                     crate::mls_governance::GovernanceBindingPayload,
                                 > {
@@ -2411,16 +3257,25 @@ pub fn ChatPanel(
                                         .map_err(|e| {
                                             anyhow::anyhow!("invalid anchor ref: {e:?}")
                                         })?;
-                                    let schedule_hash_str = anchor_view
-                                        .key_schedule_hash
-                                        .as_ref()
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!("no prior key schedule observed")
-                                        })?;
-                                    let schedule = Hash::new(schedule_hash_str.clone())
-                                        .map_err(|e| {
-                                            anyhow::anyhow!("invalid schedule hash: {e:?}")
-                                        })?;
+                                    // B3d: prefer local group → fall back
+                                    // to server projection. Either source
+                                    // produces a canonical `sha256:<hex>`
+                                    // Hash that the binding consumes
+                                    // without re-deriving.
+                                    let schedule = if let Some(h) = &local_schedule_hash {
+                                        h.clone()
+                                    } else {
+                                        let schedule_hash_str = anchor_view
+                                            .key_schedule_hash
+                                            .as_ref()
+                                            .ok_or_else(|| {
+                                                anyhow::anyhow!("no prior key schedule observed")
+                                            })?;
+                                        Hash::new(schedule_hash_str.clone())
+                                            .map_err(|e| {
+                                                anyhow::anyhow!("invalid schedule hash: {e:?}")
+                                            })?
+                                    };
                                     crate::mls_governance::GovernanceBindingPayload::from_anchor(
                                         &space,
                                         &space_id,
@@ -2431,6 +3286,22 @@ pub fn ChatPanel(
                                     )
                                 })()
                                 .ok();
+                                // Sprint Q1 第十六增量 (B1): prefer the
+                                // real SDK self-update commit envelope's
+                                // epoch when present. `run_local_mls_encrypt`
+                                // now runs `group.self_update_commit()`
+                                // before encrypting, so the Move-pipeline
+                                // mls_commit row writes the actual new
+                                // epoch instead of a synthesized
+                                // `prev_epoch + 1`. When the local group
+                                // hasn't been hydrated (no passphrase /
+                                // wasm32 / restore failed), fall through to
+                                // the legacy synthesized value so the
+                                // chat flow still produces a Move.
+                                let mls_commit_epoch = real_commit_envelope
+                                    .as_ref()
+                                    .map(|c| c.epoch)
+                                    .unwrap_or(new_epoch);
                                 let commit_unsigned_result = match &mls_binding {
                                     Some(binding) => {
                                         crate::move_builder::build_mls_commit_move_with_governance_binding(
@@ -2445,7 +3316,7 @@ pub fn ChatPanel(
                                         &did,
                                         &space,
                                         &space,
-                                        new_epoch,
+                                        mls_commit_epoch,
                                         &covered_frontier,
                                         &anchor_ref,
                                         &hlc,
@@ -2462,6 +3333,23 @@ pub fn ChatPanel(
                                 };
                                 let commit_signed =
                                     sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
+                                // Sprint Q1 第十二增量: prefer the typed
+                                // `EncryptedPayload` from `run_local_mls_encrypt`
+                                // — when the user has supplied a passphrase
+                                // for this Space, that path produces a real
+                                // SDK-typed payload (decryptable by the same
+                                // device + by future timeline.B7 audit hooks).
+                                // When no passphrase is set we fall back to
+                                // the legacy placeholder block so non-MLS
+                                // tenants and tests don't regress.
+                                let encrypted_payload_json = encrypted_payload_value
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        json!({
+                                            "ciphertext": body.clone(),
+                                            "epoch": new_epoch,
+                                        })
+                                    });
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
@@ -2475,29 +3363,36 @@ pub fn ChatPanel(
                                             "text": format!("[encrypted epoch {new_epoch}]"),
                                         }],
                                         "body": format!("[encrypted epoch {new_epoch}]"),
+                                        "encrypted_payload": encrypted_payload_json,
                                     },
                                     "covered_frontier": covered_frontier.clone(),
-                                    "encrypted_payload": {
-                                        "ciphertext": body,
-                                        "epoch": new_epoch,
-                                    },
+                                    "encrypted_payload": encrypted_payload_json,
                                 }))
                                 .build("yougen");
                                 let base = base.clone();
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
                                 let actor_for_audit = actor.clone();
-                                // B6b: feed the audit receipt with the
-                                // set of devices the commit was delivered
-                                // to. Without a real ContrixMlsGroup
-                                // membership snapshot at this layer, the
-                                // only device we can prove was reached is
-                                // the local one (the sender), via its
-                                // did:key. When the chat path migrates to
-                                // real MLS the list will expand to the
-                                // post-commit member device DIDs from
-                                // `MlsAddMemberResult` / group state.
+                                // B6c (Q1 第十一增量): when a local MLS
+                                // group is hydrated for this Space we now
+                                // expand `delivered_to_devices` to every
+                                // principal DID in the group (returned by
+                                // SDK `member_principal_dids()`). Falls
+                                // back to the local device's did:key — the
+                                // sender is the one device we can always
+                                // prove reached, even when no local group
+                                // is persisted yet. (`local_member_dids`
+                                // is computed in the snapshot-hydrate
+                                // block above.)
                                 let device_did_for_audit = did.clone();
+                                let audit_delivered: Vec<String> = if local_member_dids.is_empty() {
+                                    vec![device_did_for_audit.clone()]
+                                } else {
+                                    local_member_dids
+                                        .iter()
+                                        .map(|did| did.as_str().to_owned())
+                                        .collect()
+                                };
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit first; if
@@ -2582,7 +3477,7 @@ pub fn ChatPanel(
                                                 &space_for_record,
                                                 &actor_for_audit,
                                                 &resp.event_id,
-                                                vec![device_did_for_audit.clone()],
+                                                audit_delivered.clone(),
                                             )
                                             .build("yougen");
                                             let _ = api.submit_operation_event(&audit_op).await;
@@ -2596,7 +3491,7 @@ pub fn ChatPanel(
                                 chat_draft.set(String::new());
                             }
                         },
-                        "Send Secure"
+                        {crate::i18n::tr("chat.send_secure")}
                     }
                 }
                 if !status_msg().is_empty() {
@@ -2636,6 +3531,57 @@ fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<se
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sprint Q1 第十三增量: the Welcome-receive shuttle iterates
+    /// `messages -> actor -> device -> {type, content}` from
+    /// `DeviceMessagesReceiveResponse`. Pin the parse so multi-actor /
+    /// list-vs-object device entries / mixed-type batches all surface
+    /// only the `cx.mls.welcome` payloads.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn collect_welcome_entries_filters_cx_mls_welcome_and_drops_other_kinds() {
+        let value = json!({
+            "messages": {
+                "did:web:alice.example": {
+                    // device A: list shape — 2 welcomes + 1 unrelated.
+                    "cx:device:01": [
+                        {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
+                        {"type": "cx.key.verify.request", "content": {"ignore_me": true}},
+                        {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
+                    ],
+                    // device B: single object shape — 1 welcome.
+                    "cx:device:02": {
+                        "type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-3"}
+                    },
+                    // device C: single object — unrelated kind.
+                    "cx:device:03": {
+                        "type": "cx.device.message", "content": {"ignore_me": true}
+                    },
+                }
+            }
+        });
+        let welcomes = collect_welcome_entries(&value);
+        let ids: Vec<&str> = welcomes
+            .iter()
+            .filter_map(|w| w.get("welcome_envelope_id").and_then(|v| v.as_str()))
+            .collect();
+        // We MUST see all three welcomes regardless of object-vs-list
+        // shape, and zero of the unrelated kinds.
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&"w-1"));
+        assert!(ids.contains(&"w-2"));
+        assert!(ids.contains(&"w-3"));
+    }
+
+    /// Empty / missing `messages` envelope returns no welcomes — the
+    /// shuttle silently returns instead of panicking.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn collect_welcome_entries_tolerates_missing_messages_envelope() {
+        assert!(collect_welcome_entries(&json!({})).is_empty());
+        assert!(collect_welcome_entries(&json!({"messages": null})).is_empty());
+        assert!(collect_welcome_entries(&json!({"messages": {}})).is_empty());
+    }
 
     #[test]
     fn parses_message_event_with_operation_body_shape() {

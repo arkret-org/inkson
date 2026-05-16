@@ -1460,6 +1460,53 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 .msg-head time { color: var(--text-3); font-size: 11px; }
 .msg-head .role-pill { font-size: 9px; padding: 0 5px; }
 .msg-content { font-size: 14px; line-height: 1.5; word-wrap: break-word; }
+
+.chat-reply-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+  border-left: 3px solid var(--accent, #f97316);
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+}
+.chat-reply-quote .chat-reply-quote-name {
+  font-weight: 600;
+  color: var(--accent, #f97316);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-reply-quote .chat-reply-quote-body {
+  color: var(--text-2);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.chat-reply-quote.chat-reply-quote-missing {
+  border-left-color: var(--border-strong, #4b5563);
+  color: var(--text-3);
+  font-style: italic;
+}
+.chat-reply-quote-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chat-reply-quote-banner .chat-reply-quote {
+  flex: 1;
+  min-width: 0;
+}
 .msg-content.redacted { color: var(--text-3); font-style: italic; }
 .msg-content.encrypted { color: var(--text-3); }
 .msg-content.encrypted::before { content: "🔒 "; }

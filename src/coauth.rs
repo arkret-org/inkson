@@ -12,9 +12,19 @@ use crate::api::ContrixApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
-const OIDC_STATE_PLACEHOLDER: &str = "TODO_STATE";
-const OIDC_NONCE_PLACEHOLDER: &str = "TODO_NONCE";
-const OIDC_CODE_CHALLENGE_PLACEHOLDER: &str = "TODO_PKCE_CODE_CHALLENGE";
+// Sprint Q1 第十四增量 (P5): these three constants are **only**
+// referenced by `build_authorize_url_preview` — the diagnostic /
+// inspector function that renders an example authorize URL without
+// running the real PKCE round trip. The production path
+// (`build_authorize_url_with_session`, line ~825) uses
+// `random_url_safe_token` for state + nonce and computes the code
+// challenge with `pkce_code_challenge_s256(&random_code_verifier)`. The
+// `_PREVIEW` suffix is intentional so a future code search for
+// `TODO_STATE` / `TODO_NONCE` / `TODO_PKCE_CODE_CHALLENGE` does not
+// confuse this with a real authorization gap.
+const OIDC_STATE_PREVIEW: &str = "[preview-state]";
+const OIDC_NONCE_PREVIEW: &str = "[preview-nonce]";
+const OIDC_CODE_CHALLENGE_PREVIEW: &str = "[preview-code-challenge]";
 
 #[derive(Clone, Debug)]
 pub struct CoauthApi {
@@ -1250,6 +1260,13 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Diagnostic preview of the OIDC authorize URL using **stable
+/// non-secret placeholders** for state / nonce / code_challenge so the
+/// preview output is reproducible and obvious in the UI. The real
+/// authorize flow runs through [`build_authorize_url_with_session`]
+/// (~line 825) which generates the three values via
+/// `random_url_safe_token` + `pkce_code_challenge_s256` against fresh
+/// per-attempt randomness.
 fn build_authorize_url_preview(
     topology: &CoauthTopologySnapshot,
     actor_did: &str,
@@ -1263,9 +1280,9 @@ fn build_authorize_url_preview(
         redirect_uri.as_str(),
         actor_did,
         principal_audience,
-        OIDC_STATE_PLACEHOLDER,
-        OIDC_NONCE_PLACEHOLDER,
-        OIDC_CODE_CHALLENGE_PLACEHOLDER,
+        OIDC_STATE_PREVIEW,
+        OIDC_NONCE_PREVIEW,
+        OIDC_CODE_CHALLENGE_PREVIEW,
     )
 }
 

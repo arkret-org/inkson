@@ -37,6 +37,8 @@
 
 pub mod audit;
 pub mod call;
+pub mod agents;
+pub mod applets;
 pub mod chat;
 /// First end-to-end UI Move-flow PoC.
 /// "Grant consent" button under settings → Privacy that builds + signs +
@@ -100,6 +102,17 @@ pub enum View {
     /// see their own quarantined invites. Approve / reject buttons
     /// POST `/admin/v1/invite-quarantine/{id}/resolve`.
     Quarantine,
+    /// Sprint Q1 第十四增量 (V1): applet registry + discovery + per-
+    /// session controls. Spec `extensions/applet-integration.md`. Writes
+    /// `cx.applet.registration` / `cx.applet.discovery` /
+    /// `cx.applet.protocol_session.{start,status}` / `cx.applet.bridge_error`
+    /// via `crate::operation::cx_ops::applet_*` builders.
+    Applets,
+    /// Sprint Q1 第十四增量 (V2): agent endpoint + protocol_session monitor.
+    /// Spec `extensions/agent-integration.md`. Writes `cx.agent.endpoint` /
+    /// `cx.agent.protocol_session.{start,status,result}` via
+    /// `crate::operation::cx_ops::agent_*` builders.
+    Agents,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

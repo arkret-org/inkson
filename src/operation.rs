@@ -453,6 +453,190 @@ pub mod cx_ops {
             .target_ref(flow_id)
             .body(json!({ "flow_id": flow_id }))
     }
+
+    // ── Applet protocol family (Sprint Q1 第十四增量 P2) ──────────────
+    //
+    // Spec: `extensions/applet-integration.md` + canonical event-kind
+    // registry rows `cx.applet.registration` / `cx.applet.discovery` /
+    // `cx.applet.protocol_session.{start,status}` / `cx.applet.bridge_error`.
+    //
+    // The builders below produce the wire shape soland validators and the
+    // SDK reducer consume. Each carries the canonical `applet_id` (or
+    // `service_did` for registration / discovery) as `target_ref` so
+    // soland's `target-ref-required` envelope-shape check passes.
+
+    /// `cx.applet.registration` — declare an applet service_did + the
+    /// event-kind subset / namespaces / capabilities it can write.
+    pub fn applet_registration(
+        space_id: &str,
+        actor: &str,
+        service_did: &str,
+        namespace: &str,
+        capabilities: &[&str],
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.applet.registration")
+            .target_ref(service_did)
+            .body(json!({
+                "service_did": service_did,
+                "namespace": namespace,
+                "capabilities": capabilities,
+            }))
+    }
+
+    /// `cx.applet.discovery` — the network discovery surface that lists
+    /// what an applet exposes; emitted by directory crawlers and by the
+    /// applet itself on registration round-trip.
+    pub fn applet_discovery(
+        space_id: &str,
+        actor: &str,
+        service_did: &str,
+        manifest: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.applet.discovery")
+            .target_ref(service_did)
+            .body(json!({
+                "service_did": service_did,
+                "manifest": manifest,
+            }))
+    }
+
+    /// `cx.applet.protocol_session.start` — open a per-session channel
+    /// between a Space member and an applet (used for portal-style RPC
+    /// + agent invocation).
+    pub fn applet_protocol_session_start(
+        space_id: &str,
+        actor: &str,
+        applet_id: &str,
+        session_id: &str,
+        params: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.applet.protocol_session.start")
+            .target_ref(session_id)
+            .body(json!({
+                "applet_id": applet_id,
+                "session_id": session_id,
+                "params": params,
+            }))
+    }
+
+    /// `cx.applet.protocol_session.status` — applet → caller status push
+    /// (progress, intermediate result, completion).
+    pub fn applet_protocol_session_status(
+        space_id: &str,
+        actor: &str,
+        session_id: &str,
+        status: &str,
+        detail: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.applet.protocol_session.status")
+            .target_ref(session_id)
+            .body(json!({
+                "session_id": session_id,
+                "status": status,
+                "detail": detail,
+            }))
+    }
+
+    /// `cx.applet.bridge_error` — emitted by the applet bridge when a
+    /// protocol_session call fails outside the spec's typed result.
+    pub fn applet_bridge_error(
+        space_id: &str,
+        actor: &str,
+        session_id: &str,
+        errcode: &str,
+        message: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.applet.bridge_error")
+            .target_ref(session_id)
+            .body(json!({
+                "session_id": session_id,
+                "errcode": errcode,
+                "message": message,
+            }))
+    }
+
+    // ── Agent protocol family (Sprint Q1 第十四增量 P3) ───────────────
+    //
+    // Spec: `extensions/agent-integration.md` + canonical event-kind
+    // registry rows `cx.agent.endpoint` / `cx.agent.protocol_session.
+    // {start,status,result}`. Agents are server-side delegates a member
+    // grants narrow capabilities to (e.g. a read-flow Researcher Agent);
+    // the wire shape lets soland and the SDK reducer track which agent
+    // owns which session, what status, and what result.
+
+    /// `cx.agent.endpoint` — register an agent service_did + its
+    /// invocation protocol + capability requirements.
+    pub fn agent_endpoint(
+        space_id: &str,
+        actor: &str,
+        agent_did: &str,
+        protocol: &str,
+        capabilities: &[&str],
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.agent.endpoint")
+            .target_ref(agent_did)
+            .body(json!({
+                "agent_did": agent_did,
+                "protocol": protocol,
+                "capabilities": capabilities,
+            }))
+    }
+
+    /// `cx.agent.protocol_session.start` — kick off an agent
+    /// invocation;  body carries the parameter payload + the
+    /// capability proof bundle.
+    pub fn agent_protocol_session_start(
+        space_id: &str,
+        actor: &str,
+        agent_did: &str,
+        session_id: &str,
+        params: serde_json::Value,
+        capability_proof: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.start")
+            .target_ref(session_id)
+            .body(json!({
+                "agent_did": agent_did,
+                "session_id": session_id,
+                "params": params,
+                "capability_proof": capability_proof,
+            }))
+    }
+
+    /// `cx.agent.protocol_session.status` — agent progress signal.
+    pub fn agent_protocol_session_status(
+        space_id: &str,
+        actor: &str,
+        session_id: &str,
+        status: &str,
+        detail: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.status")
+            .target_ref(session_id)
+            .body(json!({
+                "session_id": session_id,
+                "status": status,
+                "detail": detail,
+            }))
+    }
+
+    /// `cx.agent.protocol_session.result` — terminal event carrying the
+    /// agent's signed result + the audit-binding proof.
+    pub fn agent_protocol_session_result(
+        space_id: &str,
+        actor: &str,
+        session_id: &str,
+        result: serde_json::Value,
+        audit_binding: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.result")
+            .target_ref(session_id)
+            .body(json!({
+                "session_id": session_id,
+                "result": result,
+                "audit_binding": audit_binding,
+            }))
+    }
 }
 
 #[cfg(test)]
@@ -641,5 +825,109 @@ mod tests {
         assert_eq!(restore.op_type, "cx.flow.restore");
         assert_eq!(restore.body["flow_id"], flow_id);
         assert_eq!(restore.target_ref.as_deref(), Some(flow_id));
+    }
+
+    /// Sprint Q1 第十四增量 (P2): pin the canonical op_type + target_ref
+    /// + body shape for every `cx.applet.*` builder so server-side
+    /// validators (soland operation requirements) keep accepting them
+    /// after any spec round.
+    #[test]
+    fn applet_helpers_emit_canonical_kinds_and_target_refs() {
+        let service_did = "did:web:applet.example";
+        let session_id = "cx:session:01904100-0000-7000-8000-aa55aa55aa55";
+        let space = "cx:space:test";
+        let actor = "did:web:alice.example";
+
+        let reg = cx_ops::applet_registration(space, actor, service_did, "extensions", &["read"])
+            .build("node");
+        assert_eq!(reg.op_type, "cx.applet.registration");
+        assert_eq!(reg.body["service_did"], service_did);
+        assert_eq!(reg.body["namespace"], "extensions");
+        assert_eq!(reg.body["capabilities"][0], "read");
+        assert_eq!(reg.target_ref.as_deref(), Some(service_did));
+
+        let disc = cx_ops::applet_discovery(space, actor, service_did, json!({"version": 1}))
+            .build("node");
+        assert_eq!(disc.op_type, "cx.applet.discovery");
+        assert_eq!(disc.body["manifest"]["version"], 1);
+        assert_eq!(disc.target_ref.as_deref(), Some(service_did));
+
+        let start = cx_ops::applet_protocol_session_start(
+            space,
+            actor,
+            "cx:applet:dummy",
+            session_id,
+            json!({"op": "ping"}),
+        )
+        .build("node");
+        assert_eq!(start.op_type, "cx.applet.protocol_session.start");
+        assert_eq!(start.body["session_id"], session_id);
+        assert_eq!(start.target_ref.as_deref(), Some(session_id));
+
+        let status = cx_ops::applet_protocol_session_status(
+            space,
+            actor,
+            session_id,
+            "running",
+            json!({"progress": 0.5}),
+        )
+        .build("node");
+        assert_eq!(status.op_type, "cx.applet.protocol_session.status");
+        assert_eq!(status.body["status"], "running");
+
+        let err = cx_ops::applet_bridge_error(
+            space,
+            actor,
+            session_id,
+            "applet_unavailable",
+            "service did not respond",
+        )
+        .build("node");
+        assert_eq!(err.op_type, "cx.applet.bridge_error");
+        assert_eq!(err.body["errcode"], "applet_unavailable");
+    }
+
+    /// Sprint Q1 第十四增量 (P3): same pinning at the agent layer.
+    #[test]
+    fn agent_helpers_emit_canonical_kinds_and_target_refs() {
+        let agent = "did:web:researcher.agent.example";
+        let session_id = "cx:session:01904100-0000-7000-8000-bb66bb66bb66";
+        let space = "cx:space:test";
+        let actor = "did:web:alice.example";
+
+        let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
+            .build("node");
+        assert_eq!(endpoint.op_type, "cx.agent.endpoint");
+        assert_eq!(endpoint.body["protocol"], "cx.agent.v1");
+        assert_eq!(endpoint.target_ref.as_deref(), Some(agent));
+
+        let start = cx_ops::agent_protocol_session_start(
+            space,
+            actor,
+            agent,
+            session_id,
+            json!({"query": "summarize"}),
+            json!({"grant_id": "cap-1"}),
+        )
+        .build("node");
+        assert_eq!(start.op_type, "cx.agent.protocol_session.start");
+        assert_eq!(start.body["agent_did"], agent);
+        assert_eq!(start.body["capability_proof"]["grant_id"], "cap-1");
+
+        let status =
+            cx_ops::agent_protocol_session_status(space, actor, session_id, "thinking", json!({}))
+                .build("node");
+        assert_eq!(status.op_type, "cx.agent.protocol_session.status");
+
+        let result = cx_ops::agent_protocol_session_result(
+            space,
+            actor,
+            session_id,
+            json!({"summary": "TL;DR"}),
+            json!({"merkle_root": "sha256:abc"}),
+        )
+        .build("node");
+        assert_eq!(result.op_type, "cx.agent.protocol_session.result");
+        assert_eq!(result.body["audit_binding"]["merkle_root"], "sha256:abc");
     }
 }

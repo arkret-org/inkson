@@ -25,6 +25,7 @@ pub mod key_store;
 pub mod local_state;
 pub mod media;
 pub mod mls_governance;
+pub mod mls_passphrase;
 pub mod mls_persistence;
 pub mod models;
 pub mod move_builder;

@@ -3,13 +3,12 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::{
-    audit::build_audit_accessed,
     conformance::PlaintextBoundary,
     crypto::compose_local_encrypted_message,
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
     operation::{OperationBuilder, OperationEnvelope, uuid_v7},
-    views::helpers::{active_sync_token, authed_api_with_sync, with_authed_api_with_sync},
+    views::helpers::{active_sync_token, authed_api_with_sync, with_authed_api, with_authed_api_with_sync},
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
@@ -67,6 +66,12 @@ pub struct TimelineEvent {
     pub tombstone_reason: Option<String>,
     pub revisions: Vec<TimelineRevision>,
     pub pending: bool,
+    /// B7 (Q1 第十一增量): when present, this message carries an
+    /// `encrypted_payload` object that the local MLS group may be able
+    /// to decrypt. Timeline's audit-accessed emitter watches this field
+    /// — on successful decrypt, fires a single `cx.audit.accessed` for
+    /// `id` per session (de-duplicated by `audit_accessed_emitted`).
+    pub encrypted_payload: Option<serde_json::Value>,
 }
 
 impl Default for TimelineEvent {
@@ -90,6 +95,7 @@ impl Default for TimelineEvent {
             tombstone_reason: None,
             revisions: Vec::new(),
             pending: false,
+            encrypted_payload: None,
         }
     }
 }
@@ -311,7 +317,8 @@ pub fn TimelinePanel(
         .map(read_marker_status_label)
         .unwrap_or_else(|| "Read marker: none".to_owned());
 
-    let events_data: Vec<(usize, TimelineEvent)> = timeline()
+    let timeline_snapshot = timeline();
+    let events_data: Vec<(usize, TimelineEvent)> = timeline_snapshot
         .iter()
         .enumerate()
         .filter(|(_, event)| {
@@ -324,6 +331,8 @@ pub fn TimelinePanel(
         })
         .map(|(i, event)| (i, event.clone()))
         .collect();
+    let events_for_reply_lookup = timeline_snapshot.clone();
+    let events_for_composer_lookup = timeline_snapshot;
     let plaintext_service = plaintext_visible_service(&base_url);
     let plaintext_boundary = PlaintextBoundary {
         allowed_services: vec![plaintext_service.clone()],
@@ -351,6 +360,88 @@ pub fn TimelinePanel(
                     timeline.set(events);
                 }
                 sync_cursor.set(sync.next_batch);
+            }
+        });
+    }
+
+    // B7 (Q1 第十一增量): attested-audit emitter. Spec
+    // `crypto-media/encryption-and-audit.md §11` says
+    // `cx.audit.accessed` MUST be fired by readers on every successful
+    // MLS decrypt — until this hook existed, yougen fired it on user-
+    // initiated Mark Read, which is approximately correct but doesn't
+    // distinguish decrypt-success from "user clicked the button". This
+    // future scans the current `timeline()` snapshot for events
+    // carrying `encrypted_payload`, attempts a local MLS decrypt via
+    // the persisted snapshot for the Space, and on each new success
+    // emits a single `cx.audit.accessed` (dedup keyed by event_id).
+    // Non-attested servers ignore the event; attested ones use it.
+    let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
+    let mls_passphrase_store =
+        use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    {
+        let base_a = base_url.clone();
+        let token_a = token;
+        let space_a = selected_space.clone();
+        let actor_a = account_did.clone();
+        let device_a = device_id.clone();
+        let mut emitted_sig = audit_accessed_emitted;
+        use_future(move || {
+            let base = base_a.clone();
+            let space = space_a.clone();
+            let actor = actor_a.clone();
+            let device = device_a.clone();
+            async move {
+                let snapshot = timeline();
+                // Identify candidates first so the closure doesn't have
+                // to re-read the signal under await.
+                let candidates: Vec<(String, serde_json::Value)> = snapshot
+                    .iter()
+                    .filter_map(|event| {
+                        let id = event.id.clone();
+                        let payload = event.encrypted_payload.clone()?;
+                        if emitted_sig.read().contains(&id) {
+                            None
+                        } else {
+                            Some((id, payload))
+                        }
+                    })
+                    .collect();
+                if candidates.is_empty() {
+                    return;
+                }
+                let passphrase = mls_passphrase_store
+                    .read()
+                    .get(&space)
+                    .map(str::to_owned)
+                    .unwrap_or_default();
+                let api_token = token_a();
+                for (event_id, payload_value) in candidates {
+                    let Some(plaintext) = try_local_mls_decrypt(
+                        state_store,
+                        &space,
+                        &passphrase,
+                        &payload_value,
+                    ) else {
+                        continue;
+                    };
+                    let _ = plaintext;
+                    emitted_sig.write().insert(event_id.clone());
+                    let base = base.clone();
+                    let api_token = api_token.clone();
+                    let space = space.clone();
+                    let actor = actor.clone();
+                    let device = device.clone();
+                    spawn(async move {
+                        let _ = with_authed_api(&base, api_token, |api| async move {
+                            let op = crate::audit::build_audit_accessed(
+                                &space, &actor, &event_id, &device,
+                            )
+                            .build("yougen");
+                            api.submit_operation_event(&op).await
+                        })
+                        .await;
+                    });
+                }
             }
         });
     }
@@ -406,8 +497,18 @@ pub fn TimelinePanel(
                         }
 
                         if let Some(reply_id) = &event.reply_to {
-                            div { class: "muted", "data-testid": "reply-indicator",
-                                "\u{21a9}\u{fe0f} Reply to {reply_id}"
+                            if let Some((quoted_name, quoted_body)) = timeline_reply_quote_preview(
+                                &events_for_reply_lookup,
+                                reply_id,
+                            ) {
+                                div { class: "chat-reply-quote", "data-testid": "reply-indicator",
+                                    span { class: "chat-reply-quote-name", "{quoted_name}" }
+                                    div { class: "chat-reply-quote-body", "{quoted_body}" }
+                                }
+                            } else {
+                                div { class: "chat-reply-quote chat-reply-quote-missing", "data-testid": "reply-indicator",
+                                    "\u{21a9}\u{fe0f} Reply to a message"
+                                }
                             }
                         }
 
@@ -566,34 +667,31 @@ pub fn TimelinePanel(
                                                             )),
                                                         }
 
-                                                        // Attested-audit hardening
-                                                        // (`cx.profile.attested_audit.e2ee.v1`):
-                                                        // record that this reader
-                                                        // observed the event. Spec
-                                                        // says the trigger is a
-                                                        // successful MLS decrypt;
-                                                        // until yougen has a real
-                                                        // decrypt path this fires
-                                                        // on the user-initiated
-                                                        // Mark Read instead, which
-                                                        // is the closest "I have
-                                                        // observed this event"
-                                                        // signal we have. The
-                                                        // event is fire-and-forget
-                                                        // — non-attested servers
-                                                        // store it as a normal
-                                                        // operation and ignore it
-                                                        // policy-wise.
-                                                        let audit_op = build_audit_accessed(
+                                                        // B7 (Q1 第十一增量):
+                                                        // `cx.audit.accessed`
+                                                        // is now owned by the
+                                                        // dedicated emitter
+                                                        // wired to the MLS
+                                                        // decrypt-success
+                                                        // path higher up in
+                                                        // this component, so
+                                                        // Mark Read no
+                                                        // longer double-
+                                                        // fires it. Mark
+                                                        // Read still emits
+                                                        // the public
+                                                        // `cx.receipt.read`
+                                                        // above and the
+                                                        // local private
+                                                        // read marker
+                                                        // below.
+                                                        let _ = (
+                                                            &receipt_event_id,
                                                             &receipt_space,
                                                             &actor_for_audit,
-                                                            &receipt_event_id,
                                                             &device_for_audit,
-                                                        )
-                                                        .build("yougen");
-                                                        let _ = api
-                                                            .submit_operation_event(&audit_op)
-                                                            .await;
+                                                            &api,
+                                                        );
                                                     }
                                                     Err(error) => receipt_status.set(format!(
                                                         "Read receipt failed: {error}"
@@ -936,8 +1034,29 @@ pub fn TimelinePanel(
                 }
             }
             if let Some(reply_idx) = reply_to_index() {
-                div { class: "muted", "data-testid": "reply-to-banner",
-                    "Replying to {reply_target_label(&timeline(), reply_idx)}"
+                div { class: "chat-reply-quote-banner", "data-testid": "reply-to-banner",
+                    if let Some(reply_id) = events_for_composer_lookup
+                        .get(reply_idx)
+                        .map(|event| event.id.clone())
+                    {
+                        if let Some((quoted_name, quoted_body)) = timeline_reply_quote_preview(
+                            &events_for_composer_lookup,
+                            &reply_id,
+                        ) {
+                            div { class: "chat-reply-quote",
+                                span { class: "chat-reply-quote-name", "{quoted_name}" }
+                                div { class: "chat-reply-quote-body", "{quoted_body}" }
+                            }
+                        } else {
+                            div { class: "chat-reply-quote chat-reply-quote-missing",
+                                "Replying to a message"
+                            }
+                        }
+                    } else {
+                        div { class: "chat-reply-quote chat-reply-quote-missing",
+                            "Replying to a message"
+                        }
+                    }
                     button {
                         class: "secondary",
                         onclick: move |_| reply_to_index.set(None),
@@ -1033,6 +1152,7 @@ pub fn TimelinePanel(
                                 tombstone_reason: None,
                                 revisions: Vec::new(),
                                 pending: true,
+                                encrypted_payload: None,
                             });
                             let base = base_url_sig();
                             let api_token = token();
@@ -1421,6 +1541,11 @@ fn timeline_events_from_sync_spaces(
                 })
                 .unwrap_or("[message]")
                 .to_owned();
+            // B7: carry the raw `encrypted_payload` block forward so the
+            // audit-accessed emitter (later in this component) can try a
+            // local MLS decrypt against it and fire `cx.audit.accessed`
+            // on every successful decrypt.
+            let encrypted_payload = content.get("encrypted_payload").cloned();
             events.push(TimelineEvent {
                 space_id: Some(space_id.clone()),
                 id: event_id.clone(),
@@ -1445,6 +1570,7 @@ fn timeline_events_from_sync_spaces(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 event_id: Some(event_id),
+                encrypted_payload,
                 ..TimelineEvent::default()
             });
         }
@@ -1452,11 +1578,17 @@ fn timeline_events_from_sync_spaces(
     events
 }
 
-fn reply_target_label(events: &[TimelineEvent], reply_idx: usize) -> String {
-    events
-        .get(reply_idx)
-        .map(|event| event.id.clone())
-        .unwrap_or_else(|| format!("local-event-{reply_idx}"))
+fn timeline_reply_quote_preview(
+    events: &[TimelineEvent],
+    reply_id: &str,
+) -> Option<(String, String)> {
+    let quoted = events.iter().find(|e| e.id == reply_id)?;
+    let body = if quoted.redacted {
+        "[Message redacted]".to_owned()
+    } else {
+        quoted.body.clone()
+    };
+    Some((quoted.sender_display.clone(), body))
 }
 
 fn timestamp_now() -> String {
@@ -1484,4 +1616,49 @@ fn plaintext_visible_service(base_url: &str) -> String {
         .filter(|host| !host.is_empty())
         .map(|host| format!("configured server {host}"))
         .unwrap_or_else(|| "configured server".to_owned())
+}
+
+/// B7 (Q1 第十一增量) + Sprint Q1 第十二增量: attempt a local MLS
+/// decrypt of an `encrypted_payload` JSON object emitted by chat.rs
+/// Send Secure. Returns `Some(plaintext_bytes)` on successful decrypt,
+/// `None` for every soft failure (no snapshot, snapshot can't be
+/// hydrated with the supplied passphrase, payload doesn't deserialize
+/// as a typed `EncryptedPayload`, group rejects the payload).
+///
+/// The caller — the `cx.audit.accessed` emitter inside
+/// [`TimelinePanel`] — uses `Some(...)` as the firing trigger, so any
+/// soft failure quietly suppresses the audit emit instead of looping.
+/// Native-only because OpenMLS is gated to non-wasm. On wasm we
+/// uniformly return `None` so the emitter is a no-op there.
+///
+/// `passphrase` is sourced from the shared `MlsPassphraseStore` context;
+/// an empty string falls through to the legacy placeholder ciphertext
+/// path which never deserializes as a typed payload — so decrypt fails
+/// closed without firing audit. This is the right behaviour: only real
+/// SDK-encrypted payloads should trigger the audit hook.
+#[cfg(not(target_arch = "wasm32"))]
+fn try_local_mls_decrypt(
+    state_store: Signal<LocalStateStore>,
+    space_id: &str,
+    passphrase: &str,
+    payload_value: &Value,
+) -> Option<Vec<u8>> {
+    if passphrase.is_empty() {
+        return None;
+    }
+    let envelope = state_store.read().mls_snapshot_for(space_id)?;
+    let mut group = crate::mls_persistence::restore_envelope(&envelope, passphrase, 0).ok()?;
+    let payload: contrix_sdk::EncryptedPayload =
+        serde_json::from_value(payload_value.clone()).ok()?;
+    group.decrypt_payload(&payload).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn try_local_mls_decrypt(
+    _state_store: Signal<LocalStateStore>,
+    _space_id: &str,
+    _passphrase: &str,
+    _payload_value: &Value,
+) -> Option<Vec<u8>> {
+    None
 }

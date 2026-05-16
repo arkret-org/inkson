@@ -680,6 +680,68 @@ impl CapabilityEngine {
     pub fn get_revocations(&self) -> Vec<&CapabilityRevocation> {
         self.revocations.values().collect()
     }
+
+    /// UI-side pre-gate for a button / control.
+    ///
+    /// Returns a [`CapabilityGate`] suitable for binding to a Dioxus
+    /// button's `disabled` + `title` attributes. The contract: when the
+    /// engine carries no grants for `subject` at all the gate stays open
+    /// (yougen still trusts the server's authoritative check). Once the
+    /// engine has been seeded with grants for the actor — typically by
+    /// hydrating `cx.capability.grant` events on login — the gate
+    /// disables the control whenever `check` returns anything other than
+    /// `Allow`, so users get immediate feedback before they hit the
+    /// server's 403.
+    pub fn ui_gate(
+        &self,
+        subject: &str,
+        action: &str,
+        resource: &ResourceRef,
+        ctx: &EvalContext,
+    ) -> CapabilityGate {
+        let has_any_grant_for_subject = self.grants.values().any(|g| g.subject == subject);
+        if !has_any_grant_for_subject {
+            return CapabilityGate::open();
+        }
+        match self.check(subject, action, resource, ctx) {
+            AuthzDecision::Allow => CapabilityGate::open(),
+            AuthzDecision::Deny(reason) => CapabilityGate::denied(reason),
+            AuthzDecision::Quarantine(reason) => {
+                CapabilityGate::denied(format!("quarantine: {reason}"))
+            }
+            AuthzDecision::RequireReview(reason) => {
+                CapabilityGate::denied(format!("review required: {reason}"))
+            }
+        }
+    }
+}
+
+/// Result of a UI-side capability gate evaluation. See
+/// [`CapabilityEngine::ui_gate`] for the contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityGate {
+    /// True when the control should accept input; false when it should
+    /// be rendered disabled.
+    pub enabled: bool,
+    /// Human-readable reason when `enabled = false`. Empty when the
+    /// gate is open.
+    pub reason: String,
+}
+
+impl CapabilityGate {
+    pub fn open() -> Self {
+        Self {
+            enabled: true,
+            reason: String::new(),
+        }
+    }
+
+    pub fn denied(reason: impl Into<String>) -> Self {
+        Self {
+            enabled: false,
+            reason: reason.into(),
+        }
+    }
 }
 
 /// Builder for creating CapabilityGrant objects.
@@ -852,6 +914,63 @@ mod tests {
         assert!(ActionGroup::Common.contains("place.restore"));
         assert!(ActionGroup::Morph.contains("morph.archive"));
         assert!(ActionGroup::Morph.contains("morph.restore"));
+    }
+
+    #[test]
+    fn test_ui_gate_open_when_no_grants_for_subject() {
+        // Empty engine — yougen should keep the button enabled and let
+        // the server make the final call. This is the "we haven't
+        // hydrated capability state yet" path.
+        let engine = CapabilityEngine::new();
+        let resource = ResourceRef {
+            space_id: Some("cx:space:test".to_owned()),
+            ..Default::default()
+        };
+        let ctx = EvalContext::default();
+        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        assert!(gate.enabled);
+        assert!(gate.reason.is_empty());
+    }
+
+    #[test]
+    fn test_ui_gate_denies_when_grant_present_but_action_missing() {
+        // Engine carries an unrelated grant for the subject — gate is
+        // now active and denies place.archive because the grant only
+        // covers space.read.
+        let mut engine = CapabilityEngine::new();
+        engine.add_grant(
+            GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
+                .with_action("space.read")
+                .with_resource(ResourceSelector::Wildcard)
+                .build(),
+        );
+        let resource = ResourceRef {
+            space_id: Some("cx:space:test".to_owned()),
+            ..Default::default()
+        };
+        let ctx = EvalContext::default();
+        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        assert!(!gate.enabled);
+        assert!(gate.reason.contains("place.archive"));
+    }
+
+    #[test]
+    fn test_ui_gate_allows_when_grant_covers_action() {
+        let mut engine = CapabilityEngine::new();
+        engine.add_grant(
+            GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
+                .with_actions(&["place.archive", "place.restore"])
+                .with_resource(ResourceSelector::Wildcard)
+                .build(),
+        );
+        let resource = ResourceRef {
+            space_id: Some("cx:space:test".to_owned()),
+            ..Default::default()
+        };
+        let ctx = EvalContext::default();
+        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        assert!(gate.enabled);
+        assert!(gate.reason.is_empty());
     }
 
     #[test]

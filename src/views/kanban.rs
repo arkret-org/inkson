@@ -14,7 +14,7 @@ use crate::{
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
     routes::Route,
-    views::helpers::{authed_api, with_authed_api},
+    views::helpers::with_authed_api,
 };
 
 /// Fallback Board Place id used by the demo seed data. Production
@@ -436,6 +436,13 @@ pub fn KanbanPanel(
         BoardProjectionSource::SeedFallback
     };
     let mut columns = use_signal(|| try_load_api_columns(view_id).unwrap_or_else(seed_columns));
+    // Cap-Gate-2: consume the app-level CapabilityEngine context so the
+    // Archive / Restore buttons can pre-gate themselves. When the engine
+    // carries no grants for the actor the gate stays open (yougen still
+    // trusts the server). Cap-Gate-3 (below) computes the per-button
+    // gate inside the render path.
+    let capability_engine =
+        use_context::<Signal<crate::capability::CapabilityEngine>>();
     let mut projection_source = use_signal(|| initial_source);
     let mut new_column_title = use_signal(String::new);
     let mut new_card_title = use_signal(String::new);
@@ -503,6 +510,79 @@ pub fn KanbanPanel(
         }
     });
 
+    // Sync-Projection (Q1 第十增量): hydrate Place / Flow lifecycle state
+    // from the soland `/api/v1/projection/{places|flows}` endpoints so
+    // an Archive accepted on the server stays archived after a page
+    // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
+    // columns/cards in their `Active` default and the user is no worse
+    // off than before this wiring.
+    let mut lifecycle_bootstrapped = use_signal(|| false);
+    let lifecycle_base = base_url.clone();
+    let lifecycle_token = token;
+    let lifecycle_space = selected_space.clone();
+    use_future(move || {
+        let base = lifecycle_base.clone();
+        let space = lifecycle_space.clone();
+        async move {
+            if lifecycle_bootstrapped() {
+                return;
+            }
+            lifecycle_bootstrapped.set(true);
+            let api_token = lifecycle_token();
+            let places_res = {
+                let space = space.clone();
+                with_authed_api(&base, api_token.clone(), |api| async move {
+                    api.list_place_projections(&space).await
+                })
+                .await
+            };
+            let flows_res = {
+                let space = space.clone();
+                with_authed_api(&base, api_token, |api| async move {
+                    api.list_flow_projections(&space).await
+                })
+                .await
+            };
+            let mut applied = 0_usize;
+            let places_ok = places_res.is_ok();
+            let flows_ok = flows_res.is_ok();
+            if places_ok || flows_ok {
+                let mut cols = columns.write();
+                if let Ok(resp) = places_res {
+                    for view in &resp.items {
+                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.place_id) {
+                            let new_state = place_state_from_wire(&view.state);
+                            if col.state != new_state {
+                                col.state = new_state;
+                                applied += 1;
+                            }
+                        }
+                    }
+                }
+                if let Ok(resp) = flows_res {
+                    for view in &resp.items {
+                        for col in cols.iter_mut() {
+                            if let Some(card) =
+                                col.cards.iter_mut().find(|c| c.id == view.flow_id)
+                            {
+                                let new_lifecycle = flow_lifecycle_from_wire(&view.state);
+                                if card.lifecycle != new_lifecycle {
+                                    card.lifecycle = new_lifecycle;
+                                    applied += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if applied > 0 {
+                board_status.set(format!(
+                    "lifecycle hydrate · {applied} object(s) reconciled from server projection"
+                ));
+            }
+        }
+    });
+
     rsx! {
         div { class: "timeline", "data-testid": "kanban-panel",
             div { class: "event board-header",
@@ -558,14 +638,11 @@ pub fn KanbanPanel(
                                 let api_token = token();
                                 let view = view_id.to_owned();
                                 spawn(async move {
-                                    let api = match crate::views::helpers::authed_api(&base, api_token) {
-                                        Ok(api) => api,
-                                        Err(_) => {
-                                            projection_source.set(BoardProjectionSource::SeedFallback);
-                                            return;
-                                        }
-                                    };
-                                    match api.collection_projection(&view).await {
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.collection_projection(&view).await
+                                    })
+                                    .await
+                                    {
                                         Ok(projection) => {
                                             let cols = collection_projection_to_columns(&projection);
                                             if !cols.is_empty() {
@@ -578,17 +655,17 @@ pub fn KanbanPanel(
                                                 projection.view_id.as_str()
                                             ));
                                         }
-                                        Err(error) => {
+                                        Err(err) => {
                                             projection_source.set(BoardProjectionSource::SeedFallback);
                                             board_status.set(format!(
-                                                "API projection unavailable: {error}"
+                                                "API projection unavailable: {}", err.display()
                                             ));
                                         }
                                     }
                                 });
                             }
                         },
-                        "Refresh from API"
+                        {crate::i18n::tr("kanban.refresh_from_api")}
                     }
                     span { class: "muted",
                         "Refresh calls Client::collection_projection (POST /api/v1/views/:id/projection); when unavailable we fall back to seed data."
@@ -660,7 +737,7 @@ pub fn KanbanPanel(
                                     new_column_title.set(String::new());
                                 }
                             },
-                            "Add List"
+                            {crate::i18n::tr("kanban.add_list")}
                         }
                         button {
                             class: "secondary",
@@ -731,30 +808,49 @@ pub fn KanbanPanel(
                         div { class: "event-head",
                             span { class: "space-title", "{column.title}" }
                             span { "rank {column.rank} / {column.cards.len()}" }
-                            button {
-                                class: "secondary",
-                                "data-testid": "list-archive-button",
-                                "data-place-id": "{column.id}",
-                                title: "Archive this list (cx.place.archive)",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let space = selected_space.clone();
-                                    let actor = account_did.clone();
-                                    let place_id = column.id.clone();
-                                    move |_| {
-                                        dispatch_place_lifecycle(
-                                            base.clone(),
-                                            token,
-                                            space.clone(),
-                                            actor.clone(),
-                                            place_id.clone(),
-                                            PlaceLifecycleState::Archived,
-                                            columns,
-                                            board_status,
-                                        );
+                            {
+                                let gate = capability_gate_for_place(
+                                    &capability_engine,
+                                    &account_did,
+                                    &selected_space,
+                                    &column.id,
+                                    "place.archive",
+                                );
+                                let title_text = if gate.enabled {
+                                    "Archive this list (cx.place.archive)".to_owned()
+                                } else {
+                                    format!("Archive gated: {}", gate.reason)
+                                };
+                                let testid_state = if gate.enabled { "open" } else { "denied" };
+                                rsx! {
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "list-archive-button",
+                                        "data-place-id": "{column.id}",
+                                        "data-cap-gate": testid_state,
+                                        disabled: !gate.enabled,
+                                        title: title_text,
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let place_id = column.id.clone();
+                                            move |_| {
+                                                dispatch_place_lifecycle(
+                                                    base.clone(),
+                                                    token,
+                                                    space.clone(),
+                                                    actor.clone(),
+                                                    place_id.clone(),
+                                                    PlaceLifecycleState::Archived,
+                                                    columns,
+                                                    board_status,
+                                                );
+                                            }
+                                        },
+                                        {crate::i18n::tr("kanban.archive_action")}
                                     }
-                                },
-                                "Archive"
+                                }
                             }
                         }
 
@@ -847,33 +943,50 @@ pub fn KanbanPanel(
                                 if card.locked_flow.is_some() {
                                         span { class: "badge amber", "Locked discussion hidden" }
                                     }
-                                    button {
-                                        class: "secondary",
-                                        "data-testid": "card-archive-button",
-                                        "data-flow-id": "{card.id}",
-                                        title: "Archive this card (cx.flow.archive)",
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let space = selected_space.clone();
-                                            let actor = account_did.clone();
-                                            let flow_id = card.id.clone();
-                                            move |evt: dioxus::events::MouseEvent| {
-                                                // Stop propagation so the card's parent onclick
-                                                // (which opens the card-detail drawer) doesn't fire.
-                                                evt.stop_propagation();
-                                                dispatch_flow_lifecycle(
-                                                    base.clone(),
-                                                    token,
-                                                    space.clone(),
-                                                    actor.clone(),
-                                                    flow_id.clone(),
-                                                    FlowLifecycleState::Archived,
-                                                    columns,
-                                                    board_status,
-                                                );
+                                    {
+                                        let gate = capability_gate_for_flow(
+                                            &capability_engine,
+                                            &account_did,
+                                            &selected_space,
+                                            &card.id,
+                                            "flow.archive",
+                                        );
+                                        let title_text = if gate.enabled {
+                                            "Archive this card (cx.flow.archive)".to_owned()
+                                        } else {
+                                            format!("Archive gated: {}", gate.reason)
+                                        };
+                                        let testid_state = if gate.enabled { "open" } else { "denied" };
+                                        rsx! {
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "card-archive-button",
+                                                "data-flow-id": "{card.id}",
+                                                "data-cap-gate": testid_state,
+                                                disabled: !gate.enabled,
+                                                title: title_text,
+                                                onclick: {
+                                                    let base = base_url.clone();
+                                                    let space = selected_space.clone();
+                                                    let actor = account_did.clone();
+                                                    let flow_id = card.id.clone();
+                                                    move |evt: dioxus::events::MouseEvent| {
+                                                        evt.stop_propagation();
+                                                        dispatch_flow_lifecycle(
+                                                            base.clone(),
+                                                            token,
+                                                            space.clone(),
+                                                            actor.clone(),
+                                                            flow_id.clone(),
+                                                            FlowLifecycleState::Archived,
+                                                            columns,
+                                                            board_status,
+                                                        );
+                                                    }
+                                                },
+                                                {crate::i18n::tr("kanban.archive_action")}
                                             }
-                                        },
-                                        "Archive"
+                                        }
                                     }
                                 }
                             }
@@ -972,12 +1085,12 @@ pub fn KanbanPanel(
                                                 adding_card_to.set(None);
                                             }
                                         },
-                                        "Add"
+                                        {crate::i18n::tr("kanban.save_card")}
                                     }
                                     button {
                                         class: "secondary",
                                         onclick: move |_| adding_card_to.set(None),
-                                        "Cancel"
+                                        {crate::i18n::tr("kanban.cancel_card")}
                                     }
                                 }
                             }
@@ -990,7 +1103,7 @@ pub fn KanbanPanel(
                                         let col_id = column.id.clone();
                                         move |_| adding_card_to.set(Some(col_id.clone()))
                                     },
-                                    "+ Add Card"
+                                    {format!("+ {}", crate::i18n::tr("kanban.add_card"))}
                                 }
                             }
                         }
@@ -1013,41 +1126,60 @@ pub fn KanbanPanel(
                 rsx! {
                     div { class: "event", "data-testid": "kanban-archived-lists",
                         div { class: "event-head",
-                            span { "Archived lists" }
+                            span { {crate::i18n::tr("kanban.archived_lists_header")} }
                             span { "{archived_count} list(s)" }
                         }
                         if archived_count == 0 {
-                            div { class: "muted", "No archived lists." }
+                            div { class: "muted", {crate::i18n::tr("kanban.archived_lists_empty")} }
                         } else {
                             for column in archived.iter() {
                                 div { class: "event", "data-testid": "kanban-archived-list-row",
                                     div { class: "event-head",
                                         span { class: "space-title", "{column.title}" }
                                         span { "rank {column.rank} / {column.cards.len()} card(s)" }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "list-restore-button",
-                                            "data-place-id": "{column.id}",
-                                            title: "Restore this list (cx.place.restore)",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let space = selected_space.clone();
-                                                let actor = account_did.clone();
-                                                let place_id = column.id.clone();
-                                                move |_| {
-                                                    dispatch_place_lifecycle(
-                                                        base.clone(),
-                                                        token,
-                                                        space.clone(),
-                                                        actor.clone(),
-                                                        place_id.clone(),
-                                                        PlaceLifecycleState::Active,
-                                                        columns,
-                                                        board_status,
-                                                    );
+                                        {
+                                            let gate = capability_gate_for_place(
+                                                &capability_engine,
+                                                &account_did,
+                                                &selected_space,
+                                                &column.id,
+                                                "place.restore",
+                                            );
+                                            let title_text = if gate.enabled {
+                                                "Restore this list (cx.place.restore)".to_owned()
+                                            } else {
+                                                format!("Restore gated: {}", gate.reason)
+                                            };
+                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                            rsx! {
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "list-restore-button",
+                                                    "data-place-id": "{column.id}",
+                                                    "data-cap-gate": testid_state,
+                                                    disabled: !gate.enabled,
+                                                    title: title_text,
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let space = selected_space.clone();
+                                                        let actor = account_did.clone();
+                                                        let place_id = column.id.clone();
+                                                        move |_| {
+                                                            dispatch_place_lifecycle(
+                                                                base.clone(),
+                                                                token,
+                                                                space.clone(),
+                                                                actor.clone(),
+                                                                place_id.clone(),
+                                                                PlaceLifecycleState::Active,
+                                                                columns,
+                                                                board_status,
+                                                            );
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("kanban.restore_action")}
                                                 }
-                                            },
-                                            "Restore"
+                                            }
                                         }
                                     }
                                 }
@@ -1088,41 +1220,60 @@ pub fn KanbanPanel(
                 rsx! {
                     div { class: "event", "data-testid": "kanban-archived-cards",
                         div { class: "event-head",
-                            span { "Archived cards" }
+                            span { {crate::i18n::tr("kanban.archived_cards_header")} }
                             span { "{archived_count} card(s)" }
                         }
                         if archived_count == 0 {
-                            div { class: "muted", "No archived cards." }
+                            div { class: "muted", {crate::i18n::tr("kanban.archived_cards_empty")} }
                         } else {
                             for row in archived_cards.iter() {
                                 div { class: "event", "data-testid": "kanban-archived-card-row",
                                     div { class: "event-head",
                                         span { class: "space-title", "{row.card.title}" }
                                         span { "from list: {row.column_title}" }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "card-restore-button",
-                                            "data-flow-id": "{row.card.id}",
-                                            title: "Restore this card (cx.flow.restore)",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let space = selected_space.clone();
-                                                let actor = account_did.clone();
-                                                let flow_id = row.card.id.clone();
-                                                move |_| {
-                                                    dispatch_flow_lifecycle(
-                                                        base.clone(),
-                                                        token,
-                                                        space.clone(),
-                                                        actor.clone(),
-                                                        flow_id.clone(),
-                                                        FlowLifecycleState::Active,
-                                                        columns,
-                                                        board_status,
-                                                    );
+                                        {
+                                            let gate = capability_gate_for_flow(
+                                                &capability_engine,
+                                                &account_did,
+                                                &selected_space,
+                                                &row.card.id,
+                                                "flow.restore",
+                                            );
+                                            let title_text = if gate.enabled {
+                                                "Restore this card (cx.flow.restore)".to_owned()
+                                            } else {
+                                                format!("Restore gated: {}", gate.reason)
+                                            };
+                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                            rsx! {
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "card-restore-button",
+                                                    "data-flow-id": "{row.card.id}",
+                                                    "data-cap-gate": testid_state,
+                                                    disabled: !gate.enabled,
+                                                    title: title_text,
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let space = selected_space.clone();
+                                                        let actor = account_did.clone();
+                                                        let flow_id = row.card.id.clone();
+                                                        move |_| {
+                                                            dispatch_flow_lifecycle(
+                                                                base.clone(),
+                                                                token,
+                                                                space.clone(),
+                                                                actor.clone(),
+                                                                flow_id.clone(),
+                                                                FlowLifecycleState::Active,
+                                                                columns,
+                                                                board_status,
+                                                            );
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("kanban.restore_action")}
                                                 }
-                                            },
-                                            "Restore"
+                                            }
                                         }
                                     }
                                     if !row.card.description.is_empty() {
@@ -1136,7 +1287,7 @@ pub fn KanbanPanel(
             }
 
             div { class: "event", "data-testid": "board-offline-queue",
-                div { class: "event-head", span { "Move Queue" } span { "{write_records().len()} move(s)" } }
+                div { class: "event-head", span { {crate::i18n::tr("kanban.move_queue_header")} } span { "{write_records().len()} move(s)" } }
                 div { class: "muted", "data-testid": "board-status", "{board_status}" }
                 for record in write_records() {
                     div { class: "event", "data-testid": "board-event-record",
@@ -1152,7 +1303,7 @@ pub fn KanbanPanel(
                     }
                 }
                 if write_records().is_empty() {
-                    div { class: "muted", "No local board Moves queued." }
+                    div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
                 }
             }
 
@@ -1421,53 +1572,55 @@ fn submit_kanban_move(
     let kind_for_record = kind.to_owned();
     let move_for_track = move_id.clone();
     spawn(async move {
-        match authed_api(&base_url, api_token) {
-            Ok(api) => match api.submit_move(&signed).await {
-                Ok(resp) => {
-                    let state = MoveSubmissionState::from_submit_state(
-                        resp.state.as_str(),
-                        resp.reason.as_deref(),
-                    );
-                    state_store.write().record_move_submission(
-                        resp.move_id.clone(),
-                        space_for_record,
-                        kind_for_record.clone(),
-                        state,
-                        resp.reason.clone(),
-                        Some(anchor_for_record),
-                    );
-                    let card_state = if state.is_failed() {
-                        CardState::SoftFailed
-                    } else {
-                        CardState::Accepted
-                    };
-                    if let Some(record) = write_records
-                        .write()
-                        .iter_mut()
-                        .find(|r| r.move_id == move_for_track)
-                    {
-                        record.state = card_state;
-                        record.note =
-                            format!("submit_move state={} reason={:?}", resp.state, resp.reason);
-                    }
-                    board_status.set(format!(
-                        "{kind_for_record} Move {} state={}",
-                        resp.move_id, resp.state
-                    ));
+        let signed_clone = signed.clone();
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_move(&signed_clone).await
+        })
+        .await
+        {
+            Ok(resp) => {
+                let state = MoveSubmissionState::from_submit_state(
+                    resp.state.as_str(),
+                    resp.reason.as_deref(),
+                );
+                state_store.write().record_move_submission(
+                    resp.move_id.clone(),
+                    space_for_record,
+                    kind_for_record.clone(),
+                    state,
+                    resp.reason.clone(),
+                    Some(anchor_for_record),
+                );
+                let card_state = if state.is_failed() {
+                    CardState::SoftFailed
+                } else {
+                    CardState::Accepted
+                };
+                if let Some(record) = write_records
+                    .write()
+                    .iter_mut()
+                    .find(|r| r.move_id == move_for_track)
+                {
+                    record.state = card_state;
+                    record.note =
+                        format!("submit_move state={} reason={:?}", resp.state, resp.reason);
                 }
-                Err(error) => {
-                    if let Some(record) = write_records
-                        .write()
-                        .iter_mut()
-                        .find(|r| r.move_id == move_for_track)
-                    {
-                        record.state = CardState::Quarantined;
-                        record.note = format!("submit_move failed: {error}");
-                    }
-                    board_status.set(format!("quarantined Move: {error}"));
+                board_status.set(format!(
+                    "{kind_for_record} Move {} state={}",
+                    resp.move_id, resp.state
+                ));
+            }
+            Err(err) => {
+                if let Some(record) = write_records
+                    .write()
+                    .iter_mut()
+                    .find(|r| r.move_id == move_for_track)
+                {
+                    record.state = CardState::Quarantined;
+                    record.note = format!("submit_move failed: {}", err.display());
                 }
-            },
-            Err(error) => board_status.set(format!("invalid server URL: {error}")),
+                board_status.set(format!("quarantined Move: {}", err.display()));
+            }
         }
     });
 }
@@ -1600,6 +1753,76 @@ fn validate_place_lifecycle_transition(
         ));
     }
     Ok(())
+}
+
+/// Sync-Projection (Q1 第十增量): map soland's wire state strings into
+/// `PlaceLifecycleState`. Anything we don't recognise stays `Active`
+/// (the safe default — server can correct on next sync).
+fn place_state_from_wire(state: &str) -> PlaceLifecycleState {
+    match state {
+        "archived" => PlaceLifecycleState::Archived,
+        "tombstoned" => PlaceLifecycleState::Tombstoned,
+        _ => PlaceLifecycleState::Active,
+    }
+}
+
+/// Sibling at the Flow object layer. Server emits the four states
+/// `active / archived / deleted / redacted`; yougen folds the two
+/// terminals into `Tombstoned` since the UI treats them equivalently.
+fn flow_lifecycle_from_wire(state: &str) -> FlowLifecycleState {
+    match state {
+        "archived" => FlowLifecycleState::Archived,
+        "deleted" | "redacted" => FlowLifecycleState::Tombstoned,
+        _ => FlowLifecycleState::Active,
+    }
+}
+
+/// Cap-Gate-3: helper that reads the app-provided `CapabilityEngine`
+/// signal and returns the UI gate for a Place-scoped action. Wraps
+/// `engine.read().ui_gate(...)` so kanban callers don't have to spell
+/// out the `ResourceRef` / `EvalContext` every time.
+fn capability_gate_for_place(
+    engine: &Signal<crate::capability::CapabilityEngine>,
+    actor: &str,
+    space_id: &str,
+    place_id: &str,
+    action: &str,
+) -> crate::capability::CapabilityGate {
+    let resource = crate::capability::ResourceRef {
+        space_id: Some(space_id.to_owned()),
+        object_ref: Some(place_id.to_owned()),
+        object_type: Some("Place".to_owned()),
+        ..Default::default()
+    };
+    let ctx = crate::capability::EvalContext {
+        space_id: Some(space_id.to_owned()),
+        place_id: Some(place_id.to_owned()),
+        action: Some(action.to_owned()),
+        ..Default::default()
+    };
+    engine.read().ui_gate(actor, action, &resource, &ctx)
+}
+
+/// Cap-Gate-3 sibling at the Flow object layer.
+fn capability_gate_for_flow(
+    engine: &Signal<crate::capability::CapabilityEngine>,
+    actor: &str,
+    space_id: &str,
+    flow_id: &str,
+    action: &str,
+) -> crate::capability::CapabilityGate {
+    let resource = crate::capability::ResourceRef {
+        space_id: Some(space_id.to_owned()),
+        object_ref: Some(flow_id.to_owned()),
+        object_type: Some("Flow".to_owned()),
+        ..Default::default()
+    };
+    let ctx = crate::capability::EvalContext {
+        space_id: Some(space_id.to_owned()),
+        action: Some(action.to_owned()),
+        ..Default::default()
+    };
+    engine.read().ui_gate(actor, action, &resource, &ctx)
 }
 
 /// Dispatch a `cx.place.archive` or `cx.place.restore` operation against
@@ -1960,14 +2183,12 @@ fn submit_flow_position_cas_move_with_attempt(
     let flow_for_rebase = flow_id.clone();
     let effect_for_rebase = effect.clone();
     spawn(async move {
-        let api = match authed_api(&base_url, api_token) {
-            Ok(api) => api,
-            Err(error) => {
-                board_status.set(format!("invalid server URL: {error}"));
-                return;
-            }
-        };
-        match api.submit_move(&signed).await {
+        let signed_for_submit = signed.clone();
+        let submit_result = with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_move(&signed_for_submit).await
+        })
+        .await;
+        match submit_result {
             Ok(resp) => {
                 let submission_state = MoveSubmissionState::from_submit_state(
                     resp.state.as_str(),
@@ -2042,16 +2263,16 @@ fn submit_flow_position_cas_move_with_attempt(
                     ));
                 }
             }
-            Err(error) => {
+            Err(err) => {
                 if let Some(record) = write_records
                     .write()
                     .iter_mut()
                     .find(|r| r.move_id == move_for_track)
                 {
                     record.state = CardState::Quarantined;
-                    record.note = format!("submit_move failed: {error}");
+                    record.note = format!("submit_move failed: {}", err.display());
                 }
-                board_status.set(format!("quarantined Move: {error}"));
+                board_status.set(format!("quarantined Move: {}", err.display()));
             }
         }
     });
@@ -2087,22 +2308,19 @@ fn rebase_flow_position_after_conflict(
         "rebase {kind} attempt {attempt}/{MAX_CONFLICT_REBASE_ATTEMPTS} — refetching projection"
     ));
     spawn(async move {
-        let api = match authed_api(&base_url, token()) {
-            Ok(api) => api,
-            Err(error) => {
-                board_status.set(format!("rebase aborted (invalid server URL): {error}"));
-                return;
-            }
-        };
         // We hardcode the view id to match the rest of this view —
         // production wiring should pass it through from the saved
         // View. Falling back to seed leaves the conflict in place.
         let view_id = "cx:view:01js0vw0000000000000000000release";
-        let new_expected = match api.collection_projection(view_id).await {
+        let new_expected = match with_authed_api(&base_url, token(), |api| async move {
+            api.collection_projection(view_id).await
+        })
+        .await
+        {
             Ok(projection) => locate_flow_position_in_projection(&projection, &flow_id),
-            Err(error) => {
+            Err(err) => {
                 board_status.set(format!(
-                    "rebase aborted (projection refresh failed): {error}"
+                    "rebase aborted (projection refresh failed): {}", err.display()
                 ));
                 return;
             }
@@ -2207,14 +2425,12 @@ fn replay_first_move(
         let move_for_track = queued.move_id.clone();
         let kind_for_record = queued.kind.clone();
         spawn(async move {
-            let api = match authed_api(&base, api_token) {
-                Ok(api) => api,
-                Err(error) => {
-                    board_status.set(format!("invalid server URL: {error}"));
-                    return;
-                }
-            };
-            match api.submit_move(&signed).await {
+            let signed_clone = signed.clone();
+            match with_authed_api(&base, api_token, |api| async move {
+                api.submit_move(&signed_clone).await
+            })
+            .await
+            {
                 Ok(resp) => {
                     if let Some(record) = write_records
                         .write()
@@ -2241,16 +2457,16 @@ fn replay_first_move(
                         resp.state
                     ));
                 }
-                Err(error) => {
+                Err(err) => {
                     if let Some(record) = write_records
                         .write()
                         .iter_mut()
                         .find(|r| r.move_id == move_for_track)
                     {
                         record.state = CardState::Quarantined;
-                        record.note = format!("replay failed: {error}");
+                        record.note = format!("replay failed: {}", err.display());
                     }
-                    board_status.set(format!("replay quarantined: {error}"));
+                    board_status.set(format!("replay quarantined: {}", err.display()));
                 }
             }
         });
@@ -2431,6 +2647,46 @@ mod tests {
         assert!(
             result.is_none(),
             "synchronous init MUST return None; async refresh handles real fetch"
+        );
+    }
+
+    /// Sync-Projection (Q1 第十增量): wire state strings emitted by
+    /// soland's `/api/v1/projection/{places|flows}` round-trip into the
+    /// renderer enums. Unknown values stay at the safe `Active` default.
+    #[test]
+    fn lifecycle_wire_strings_decode_to_enums() {
+        assert_eq!(place_state_from_wire("active"), PlaceLifecycleState::Active);
+        assert_eq!(
+            place_state_from_wire("archived"),
+            PlaceLifecycleState::Archived
+        );
+        assert_eq!(
+            place_state_from_wire("tombstoned"),
+            PlaceLifecycleState::Tombstoned
+        );
+        assert_eq!(place_state_from_wire("garbage"), PlaceLifecycleState::Active);
+
+        assert_eq!(
+            flow_lifecycle_from_wire("active"),
+            FlowLifecycleState::Active
+        );
+        assert_eq!(
+            flow_lifecycle_from_wire("archived"),
+            FlowLifecycleState::Archived
+        );
+        // Spec lists both `deleted` and `redacted` as terminal; yougen
+        // folds them into the same UI bucket.
+        assert_eq!(
+            flow_lifecycle_from_wire("deleted"),
+            FlowLifecycleState::Tombstoned
+        );
+        assert_eq!(
+            flow_lifecycle_from_wire("redacted"),
+            FlowLifecycleState::Tombstoned
+        );
+        assert_eq!(
+            flow_lifecycle_from_wire("garbage"),
+            FlowLifecycleState::Active
         );
     }
 

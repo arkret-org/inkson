@@ -17,7 +17,7 @@ use crate::{
     routes::Route,
     views::{
         consent_demo::format_submit_response,
-        helpers::{active_sync_token, authed_api, authed_api_with_sync},
+        helpers::{active_sync_token, authed_api_with_sync},
     },
 };
 // `build_capability_grant_move` is only used by the test-only
@@ -330,6 +330,16 @@ pub fn SpaceAdminPanel(
     let mut repair_head_b = use_signal(String::new);
     let mut repair_capability_ref = use_signal(|| "cap.recovery-01".to_owned());
     let mut repair_winner_json = use_signal(String::new);
+    // B5c (Q1 第十增量) — Device-revoke MLS Remove builder. The full
+    // round-trip is: load encrypted snapshot from `state_store`,
+    // decrypt with user-supplied passphrase, run SDK
+    // `remove_member_by_principal`, sign the canonical `mls_commit`
+    // Operation, submit via /api/v1/events, then re-encrypt + persist
+    // the post-commit group state so a crash between submit and
+    // persist doesn't leave the local cache an epoch behind.
+    let mut device_revoke_target = use_signal(String::new);
+    let mut device_revoke_passphrase = use_signal(String::new);
+    let device_revoke_status = use_signal(String::new);
 
     // Read the local anchor view for this space once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
@@ -439,7 +449,7 @@ pub fn SpaceAdminPanel(
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { "Members" }
+                            strong { {crate::i18n::tr("space_admin.members")} }
                             span { "{members().len()} known" }
                             div { class: "muted", "Invites, membership state machine, and leave flow." }
                             Link {
@@ -452,7 +462,7 @@ pub fn SpaceAdminPanel(
                             }
                         }
                         div { class: "metric",
-                            strong { "Access" }
+                            strong { {crate::i18n::tr("space_admin.access")} }
                             span { "{join_rule()} / {history_visibility()}" }
                             div { class: "muted", "Metadata, join rule, history visibility, and discovery live together." }
                             Link {
@@ -465,7 +475,7 @@ pub fn SpaceAdminPanel(
                             }
                         }
                         div { class: "metric",
-                            strong { "Security & MLS" }
+                            strong { {crate::i18n::tr("space_admin.security_mls")} }
                             span { "epoch {mls_epoch_label}" }
                             div { class: "muted", "Capability grants, MLS health, anchor visibility, and audit-bound E2EE controls." }
                             Link {
@@ -478,7 +488,7 @@ pub fn SpaceAdminPanel(
                             }
                         }
                         div { class: "metric",
-                            strong { "Governance" }
+                            strong { {crate::i18n::tr("space_admin.governance")} }
                             span { "policy / moderation" }
                             div { class: "muted", "Organization-level governance and moderation policy stay out of the daily admin path." }
                             Link {
@@ -799,24 +809,31 @@ pub fn SpaceAdminPanel(
                                     let space_for_record = space.clone();
                                     let anchor_for_record = anchor_ref.clone();
                                     spawn(async move {
-                                        if let Ok(api) = authed_api(&base, api_token) {
-                                            match api.submit_move(&signed).await {
-                                                Ok(resp) => {
-                                                    let line = record_submit_outcome(
-                                                        &mut state_store.write(),
-                                                        &space_for_record,
-                                                        "conflict.repair",
-                                                        Some(anchor_for_record),
-                                                        &resp,
-                                                    );
-                                                    status_msg.set(format!(
-                                                        "repair Move: {line}"
-                                                    ));
-                                                }
-                                                Err(err) => status_msg.set(format!(
-                                                    "repair submit failed: {err}"
-                                                )),
+                                        let signed_clone = signed.clone();
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.submit_move(&signed_clone).await
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(resp) => {
+                                                let line = record_submit_outcome(
+                                                    &mut state_store.write(),
+                                                    &space_for_record,
+                                                    "conflict.repair",
+                                                    Some(anchor_for_record),
+                                                    &resp,
+                                                );
+                                                status_msg.set(format!(
+                                                    "repair Move: {line}"
+                                                ));
                                             }
+                                            Err(err) => status_msg.set(format!(
+                                                "repair submit failed: {}", err.display()
+                                            )),
                                         }
                                     });
                                 }
@@ -932,28 +949,29 @@ pub fn SpaceAdminPanel(
                                     let space = space.clone();
                                     let api_token = token();
                                     spawn(async move {
-                                        let api = match authed_api(&base, api_token) {
-                                            Ok(api) => api,
-                                            Err(error) => {
-                                                anchorer_cell_status
-                                                    .set(format!("API client unavailable: {error}"));
-                                                return;
-                                            }
-                                        };
-                                        match api.admin_anchorer_describe(&space).await {
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.admin_anchorer_describe(&space).await
+                                            },
+                                        )
+                                        .await
+                                        {
                                             Ok(value) => {
                                                 anchorer_cell_status.set("ok".to_owned());
                                                 anchorer_cell_value.set(value.to_string());
                                             }
-                                            Err(error) => {
+                                            Err(err) => {
                                                 // 404 / not-implemented falls through here.
                                                 // Keep the message clear so the operator
                                                 // knows it's a missing endpoint, not bad
                                                 // data.
                                                 anchorer_cell_status.set(format!(
-                                                    "anchorer endpoint unavailable ({error}); \
+                                                    "anchorer endpoint unavailable ({}); \
                                                      expected /api/admin/v1/spaces/{{id}}/anchorer \
-                                                     (separate agent shipping)"
+                                                     (separate agent shipping)",
+                                                    err.display()
                                                 ));
                                             }
                                         }
@@ -1016,20 +1034,26 @@ pub fn SpaceAdminPanel(
                                     let topic = space_topic();
                                     let desc = space_description();
                                     spawn(async move {
-                                        if let Ok(api) = authed_api(&base, api_token) {
-                                            match api.update_space(&space, json!({
-                                                "name": name,
-                                                "topic": topic,
-                                                "description": desc,
-                                            })).await {
-                                                Ok(_) => status_msg.set("Metadata updated".to_owned()),
-                                                Err(e) => status_msg.set(format!("update failed: {e}")),
-                                            }
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.update_space(&space, json!({
+                                                    "name": name,
+                                                    "topic": topic,
+                                                    "description": desc,
+                                                })).await
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(_) => status_msg.set("Metadata updated".to_owned()),
+                                            Err(err) => status_msg.set(format!("update failed: {}", err.display())),
                                         }
                                     });
                                 }
                             },
-                            "Save Metadata"
+                            {crate::i18n::tr("space_admin.save_metadata")}
                         }
                         // Alternate Move-flow path: build a cx.space.update
                         // Move targeting cx.component.space.organization.v1
@@ -1081,27 +1105,32 @@ pub fn SpaceAdminPanel(
                                     let space_for_record = space.clone();
                                     let anchor_for_record = anchor_ref.clone();
                                     spawn(async move {
-                                        if let Ok(api) = authed_api(&base, api_token) {
-                                            match api.submit_move(&signed).await {
-                                                Ok(resp) => {
-                                                    let line = record_submit_outcome(
-                                                        &mut state_store.write(),
-                                                        &space_for_record,
-                                                        "cx.space.update",
-                                                        Some(anchor_for_record),
-                                                        &resp,
-                                                    );
-                                                    status_msg.set(line);
-                                                }
-                                                Err(e) => status_msg.set(format!(
-                                                    "submit_move failed: {e}"
-                                                )),
+                                        let signed_clone = signed.clone();
+                                        match crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move { api.submit_move(&signed_clone).await },
+                                        )
+                                        .await
+                                        {
+                                            Ok(resp) => {
+                                                let line = record_submit_outcome(
+                                                    &mut state_store.write(),
+                                                    &space_for_record,
+                                                    "cx.space.update",
+                                                    Some(anchor_for_record),
+                                                    &resp,
+                                                );
+                                                status_msg.set(line);
                                             }
+                                            Err(err) => status_msg.set(format!(
+                                                "submit_move failed: {}", err.display()
+                                            )),
                                         }
                                     });
                                 }
                             },
-                            "Save Metadata (Move)"
+                            {crate::i18n::tr("space_admin.save_metadata_move")}
                         }
                     }
                 }
@@ -1174,16 +1203,27 @@ pub fn SpaceAdminPanel(
                                 let rule = join_rule();
                                 let vis = history_visibility();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.set_space_policy(&space, &rule, &vis).await {
-                                            Ok(resp) => status_msg.set(format!("policy: join={}, history={}", resp.join_rule, resp.history_visibility)),
-                                            Err(e) => status_msg.set(format!("policy failed: {e}")),
-                                        }
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.set_space_policy(&space, &rule, &vis).await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "policy: join={}, history={}",
+                                            resp.join_rule, resp.history_visibility
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "policy failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Apply Policy"
+                        {crate::i18n::tr("space_admin.apply_policy")}
                     }
                 }
             }
@@ -1352,22 +1392,28 @@ pub fn SpaceAdminPanel(
                                 let space = space.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.get_space(&space).await {
-                                            Ok(resp) => {
-                                                members.set(resp.members.clone());
-                                                status_msg.set(format!(
-                                                    "members refreshed ({})",
-                                                    resp.members.len()
-                                                ));
-                                            }
-                                            Err(e) => status_msg.set(format!("members refresh failed: {e}")),
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move { api.get_space(&space).await },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => {
+                                            members.set(resp.members.clone());
+                                            status_msg.set(format!(
+                                                "members refreshed ({})",
+                                                resp.members.len()
+                                            ));
                                         }
+                                        Err(err) => status_msg.set(format!(
+                                            "members refresh failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Refresh"
+                        {crate::i18n::tr("space_admin.refresh_members")}
                     }
                 }
                 for member in members() {
@@ -1390,16 +1436,25 @@ pub fn SpaceAdminPanel(
                                         let m = m.clone();
                                         let api_token = token();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.remove_space_member(&space, &m).await {
-                                                    Ok(_) => status_msg.set(format!("kicked {m}")),
-                                                    Err(e) => status_msg.set(format!("kick failed: {e}")),
-                                                }
+                                            let m_for_msg = m.clone();
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.remove_space_member(&space, &m).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(_) => status_msg.set(format!("kicked {m_for_msg}")),
+                                                Err(err) => status_msg.set(format!(
+                                                    "kick failed: {}", err.display()
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Kick"
+                                {crate::i18n::tr("space_admin.kick_member")}
                             }
                             button {
                                 class: "secondary",
@@ -1414,16 +1469,25 @@ pub fn SpaceAdminPanel(
                                         let m = m.clone();
                                         let api_token = token();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.ban_member(&space, &m).await {
-                                                    Ok(_) => status_msg.set(format!("banned {m}")),
-                                                    Err(e) => status_msg.set(format!("ban failed: {e}")),
-                                                }
+                                            let m_for_msg = m.clone();
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.ban_member(&space, &m).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(_) => status_msg.set(format!("banned {m_for_msg}")),
+                                                Err(err) => status_msg.set(format!(
+                                                    "ban failed: {}", err.display()
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Ban"
+                                {crate::i18n::tr("space_admin.ban_member")}
                             }
                             // Move-flow alternates: build cx.member.state
                             // FSM transitions on cx.component.member.state.v1
@@ -1471,21 +1535,28 @@ pub fn SpaceAdminPanel(
                                         let actor_label = m.clone();
                                         let base = base.clone();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.submit_move(&signed).await {
-                                                    Ok(resp) => status_msg.set(format!(
-                                                        "kick(Move) {actor_label}: {}",
-                                                        format_submit_response(&resp)
-                                                    )),
-                                                    Err(e) => status_msg.set(format!(
-                                                        "kick(Move) failed: {e}"
-                                                    )),
-                                                }
+                                            let signed_clone = signed.clone();
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.submit_move(&signed_clone).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(resp) => status_msg.set(format!(
+                                                    "kick(Move) {actor_label}: {}",
+                                                    format_submit_response(&resp)
+                                                )),
+                                                Err(err) => status_msg.set(format!(
+                                                    "kick(Move) failed: {}", err.display()
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Kick (Move)"
+                                {crate::i18n::tr("space_admin.kick_member_move")}
                             }
                             button {
                                 class: "secondary",
@@ -1527,21 +1598,28 @@ pub fn SpaceAdminPanel(
                                         let actor_label = m.clone();
                                         let base = base.clone();
                                         spawn(async move {
-                                            if let Ok(api) = authed_api(&base, api_token) {
-                                                match api.submit_move(&signed).await {
-                                                    Ok(resp) => status_msg.set(format!(
-                                                        "ban(Move) {actor_label}: {}",
-                                                        format_submit_response(&resp)
-                                                    )),
-                                                    Err(e) => status_msg.set(format!(
-                                                        "ban(Move) failed: {e}"
-                                                    )),
-                                                }
+                                            let signed_clone = signed.clone();
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    api.submit_move(&signed_clone).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(resp) => status_msg.set(format!(
+                                                    "ban(Move) {actor_label}: {}",
+                                                    format_submit_response(&resp)
+                                                )),
+                                                Err(err) => status_msg.set(format!(
+                                                    "ban(Move) failed: {}", err.display()
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Ban (Move)"
+                                {crate::i18n::tr("space_admin.ban_member_move")}
                             }
                         }
                     }
@@ -1811,16 +1889,26 @@ pub fn SpaceAdminPanel(
                                 let space = space.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.rotate_mls_epoch(&space).await {
-                                            Ok(resp) => status_msg.set(format!("rotated to epoch {}", resp.epoch)),
-                                            Err(e) => status_msg.set(format!("rotate failed: {e}")),
-                                        }
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.rotate_mls_epoch(&space).await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "rotated to epoch {}", resp.epoch
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "rotate failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Rotate Epoch"
+                        {crate::i18n::tr("space_admin.rotate_epoch")}
                     }
                 }
             }
@@ -1840,16 +1928,23 @@ pub fn SpaceAdminPanel(
                                 let space = space.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.leave_space(&space).await {
-                                            Ok(_) => status_msg.set(format!("left {space}")),
-                                            Err(e) => status_msg.set(format!("leave failed: {e}")),
-                                        }
+                                    let space_for_msg = space.clone();
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move { api.leave_space(&space).await },
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => status_msg.set(format!("left {space_for_msg}")),
+                                        Err(err) => status_msg.set(format!(
+                                            "leave failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Leave"
+                        {crate::i18n::tr("space_admin.leave_space")}
                     }
                 }
             }
@@ -2076,21 +2171,28 @@ pub fn SpaceAdminPanel(
                                         }
                                     };
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.submit_move(&signed).await {
-                                            Ok(resp) => status_msg.set(format!(
-                                                "capability.grant: {}",
-                                                format_submit_response(&resp)
-                                            )),
-                                            Err(e) => status_msg.set(format!(
-                                                "capability.grant submit failed: {e}"
-                                            )),
-                                        }
+                                    let signed_clone = signed.clone();
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.submit_move(&signed_clone).await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "capability.grant: {}",
+                                            format_submit_response(&resp)
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "capability.grant submit failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Grant capability (Move)"
+                        {crate::i18n::tr("space_admin.grant_capability_move")}
                     }
                     button {
                         class: "secondary",
@@ -2147,21 +2249,28 @@ pub fn SpaceAdminPanel(
                                     }
                                 };
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.submit_move(&signed).await {
-                                            Ok(resp) => status_msg.set(format!(
-                                                "capability.revoke: {}",
-                                                format_submit_response(&resp)
-                                            )),
-                                            Err(e) => status_msg.set(format!(
-                                                "capability.revoke submit failed: {e}"
-                                            )),
-                                        }
+                                    let signed_clone = signed.clone();
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            api.submit_move(&signed_clone).await
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "capability.revoke: {}",
+                                            format_submit_response(&resp)
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "capability.revoke submit failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Revoke capability (Move)"
+                        {crate::i18n::tr("space_admin.revoke_capability_move")}
                     }
                 }
             }
@@ -2303,16 +2412,24 @@ pub fn SpaceAdminPanel(
                                 let space = space.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.archive_space(&space).await {
-                                            Ok(resp) => status_msg.set(format!("archived: {}", resp.archived)),
-                                            Err(e) => status_msg.set(format!("archive failed: {e}")),
-                                        }
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move { api.archive_space(&space).await },
+                                    )
+                                    .await
+                                    {
+                                        Ok(resp) => status_msg.set(format!(
+                                            "archived: {}", resp.archived
+                                        )),
+                                        Err(err) => status_msg.set(format!(
+                                            "archive failed: {}", err.display()
+                                        )),
                                     }
                                 });
                             }
                         },
-                        "Archive Space"
+                        {crate::i18n::tr("space_admin.archive_space")}
                     }
                     button {
                         class: "secondary",
@@ -2325,16 +2442,106 @@ pub fn SpaceAdminPanel(
                                 let space = space.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        match api.delete_space(&space).await {
-                                            Ok(_) => status_msg.set(format!("deleted {space}")),
-                                            Err(e) => status_msg.set(format!("delete failed: {e}")),
-                                        }
+                                    let space_for_msg = space.clone();
+                                    match crate::views::helpers::with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move { api.delete_space(&space).await },
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => status_msg.set(format!("deleted {space_for_msg}")),
+                                        Err(err) => status_msg.set(format!("delete failed: {}", err.display())),
                                     }
                                 });
                             }
                         },
-                        "Tombstone / Delete"
+                        {crate::i18n::tr("space_admin.tombstone_delete")}
+                    }
+                }
+            }
+
+            // B5c (Q1 第十增量) — Device-revoke MLS Remove builder.
+            // Lets an operator turn the persisted MLS snapshot for this
+            // Space into a canonical `mls_commit` Operation that removes
+            // a target device's leaf, submits it, and re-persists the
+            // post-commit group state. On wasm builds (no OpenMLS
+            // runtime) we surface a desktop-only notice instead — the
+            // SDK group can't be hydrated from inside the browser yet.
+            div { class: "event", "data-testid": "mls-remove-builder",
+                div { class: "event-head",
+                    span { {crate::i18n::tr("space_admin.mls_remove_header")} }
+                    span { "B5c · cx.mls.commit" }
+                }
+                div { class: "muted",
+                    {crate::i18n::tr("space_admin.mls_remove_hint")}
+                }
+                {
+                    let has_snapshot = state_store
+                        .read()
+                        .mls_snapshot_for(&selected_space)
+                        .is_some();
+                    let cfg_native = cfg!(not(target_arch = "wasm32"));
+                    let snapshot_banner = if !cfg_native {
+                        "Web build cannot decrypt MLS snapshots — switch to the desktop client to revoke a device."
+                    } else if !has_snapshot {
+                        "No MLS snapshot persisted for this Space yet. Send at least one Secure message (chat.rs) to seed one before revoking a device."
+                    } else {
+                        "Snapshot found; enter the passphrase + target device DID and click Build & submit."
+                    };
+                    let disable_button = !(cfg_native && has_snapshot);
+                    rsx! {
+                        div { class: "muted", "data-testid": "mls-remove-snapshot-status", "{snapshot_banner}" }
+                        div { class: "workflow-form",
+                            input {
+                                "data-testid": "mls-remove-target-did",
+                                value: "{device_revoke_target}",
+                                placeholder: crate::i18n::tr("space_admin.mls_remove_target_placeholder"),
+                                oninput: move |evt| device_revoke_target.set(evt.value()),
+                            }
+                            input {
+                                "data-testid": "mls-remove-passphrase",
+                                r#type: "password",
+                                value: "{device_revoke_passphrase}",
+                                placeholder: crate::i18n::tr("space_admin.mls_remove_passphrase_placeholder"),
+                                oninput: move |evt| device_revoke_passphrase.set(evt.value()),
+                            }
+                            div { class: "actions",
+                                button {
+                                    class: "danger",
+                                    "data-testid": "mls-remove-submit-button",
+                                    disabled: disable_button,
+                                    title: crate::i18n::tr("space_admin.mls_remove_button"),
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let space = selected_space.clone();
+                                        move |_| {
+                                            let base = base.clone();
+                                            let space = space.clone();
+                                            let api_token = token();
+                                            let target = device_revoke_target().trim().to_owned();
+                                            let passphrase = device_revoke_passphrase();
+                                            spawn(async move {
+                                                run_device_revoke_from_snapshot(
+                                                    base,
+                                                    api_token,
+                                                    state_store,
+                                                    space,
+                                                    target,
+                                                    passphrase,
+                                                    device_revoke_status,
+                                                )
+                                                .await;
+                                            });
+                                        }
+                                    },
+                                    {crate::i18n::tr("space_admin.mls_remove_button")}
+                                }
+                            }
+                            if !device_revoke_status().is_empty() {
+                                div { class: "muted", "data-testid": "mls-remove-status", "{device_revoke_status}" }
+                            }
+                        }
                     }
                 }
             }
@@ -2461,6 +2668,169 @@ pub fn SpaceAdminPanel(
             if !status_msg().is_empty() {
                 div { class: "muted", "data-testid": "space-admin-status", "{status_msg}" }
             }
+        }
+    }
+}
+
+/// B5c (Q1 第十增量) — wasm-fallback for the MLS Remove handler. The
+/// browser build can't decrypt the snapshot or talk to OpenMLS, so this
+/// branch surfaces a clear "use desktop" notice and returns without
+/// touching `state_store` or the network.
+#[cfg(target_arch = "wasm32")]
+async fn run_device_revoke_from_snapshot(
+    _base_url: String,
+    _api_token: String,
+    _state_store: Signal<LocalStateStore>,
+    _space_id: String,
+    _target_did: String,
+    _passphrase: String,
+    mut status: Signal<String>,
+) {
+    status.set(
+        "MLS Remove requires the desktop client (browser build has no OpenMLS runtime). Switch clients and try again."
+            .to_owned(),
+    );
+}
+
+/// B5c (Q1 第十增量) — native handler that wraps
+/// [`crate::device_revoke::execute_mls_remove_from_snapshot`]:
+///
+/// 1. read the encrypted MLS snapshot for the Space out of the local state store;
+/// 2. validate inputs (target DID + passphrase present);
+/// 3. mint a UUIDv7 operation_id, parse typed `Did` / `SpaceId`;
+/// 4. run the SDK Remove (group decrypt → commit → re-export);
+/// 5. submit the `mls_commit` Operation via `with_authed_api`;
+/// 6. on submit success, re-encrypt the post-commit group state and save it
+///    back so the next boot doesn't try to rehydrate the pre-revoke epoch.
+///
+/// Any error along the way is surfaced verbatim in the `status` signal;
+/// the operator can inspect it inline and retry without page reload.
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_device_revoke_from_snapshot(
+    base_url: String,
+    api_token: String,
+    mut state_store: Signal<LocalStateStore>,
+    space_id: String,
+    target_did: String,
+    passphrase: String,
+    mut status: Signal<String>,
+) {
+    if target_did.is_empty() {
+        status.set("target device DID is required".to_owned());
+        return;
+    }
+    if passphrase.is_empty() {
+        status.set("snapshot passphrase is required".to_owned());
+        return;
+    }
+    let envelope = match state_store.read().mls_snapshot_for(&space_id) {
+        Some(env) => env,
+        None => {
+            status.set(format!(
+                "no persisted MLS snapshot for space {space_id}; nothing to revoke against"
+            ));
+            return;
+        }
+    };
+    let typed_target = match contrix_sdk::Did::new(target_did.clone()) {
+        Ok(d) => d,
+        Err(err) => {
+            status.set(format!("invalid target DID: {err}"));
+            return;
+        }
+    };
+    let typed_space = match contrix_sdk::SpaceId::new(space_id.clone()) {
+        Ok(s) => s,
+        Err(err) => {
+            status.set(format!("invalid space id: {err}"));
+            return;
+        }
+    };
+    let op_id_str = format!("cx:operation:{}", crate::operation::uuid_v7());
+    let typed_op_id = match contrix_sdk::OperationId::new(op_id_str) {
+        Ok(o) => o,
+        Err(err) => {
+            status.set(format!("internal: operation id minting failed: {err}"));
+            return;
+        }
+    };
+    let full = match crate::device_revoke::execute_mls_remove_from_snapshot(
+        &envelope,
+        &passphrase,
+        &typed_target,
+        typed_op_id,
+        typed_space,
+    ) {
+        Ok(full) => full,
+        Err(err) => {
+            status.set(format!("MLS Remove execution failed: {err}"));
+            return;
+        }
+    };
+    let removed_count = full.output.result.removed_leaves.len();
+    let post_state = full.post_state.clone();
+    // The SDK's `commit_operation` returns an SDK-typed Operation. We
+    // wrap its payload into yougen's OperationEnvelope shape so the
+    // existing `submit_operation_event` path (Event envelope wrapper +
+    // /api/v1/events POST) accepts it without a separate wire route.
+    let actor = full
+        .output
+        .commit_operation
+        .payload
+        .get("creator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("yougen-operator")
+        .to_owned();
+    let target_ref = full
+        .output
+        .commit_operation
+        .object_id
+        .clone();
+    let mut envelope_builder = crate::operation::OperationBuilder::new(
+        space_id.clone(),
+        actor,
+        "mls_commit",
+    )
+    .body(full.output.commit_operation.payload.clone());
+    if let Some(tref) = target_ref {
+        envelope_builder = envelope_builder.target_ref(tref);
+    }
+    let envelope = envelope_builder.build("yougen");
+    let submit_result = crate::views::helpers::with_authed_api(
+        &base_url,
+        api_token,
+        |api| async move { api.submit_operation_event(&envelope).await },
+    )
+    .await;
+    match submit_result {
+        Ok(_) => {
+            // Re-encrypt and persist the post-commit group state so a
+            // boot after the submit doesn't read the pre-revoke epoch.
+            let mut salt = [0u8; 16];
+            if let Err(err) = getrandom::fill(&mut salt) {
+                status.set(format!(
+                    "submit accepted but rng fill failed: {err}; re-encrypt deferred"
+                ));
+                return;
+            }
+            let new_envelope = crate::mls_persistence::encrypt_state(
+                &space_id,
+                &post_state.group_id,
+                post_state.epoch,
+                &post_state.serialized_state,
+                &passphrase,
+                &salt,
+            );
+            state_store
+                .write()
+                .save_mls_snapshot(space_id.clone(), new_envelope);
+            status.set(format!(
+                "MLS Remove submitted; {removed_count} leaf/leaves removed; post-state re-persisted (epoch {})",
+                post_state.epoch
+            ));
+        }
+        Err(err) => {
+            status.set(format!("MLS Remove submit failed: {}", err.display()));
         }
     }
 }

@@ -343,6 +343,65 @@ pub fn english_translations() -> TranslationDict {
         "kanban.board_hint",
         "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available.",
     );
+    dict.set("chat.mls_passphrase_placeholder", "MLS passphrase (this Space)");
+    dict.set("chat.mls_passphrase_save", "Save passphrase");
+    dict.set("chat.mls_publish_key_package", "Publish key package");
+    dict.set("chat.mls_invite_actor_placeholder", "Invite actor DID");
+    dict.set("chat.mls_invite_device_placeholder", "Invite device id");
+    dict.set("chat.mls_invite_member", "Invite to MLS group");
+    dict.set("chat.send", "Send");
+    dict.set("chat.send_secure", "Send Secure");
+    dict.set("chat.plaintext_blocked", "Type a message before secure send");
+    dict.set("recovery.vault_encrypt_button", "Encrypt and upload");
+    dict.set("recovery.vault_rotate_button", "Rotate passphrase");
+    dict.set(
+        "recovery.vault_rotate_hint",
+        "Reuses the existing backup_id but re-derives a fresh KEK / nonce.",
+    );
+    dict.set("recovery.vault_rotate_prompt", "Enter a new passphrase above and click Encrypt and upload to rotate.");
+    dict.set("space_admin.save_metadata", "Save Metadata");
+    dict.set("space_admin.save_metadata_move", "Save Metadata (Move)");
+    dict.set("space_admin.tombstone_delete", "Tombstone / Delete");
+    dict.set("space_admin.archive_space", "Archive Space");
+    dict.set("verify_device.refresh_trust", "Refresh");
+    dict.set("verify_device.verify_action", "Verify");
+    dict.set("verify_device.revoke_action", "Revoke");
+    dict.set("verify_device.revoke_confirm_title", "Revoke this device?");
+    dict.set("verify_device.revoke_confirm_button", "Confirm Revoke");
+    dict.set("common.cancel_button", "Cancel");
+    dict.set("common.refresh", "Refresh");
+    dict.set("common.save", "Save");
+    dict.set("common.submit", "Submit");
+    dict.set("kanban.refresh_from_api", "Refresh from API");
+    dict.set("kanban.add_card", "Add Card");
+    dict.set("kanban.add_list", "Add List");
+    dict.set("kanban.save_card", "Save");
+    dict.set("kanban.cancel_card", "Cancel");
+    dict.set("space_admin.apply_policy", "Apply Policy");
+    dict.set("space_admin.grant_capability_move", "Grant capability (Move)");
+    dict.set("space_admin.revoke_capability_move", "Revoke capability (Move)");
+    dict.set("space_admin.refresh_members", "Refresh");
+    dict.set("space_admin.kick_member", "Kick");
+    dict.set("space_admin.ban_member", "Ban");
+    dict.set("space_admin.kick_member_move", "Kick (Move)");
+    dict.set("space_admin.ban_member_move", "Ban (Move)");
+    dict.set("space_admin.rotate_epoch", "Rotate Epoch");
+    dict.set("space_admin.leave_space", "Leave");
+    dict.set("recovery.primary", "Primary");
+    dict.set("directory.list_contacts", "List");
+    dict.set("directory.search_button", "Search");
+    dict.set("directory.resolve_selected", "Resolve Selected");
+    dict.set("settings.store_backup", "Store Backup");
+    dict.set("settings.register_push", "Register Push");
+    dict.set("settings.unregister_push", "Unregister Push");
+    dict.set("kanban.archive_action", "Archive");
+    dict.set("kanban.restore_action", "Restore");
+    dict.set("kanban.archived_lists_header", "Archived lists");
+    dict.set("kanban.archived_lists_empty", "No archived lists.");
+    dict.set("kanban.archived_cards_header", "Archived cards");
+    dict.set("kanban.archived_cards_empty", "No archived cards.");
+    dict.set("kanban.move_queue_header", "Move Queue");
+    dict.set("kanban.move_queue_empty", "No local board Moves queued.");
 
     // Directory view (tabs share the existing `directory.tab.*` keys).
     dict.set("directory.org_empty_body", "No organizations found. Try a search.");
@@ -358,6 +417,17 @@ pub fn english_translations() -> TranslationDict {
     dict.set("space_admin.title", "Space Admin");
     dict.set("space_admin.governance", "Governance");
     dict.set("space_admin.devices", "Devices");
+    dict.set("space_admin.members", "Members");
+    dict.set("space_admin.access", "Access");
+    dict.set("space_admin.security_mls", "Security & MLS");
+    dict.set("space_admin.mls_remove_header", "MLS Remove (device revoke)");
+    dict.set(
+        "space_admin.mls_remove_hint",
+        "Decrypt the local MLS snapshot, run remove_member_by_principal against the target device, and submit cx.mls.commit. Post-commit state is re-encrypted on success.",
+    );
+    dict.set("space_admin.mls_remove_button", "Build & submit MLS Remove");
+    dict.set("space_admin.mls_remove_target_placeholder", "Target device DID (did:web:…)");
+    dict.set("space_admin.mls_remove_passphrase_placeholder", "Snapshot passphrase");
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
     // generic verbs like Save/Cancel/Retry/Edit/Confirm).
@@ -534,6 +604,65 @@ pub fn chinese_translations() -> TranslationDict {
         "kanban.board_hint",
         "拖动卡片到不同列以排队 cx.flow.move 写入；服务端 view 接口可用时刷新会替换种子数据。",
     );
+    dict.set("chat.mls_passphrase_placeholder", "MLS 口令（本 Space）");
+    dict.set("chat.mls_passphrase_save", "保存口令");
+    dict.set("chat.mls_publish_key_package", "发布 Key Package");
+    dict.set("chat.mls_invite_actor_placeholder", "邀请目标 actor DID");
+    dict.set("chat.mls_invite_device_placeholder", "邀请目标设备 id");
+    dict.set("chat.mls_invite_member", "邀请加入 MLS 群");
+    dict.set("chat.send", "发送");
+    dict.set("chat.send_secure", "加密发送");
+    dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
+    dict.set("recovery.vault_encrypt_button", "加密并上传");
+    dict.set("recovery.vault_rotate_button", "轮换口令");
+    dict.set(
+        "recovery.vault_rotate_hint",
+        "复用现有 backup_id，但重新派生 KEK / nonce。",
+    );
+    dict.set("recovery.vault_rotate_prompt", "请在上方输入新口令并点击「加密并上传」完成轮换。");
+    dict.set("space_admin.save_metadata", "保存元数据");
+    dict.set("space_admin.save_metadata_move", "通过 Move 保存元数据");
+    dict.set("space_admin.tombstone_delete", "终结 / 删除");
+    dict.set("space_admin.archive_space", "归档 Space");
+    dict.set("verify_device.refresh_trust", "刷新");
+    dict.set("verify_device.verify_action", "验证");
+    dict.set("verify_device.revoke_action", "撤销");
+    dict.set("verify_device.revoke_confirm_title", "确认撤销此设备？");
+    dict.set("verify_device.revoke_confirm_button", "确认撤销");
+    dict.set("common.cancel_button", "取消");
+    dict.set("common.refresh", "刷新");
+    dict.set("common.save", "保存");
+    dict.set("common.submit", "提交");
+    dict.set("kanban.refresh_from_api", "从 API 刷新");
+    dict.set("kanban.add_card", "添加卡片");
+    dict.set("kanban.add_list", "添加列表");
+    dict.set("kanban.save_card", "保存");
+    dict.set("kanban.cancel_card", "取消");
+    dict.set("space_admin.apply_policy", "应用策略");
+    dict.set("space_admin.grant_capability_move", "授予权限（Move）");
+    dict.set("space_admin.revoke_capability_move", "撤销权限（Move）");
+    dict.set("space_admin.refresh_members", "刷新");
+    dict.set("space_admin.kick_member", "踢出");
+    dict.set("space_admin.ban_member", "封禁");
+    dict.set("space_admin.kick_member_move", "踢出（Move）");
+    dict.set("space_admin.ban_member_move", "封禁（Move）");
+    dict.set("space_admin.rotate_epoch", "轮换 Epoch");
+    dict.set("space_admin.leave_space", "退出");
+    dict.set("recovery.primary", "主");
+    dict.set("directory.list_contacts", "列出");
+    dict.set("directory.search_button", "搜索");
+    dict.set("directory.resolve_selected", "解析选中");
+    dict.set("settings.store_backup", "存储备份");
+    dict.set("settings.register_push", "注册推送");
+    dict.set("settings.unregister_push", "注销推送");
+    dict.set("kanban.archive_action", "归档");
+    dict.set("kanban.restore_action", "恢复");
+    dict.set("kanban.archived_lists_header", "已归档列表");
+    dict.set("kanban.archived_lists_empty", "暂无已归档列表。");
+    dict.set("kanban.archived_cards_header", "已归档卡片");
+    dict.set("kanban.archived_cards_empty", "暂无已归档卡片。");
+    dict.set("kanban.move_queue_header", "Move 队列");
+    dict.set("kanban.move_queue_empty", "本地没有排队的 Move。");
 
     // Directory view
     dict.set("directory.org_empty_body", "未找到组织，可尝试搜索。");
@@ -549,6 +678,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("space_admin.title", "Space 管理");
     dict.set("space_admin.governance", "治理");
     dict.set("space_admin.devices", "设备");
+    dict.set("space_admin.members", "成员");
+    dict.set("space_admin.access", "访问控制");
+    dict.set("space_admin.security_mls", "安全与 MLS");
+    dict.set("space_admin.mls_remove_header", "MLS 移除（设备吊销）");
+    dict.set(
+        "space_admin.mls_remove_hint",
+        "用本地 MLS 快照口令解密群状态，运行 remove_member_by_principal，提交 cx.mls.commit；成功后重新加密持久化新一轮 epoch。",
+    );
+    dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
+    dict.set("space_admin.mls_remove_target_placeholder", "目标设备 DID（did:web:…）");
+    dict.set("space_admin.mls_remove_passphrase_placeholder", "快照口令");
 
     // Chat / Discussion view
     dict.set("chat.discussions_header", "讨论");

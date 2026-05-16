@@ -30,6 +30,58 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
+use chacha20poly1305::{
+    AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
+    aead::{Aead, OsRng},
+};
+
+/// Sprint Q1 第十七增量 (H2): AEAD-wrap a UTF-8 secret string with
+/// ChaCha20-Poly1305 + a 32-byte wrapping key. Returns a base64
+/// (no-pad) string with a 12-byte random nonce prefix so the same
+/// secret encrypts to a different ciphertext each time. Use
+/// [`unwrap_secret`] to round-trip. Both helpers are platform-
+/// agnostic — they live here so the at-rest crypto used by the
+/// wasm32 [`LocalStorageSecureKeyStore`] (and any future IndexedDB
+/// store) is testable on native too.
+pub fn wrap_secret(secret: &str, wrapping_key: &[u8; 32]) -> Result<String, SecureKeyStoreError> {
+    let cipher = ChaCha20Poly1305::new(wrapping_key.into());
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, secret.as_bytes())
+        .map_err(|err| SecureKeyStoreError::Backend(format!("wrap_secret encrypt: {err}")))?;
+    let mut packed = Vec::with_capacity(nonce.len() + ciphertext.len());
+    packed.extend_from_slice(nonce.as_slice());
+    packed.extend_from_slice(&ciphertext);
+    Ok(STANDARD_NO_PAD.encode(&packed))
+}
+
+/// Sprint Q1 第十七增量 (H2): inverse of [`wrap_secret`]. Returns
+/// `Ok(None)` when the wrapped blob fails to decode / authenticate
+/// (likely cause: the wrapping key has changed or the entry was
+/// rolled in by a different installation).
+pub fn unwrap_secret(
+    wrapped_b64: &str,
+    wrapping_key: &[u8; 32],
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let packed = match STANDARD_NO_PAD.decode(wrapped_b64.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    if packed.len() < 12 {
+        return Ok(None);
+    }
+    let (nonce_bytes, ciphertext) = packed.split_at(12);
+    let cipher = ChaCha20Poly1305::new(wrapping_key.into());
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let plain = match cipher.decrypt(nonce, ciphertext) {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    Ok(String::from_utf8(plain).ok())
+}
+
 /// Errors a [`SecureKeyStore`] can surface.
 #[derive(Debug)]
 pub enum SecureKeyStoreError {
@@ -229,135 +281,267 @@ impl SecureKeyStore for KeyringSecureKeyStore {
     }
 }
 
-/// Android Keystore-backed secret store (C34.1 stub).
+/// Sprint Q1 第二十二增量 (H1): mobile **host-bridge** delegation
+/// pattern for Android Keystore + iOS Keychain access.
 ///
-/// On `target_os = "android"` the production wiring will bridge into
-/// the platform `java.security.KeyStore` (provider `"AndroidKeyStore"`)
-/// through a JNI shim — typically dispatched by the Dioxus mobile
-/// runtime which owns the `JNIEnv` for the calling thread. The stub
-/// here pins the *Rust-side* trait surface so the rest of the crate
-/// can hand callers an `Arc<dyn SecureKeyStore>` selected at compile
-/// time, and so the FFI wire-up can happen in isolation without
-/// re-touching every call site that holds a key store.
+/// The mobile-platform FFI surface (JNI on Android,
+/// `Security.framework` on iOS) cannot be cleanly initialised from
+/// inside yougen alone — the Android Keystore path needs a `JNIEnv`
+/// that's only valid on the current Java thread, and iOS Keychain
+/// access against `kSecClassGenericPassword` needs Objective-C
+/// runtime + an app-level entitlement. Both of those are owned by
+/// the host runtime (Dioxus mobile + the platform-native shell that
+/// embeds it).
 ///
-/// All methods currently `unimplemented!()` — the surface is interface
-/// only. Hosts that want a working secret store on Android today
-/// should explicitly construct [`MemorySecureKeyStore`] (with the
-/// usual "secrets in plaintext heap" caveat) and revisit once the FFI
-/// shim lands.
-#[cfg(target_os = "android")]
-#[derive(Clone, Debug)]
-pub struct AndroidKeystoreSecureKeyStore {
-    service_name: String,
+/// We solve this by inverting the relationship: instead of yougen
+/// linking against a mobile FFI crate, yougen exposes a
+/// [`HostSecretBridge`] trait that the host implements and registers
+/// via [`install_host_secret_bridge`]. When
+/// [`default_secure_key_store`] runs on `target_os = "android"` or
+/// `"ios"`, it constructs a [`HostBridgeSecureKeyStore`] that delegates
+/// every store/get/delete through the installed bridge. The bridge
+/// implementation lives in the host runtime where it has access to
+/// `JNIEnv` / Security.framework.
+///
+/// Hosts that don't install a bridge get
+/// [`MemorySecureKeyStore`] as the fallback (matches existing
+/// "secrets in plaintext heap" caveat), so the API is forwards-
+/// compatible: a binary that never wires a bridge keeps working,
+/// it just loses the OS-keychain tier.
+///
+/// The host implementation contract:
+///
+/// * **Android** — bridge methods call into a Java class
+///   (`com.contrix.yougen.SecureKeyStoreBridge` or similar) via JNI.
+///   That class proxies to `java.security.KeyStore` with provider
+///   `"AndroidKeyStore"`, aliasing entries as
+///   `"<service_name>:<key>"`. AES-256-GCM is the recommended
+///   cipher; the platform Keystore can be configured to require
+///   user authentication / biometrics before the key is unsealed.
+/// * **iOS** — bridge methods call into Objective-C / Swift code
+///   that invokes `SecItemAdd`, `SecItemCopyMatching`, and
+///   `SecItemDelete` against `kSecClassGenericPassword` keychain
+///   items. `kSecAttrService` is set to `service_name`,
+///   `kSecAttrAccount` is set to the entry key. `kSecAttrAccessible`
+///   defaults to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
+///   so secrets do NOT propagate through iCloud Keychain.
+///
+/// Both bridges MUST be safe to call from arbitrary threads
+/// (the trait demands `Send + Sync`). On Android that means each
+/// call attaches the current thread to the JavaVM before issuing
+/// JNI calls; on iOS Keychain Services is already thread-safe.
+pub trait HostSecretBridge: Send + Sync {
+    /// Persist `value` under `(service_name, key)` in the platform
+    /// secure store. Overwrites silently when the alias already
+    /// exists.
+    fn put(&self, service_name: &str, key: &str, value: &str) -> Result<(), SecureKeyStoreError>;
+
+    /// Load the secret under `(service_name, key)`. Returns `Ok(None)`
+    /// when the alias is absent.
+    fn get(&self, service_name: &str, key: &str) -> Result<Option<String>, SecureKeyStoreError>;
+
+    /// Remove the secret. Idempotent — deleting an absent alias
+    /// returns `Ok(())`.
+    fn delete(&self, service_name: &str, key: &str) -> Result<(), SecureKeyStoreError>;
+
+    /// Optional human-readable label surfaced via
+    /// [`SecureKeyStore::backend_name`]. Default is
+    /// `"host-bridge"`; hosts override to e.g. `"android-keystore"`
+    /// or `"ios-keychain"` so diagnostic UI can distinguish them.
+    fn backend_label(&self) -> &'static str {
+        "host-bridge"
+    }
 }
 
-#[cfg(target_os = "android")]
-impl AndroidKeystoreSecureKeyStore {
-    /// Construct a store whose entries land under `service_name`.
-    /// Conventional value: `"yougen"`. The service name is currently
-    /// only retained for diagnostic UI; the Android Keystore alias
-    /// scheme will be `"<service_name>:<key>"` once the JNI shim is
-    /// wired.
-    pub fn new(service_name: impl Into<String>) -> Self {
+static HOST_SECRET_BRIDGE: std::sync::OnceLock<Arc<dyn HostSecretBridge>> =
+    std::sync::OnceLock::new();
+
+/// Register a [`HostSecretBridge`] implementation. Idempotent — the
+/// first call wins; subsequent calls are no-ops and return `false`.
+/// Hosts MUST call this **before** any secure-store consumer runs
+/// (typically in the platform glue's `init()` hook before mounting
+/// the Dioxus app).
+///
+/// Returns `true` on first install, `false` if a bridge was already
+/// registered. The "first-write-wins" semantics match how the
+/// Android `JavaVM` reference works: there is exactly one host
+/// runtime per process, and re-registering would race against
+/// in-flight secret reads.
+pub fn install_host_secret_bridge(bridge: Arc<dyn HostSecretBridge>) -> bool {
+    HOST_SECRET_BRIDGE.set(bridge).is_ok()
+}
+
+/// Test/diagnostic helper: did the host install a secret bridge?
+pub fn host_secret_bridge_installed() -> bool {
+    HOST_SECRET_BRIDGE.get().is_some()
+}
+
+/// [`SecureKeyStore`] implementation that delegates every operation
+/// through the installed [`HostSecretBridge`]. Constructed by
+/// [`default_secure_key_store`] on `target_os = "android"` and
+/// `"ios"` when a bridge is registered; falls back to
+/// [`MemorySecureKeyStore`] otherwise.
+#[derive(Clone)]
+pub struct HostBridgeSecureKeyStore {
+    service_name: String,
+    bridge: Arc<dyn HostSecretBridge>,
+}
+
+impl HostBridgeSecureKeyStore {
+    /// Build a store that funnels calls through the supplied bridge.
+    /// Use [`HostBridgeSecureKeyStore::from_installed`] when the
+    /// bridge has been registered via
+    /// [`install_host_secret_bridge`].
+    pub fn new(service_name: impl Into<String>, bridge: Arc<dyn HostSecretBridge>) -> Self {
         Self {
             service_name: service_name.into(),
+            bridge,
         }
+    }
+
+    /// Build a store backed by the currently-installed host bridge.
+    /// Returns `None` when no bridge has been registered yet.
+    pub fn from_installed(service_name: impl Into<String>) -> Option<Self> {
+        let bridge = HOST_SECRET_BRIDGE.get()?.clone();
+        Some(Self {
+            service_name: service_name.into(),
+            bridge,
+        })
     }
 
     pub fn service_name(&self) -> &str {
         &self.service_name
+    }
+}
+
+impl std::fmt::Debug for HostBridgeSecureKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostBridgeSecureKeyStore")
+            .field("service_name", &self.service_name)
+            .field("bridge", &self.bridge.backend_label())
+            .finish()
+    }
+}
+
+impl SecureKeyStore for HostBridgeSecureKeyStore {
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        self.bridge.put(&self.service_name, key, value)
+    }
+
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        self.bridge.get(&self.service_name, key)
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        self.bridge.delete(&self.service_name, key)
+    }
+
+    fn backend_name(&self) -> &'static str {
+        self.bridge.backend_label()
+    }
+}
+
+/// Android Keystore-backed secret store. On `target_os = "android"`
+/// this is a thin wrapper around [`HostBridgeSecureKeyStore`] — the
+/// real FFI work happens in the host runtime's
+/// [`HostSecretBridge`] implementation (typically a JNI shim against
+/// `java.security.KeyStore` with provider `"AndroidKeyStore"`).
+///
+/// See the [`HostSecretBridge`] doc-comment for the full contract.
+#[cfg(target_os = "android")]
+#[derive(Clone, Debug)]
+pub struct AndroidKeystoreSecureKeyStore {
+    inner: HostBridgeSecureKeyStore,
+}
+
+#[cfg(target_os = "android")]
+impl AndroidKeystoreSecureKeyStore {
+    /// Construct a store delegating to the installed
+    /// [`HostSecretBridge`]. Returns `None` when no bridge has been
+    /// registered; callers should fall back to
+    /// [`MemorySecureKeyStore`] in that case.
+    pub fn from_installed(service_name: impl Into<String>) -> Option<Self> {
+        HostBridgeSecureKeyStore::from_installed(service_name).map(|inner| Self { inner })
+    }
+
+    /// Construct against an explicit bridge — used by tests and by
+    /// hosts that prefer dependency injection over the global
+    /// registry.
+    pub fn new_with_bridge(
+        service_name: impl Into<String>,
+        bridge: Arc<dyn HostSecretBridge>,
+    ) -> Self {
+        Self {
+            inner: HostBridgeSecureKeyStore::new(service_name, bridge),
+        }
+    }
+
+    pub fn service_name(&self) -> &str {
+        self.inner.service_name()
     }
 }
 
 #[cfg(target_os = "android")]
 impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
-    fn store_secret(&self, _key: &str, _value: &str) -> Result<(), SecureKeyStoreError> {
-        unimplemented!(
-            "android keystore FFI pending wire-up: bridge to java.security.KeyStore \
-             via the Dioxus mobile JNIEnv handle"
-        )
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        self.inner.store_secret(key, value)
     }
-
-    fn get_secret(&self, _key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        unimplemented!(
-            "android keystore FFI pending wire-up: bridge to java.security.KeyStore \
-             via the Dioxus mobile JNIEnv handle"
-        )
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        self.inner.get_secret(key)
     }
-
-    fn delete_secret(&self, _key: &str) -> Result<(), SecureKeyStoreError> {
-        unimplemented!(
-            "android keystore FFI pending wire-up: bridge to java.security.KeyStore \
-             via the Dioxus mobile JNIEnv handle"
-        )
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        self.inner.delete_secret(key)
     }
-
     fn backend_name(&self) -> &'static str {
         "android-keystore"
     }
 }
 
-/// iOS Keychain-backed secret store (C34.1 stub).
+/// iOS Keychain-backed secret store. On `target_os = "ios"` this is
+/// a thin wrapper around [`HostBridgeSecureKeyStore`] — the real FFI
+/// work happens in the host runtime's [`HostSecretBridge`]
+/// implementation (typically an Objective-C / Swift shim against
+/// `Security.framework` `SecItemAdd` / `SecItemCopyMatching` /
+/// `SecItemDelete`).
 ///
-/// On `target_os = "ios"` the production wiring will bridge into
-/// `Security.framework` — `SecItemAdd` / `SecItemCopyMatching` /
-/// `SecItemDelete` against the `kSecClassGenericPassword` class — via
-/// an Objective-C / Swift shim exposed through `extern "C"` symbols.
-/// The shim should set `kSecAttrAccessible` to
-/// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` so secrets are
-/// not synchronised through iCloud Keychain by default.
-///
-/// All methods currently `unimplemented!()` — the surface is interface
-/// only. See [`AndroidKeystoreSecureKeyStore`] for the matching
-/// rationale.
+/// See the [`HostSecretBridge`] doc-comment for the full contract.
 #[cfg(target_os = "ios")]
 #[derive(Clone, Debug)]
 pub struct IosKeychainSecureKeyStore {
-    service_name: String,
+    inner: HostBridgeSecureKeyStore,
 }
 
 #[cfg(target_os = "ios")]
 impl IosKeychainSecureKeyStore {
-    /// Construct a store whose entries land under `service_name`.
-    /// Conventional value: `"yougen"`. Stamped onto the keychain item
-    /// `kSecAttrService` attribute by the Security.framework shim.
-    pub fn new(service_name: impl Into<String>) -> Self {
+    pub fn from_installed(service_name: impl Into<String>) -> Option<Self> {
+        HostBridgeSecureKeyStore::from_installed(service_name).map(|inner| Self { inner })
+    }
+
+    pub fn new_with_bridge(
+        service_name: impl Into<String>,
+        bridge: Arc<dyn HostSecretBridge>,
+    ) -> Self {
         Self {
-            service_name: service_name.into(),
+            inner: HostBridgeSecureKeyStore::new(service_name, bridge),
         }
     }
 
     pub fn service_name(&self) -> &str {
-        &self.service_name
+        self.inner.service_name()
     }
 }
 
 #[cfg(target_os = "ios")]
 impl SecureKeyStore for IosKeychainSecureKeyStore {
-    fn store_secret(&self, _key: &str, _value: &str) -> Result<(), SecureKeyStoreError> {
-        unimplemented!(
-            "ios keychain FFI pending wire-up: bridge to Security.framework \
-             SecItemAdd/SecItemCopyMatching/SecItemDelete with \
-             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
-        )
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        self.inner.store_secret(key, value)
     }
-
-    fn get_secret(&self, _key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        unimplemented!(
-            "ios keychain FFI pending wire-up: bridge to Security.framework \
-             SecItemAdd/SecItemCopyMatching/SecItemDelete with \
-             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
-        )
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        self.inner.get_secret(key)
     }
-
-    fn delete_secret(&self, _key: &str) -> Result<(), SecureKeyStoreError> {
-        unimplemented!(
-            "ios keychain FFI pending wire-up: bridge to Security.framework \
-             SecItemAdd/SecItemCopyMatching/SecItemDelete with \
-             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
-        )
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        self.inner.delete_secret(key)
     }
-
     fn backend_name(&self) -> &'static str {
         "ios-keychain"
     }
@@ -378,20 +562,71 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 /// until the FFI shim lands — either gate the call site behind a
 /// runtime feature flag, or substitute [`MemorySecureKeyStore`]
 /// explicitly with the usual "secrets in plaintext heap" UX warning.
+///
+/// **wasm32 callers**: this returns the synchronous fallback
+/// [`LocalStorageSecureKeyStore`] for first-paint usability. Once the
+/// app reaches an async-capable boot phase, call
+/// [`upgrade_wasm_secure_key_store_async`] to promote the store to
+/// the IndexedDB + SubtleCrypto-non-extractable tier (H6).
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Sprint Q1 第十七增量 (H2): wasm32 build now persists
+        // AEAD-wrapped secrets to `localStorage` rather than dropping
+        // them on memory-only fallback. See
+        // `LocalStorageSecureKeyStore` doc-comment for the
+        // wrapping-key bootstrap details.
+        //
+        // Sprint Q1 第二十二增量 (H6): the LocalStorage store remains
+        // the sync first-paint fallback; the app upgrades to
+        // `IndexedDbSecureKeyStore` via
+        // `upgrade_wasm_secure_key_store_async` once async init can
+        // run. Both stores share the same `SecureKeyStore` interface
+        // so callers don't care which tier they got.
+        match LocalStorageSecureKeyStore::new(service_name) {
+            Ok(store) => return Arc::new(store),
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "LocalStorageSecureKeyStore init failed; falling back to in-memory store"
+                );
+                return Arc::new(MemorySecureKeyStore::new());
+            }
+        }
+    }
+    #[cfg(all(not(target_arch = "wasm32"), any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Arc::new(KeyringSecureKeyStore::new(service_name.to_owned()))
     }
-    #[cfg(target_os = "android")]
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
     {
-        Arc::new(AndroidKeystoreSecureKeyStore::new(service_name.to_owned()))
+        // Sprint Q1 第二十二增量 (H1): if the host runtime has
+        // installed a HostSecretBridge, route through it; otherwise
+        // fall back to MemorySecureKeyStore with the documented
+        // "secrets in plaintext heap" caveat. The host typically
+        // calls install_host_secret_bridge() from its JNI init
+        // before mounting the Dioxus app.
+        if let Some(store) = AndroidKeystoreSecureKeyStore::from_installed(service_name.to_owned())
+        {
+            return Arc::new(store);
+        }
+        tracing::warn!(
+            "no HostSecretBridge registered on Android; falling back to MemorySecureKeyStore"
+        );
+        Arc::new(MemorySecureKeyStore::new())
     }
-    #[cfg(target_os = "ios")]
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "ios"))]
     {
-        Arc::new(IosKeychainSecureKeyStore::new(service_name.to_owned()))
+        if let Some(store) = IosKeychainSecureKeyStore::from_installed(service_name.to_owned()) {
+            return Arc::new(store);
+        }
+        tracing::warn!(
+            "no HostSecretBridge registered on iOS; falling back to MemorySecureKeyStore"
+        );
+        Arc::new(MemorySecureKeyStore::new())
     }
     #[cfg(not(any(
+        target_arch = "wasm32",
         target_os = "linux",
         target_os = "macos",
         target_os = "windows",
@@ -399,17 +634,1093 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
         target_os = "ios",
     )))]
     {
-        // wasm32 stays on the in-memory fallback until we add an
-        // IndexedDB+WebCrypto wrapper. Other unknown targets also land
-        // here.
-        let _ = service_name; // suppress unused warning on wasm
+        // Unknown targets land on the in-memory fallback. wasm32 is
+        // handled above by `LocalStorageSecureKeyStore`.
+        let _ = service_name;
         Arc::new(MemorySecureKeyStore::new())
     }
+}
+
+/// Sprint Q1 第十七增量 (H2): wasm32-only persistence-backed store
+/// that wraps secrets with ChaCha20-Poly1305 before stashing them in
+/// `localStorage`. The wrapping key is a per-installation random
+/// 32-byte seed that itself lives in `localStorage` under a separate
+/// key — this is the same trust posture as
+/// `MemorySecureKeyStore` against a fully-compromised DOM, but it
+/// keeps secrets out of plaintext if a backup / disk-dump only sees
+/// the localStorage blob (an actual attack the spec calls out in
+/// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
+///
+/// A future IndexedDB + `crypto.subtle.deriveKey` upgrade can swap
+/// the wrapping-key bootstrap without changing the on-disk format
+/// because the storage key namespace stays
+/// `yougen.secret.<service_name>.<key>`. Until then this is the best
+/// the browser tier can offer without an OS keychain.
+#[cfg(target_arch = "wasm32")]
+pub struct LocalStorageSecureKeyStore {
+    service_name: String,
+    wrapping_key: [u8; 32],
+}
+
+#[cfg(target_arch = "wasm32")]
+impl LocalStorageSecureKeyStore {
+    const WRAPPING_KEY_STORAGE_KEY_SUFFIX: &'static str = ".wrap_seed.v1";
+
+    /// Initialise the store for the given service namespace. Boot
+    /// reads the wrapping-key seed from `localStorage`, generating a
+    /// fresh one via `getrandom` if none exists yet. The seed is
+    /// base64-encoded so it round-trips through the JS string API.
+    pub fn new(service_name: &str) -> Result<Self, SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let seed_key = Self::wrapping_seed_key(service_name);
+        let wrapping_key = match storage
+            .get_item(&seed_key)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage get: {err:?}")))?
+        {
+            Some(b64) => {
+                let bytes = STANDARD_NO_PAD.decode(b64.as_bytes()).map_err(|err| {
+                    SecureKeyStoreError::Backend(format!("wrap_seed base64: {err}"))
+                })?;
+                if bytes.len() != 32 {
+                    return Err(SecureKeyStoreError::Backend(format!(
+                        "wrap_seed length {}, expected 32",
+                        bytes.len()
+                    )));
+                }
+                let mut buf = [0u8; 32];
+                buf.copy_from_slice(&bytes);
+                buf
+            }
+            None => {
+                let mut seed = [0u8; 32];
+                getrandom::fill(&mut seed)
+                    .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
+                storage
+                    .set_item(&seed_key, &STANDARD_NO_PAD.encode(seed))
+                    .map_err(|err| {
+                        SecureKeyStoreError::Backend(format!("localStorage set seed: {err:?}"))
+                    })?;
+                seed
+            }
+        };
+        Ok(Self {
+            service_name: service_name.to_owned(),
+            wrapping_key,
+        })
+    }
+
+    fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
+        })?;
+        window
+            .local_storage()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage: {err:?}")))?
+            .ok_or_else(|| {
+                SecureKeyStoreError::Unsupported("window.localStorage not available")
+            })
+    }
+
+    fn wrapping_seed_key(service_name: &str) -> String {
+        format!(
+            "yougen.secret.{service_name}{}",
+            Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
+        )
+    }
+
+    fn entry_key(&self, key: &str) -> String {
+        format!("yougen.secret.{}.{key}", self.service_name)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::fmt::Debug for LocalStorageSecureKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalStorageSecureKeyStore")
+            .field("service_name", &self.service_name)
+            .field("wrapping_key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl SecureKeyStore for LocalStorageSecureKeyStore {
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let wrapped = wrap_secret(value, &self.wrapping_key)?;
+        storage
+            .set_item(&self.entry_key(key), &wrapped)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
+    }
+
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let Some(wrapped) = storage
+            .get_item(&self.entry_key(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage get: {err:?}")))?
+        else {
+            return Ok(None);
+        };
+        unwrap_secret(&wrapped, &self.wrapping_key)
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        storage
+            .remove_item(&self.entry_key(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage remove: {err:?}")))
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "local_storage_aead"
+    }
+}
+
+/// Sprint Q1 第二十二增量 (H6): wasm32 IndexedDB-backed secret store
+/// that upgrades the wrapping-key tier from H2's `localStorage` byte
+/// seed to a SubtleCrypto-derived **non-extractable** AES-GCM key.
+///
+/// ## Threat model improvement over [`LocalStorageSecureKeyStore`]
+///
+/// LocalStorageSecureKeyStore (H2) keeps both the wrapping seed (32
+/// random bytes) AND every wrapped secret in `localStorage` under the
+/// same origin. An attacker who can read the localStorage blob — via
+/// a backup dump, a misconfigured browser extension, a developer-tools
+/// clipboard, or a same-origin XSS — gets the seed alongside the
+/// ciphertext and decrypts everything offline.
+///
+/// IndexedDbSecureKeyStore (H6) splits the layers:
+///
+///   1. The wrapping key is derived once via `SubtleCrypto.deriveKey`
+///      with `extractable: false`. The derived `CryptoKey` lives in
+///      the browser's SubtleCrypto subsystem; even
+///      `crypto.subtle.exportKey(...)` against it rejects.
+///   2. The persisted form of the wrapping key — needed to recover
+///      across page reloads — is the `CryptoKey` *object* itself,
+///      stashed in IndexedDB via structured clone. IndexedDB preserves
+///      the `extractable: false` attribute on round-trip.
+///   3. Encrypted entries (AES-GCM ciphertext + 12-byte IV) live in a
+///      separate IndexedDB object store, keyed by `service_name`/`key`.
+///
+/// A disk dump now yields ciphertext + an unusable key handle.
+/// Recovering plaintext requires running JS in the same origin and
+/// calling `crypto.subtle.decrypt(...)`. The
+/// `LocalStorageSecureKeyStore` floor stays available as a fallback
+/// for browsers / contexts where IndexedDB is denied (private-mode
+/// Firefox, file:// URLs, etc.).
+///
+/// ## Sync trait surface against async storage
+///
+/// SubtleCrypto and IndexedDB are Promise-based; the
+/// [`SecureKeyStore`] trait is sync. The store resolves this via a
+/// two-phase model:
+///
+///   * [`IndexedDbSecureKeyStore::new_async`] (async, called once at
+///     app startup) opens the database, derives or loads the wrapping
+///     key, and decrypts every existing entry into an in-process
+///     `HashMap`. This is the only async path.
+///   * Sync trait methods read from / write to the cache directly.
+///     Writes additionally spawn a `wasm_bindgen_futures::spawn_local`
+///     task that re-encrypts and persists the change to IndexedDB.
+///     Failures are logged but do not block the caller (mirrors the
+///     `localStorage` failure mode, where a quota-exceeded `setItem`
+///     also can't be reported through a sync trait).
+///
+/// Result: an in-flight write to IndexedDB that doesn't complete
+/// before a page-unload is lost. Production callers tolerate this
+/// because the data is re-derivable on next login (OIDC refresh
+/// token, push registration grant, etc.).
+#[cfg(target_arch = "wasm32")]
+pub struct IndexedDbSecureKeyStore {
+    service_name: String,
+    db_name: String,
+    cache: Arc<Mutex<HashMap<String, String>>>,
+    /// Non-extractable AES-GCM CryptoKey, cloned cheaply via JsValue
+    /// reference counting. Used by spawn_local persistence tasks. The
+    /// `IndexedDbSendBoundary` wrapper attests Send+Sync on wasm32
+    /// where there is exactly one thread — `JsValue` is `!Send` by
+    /// default because wasm-bindgen has to accommodate the
+    /// (currently theoretical) future where multiple wasm threads can
+    /// share JS values.
+    crypto_key: IndexedDbSendBoundary<wasm_bindgen::JsValue>,
+}
+
+/// wasm32-only wrapper that asserts Send + Sync on a value that is
+/// only ever touched from the single wasm thread. The
+/// [`SecureKeyStore`] trait requires Send + Sync; wasm32 has no real
+/// thread sharing, so this is sound.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+struct IndexedDbSendBoundary<T>(std::sync::Arc<T>);
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl<T> Send for IndexedDbSendBoundary<T> {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl<T> Sync for IndexedDbSendBoundary<T> {}
+
+#[cfg(target_arch = "wasm32")]
+impl IndexedDbSecureKeyStore {
+    /// IndexedDB database version. Bump when the object-store schema
+    /// changes; the `onupgradeneeded` handler will fire.
+    const DB_VERSION: u32 = 1;
+    const OBJECT_STORE_ENTRIES: &'static str = "entries";
+    const OBJECT_STORE_KEYS: &'static str = "wrapping_keys";
+    const WRAPPING_KEY_PRIMARY: &'static str = "primary";
+    /// Key-derivation parameters. PBKDF2 over a stable installation
+    /// salt → AES-GCM 256-bit non-extractable key. Iterations are
+    /// 100k to keep init cost bounded; in-origin attackers don't
+    /// benefit from raising it.
+    const PBKDF2_ITERATIONS: u32 = 100_000;
+    const SALT_BYTES: usize = 16;
+
+    /// Open / create the IndexedDB database, derive (or recover) the
+    /// non-extractable AES-GCM wrapping key, then decrypt every
+    /// existing entry into the in-process cache. Returns a fully
+    /// initialised store ready for sync access via the
+    /// [`SecureKeyStore`] trait.
+    pub async fn new_async(service_name: &str) -> Result<Self, SecureKeyStoreError> {
+        let db_name = format!("yougen.secret.{service_name}");
+        let db = Self::open_db(&db_name).await?;
+        let crypto_key = Self::load_or_derive_wrapping_key(&db, service_name).await?;
+        let cache = Self::load_and_decrypt_cache(&db, &crypto_key).await?;
+        Ok(Self {
+            service_name: service_name.to_owned(),
+            db_name,
+            cache: Arc::new(Mutex::new(cache)),
+            crypto_key: IndexedDbSendBoundary(Arc::new(crypto_key)),
+        })
+    }
+
+    async fn open_db(db_name: &str) -> Result<web_sys::IdbDatabase, SecureKeyStoreError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
+        })?;
+        let factory = window
+            .indexed_db()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB: {err:?}")))?
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("window.indexedDB unavailable"))?;
+        let open_req = factory
+            .open_with_u32(db_name, Self::DB_VERSION)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB.open: {err:?}")))?;
+        // onupgradeneeded synchronously creates the two object stores
+        // when version bumps (first install: version goes 0 → 1).
+        let on_upgrade = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+            move |event: web_sys::Event| {
+                let request: web_sys::IdbOpenDbRequest = match event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
+                {
+                    Some(r) => r,
+                    None => return,
+                };
+                let db_value = match request.result() {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+                let db: web_sys::IdbDatabase = match db_value.dyn_into() {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                let _ = db.create_object_store(Self::OBJECT_STORE_ENTRIES);
+                let _ = db.create_object_store(Self::OBJECT_STORE_KEYS);
+            },
+        );
+        open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
+        let result = JsFuture::from(js_sys::Promise::new(&mut |resolve, reject| {
+            let resolve_clone = resolve.clone();
+            let reject_clone = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |event: web_sys::Event| {
+                    if let Some(request) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
+                    {
+                        match request.result() {
+                            Ok(value) => {
+                                let _ = resolve_clone.call1(&wasm_bindgen::JsValue::NULL, &value);
+                            }
+                            Err(err) => {
+                                let _ = reject_clone.call1(&wasm_bindgen::JsValue::NULL, &err);
+                            }
+                        }
+                    }
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |event: web_sys::Event| {
+                    let err = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
+                        .and_then(|r| r.error().ok())
+                        .map(|opt| {
+                            opt.map(wasm_bindgen::JsValue::from)
+                                .unwrap_or(wasm_bindgen::JsValue::from_str(
+                                    "indexedDB open error (no DOMException)",
+                                ))
+                        })
+                        .unwrap_or_else(|| {
+                            wasm_bindgen::JsValue::from_str("indexedDB open error (no target)")
+                        });
+                    let _ = reject.call1(&wasm_bindgen::JsValue::NULL, &err);
+                },
+            );
+            open_req.set_onsuccess(Some(on_success.unchecked_ref()));
+            open_req.set_onerror(Some(on_error.unchecked_ref()));
+        }))
+        .await
+        .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}")))?;
+        // Keep the closure alive past the await — `forget` here
+        // intentionally leaks because the closure has the lifetime
+        // of the request which is consumed once.
+        on_upgrade.forget();
+        let db: web_sys::IdbDatabase = result
+            .dyn_into()
+            .map_err(|_| SecureKeyStoreError::Backend("open did not return IdbDatabase".to_owned()))?;
+        Ok(db)
+    }
+
+    async fn load_or_derive_wrapping_key(
+        db: &web_sys::IdbDatabase,
+        service_name: &str,
+    ) -> Result<wasm_bindgen::JsValue, SecureKeyStoreError> {
+        // Read the existing CryptoKey if present; else generate +
+        // store. IndexedDB preserves the `extractable: false`
+        // attribute on round-trip via structured clone.
+        if let Some(existing) =
+            Self::idb_get_value(db, Self::OBJECT_STORE_KEYS, Self::WRAPPING_KEY_PRIMARY).await?
+        {
+            return Ok(existing);
+        }
+        let key = Self::derive_fresh_wrapping_key(service_name).await?;
+        Self::idb_put_value(
+            db,
+            Self::OBJECT_STORE_KEYS,
+            Self::WRAPPING_KEY_PRIMARY,
+            &key,
+        )
+        .await?;
+        Ok(key)
+    }
+
+    async fn derive_fresh_wrapping_key(
+        service_name: &str,
+    ) -> Result<wasm_bindgen::JsValue, SecureKeyStoreError> {
+        use js_sys::{Array, Object, Reflect, Uint8Array};
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
+        })?;
+        let subtle = window
+            .crypto()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
+            .subtle();
+        // Step 1: import the service_name bytes as a PBKDF2 base key.
+        let base_material = Uint8Array::new_with_length(service_name.len() as u32);
+        base_material.copy_from(service_name.as_bytes());
+        let pbkdf2_usages = Array::new();
+        pbkdf2_usages.push(&JsValue::from_str("deriveKey"));
+        let base_key_promise = subtle
+            .import_key_with_str(
+                "raw",
+                base_material.as_ref(),
+                "PBKDF2",
+                false,
+                &JsValue::from(pbkdf2_usages),
+            )
+            .map_err(|err| {
+                SecureKeyStoreError::Backend(format!("subtle.importKey PBKDF2: {err:?}"))
+            })?;
+        let base_key = JsFuture::from(base_key_promise).await.map_err(|err| {
+            SecureKeyStoreError::Backend(format!("subtle.importKey PBKDF2 awaited: {err:?}"))
+        })?;
+        // Step 2: deriveKey → AES-GCM 256, extractable=false.
+        let mut salt = [0u8; Self::SALT_BYTES];
+        getrandom::fill(&mut salt)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom salt: {err}")))?;
+        let salt_array = Uint8Array::new_with_length(Self::SALT_BYTES as u32);
+        salt_array.copy_from(&salt);
+        let derive_algo = Object::new();
+        Reflect::set(
+            &derive_algo,
+            &JsValue::from_str("name"),
+            &JsValue::from_str("PBKDF2"),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("derive name set: {err:?}")))?;
+        Reflect::set(&derive_algo, &JsValue::from_str("salt"), &salt_array)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("derive salt set: {err:?}")))?;
+        Reflect::set(
+            &derive_algo,
+            &JsValue::from_str("iterations"),
+            &JsValue::from_f64(Self::PBKDF2_ITERATIONS as f64),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("derive iter set: {err:?}")))?;
+        Reflect::set(
+            &derive_algo,
+            &JsValue::from_str("hash"),
+            &JsValue::from_str("SHA-256"),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("derive hash set: {err:?}")))?;
+        let derived_algo = Object::new();
+        Reflect::set(
+            &derived_algo,
+            &JsValue::from_str("name"),
+            &JsValue::from_str("AES-GCM"),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("derived name set: {err:?}")))?;
+        Reflect::set(
+            &derived_algo,
+            &JsValue::from_str("length"),
+            &JsValue::from_f64(256.0),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("derived length set: {err:?}")))?;
+        let aes_usages = Array::new();
+        aes_usages.push(&JsValue::from_str("encrypt"));
+        aes_usages.push(&JsValue::from_str("decrypt"));
+        let base_key_typed: web_sys::CryptoKey = base_key.dyn_into().map_err(|_| {
+            SecureKeyStoreError::Backend("PBKDF2 importKey did not yield CryptoKey".to_owned())
+        })?;
+        let derive_promise = subtle
+            .derive_key_with_object_and_object(
+                &derive_algo,
+                &base_key_typed,
+                &derived_algo,
+                false,
+                &JsValue::from(aes_usages),
+            )
+            .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.deriveKey: {err:?}")))?;
+        let derived = JsFuture::from(derive_promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("deriveKey awaited: {err:?}")))?;
+        Ok(derived)
+    }
+
+    async fn load_and_decrypt_cache(
+        db: &web_sys::IdbDatabase,
+        crypto_key: &wasm_bindgen::JsValue,
+    ) -> Result<HashMap<String, String>, SecureKeyStoreError> {
+        let entries = Self::idb_all_entries(db, Self::OBJECT_STORE_ENTRIES).await?;
+        let mut out = HashMap::with_capacity(entries.len());
+        for (key_name, wrapped_bytes) in entries {
+            match Self::subtle_decrypt(crypto_key, &wrapped_bytes).await {
+                Ok(plain) => {
+                    if let Ok(s) = String::from_utf8(plain) {
+                        out.insert(key_name, s);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(?err, key=%key_name, "indexedDB entry decrypt failed");
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn idb_get_value(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<wasm_bindgen::JsValue>, SecureKeyStoreError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use wasm_bindgen_futures::JsFuture;
+        let tx = db
+            .transaction_with_str(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("tx open: {err:?}")))?;
+        let obj_store = tx
+            .object_store(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("objectStore: {err:?}")))?;
+        let request = obj_store
+            .get(&JsValue::from_str(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("get: {err:?}")))?;
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let reject_for_error = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |event: web_sys::Event| {
+                    if let Some(req) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
+                    {
+                        match req.result() {
+                            Ok(v) => {
+                                let _ = resolve.call1(&JsValue::NULL, &v);
+                            }
+                            Err(err) => {
+                                let _ = reject.call1(&JsValue::NULL, &err);
+                            }
+                        }
+                    }
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = reject_for_error.call1(
+                        &JsValue::NULL,
+                        &JsValue::from_str("indexedDB get error"),
+                    );
+                },
+            );
+            request.set_onsuccess(Some(on_success.unchecked_ref()));
+            request.set_onerror(Some(on_error.unchecked_ref()));
+        });
+        let value = JsFuture::from(promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("get awaited: {err:?}")))?;
+        if value.is_undefined() || value.is_null() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    async fn idb_put_value(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+        key: &str,
+        value: &wasm_bindgen::JsValue,
+    ) -> Result<(), SecureKeyStoreError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use wasm_bindgen_futures::JsFuture;
+        let tx = db
+            .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("tx open rw: {err:?}")))?;
+        let obj_store = tx
+            .object_store(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("objectStore: {err:?}")))?;
+        let request = obj_store
+            .put_with_key(value, &JsValue::from_str(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("put: {err:?}")))?;
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let resolve = resolve.clone();
+            let reject = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = reject.call1(
+                        &JsValue::NULL,
+                        &JsValue::from_str("indexedDB put error"),
+                    );
+                },
+            );
+            request.set_onsuccess(Some(on_success.unchecked_ref()));
+            request.set_onerror(Some(on_error.unchecked_ref()));
+        });
+        JsFuture::from(promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("put awaited: {err:?}")))?;
+        Ok(())
+    }
+
+    async fn idb_delete_value(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+        key: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use wasm_bindgen_futures::JsFuture;
+        let tx = db
+            .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("tx open rw: {err:?}")))?;
+        let obj_store = tx
+            .object_store(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("objectStore: {err:?}")))?;
+        let request = obj_store
+            .delete(&JsValue::from_str(key))
+            .map_err(|err| SecureKeyStoreError::Backend(format!("delete: {err:?}")))?;
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let resolve = resolve.clone();
+            let reject = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = reject.call1(
+                        &JsValue::NULL,
+                        &JsValue::from_str("indexedDB delete error"),
+                    );
+                },
+            );
+            request.set_onsuccess(Some(on_success.unchecked_ref()));
+            request.set_onerror(Some(on_error.unchecked_ref()));
+        });
+        JsFuture::from(promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("delete awaited: {err:?}")))?;
+        Ok(())
+    }
+
+    /// Read every entry in `store` as `(key, value)`. The promise
+    /// pattern is openCursor → onsuccess loops until cursor is None.
+    async fn idb_all_entries(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, SecureKeyStoreError> {
+        use js_sys::{Object, Reflect, Uint8Array};
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        let tx = db
+            .transaction_with_str(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("tx open: {err:?}")))?;
+        let obj_store = tx
+            .object_store(store)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("objectStore: {err:?}")))?;
+        // getAll + getAllKeys is the simplest cross-browser way to
+        // enumerate without cursor-callback gymnastics.
+        let values_req = obj_store
+            .get_all()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getAll: {err:?}")))?;
+        let keys_req = obj_store
+            .get_all_keys()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys: {err:?}")))?;
+        let values_promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let reject_for_error = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |event: web_sys::Event| {
+                    if let Some(req) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
+                    {
+                        match req.result() {
+                            Ok(v) => {
+                                let _ = resolve.call1(&JsValue::NULL, &v);
+                            }
+                            Err(err) => {
+                                let _ = reject.call1(&JsValue::NULL, &err);
+                            }
+                        }
+                    }
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = reject_for_error.call1(
+                        &JsValue::NULL,
+                        &JsValue::from_str("indexedDB getAll error"),
+                    );
+                },
+            );
+            values_req.set_onsuccess(Some(on_success.unchecked_ref()));
+            values_req.set_onerror(Some(on_error.unchecked_ref()));
+        });
+        let keys_promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let reject_for_error = reject.clone();
+            let on_success = wasm_bindgen::closure::Closure::once_into_js(
+                move |event: web_sys::Event| {
+                    if let Some(req) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
+                    {
+                        match req.result() {
+                            Ok(v) => {
+                                let _ = resolve.call1(&JsValue::NULL, &v);
+                            }
+                            Err(err) => {
+                                let _ = reject.call1(&JsValue::NULL, &err);
+                            }
+                        }
+                    }
+                },
+            );
+            let on_error = wasm_bindgen::closure::Closure::once_into_js(
+                move |_event: web_sys::Event| {
+                    let _ = reject_for_error.call1(
+                        &JsValue::NULL,
+                        &JsValue::from_str("indexedDB getAllKeys error"),
+                    );
+                },
+            );
+            keys_req.set_onsuccess(Some(on_success.unchecked_ref()));
+            keys_req.set_onerror(Some(on_error.unchecked_ref()));
+        });
+        let values = JsFuture::from(values_promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getAll awaited: {err:?}")))?;
+        let keys = JsFuture::from(keys_promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys awaited: {err:?}")))?;
+        let values_arr: js_sys::Array = values.into();
+        let keys_arr: js_sys::Array = keys.into();
+        let len = std::cmp::min(values_arr.length(), keys_arr.length()) as usize;
+        let mut out = Vec::with_capacity(len);
+        for i in 0..len as u32 {
+            let key_value = keys_arr.get(i);
+            let entry_value = values_arr.get(i);
+            let Some(key_str) = key_value.as_string() else {
+                continue;
+            };
+            // entry_value is an Object with { iv: Uint8Array, ct: Uint8Array }.
+            let obj: Object = match entry_value.dyn_into() {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let iv = Reflect::get(&obj, &JsValue::from_str("iv"))
+                .ok()
+                .and_then(|v| v.dyn_into::<Uint8Array>().ok());
+            let ct = Reflect::get(&obj, &JsValue::from_str("ct"))
+                .ok()
+                .and_then(|v| v.dyn_into::<Uint8Array>().ok());
+            let (Some(iv), Some(ct)) = (iv, ct) else {
+                continue;
+            };
+            let mut iv_bytes = vec![0u8; iv.length() as usize];
+            iv.copy_to(&mut iv_bytes);
+            let mut ct_bytes = vec![0u8; ct.length() as usize];
+            ct.copy_to(&mut ct_bytes);
+            let mut packed = Vec::with_capacity(iv_bytes.len() + ct_bytes.len());
+            packed.extend_from_slice(&iv_bytes);
+            packed.extend_from_slice(&ct_bytes);
+            out.push((key_str, packed));
+        }
+        Ok(out)
+    }
+
+    /// Encrypt `plain` against the non-extractable CryptoKey via
+    /// `SubtleCrypto.encrypt({ name: "AES-GCM", iv })`. Returns
+    /// `[iv (12 bytes) || ciphertext]` so the on-disk record is
+    /// self-contained.
+    async fn subtle_encrypt(
+        crypto_key: &wasm_bindgen::JsValue,
+        plain: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
+        use js_sys::{Object, Reflect, Uint8Array};
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
+        })?;
+        let subtle = window
+            .crypto()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
+            .subtle();
+        let mut iv = [0u8; 12];
+        getrandom::fill(&mut iv)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom iv: {err}")))?;
+        let iv_array = Uint8Array::new_with_length(12);
+        iv_array.copy_from(&iv);
+        let algo = Object::new();
+        Reflect::set(
+            &algo,
+            &JsValue::from_str("name"),
+            &JsValue::from_str("AES-GCM"),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("algo name: {err:?}")))?;
+        Reflect::set(&algo, &JsValue::from_str("iv"), &iv_array)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("algo iv: {err:?}")))?;
+        let plain_array = Uint8Array::new_with_length(plain.len() as u32);
+        plain_array.copy_from(plain);
+        let key_typed: web_sys::CryptoKey = crypto_key
+            .clone()
+            .dyn_into()
+            .map_err(|_| SecureKeyStoreError::Backend("wrapping key not CryptoKey".to_owned()))?;
+        let promise = subtle
+            .encrypt_with_object_and_buffer_source(&algo, &key_typed, plain_array.as_ref())
+            .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.encrypt: {err:?}")))?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("encrypt awaited: {err:?}")))?;
+        let buf: js_sys::ArrayBuffer = result
+            .dyn_into()
+            .map_err(|_| SecureKeyStoreError::Backend("encrypt did not return ArrayBuffer".to_owned()))?;
+        let view = Uint8Array::new(&buf);
+        let mut ct = vec![0u8; view.length() as usize];
+        view.copy_to(&mut ct);
+        Ok((iv.to_vec(), ct))
+    }
+
+    async fn subtle_decrypt(
+        crypto_key: &wasm_bindgen::JsValue,
+        packed: &[u8],
+    ) -> Result<Vec<u8>, SecureKeyStoreError> {
+        use js_sys::{Object, Reflect, Uint8Array};
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        if packed.len() < 12 {
+            return Err(SecureKeyStoreError::Backend(
+                "subtle_decrypt: packed too short".to_owned(),
+            ));
+        }
+        let (iv, ct) = packed.split_at(12);
+        let window = web_sys::window().ok_or_else(|| {
+            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
+        })?;
+        let subtle = window
+            .crypto()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
+            .subtle();
+        let iv_array = Uint8Array::new_with_length(12);
+        iv_array.copy_from(iv);
+        let algo = Object::new();
+        Reflect::set(
+            &algo,
+            &JsValue::from_str("name"),
+            &JsValue::from_str("AES-GCM"),
+        )
+        .map_err(|err| SecureKeyStoreError::Backend(format!("algo name: {err:?}")))?;
+        Reflect::set(&algo, &JsValue::from_str("iv"), &iv_array)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("algo iv: {err:?}")))?;
+        let ct_array = Uint8Array::new_with_length(ct.len() as u32);
+        ct_array.copy_from(ct);
+        let key_typed: web_sys::CryptoKey = crypto_key
+            .clone()
+            .dyn_into()
+            .map_err(|_| SecureKeyStoreError::Backend("wrapping key not CryptoKey".to_owned()))?;
+        let promise = subtle
+            .decrypt_with_object_and_buffer_source(&algo, &key_typed, ct_array.as_ref())
+            .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.decrypt: {err:?}")))?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("decrypt awaited: {err:?}")))?;
+        let buf: js_sys::ArrayBuffer = result
+            .dyn_into()
+            .map_err(|_| SecureKeyStoreError::Backend("decrypt did not return ArrayBuffer".to_owned()))?;
+        let view = Uint8Array::new(&buf);
+        let mut out = vec![0u8; view.length() as usize];
+        view.copy_to(&mut out);
+        Ok(out)
+    }
+
+    /// Persist `(iv, ct)` against `key` in the entries object store.
+    /// Called from sync trait paths via `spawn_local`.
+    async fn persist_entry_value(
+        db_name: &str,
+        crypto_key: &wasm_bindgen::JsValue,
+        key: &str,
+        plain: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        use js_sys::{Object, Reflect, Uint8Array};
+        use wasm_bindgen::JsValue;
+        let db = Self::open_db(db_name).await?;
+        let (iv, ct) = Self::subtle_encrypt(crypto_key, plain.as_bytes()).await?;
+        let entry = Object::new();
+        let iv_array = Uint8Array::new_with_length(iv.len() as u32);
+        iv_array.copy_from(&iv);
+        let ct_array = Uint8Array::new_with_length(ct.len() as u32);
+        ct_array.copy_from(&ct);
+        Reflect::set(&entry, &JsValue::from_str("iv"), &iv_array)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("entry iv: {err:?}")))?;
+        Reflect::set(&entry, &JsValue::from_str("ct"), &ct_array)
+            .map_err(|err| SecureKeyStoreError::Backend(format!("entry ct: {err:?}")))?;
+        Self::idb_put_value(&db, Self::OBJECT_STORE_ENTRIES, key, entry.as_ref()).await
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::fmt::Debug for IndexedDbSecureKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexedDbSecureKeyStore")
+            .field("service_name", &self.service_name)
+            .field("db_name", &self.db_name)
+            .field(
+                "cache_entries",
+                &self.cache.lock().map(|g| g.len()).unwrap_or(0),
+            )
+            .field("crypto_key", &"<non-extractable CryptoKey>")
+            .finish()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl SecureKeyStore for IndexedDbSecureKeyStore {
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        {
+            let mut guard = self
+                .cache
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
+            guard.insert(key.to_owned(), value.to_owned());
+        }
+        // Fire-and-forget persistence. Failures are logged; the cache
+        // already has the new value so subsequent reads succeed even
+        // if the write loses out to a page-unload race.
+        let db_name = self.db_name.clone();
+        let key_for_async = key.to_owned();
+        let value_for_async = value.to_owned();
+        let crypto_key = self.crypto_key.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(err) =
+                Self::persist_entry_value(&db_name, &crypto_key.0, &key_for_async, &value_for_async)
+                    .await
+            {
+                tracing::warn!(?err, key=%key_for_async, "indexedDB persist failed");
+            }
+        });
+        Ok(())
+    }
+
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        let guard = self
+            .cache
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
+        Ok(guard.get(key).cloned())
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        {
+            let mut guard = self
+                .cache
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
+            guard.remove(key);
+        }
+        let db_name = self.db_name.clone();
+        let key_for_async = key.to_owned();
+        wasm_bindgen_futures::spawn_local(async move {
+            let db = match Self::open_db(&db_name).await {
+                Ok(d) => d,
+                Err(err) => {
+                    tracing::warn!(?err, "indexedDB delete: open failed");
+                    return;
+                }
+            };
+            if let Err(err) =
+                Self::idb_delete_value(&db, Self::OBJECT_STORE_ENTRIES, &key_for_async).await
+            {
+                tracing::warn!(?err, key=%key_for_async, "indexedDB delete failed");
+            }
+        });
+        Ok(())
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "indexed_db_subtle_aes_gcm"
+    }
+}
+
+/// Sprint Q1 第二十二增量 (H6): wasm32-only async upgrade path.
+///
+/// The boot sequence on wasm32 looks like:
+///
+///   1. App `main` calls [`default_secure_key_store`] synchronously
+///      and receives a [`LocalStorageSecureKeyStore`]. This unblocks
+///      first paint without waiting on IndexedDB/SubtleCrypto.
+///   2. App `main` then `spawn_local`s an async task that calls
+///      `upgrade_wasm_secure_key_store_async(service_name).await`,
+///      which returns either:
+///        * `Ok(Some(store))` — a fully-initialised
+///          [`IndexedDbSecureKeyStore`] ready to replace the
+///          LocalStorage store. The app should hot-swap the
+///          `Arc<dyn SecureKeyStore>` in its app state.
+///        * `Ok(None)` — IndexedDB or SubtleCrypto were
+///          unavailable (private-mode Firefox, file:// origin,
+///          Tor Browser hardened). Keep the LocalStorage store.
+///        * `Err(...)` — backend failure during init. Caller should
+///          log and keep the LocalStorage store.
+///   3. The first time an entry is written through the IndexedDB
+///      store, [`migrate_localstorage_entries_to_indexeddb`] (also
+///      async) can be invoked to copy any pre-existing wrapped
+///      secrets across, then drop the LocalStorage seed.
+///
+/// Returning `Option<Arc<...>>` rather than panicking on
+/// "browser doesn't support this" mirrors the rest of the secure
+/// key store contract (sync `default_secure_key_store` also falls
+/// back to `MemorySecureKeyStore` rather than crashing).
+#[cfg(target_arch = "wasm32")]
+pub async fn upgrade_wasm_secure_key_store_async(
+    service_name: &str,
+) -> Result<Option<Arc<dyn SecureKeyStore>>, SecureKeyStoreError> {
+    // Probe for SubtleCrypto first — older browsers / file:// origins
+    // expose `crypto` but not `crypto.subtle`. We can't reasonably
+    // recover from a missing SubtleCrypto, so return `Ok(None)` and
+    // let the caller keep the LocalStorage fallback.
+    if !indexeddb_and_subtle_available() {
+        tracing::info!("IndexedDB or SubtleCrypto unavailable; keeping LocalStorage store");
+        return Ok(None);
+    }
+    match IndexedDbSecureKeyStore::new_async(service_name).await {
+        Ok(store) => Ok(Some(Arc::new(store))),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn indexeddb_and_subtle_available() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let idb_present = window
+        .indexed_db()
+        .ok()
+        .flatten()
+        .is_some();
+    // `crypto.subtle()` on web_sys returns a `SubtleCrypto` directly
+    // (no `Result` / `Option`), but the underlying property access
+    // panics on browsers that don't expose it. Probe by catching the
+    // JS-side `undefined` via a runtime check: convert the SubtleCrypto
+    // reference into a JsValue and verify it's not undefined / null.
+    let subtle_present = window
+        .crypto()
+        .map(|c| {
+            let subtle: wasm_bindgen::JsValue = c.subtle().into();
+            !subtle.is_undefined() && !subtle.is_null()
+        })
+        .unwrap_or(false);
+    idb_present && subtle_present
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sprint Q1 第十七增量 (H2): the AEAD wrap helper MUST be a
+    /// real ChaCha20-Poly1305 wrap — round-trip recovers the
+    /// plaintext, identical inputs produce different ciphertexts
+    /// (random nonce), and decryption with the wrong key fails
+    /// closed.
+    #[test]
+    fn wrap_secret_round_trips_and_is_nonce_unique() {
+        let key = [0x42u8; 32];
+        let secret = "rt-1234567890";
+
+        let wrapped_a = wrap_secret(secret, &key).expect("wrap a");
+        let wrapped_b = wrap_secret(secret, &key).expect("wrap b");
+        // Random nonce → identical plaintexts encrypt to distinct
+        // ciphertexts.
+        assert_ne!(wrapped_a, wrapped_b);
+
+        let recovered = unwrap_secret(&wrapped_a, &key).expect("unwrap a");
+        assert_eq!(recovered.as_deref(), Some(secret));
+
+        // Wrong key → MAC fails → None (we collapse decrypt errors
+        // into None so callers see "secret missing or corrupt").
+        let wrong_key = [0x21u8; 32];
+        let recovered_wrong = unwrap_secret(&wrapped_a, &wrong_key).expect("unwrap call ok");
+        assert!(recovered_wrong.is_none());
+
+        // Tampered ciphertext → also None.
+        let mut tampered = wrapped_a.into_bytes();
+        let last_idx = tampered.len() - 1;
+        // Flip a single base64 character — close to guaranteed to break
+        // the MAC.
+        tampered[last_idx] = if tampered[last_idx] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(tampered).unwrap();
+        let recovered_tampered = unwrap_secret(&tampered, &key).expect("unwrap call ok");
+        assert!(recovered_tampered.is_none());
+    }
+
+    /// Sprint Q1 第十七增量 (H2): malformed input (non-base64, too
+    /// short to carry a nonce, etc.) MUST not panic — the helper
+    /// returns Ok(None) so callers treat it the same as "secret
+    /// missing".
+    #[test]
+    fn unwrap_secret_tolerates_malformed_blobs() {
+        let key = [0x10u8; 32];
+        assert!(unwrap_secret("not-base64-@@!!", &key).unwrap().is_none());
+        assert!(unwrap_secret("", &key).unwrap().is_none());
+        // Valid base64 but shorter than 12 bytes (no nonce).
+        assert!(unwrap_secret(&STANDARD_NO_PAD.encode([0u8; 8]), &key).unwrap().is_none());
+    }
 
     #[test]
     fn memory_store_round_trips_a_secret() {
@@ -528,30 +1839,138 @@ mod tests {
         assert_eq!(store.backend_name(), "keyring");
     }
 
-    /// C34.1: ensure the Android stub trait surface compiles + the
-    /// metadata accessors do not panic. The store/get/delete methods
-    /// `unimplemented!()` until the JNI shim lands, so we deliberately
-    /// avoid touching them from unit tests.
+    /// Sprint Q1 第二十二增量 (H1): Android Keystore store
+    /// constructed against an explicit in-memory bridge round-trips
+    /// secrets through the bridge. Replaces the C34.1 stub test:
+    /// store/get/delete now actually work because the host-bridge
+    /// pattern moves the FFI out of yougen and into a pluggable
+    /// trait. A real Android build wires a JNI-backed bridge here;
+    /// this test wires `MemorySecureKeyStore` behind a thin adapter
+    /// so the surface compiles + functions on any target.
     #[cfg(target_os = "android")]
     #[test]
-    fn android_keystore_stub_metadata_is_stable() {
-        let store = AndroidKeystoreSecureKeyStore::new("yougen.test.unit");
+    fn android_keystore_via_bridge_round_trips_secrets() {
+        let bridge: Arc<dyn HostSecretBridge> =
+            Arc::new(TestHostSecretBridge::new("android-keystore"));
+        let store = AndroidKeystoreSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
         assert_eq!(store.service_name(), "yougen.test.unit");
         assert_eq!(store.backend_name(), "android-keystore");
-        // Trait-object construction must succeed at compile time so the
-        // dyn-dispatched call sites in `default_secure_key_store` stay
-        // sound once the FFI lands.
-        let _: Arc<dyn SecureKeyStore> = Arc::new(store);
+        store.store_secret("refresh_token", "rt-123").unwrap();
+        assert_eq!(
+            store.get_secret("refresh_token").unwrap().as_deref(),
+            Some("rt-123")
+        );
+        store.delete_secret("refresh_token").unwrap();
+        assert_eq!(store.get_secret("refresh_token").unwrap(), None);
     }
 
-    /// C34.1: matching iOS stub metadata test — same rationale as the
-    /// Android case above.
+    /// Sprint Q1 第二十二增量 (H1): matching iOS test — same
+    /// rationale as the Android case above.
     #[cfg(target_os = "ios")]
     #[test]
-    fn ios_keychain_stub_metadata_is_stable() {
-        let store = IosKeychainSecureKeyStore::new("yougen.test.unit");
+    fn ios_keychain_via_bridge_round_trips_secrets() {
+        let bridge: Arc<dyn HostSecretBridge> =
+            Arc::new(TestHostSecretBridge::new("ios-keychain"));
+        let store = IosKeychainSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
         assert_eq!(store.service_name(), "yougen.test.unit");
         assert_eq!(store.backend_name(), "ios-keychain");
-        let _: Arc<dyn SecureKeyStore> = Arc::new(store);
+        store.store_secret("refresh_token", "rt-123").unwrap();
+        assert_eq!(
+            store.get_secret("refresh_token").unwrap().as_deref(),
+            Some("rt-123")
+        );
+        store.delete_secret("refresh_token").unwrap();
+        assert_eq!(store.get_secret("refresh_token").unwrap(), None);
+    }
+
+    /// Sprint Q1 第二十二增量 (H1): HostBridgeSecureKeyStore wires
+    /// the right service_name + key tuple through to the bridge.
+    /// Exercised cross-target because the bridge contract MUST be
+    /// callable from non-mobile builds too (it's the same trait
+    /// surface).
+    #[test]
+    fn host_bridge_store_namespaces_by_service_name() {
+        let bridge: Arc<dyn HostSecretBridge> =
+            Arc::new(TestHostSecretBridge::new("test-bridge"));
+        let store_a = HostBridgeSecureKeyStore::new("svc.a", bridge.clone());
+        let store_b = HostBridgeSecureKeyStore::new("svc.b", bridge.clone());
+        store_a.store_secret("k", "v-a").unwrap();
+        store_b.store_secret("k", "v-b").unwrap();
+        assert_eq!(store_a.get_secret("k").unwrap().as_deref(), Some("v-a"));
+        assert_eq!(store_b.get_secret("k").unwrap().as_deref(), Some("v-b"));
+        // Deleting from store_a must not affect store_b — service_name
+        // is part of the bridge key tuple.
+        store_a.delete_secret("k").unwrap();
+        assert_eq!(store_a.get_secret("k").unwrap(), None);
+        assert_eq!(store_b.get_secret("k").unwrap().as_deref(), Some("v-b"));
+    }
+
+    /// Sprint Q1 第二十二增量 (H1): backend_name flows from the
+    /// bridge's `backend_label` so diagnostic UI can distinguish
+    /// Android Keystore vs iOS Keychain.
+    #[test]
+    fn host_bridge_store_surface_backend_label_from_bridge() {
+        let bridge: Arc<dyn HostSecretBridge> =
+            Arc::new(TestHostSecretBridge::new("custom-label"));
+        let store = HostBridgeSecureKeyStore::new("svc", bridge);
+        assert_eq!(store.backend_name(), "custom-label");
+    }
+
+    /// In-process [`HostSecretBridge`] used by mobile-platform unit
+    /// tests so the round-trip can run on any target. Stores entries
+    /// in a `(service_name, key) -> value` map. NOT a real Android /
+    /// iOS implementation — production hosts wire JNI / Security.framework.
+    struct TestHostSecretBridge {
+        label: &'static str,
+        inner: std::sync::Mutex<std::collections::HashMap<(String, String), String>>,
+    }
+
+    impl TestHostSecretBridge {
+        fn new(label: &'static str) -> Self {
+            Self {
+                label,
+                inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+            }
+        }
+    }
+
+    impl HostSecretBridge for TestHostSecretBridge {
+        fn put(
+            &self,
+            service_name: &str,
+            key: &str,
+            value: &str,
+        ) -> Result<(), SecureKeyStoreError> {
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("lock: {err}")))?;
+            guard.insert((service_name.to_owned(), key.to_owned()), value.to_owned());
+            Ok(())
+        }
+        fn get(
+            &self,
+            service_name: &str,
+            key: &str,
+        ) -> Result<Option<String>, SecureKeyStoreError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("lock: {err}")))?;
+            Ok(guard
+                .get(&(service_name.to_owned(), key.to_owned()))
+                .cloned())
+        }
+        fn delete(&self, service_name: &str, key: &str) -> Result<(), SecureKeyStoreError> {
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("lock: {err}")))?;
+            guard.remove(&(service_name.to_owned(), key.to_owned()));
+            Ok(())
+        }
+        fn backend_label(&self) -> &'static str {
+            self.label
+        }
     }
 }

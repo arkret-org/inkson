@@ -14,7 +14,7 @@ use crate::{
         estimate_passphrase_strength,
     },
     routes::Route,
-    views::helpers::{authed_api, with_authed_api},
+    views::helpers::with_authed_api,
     workflows::blocked_release_workflows,
 };
 
@@ -54,13 +54,10 @@ fn push_read_receipt_account_data(
         &state_store.read().read_receipt_flow_overrides(),
     );
     spawn(async move {
-        let api = match authed_api(&base_url, api_token) {
-            Ok(api) => api,
-            Err(_) => return,
-        };
-        match api
-            .set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body)
-            .await
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body).await
+        })
+        .await
         {
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
@@ -68,8 +65,8 @@ fn push_read_receipt_account_data(
                     "soland account_data PUT returned {status}; local state still authoritative"
                 );
             }
-            Err(error) => {
-                tracing::warn!("account_data PUT for read-receipt prefs failed: {error}");
+            Err(err) => {
+                tracing::warn!("account_data PUT for read-receipt prefs failed: {}", err.display());
             }
         }
     });
@@ -88,14 +85,17 @@ fn push_space_remark_account_data(
 ) {
     let key = crate::account_data::space_remark_account_data_key(&space_id);
     spawn(async move {
-        let api = match authed_api(&base_url, api_token) {
-            Ok(api) => api,
-            Err(_) => return,
-        };
         if remark.is_empty() {
-            if let Err(error) = api.delete_account_data(&key).await {
+            let key_for_log = key.clone();
+            if let Err(err) = with_authed_api(&base_url, api_token, |api| {
+                let key = key.clone();
+                async move { api.delete_account_data(&key).await }
+            })
+            .await
+            {
                 tracing::debug!(
-                    "account_data DELETE for {key} failed: {error}; local state still authoritative"
+                    "account_data DELETE for {key_for_log} failed: {}; local state still authoritative",
+                    err.display()
                 );
             }
             return;
@@ -107,15 +107,21 @@ fn push_space_remark_account_data(
                 return;
             }
         };
-        match api.set_account_data(&key, body).await {
+        let key_for_log = key.clone();
+        match with_authed_api(&base_url, api_token, |api| {
+            let key = key.clone();
+            async move { api.set_account_data(&key, body).await }
+        })
+        .await
+        {
             Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
             Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for {key} returned {status}; local state still authoritative"
+                    "soland account_data PUT for {key_for_log} returned {status}; local state still authoritative"
                 );
             }
-            Err(error) => {
-                tracing::warn!("account_data PUT for {key} failed: {error}");
+            Err(err) => {
+                tracing::warn!("account_data PUT for {key_for_log} failed: {}", err.display());
             }
         }
     });
@@ -675,27 +681,26 @@ pub fn SettingsPanel(
                                         VAULT_ARGON2_T,
                                         VAULT_ARGON2_P,
                                     );
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => match api
-                                            .put_key_backup(&backup_id, body)
-                                            .await
-                                        {
-                                            Ok(_) => {
-                                                key_backup_status.set(format!(
-                                                    "Backup {backup_id} stored ({} bytes ciphertext)",
-                                                    ct.ciphertext.len()
-                                                ));
-                                                key_backup_passphrase.set(String::new());
-                                            }
-                                            Err(error) => key_backup_status
-                                                .set(format!("Backup store failed: {error}")),
-                                        },
-                                        Err(error) => key_backup_status
-                                            .set(format!("Backup API unavailable: {error}")),
+                                    let backup_id_clone = backup_id.clone();
+                                    let backup_id_for_log = backup_id.clone();
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.put_key_backup(&backup_id_clone, body).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            key_backup_status.set(format!(
+                                                "Backup {backup_id_for_log} stored ({} bytes ciphertext)",
+                                                ct.ciphertext.len()
+                                            ));
+                                            key_backup_passphrase.set(String::new());
+                                        }
+                                        Err(err) => key_backup_status
+                                            .set(format!("Backup store failed: {}", err.display())),
                                     }
                                 });
                             },
-                            "Store Backup"
+                            {crate::i18n::tr("settings.store_backup")}
                         }
                         button {
                             class: "secondary",
@@ -829,23 +834,24 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.mimi_group_info("01JSMIMI").await {
-                                                Ok(response) => {
-                                                    mimi_receipt.set(format!(
-                                                        "group-info {} participants {}",
-                                                        response.room_id,
-                                                        response.participants.len()
-                                                    ));
-                                                    status.set("MIMI groupInfo loaded".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let message = format!("MIMI groupInfo failed: {error}");
-                                                    mimi_receipt.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.mimi_group_info("01JSMIMI").await
+                                        })
+                                        .await
+                                        {
+                                            Ok(response) => {
+                                                mimi_receipt.set(format!(
+                                                    "group-info {} participants {}",
+                                                    response.room_id,
+                                                    response.participants.len()
+                                                ));
+                                                status.set("MIMI groupInfo loaded".to_owned());
+                                            }
+                                            Err(err) => {
+                                                let message = format!("MIMI groupInfo failed: {}", err.display());
+                                                mimi_receipt.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
@@ -860,27 +866,28 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.mimi_identifier_query(json!({
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.mimi_identifier_query(json!({
                                                 "query": "mimi://remote.example/alice",
                                                 "privacy_mode": "private_identifier_query"
-                                            })).await {
-                                                Ok(response) => {
-                                                    mimi_receipt.set(format!(
-                                                        "identifier {} reachable {} mapped {}",
-                                                        response.query,
-                                                        response.reachable,
-                                                        response.mapped_did.unwrap_or_else(|| "none".to_owned())
-                                                    ));
-                                                    status.set("MIMI identifier query completed".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let message = format!("MIMI identifier query failed: {error}");
-                                                    mimi_receipt.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                            })).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(response) => {
+                                                mimi_receipt.set(format!(
+                                                    "identifier {} reachable {} mapped {}",
+                                                    response.query,
+                                                    response.reachable,
+                                                    response.mapped_did.unwrap_or_else(|| "none".to_owned())
+                                                ));
+                                                status.set("MIMI identifier query completed".to_owned());
+                                            }
+                                            Err(err) => {
+                                                let message = format!("MIMI identifier query failed: {}", err.display());
+                                                mimi_receipt.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
@@ -895,27 +902,28 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.mimi_submit_message("01JSMIMI", json!({
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.mimi_submit_message("01JSMIMI", json!({
                                                 "source_format": "text/markdown;variant=GFM-MIMI",
                                                 "body": "MIMI interop test from yougen",
                                                 "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
-                                            })).await {
-                                                Ok(response) => {
-                                                    mimi_receipt.set(format!(
-                                                        "submit-message {} {}",
-                                                        response.mimi_message_id.unwrap_or_else(|| "no-message-id".to_owned()),
-                                                        response.mapped_operation_id.unwrap_or_else(|| "no-operation".to_owned())
-                                                    ));
-                                                    status.set("MIMI test message submitted".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let message = format!("MIMI submit failed: {error}");
-                                                    mimi_receipt.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                            })).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(response) => {
+                                                mimi_receipt.set(format!(
+                                                    "submit-message {} {}",
+                                                    response.mimi_message_id.unwrap_or_else(|| "no-message-id".to_owned()),
+                                                    response.mapped_operation_id.unwrap_or_else(|| "no-operation".to_owned())
+                                                ));
+                                                status.set("MIMI test message submitted".to_owned());
+                                            }
+                                            Err(err) => {
+                                                let message = format!("MIMI submit failed: {}", err.display());
+                                                mimi_receipt.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
@@ -930,26 +938,27 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match api.mimi_proxy_download(json!({
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.mimi_proxy_download(json!({
                                                 "blob_ref": "cx:blob:sha256:e2e",
                                                 "asset_privacy_policy": "provider_proxy"
-                                            })).await {
-                                                Ok(response) => {
-                                                    mimi_receipt.set(format!(
-                                                        "proxy-download {} {}",
-                                                        response.blob_ref,
-                                                        response.media_type.unwrap_or_else(|| "unknown".to_owned())
-                                                    ));
-                                                    status.set("MIMI proxy download prepared".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let message = format!("MIMI proxy download failed: {error}");
-                                                    mimi_receipt.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("MIMI API unavailable: {error}")),
+                                            })).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(response) => {
+                                                mimi_receipt.set(format!(
+                                                    "proxy-download {} {}",
+                                                    response.blob_ref,
+                                                    response.media_type.unwrap_or_else(|| "unknown".to_owned())
+                                                ));
+                                                status.set("MIMI proxy download prepared".to_owned());
+                                            }
+                                            Err(err) => {
+                                                let message = format!("MIMI proxy download failed: {}", err.display());
+                                                mimi_receipt.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
@@ -998,41 +1007,45 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     let dev = device_id();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match crate::push::build_register_request(&dev) {
-                                                Ok(request) => match api.register_push_device_with_request(&request).await {
-                                                    Ok(push) => {
-                                                        let mut local_push = chime::RegisterDeviceResponse::default();
-                                                        local_push.ok = push.ok;
-                                                        local_push.registration_id = push.registration_id.clone();
-                                                        local_push.expires_at = push.expires_at.clone();
-                                                        let local_state = crate::push::registration_state_from_response(
-                                                            &request,
-                                                            &local_push,
-                                                        );
-                                                        state_store.write().save_push_registration(local_state);
-                                                        let label = push.registration_id.unwrap_or_else(|| "registered".to_owned());
-                                                        push_state.set(label.clone());
-                                                        status.set(format!("Push registered: {label}"));
-                                                    }
-                                                    Err(error) => {
-                                                        let message = format!("push register failed: {error}");
-                                                        push_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                },
-                                                Err(error) => {
-                                                    let message = format!("push unavailable: {error}");
-                                                    push_state.set(message.clone());
-                                                    status.set(message);
-                                                }
-                                            },
-                                            Err(error) => status.set(format!("push API unavailable: {error}")),
+                                        let request = match crate::push::build_register_request(&dev) {
+                                            Ok(r) => r,
+                                            Err(error) => {
+                                                let message = format!("push unavailable: {error}");
+                                                push_state.set(message.clone());
+                                                status.set(message);
+                                                return;
+                                            }
+                                        };
+                                        let request_for_async = request.clone();
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.register_push_device_with_request(&request_for_async).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(push) => {
+                                                let mut local_push = chime::RegisterDeviceResponse::default();
+                                                local_push.ok = push.ok;
+                                                local_push.registration_id = push.registration_id.clone();
+                                                local_push.expires_at = push.expires_at.clone();
+                                                let local_state = crate::push::registration_state_from_response(
+                                                    &request,
+                                                    &local_push,
+                                                );
+                                                state_store.write().save_push_registration(local_state);
+                                                let label = push.registration_id.unwrap_or_else(|| "registered".to_owned());
+                                                push_state.set(label.clone());
+                                                status.set(format!("Push registered: {label}"));
+                                            }
+                                            Err(err) => {
+                                                let message = format!("push register failed: {}", err.display());
+                                                push_state.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
                             },
-                            "Register Push"
+                            {crate::i18n::tr("settings.register_push")}
                         }
                         button {
                             class: "secondary",
@@ -1044,28 +1057,33 @@ pub fn SettingsPanel(
                                     let dev = device_id();
                                     let existing = state_store.read().push_registration();
                                     spawn(async move {
-                                        match authed_api(&base, api_token) {
-                                            Ok(api) => match crate::push::build_unregister_request(&dev, existing.as_ref()) {
-                                                Ok(request) => match api.unregister_push_device_with_request(&request).await {
-                                                    Ok(_) => {
-                                                        state_store.write().clear_push_registration();
-                                                        push_state.set("Not registered".to_owned());
-                                                        status.set("Push unregistered".to_owned());
-                                                    }
-                                                    Err(error) => {
-                                                        let message = format!("push unregister failed: {error}");
-                                                        push_state.set(message.clone());
-                                                        status.set(message);
-                                                    }
-                                                },
-                                                Err(error) => status.set(format!("push unregister unavailable: {error}")),
-                                            },
-                                            Err(error) => status.set(format!("push API unavailable: {error}")),
+                                        let request = match crate::push::build_unregister_request(&dev, existing.as_ref()) {
+                                            Ok(r) => r,
+                                            Err(error) => {
+                                                status.set(format!("push unregister unavailable: {error}"));
+                                                return;
+                                            }
+                                        };
+                                        match with_authed_api(&base, api_token, |api| async move {
+                                            api.unregister_push_device_with_request(&request).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(_) => {
+                                                state_store.write().clear_push_registration();
+                                                push_state.set("Not registered".to_owned());
+                                                status.set("Push unregistered".to_owned());
+                                            }
+                                            Err(err) => {
+                                                let message = format!("push unregister failed: {}", err.display());
+                                                push_state.set(message.clone());
+                                                status.set(message);
+                                            }
                                         }
                                     });
                                 }
                             },
-                            "Unregister Push"
+                            {crate::i18n::tr("settings.unregister_push")}
                         }
                     }
                     div { class: "event", "data-testid": "notifications-mute-summary",
@@ -1154,14 +1172,14 @@ pub fn SettingsPanel(
                                 let base = base_url();
                                 let api_token = token();
                                 spawn(async move {
-                                    if let Ok(api) = authed_api(&base, api_token) {
-                                        let _ = api
-                                            .set_account_data(
-                                                READ_RECEIPT_ACCOUNT_DATA_KEY,
-                                                body,
-                                            )
-                                            .await;
-                                    }
+                                    let _ = with_authed_api(&base, api_token, |api| async move {
+                                        api.set_account_data(
+                                            READ_RECEIPT_ACCOUNT_DATA_KEY,
+                                            body,
+                                        )
+                                        .await
+                                    })
+                                    .await;
                                 });
                             },
                         }

@@ -33,7 +33,7 @@ use crate::{
         encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key,
         generate_recovery_key,
     },
-    views::helpers::{authed_api, with_authed_api},
+    views::helpers::with_authed_api,
 };
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
@@ -355,7 +355,7 @@ pub fn RecoveryPanel(
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
-                        strong { "Primary" }
+                        strong { {crate::i18n::tr("recovery.primary")} }
                         span { "Encrypted Cloud Vault" }
                         div { class: "muted", "Argon2id + xchacha20poly1305" }
                     }
@@ -517,15 +517,12 @@ pub fn RecoveryPanel(
                                         VAULT_ARGON2_T,
                                         VAULT_ARGON2_P,
                                     );
-                                    let api = match authed_api(&base, api_token) {
-                                        Ok(api) => api,
-                                        Err(err) => {
-                                            vault_sync.set(SyncBadge::Failed);
-                                            vault_status.set(format!("API unavailable: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    match api.put_key_backup(&backup_id_for_async, body).await {
+                                    let backup_id_clone = backup_id_for_async.clone();
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.put_key_backup(&backup_id_clone, body).await
+                                    })
+                                    .await
+                                    {
                                         Ok(_) => {
                                             let now = chrono::Utc::now().to_rfc3339();
                                             vault_backup_id.set(backup_id_for_async.clone());
@@ -544,23 +541,23 @@ pub fn RecoveryPanel(
                                         }
                                         Err(err) => {
                                             vault_sync.set(SyncBadge::Failed);
-                                            vault_status.set(format!("Upload failed: {err}"));
+                                            vault_status.set(format!("Upload failed: {}", err.display()));
                                         }
                                     }
                                 });
                             }
                         },
-                        "Encrypt and upload"
+                        {crate::i18n::tr("recovery.vault_encrypt_button")}
                     }
                     button {
                         class: "secondary",
                         "data-testid": "vault-rotate-passphrase",
                         disabled: vault_backup_id().is_empty(),
-                        title: "Reuses the existing backup_id but re-derives a fresh KEK / nonce.",
+                        title: crate::i18n::tr("recovery.vault_rotate_hint"),
                         onclick: move |_| {
-                            vault_status.set("Enter a new passphrase above and click Encrypt and upload to rotate.".to_owned());
+                            vault_status.set(crate::i18n::tr("recovery.vault_rotate_prompt"));
                         },
-                        "Rotate passphrase"
+                        {crate::i18n::tr("recovery.vault_rotate_button")}
                     }
                 }
             }
@@ -962,10 +959,12 @@ pub fn RecoveryPanel(
                                                 restore_loading.set(true);
                                                 restore_status.set(format!("Deleting {bid}…"));
                                                 spawn(async move {
-                                                    let result = match authed_api(&base, api_token) {
-                                                        Ok(api) => api.delete_key_backup(&bid).await,
-                                                        Err(err) => Err(anyhow::anyhow!("API unavailable: {err}")),
-                                                    };
+                                                    let bid_clone = bid.clone();
+                                                    let result = with_authed_api(&base, api_token, |api| async move {
+                                                        api.delete_key_backup(&bid_clone).await
+                                                    })
+                                                    .await
+                                                    .map_err(|err| anyhow::anyhow!("{}", err.display()));
                                                     match result {
                                                         Ok(_) => {
                                                             restore_status.set(format!("Deleted {bid}"));

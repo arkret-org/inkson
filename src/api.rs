@@ -210,6 +210,65 @@ use crate::models::{
 };
 use crate::operation::{OperationEnvelope, uuid_v7};
 
+/// Sync-Projection (Q1 第十增量) — generic wrapper for soland's
+/// `/api/v1/projection/{places|flows}` lifecycle endpoints. Keeps the
+/// query response shape symmetric across the two surfaces so the kanban
+/// hydrate path can pluck `.places` / `.flows` with the same code.
+#[derive(Clone, Debug, Deserialize)]
+pub struct LifecycleProjectionResponse<T> {
+    pub space_id: String,
+    #[serde(default)]
+    pub total: u32,
+    #[serde(default = "Vec::new", alias = "places", alias = "flows")]
+    pub items: Vec<T>,
+}
+
+/// Server-side Place row from `GET /api/v1/projection/places`. Only the
+/// fields the kanban hydrate path actually consumes are typed; the rest
+/// are tolerated via `#[serde(default)]` so future soland additions
+/// don't break deserialization.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PlaceProjectionView {
+    pub place_id: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub title: String,
+    /// `active` / `archived` / `tombstoned` per spec
+    /// `common-fields.md §5.1`.
+    pub state: String,
+    #[serde(default)]
+    pub rank: Option<String>,
+    #[serde(default)]
+    pub parent_ref: Option<String>,
+}
+
+/// Server-side Flow row from `GET /api/v1/projection/flows`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct FlowProjectionView {
+    pub flow_id: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub title: String,
+    /// `active` / `archived` / `deleted` / `redacted` per spec
+    /// `common-fields.md §5.1`. yougen folds the two terminal states
+    /// into `FlowLifecycleState::Tombstoned`.
+    pub state: String,
+}
+
+/// Sprint Q1 第十五增量: server-side Morph row from
+/// `GET /api/v1/projection/morphs` (soland round 15a). Same enum as
+/// Flow per spec §5.1.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MorphProjectionView {
+    pub morph_id: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub morph_type: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub state: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct ContrixApi {
     base_url: Url,
@@ -1061,6 +1120,69 @@ impl ContrixApi {
         .await
     }
 
+    /// Sprint Q1 第十三增量: publish an MLS `MlsKeyPackageRecord` to
+    /// soland's `/api/v1/keys/upload` endpoint so peers can fetch it via
+    /// `query_keys` and `add_member()` against it. Other key fields
+    /// (one_time_keys / fallback_keys / device_signature) carry their
+    /// default-test shape; soland tolerates them being placeholder when
+    /// the only consumer is the MLS Welcome flow.
+    pub async fn publish_mls_key_package(
+        &self,
+        device_id: &str,
+        record: &contrix_sdk::MlsKeyPackageRecord,
+    ) -> anyhow::Result<KeysUploadResponse> {
+        self.post_json(
+            "api/v1/keys/upload",
+            json!({
+                "device_id": device_id,
+                "one_time_keys": {
+                    "signed_curve25519:yougen-otk-1": {
+                        "key_id": "yougen-otk-1",
+                        "key": "yougen-one-time"
+                    }
+                },
+                "fallback_keys": {},
+                "device_signature": {"alg": "EdDSA", "signature": "yougen-dev-signature"},
+                "mls_key_packages": {
+                    record.keypackage_id.clone(): serde_json::to_value(record)?,
+                },
+            }),
+        )
+        .await
+    }
+
+    /// Sprint Q1 第十三增量: fetch a peer's MLS key package via
+    /// `query_keys`, decoding the most recent `mls_key_packages` entry
+    /// into a typed `MlsKeyPackageRecord`. Returns `Ok(None)` when the
+    /// device exists but has no MLS key package on file (in which case
+    /// the caller should fall back to a non-MLS path or ask the peer to
+    /// publish).
+    pub async fn fetch_mls_key_package(
+        &self,
+        actor: &str,
+        device_id: &str,
+    ) -> anyhow::Result<Option<contrix_sdk::MlsKeyPackageRecord>> {
+        let resp = self.query_keys(actor, device_id).await?;
+        let device_keys = &resp.device_keys;
+        let packages = device_keys
+            .get(actor)
+            .and_then(|actor_map| actor_map.get(device_id))
+            .and_then(|device_value| device_value.get("mls_key_packages"));
+        let Some(packages) = packages else {
+            return Ok(None);
+        };
+        let map = match packages.as_object() {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let Some((_, value)) = map.iter().next() else {
+            return Ok(None);
+        };
+        let record: contrix_sdk::MlsKeyPackageRecord =
+            serde_json::from_value(value.clone())?;
+        Ok(Some(record))
+    }
+
     pub async fn send_to_device(
         &self,
         actor: &str,
@@ -1428,6 +1550,42 @@ impl ContrixApi {
     ) -> anyhow::Result<contrix_sdk::CollectionProjectionResponse> {
         self.post_json(&format!("api/v1/views/{view_id}/projection"), json!({}))
             .await
+    }
+
+    // Sync-Projection (Q1 第十增量):
+    // Pull the canonical Place / Flow lifecycle state for a Space so the
+    // kanban view can hydrate `column.state` / `card.lifecycle` after a
+    // refresh. Pairs with soland's
+    // `routing::events::projection_query` (round 14d+; surface added in
+    // yougen Q1 第十增量).
+    pub async fn list_place_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<PlaceProjectionView>> {
+        // `cx:space:<uuid>` is RFC-3986-safe in query string position
+        // (colon + hyphen + alpha-digit), so no percent-encoding needed.
+        let path = format!("api/v1/projection/places?space_id={space_id}");
+        self.get_json(&path).await
+    }
+
+    pub async fn list_flow_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
+        let path = format!("api/v1/projection/flows?space_id={space_id}");
+        self.get_json(&path).await
+    }
+
+    /// Sprint Q1 第十五增量: parity with `list_place_projections` /
+    /// `list_flow_projections`. Soland round 15a added the morphs
+    /// read-side endpoint; this is the symmetric yougen consumer so
+    /// future morph-aware views can hydrate post-refresh state.
+    pub async fn list_morph_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<MorphProjectionView>> {
+        let path = format!("api/v1/projection/morphs?space_id={space_id}");
+        self.get_json(&path).await
     }
 
     // ── Device & Crypto ─────────────────────────────────────────────
