@@ -33,10 +33,9 @@ enum VerifyMethod {
     Sas,
 }
 
-/// Sprint Q1 第十八增量 (B2-UI-poll): walk a
-/// `DeviceMessagesReceiveResponse` JSON representation and return the
-/// first non-empty `body.key` (or `content.key`) string carried by a
-/// `cx.key.verification.key` typed envelope.
+/// Walk a `DeviceMessagesReceiveResponse` JSON representation and
+/// return the first non-empty `body.key` (or `content.key`) string
+/// carried by a `cx.key.verification.key` typed envelope.
 ///
 /// Soland's wire shape is either `{ "events": [...] }` (flat) or
 /// `{ "messages": { actor: { device_id: { type, content|body, ... } } } }`
@@ -204,22 +203,22 @@ pub fn VerifyDevicePanel(
     let mut sas_code = use_signal(|| String::new());
     let mut qr_data = use_signal(|| String::new());
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
-    // Sprint Q1 第十七增量 (B2-UI): SAS key-exchange state. The
-    // ephemeral keypair is generated lazily on "Generate my key"
-    // click + held in an Arc so a single getrandom call covers the
-    // lifetime of this SAS session. Peer's public key is pasted (or
-    // received via device_message poll once that wiring lands) into
-    // `peer_public_b64`. When both halves are present, the SAS
-    // display block recomputes the emoji + decimal pair from the
-    // real X25519 shared secret instead of the
-    // `target_device_did + sas_code` placeholder info.
+    // SAS key-exchange state. The ephemeral keypair is generated
+    // lazily on "Generate my key" click + held in an Arc so a
+    // single getrandom call covers the lifetime of this SAS
+    // session. Peer's public key is pasted (or auto-filled by the
+    // device_message poll below) into `peer_public_b64`. When both
+    // halves are present, the SAS display block recomputes the
+    // emoji + decimal pair from the real X25519 shared secret
+    // instead of the `target_device_did + sas_code` placeholder
+    // info.
     let mut ephemeral_keypair = use_signal(
         || Option::<std::sync::Arc<contrix_sdk::key_verification::EphemeralX25519Keypair>>::None,
     );
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
 
-    // Sprint Q1 第十八增量 (B2-UI-poll): once the user generates their
+    // Once the user generates their
     // own ephemeral keypair, start polling `/api/v1/device_messages`
     // every ~3 s looking for a `cx.key.verification.key` envelope from
     // the peer device. When one arrives, auto-fill `peer_public_b64`
@@ -418,13 +417,13 @@ pub fn VerifyDevicePanel(
                                 {crate::i18n::tr("verify_device.start_sas")}
                             }
                         }
-                        // Sprint Q1 第十七增量 (B2-UI): X25519 key
-                        // exchange controls. Generate this side's
-                        // ephemeral keypair, ship the public half via
-                        // `/api/v1/device_messages`(type=
-                        // `cx.key.verification.key`), and accept the
-                        // peer's public key by paste (until the
-                        // device_message poll auto-fills it).
+                        // X25519 key exchange controls. Generate
+                        // this side's ephemeral keypair, ship the
+                        // public half via `/api/v1/device_messages`
+                        // (type=`cx.key.verification.key`), and
+                        // accept the peer's public key (either
+                        // pasted manually or auto-filled by the
+                        // device_message poll).
                         div { class: "event", "data-testid": "sas-x25519-exchange",
                             div { class: "event-head",
                                 span { "Key exchange (X25519)" }
@@ -527,15 +526,15 @@ pub fn VerifyDevicePanel(
                         }
                         if !sas_code().is_empty() {
                             {
-                                // Sprint Q1 第十七增量 (B2-UI): when this
-                                // side's `EphemeralX25519Keypair` is
-                                // generated AND the peer's public key
-                                // has been pasted, compute the real
-                                // X25519 shared secret and derive the
-                                // SAS pair from it (Sprint Q1 第十五
-                                // 增量 B2 SDK helper). Two devices
-                                // doing the same exchange produce
-                                // identical emoji + digits — the
+                                // When this side's
+                                // `EphemeralX25519Keypair` is
+                                // generated AND the peer's public
+                                // key has been pasted, compute the
+                                // real X25519 shared secret and
+                                // derive the SAS pair from it via
+                                // the SDK helper. Two devices doing
+                                // the same exchange produce
+                                // identical emoji + digits - the
                                 // contract verify-device relies on.
                                 //
                                 // Fallback: when peer key is not yet

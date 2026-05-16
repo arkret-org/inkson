@@ -90,6 +90,21 @@ pub enum Route {
 
     #[route("/agents", crate::app::RouterView)]
     Agents,
+
+    /// Agent Workspace — controller's private mirror Space entry.
+    /// Spec `cx.profile.agent_workspace.v1`.
+    #[route("/agent-workspace", crate::app::RouterView)]
+    AgentWorkspace,
+
+    /// Single agent_task detail page.
+    #[route("/agent-workspace/task/:task_id", AgentTaskPage)]
+    AgentTask { task_id: String },
+}
+
+#[component]
+fn AgentTaskPage(task_id: String) -> Element {
+    let _ = task_id;
+    rsx! { crate::app::RouterView {} }
 }
 
 #[component]
@@ -170,6 +185,7 @@ impl Route {
             Route::Quarantine => View::Quarantine,
             Route::Applets => View::Applets,
             Route::Agents => View::Agents,
+            Route::AgentWorkspace | Route::AgentTask { .. } => View::AgentWorkspace,
         }
     }
 
@@ -237,6 +253,7 @@ impl From<View> for Route {
             View::Quarantine => Route::Quarantine,
             View::Applets => Route::Applets,
             View::Agents => Route::Agents,
+            View::AgentWorkspace => Route::AgentWorkspace,
         }
     }
 }

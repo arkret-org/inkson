@@ -324,7 +324,7 @@ pub fn DashboardPanel(
                                         let api_token = token();
                                         health_loading.set(true);
                                         spawn(async move {
-                                            // C2f: fold the four sequential checks into a
+                                            // Fold the four sequential checks into a
                                             // single `with_authed_api` so an Unavailable or
                                             // AuthExpired error tags every row at once
                                             // instead of silently returning an empty Vec.

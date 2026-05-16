@@ -1,12 +1,9 @@
-//! Round 27: client-side telemetry mirroring sodmin's
-//! `utils/audit.rs` shape.
+//! Client-side telemetry mirroring sodmin's `utils/audit.rs` shape.
 //!
-//! Why this exists: yougen lacked a structured "what action did the
-//! user just take" trace that the operator console (sodmin) already
-//! has. Until round 27 every relevant event was either an unstructured
-//! `tracing::info!` line or simply not recorded. This module gives
-//! every interactive surface (settings page, device-revoke, OIDC
-//! refresh, MLS commit, push subscribe) a single typed call site:
+//! Why this exists: yougen needs a structured "what action did the
+//! user just take" trace matching the operator console (sodmin). This
+//! module gives every interactive surface (settings page, device-revoke,
+//! OIDC refresh, MLS commit, push subscribe) a single typed call site:
 //!
 //! ```ignore
 //! use yougen::telemetry::{emit_user_action_log, UserActionOutcome};

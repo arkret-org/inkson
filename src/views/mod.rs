@@ -37,6 +37,7 @@
 
 pub mod audit;
 pub mod call;
+pub mod agent_workspace;
 pub mod agents;
 pub mod applets;
 pub mod chat;
@@ -53,7 +54,7 @@ pub mod kanban;
 pub mod login;
 pub mod notifications;
 pub mod onboarding;
-/// Round 23 (M6): invite-quarantine list + admin approve/reject buttons.
+/// Invite-quarantine list + admin approve/reject buttons.
 /// (claude-design no dedicated page yet; lives at `/quarantine` and is
 /// linked from the Settings sidebar for admins.)
 pub mod quarantine;
@@ -79,7 +80,7 @@ pub enum View {
     Audit,
     Kanban,
     Chat,
-    /// Notifications. Per `models/object-model-core.md` §1 (after Round 7),
+    /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
     /// The only canonical events feeding this view are `cx.read.marker`,
     /// `cx.receipt.read`, `@-mention` extractions, plus capability/grant
@@ -97,22 +98,27 @@ pub enum View {
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity setup surface.
     /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
     Onboarding,
-    /// Round 23 (M6): invite-quarantine list. Admins see all entries
-    /// from coauth's `GET /admin/v1/invite-quarantine`; non-admins
-    /// see their own quarantined invites. Approve / reject buttons
-    /// POST `/admin/v1/invite-quarantine/{id}/resolve`.
+    /// Invite-quarantine list. Admins see all entries from coauth's
+    /// `GET /admin/v1/invite-quarantine`; non-admins see their own
+    /// quarantined invites. Approve / reject buttons POST
+    /// `/admin/v1/invite-quarantine/{id}/resolve`.
     Quarantine,
-    /// Sprint Q1 第十四增量 (V1): applet registry + discovery + per-
-    /// session controls. Spec `extensions/applet-integration.md`. Writes
+    /// Applet registry + discovery + per-session controls.
+    /// Spec `extensions/applet-integration.md`. Writes
     /// `cx.applet.registration` / `cx.applet.discovery` /
     /// `cx.applet.protocol_session.{start,status}` / `cx.applet.bridge_error`
     /// via `crate::operation::cx_ops::applet_*` builders.
     Applets,
-    /// Sprint Q1 第十四增量 (V2): agent endpoint + protocol_session monitor.
+    /// Agent endpoint + protocol_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `cx.agent.endpoint` /
     /// `cx.agent.protocol_session.{start,status,result}` via
     /// `crate::operation::cx_ops::agent_*` builders.
     Agents,
+    /// Agent Workspace dashboard — controller's private mirror Space entry.
+    /// Spec `extensions/agent-workspace-profile.md` (`cx.profile.agent_workspace.v1`).
+    /// Shows pending / in-flight / completed agent_task objects, with
+    /// transparency / source_authority FSM cell state visible.
+    AgentWorkspace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

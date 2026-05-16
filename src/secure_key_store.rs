@@ -1,4 +1,4 @@
-//! Round 33 (C33.2): platform-secure secret storage.
+//! Platform-secure secret storage.
 //!
 //! `crate::key_store` already abstracts the per-device *signing* identity
 //! (ed25519 seed → did:key). This module covers the orthogonal axis:
@@ -37,7 +37,7 @@ use chacha20poly1305::{
     aead::{Aead, OsRng},
 };
 
-/// Sprint Q1 第十七增量 (H2): AEAD-wrap a UTF-8 secret string with
+/// AEAD-wrap a UTF-8 secret string with
 /// ChaCha20-Poly1305 + a 32-byte wrapping key. Returns a base64
 /// (no-pad) string with a 12-byte random nonce prefix so the same
 /// secret encrypts to a different ciphertext each time. Use
@@ -57,7 +57,7 @@ pub fn wrap_secret(secret: &str, wrapping_key: &[u8; 32]) -> Result<String, Secu
     Ok(STANDARD_NO_PAD.encode(&packed))
 }
 
-/// Sprint Q1 第十七增量 (H2): inverse of [`wrap_secret`]. Returns
+/// Inverse of [`wrap_secret`]. Returns
 /// `Ok(None)` when the wrapped blob fails to decode / authenticate
 /// (likely cause: the wrapping key has changed or the entry was
 /// rolled in by a different installation).
@@ -281,8 +281,8 @@ impl SecureKeyStore for KeyringSecureKeyStore {
     }
 }
 
-/// Sprint Q1 第二十二增量 (H1): mobile **host-bridge** delegation
-/// pattern for Android Keystore + iOS Keychain access.
+/// Mobile **host-bridge** delegation pattern for
+/// Android Keystore + iOS Keychain access.
 ///
 /// The mobile-platform FFI surface (JNI on Android,
 /// `Security.framework` on iOS) cannot be cleanly initialised from
@@ -571,18 +571,16 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     #[cfg(target_arch = "wasm32")]
     {
-        // Sprint Q1 第十七增量 (H2): wasm32 build now persists
-        // AEAD-wrapped secrets to `localStorage` rather than dropping
-        // them on memory-only fallback. See
-        // `LocalStorageSecureKeyStore` doc-comment for the
-        // wrapping-key bootstrap details.
+        // The wasm32 build persists AEAD-wrapped secrets to `localStorage`
+        // rather than dropping them on a memory-only fallback. See
+        // `LocalStorageSecureKeyStore` doc-comment for the wrapping-key
+        // bootstrap details.
         //
-        // Sprint Q1 第二十二增量 (H6): the LocalStorage store remains
-        // the sync first-paint fallback; the app upgrades to
-        // `IndexedDbSecureKeyStore` via
-        // `upgrade_wasm_secure_key_store_async` once async init can
-        // run. Both stores share the same `SecureKeyStore` interface
-        // so callers don't care which tier they got.
+        // The LocalStorage store remains the sync first-paint fallback;
+        // the app upgrades to `IndexedDbSecureKeyStore` via
+        // `upgrade_wasm_secure_key_store_async` once async init can run.
+        // Both stores share the same `SecureKeyStore` interface so callers
+        // don't care which tier they got.
         match LocalStorageSecureKeyStore::new(service_name) {
             Ok(store) => return Arc::new(store),
             Err(err) => {
@@ -600,12 +598,11 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     }
     #[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
     {
-        // Sprint Q1 第二十二增量 (H1): if the host runtime has
-        // installed a HostSecretBridge, route through it; otherwise
-        // fall back to MemorySecureKeyStore with the documented
-        // "secrets in plaintext heap" caveat. The host typically
-        // calls install_host_secret_bridge() from its JNI init
-        // before mounting the Dioxus app.
+        // If the host runtime has installed a HostSecretBridge, route
+        // through it; otherwise fall back to MemorySecureKeyStore with the
+        // documented "secrets in plaintext heap" caveat. The host typically
+        // calls install_host_secret_bridge() from its JNI init before
+        // mounting the Dioxus app.
         if let Some(store) = AndroidKeystoreSecureKeyStore::from_installed(service_name.to_owned())
         {
             return Arc::new(store);
@@ -641,7 +638,7 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     }
 }
 
-/// Sprint Q1 第十七增量 (H2): wasm32-only persistence-backed store
+/// wasm32-only persistence-backed store
 /// that wraps secrets with ChaCha20-Poly1305 before stashing them in
 /// `localStorage`. The wrapping key is a per-installation random
 /// 32-byte seed that itself lives in `localStorage` under a separate
@@ -709,10 +706,9 @@ impl LocalStorageSecureKeyStore {
         })
     }
 
-    // Sprint Q1 第二十四增量 (H6-migrate): visibility bumped to
-    // module-scope so `migrate_localstorage_entries_to_indexeddb`
-    // can reuse the same getter without re-implementing the window
-    // / Storage probe.
+    // Module-scope visibility so `migrate_localstorage_entries_to_indexeddb`
+    // can reuse the same getter without re-implementing the window /
+    // Storage probe.
     pub(super) fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
         let window = web_sys::window().ok_or_else(|| {
             SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
@@ -780,9 +776,9 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     }
 }
 
-/// Sprint Q1 第二十二增量 (H6): wasm32 IndexedDB-backed secret store
-/// that upgrades the wrapping-key tier from H2's `localStorage` byte
-/// seed to a SubtleCrypto-derived **non-extractable** AES-GCM key.
+/// wasm32 IndexedDB-backed secret store that upgrades the wrapping-key
+/// tier from the `localStorage` byte seed to a SubtleCrypto-derived
+/// **non-extractable** AES-GCM key.
 ///
 /// ## Threat model improvement over [`LocalStorageSecureKeyStore`]
 ///
@@ -847,13 +843,12 @@ pub struct IndexedDbSecureKeyStore {
     /// (currently theoretical) future where multiple wasm threads can
     /// share JS values.
     crypto_key: IndexedDbSendBoundary<wasm_bindgen::JsValue>,
-    /// Sprint Q1 第二十五增量 (R-Opt-1): cached `IdbDatabase` handle
-    /// reused across every persistence write/delete. Before R-Opt-1
-    /// each `spawn_local` callback inside `store_secret` /
-    /// `delete_secret` called `Self::open_db` afresh — opening a new
-    /// IndexedDB connection (and re-running `onupgradeneeded` checks)
-    /// on every write. With the cache the connection is opened once
-    /// at `new_async` time and shared for the lifetime of the store.
+    /// Cached `IdbDatabase` handle reused across every persistence
+    /// write/delete. The connection is opened once at `new_async` time
+    /// and shared for the lifetime of the store so each `spawn_local`
+    /// callback inside `store_secret` / `delete_secret` does not have to
+    /// reopen IndexedDB (and re-run `onupgradeneeded` checks) on every
+    /// write.
     db: IndexedDbSendBoundary<web_sys::IdbDatabase>,
 }
 
@@ -1504,9 +1499,9 @@ impl IndexedDbSecureKeyStore {
     }
 
     /// Persist `(iv, ct)` against `key` in the entries object store.
-    /// Called from sync trait paths via `spawn_local`. Sprint Q1
-    /// 第二十五增量 (R-Opt-1): takes a borrowed `IdbDatabase` so the
-    /// cached connection is reused instead of re-opening per write.
+    /// Called from sync trait paths via `spawn_local`. Takes a borrowed
+    /// `IdbDatabase` so the cached connection is reused instead of
+    /// re-opening per write.
     async fn persist_entry_value(
         db: &web_sys::IdbDatabase,
         crypto_key: &wasm_bindgen::JsValue,
@@ -1558,9 +1553,8 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         // already has the new value so subsequent reads succeed even
         // if the write loses out to a page-unload race.
         //
-        // Sprint Q1 第二十五增量 (R-Opt-1): reuse the cached
-        // `IdbDatabase` handle instead of opening a fresh one per
-        // write.
+        // Reuse the cached `IdbDatabase` handle instead of opening a
+        // fresh one per write.
         let key_for_async = key.to_owned();
         let value_for_async = value.to_owned();
         let crypto_key = self.crypto_key.clone();
@@ -1592,9 +1586,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.remove(key);
         }
-        // Sprint Q1 第二十五增量 (R-Opt-1): reuse the cached
-        // `IdbDatabase` handle for the spawned delete (was opening a
-        // fresh connection per call before R-Opt-1).
+        // Reuse the cached `IdbDatabase` handle for the spawned delete.
         let key_for_async = key.to_owned();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
@@ -1612,7 +1604,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
     }
 }
 
-/// Sprint Q1 第二十二增量 (H6): wasm32-only async upgrade path.
+/// wasm32-only async upgrade path.
 ///
 /// The boot sequence on wasm32 looks like:
 ///
@@ -1653,9 +1645,8 @@ pub async fn upgrade_wasm_secure_key_store_async(
         return Ok(None);
     }
     let store = IndexedDbSecureKeyStore::new_async(service_name).await?;
-    // Sprint Q1 第二十四增量 (H6-migrate): one-shot migration of any
-    // pre-existing LocalStorage entries (H2 era) into the new
-    // IndexedDB store, then prune the LocalStorage side so a future
+    // One-shot migration of any pre-existing LocalStorage entries
+    // into the new IndexedDB store, then prune the LocalStorage side so a future
     // disk dump can't recover the seed alongside the ciphertext.
     let migrated = migrate_localstorage_entries_to_indexeddb(service_name, &store)
         .await
@@ -1671,9 +1662,9 @@ pub async fn upgrade_wasm_secure_key_store_async(
     Ok(Some(Arc::new(store)))
 }
 
-/// Sprint Q1 第二十四增量 (H6-migrate): walk `localStorage` looking
-/// for keys under the `yougen.secret.<service_name>.*` prefix written
-/// by H2's [`LocalStorageSecureKeyStore`], decrypt each via the
+/// Walk `localStorage` looking for keys under the
+/// `yougen.secret.<service_name>.*` prefix written by
+/// [`LocalStorageSecureKeyStore`], decrypt each via the
 /// existing AEAD wrapping seed, re-store under the IndexedDB tier
 /// via [`IndexedDbSecureKeyStore::store_secret`], then `removeItem`
 /// the original localStorage key plus the wrapping seed itself.
@@ -1802,8 +1793,8 @@ fn indexeddb_and_subtle_available() -> bool {
 mod tests {
     use super::*;
 
-    /// Sprint Q1 第十七增量 (H2): the AEAD wrap helper MUST be a
-    /// real ChaCha20-Poly1305 wrap — round-trip recovers the
+    /// The AEAD wrap helper MUST be a real ChaCha20-Poly1305 wrap —
+    /// round-trip recovers the
     /// plaintext, identical inputs produce different ciphertexts
     /// (random nonce), and decryption with the wrong key fails
     /// closed.
@@ -1838,8 +1829,8 @@ mod tests {
         assert!(recovered_tampered.is_none());
     }
 
-    /// Sprint Q1 第十七增量 (H2): malformed input (non-base64, too
-    /// short to carry a nonce, etc.) MUST not panic — the helper
+    /// Malformed input (non-base64, too short to carry a nonce, etc.)
+    /// MUST not panic — the helper
     /// returns Ok(None) so callers treat it the same as "secret
     /// missing".
     #[test]
@@ -1968,12 +1959,11 @@ mod tests {
         assert_eq!(store.backend_name(), "keyring");
     }
 
-    /// Sprint Q1 第二十二增量 (H1): Android Keystore store
-    /// constructed against an explicit in-memory bridge round-trips
-    /// secrets through the bridge. Replaces the C34.1 stub test:
-    /// store/get/delete now actually work because the host-bridge
-    /// pattern moves the FFI out of yougen and into a pluggable
-    /// trait. A real Android build wires a JNI-backed bridge here;
+    /// Android Keystore store constructed against an explicit in-memory
+    /// bridge round-trips secrets through the bridge. store/get/delete
+    /// work because the host-bridge pattern moves the FFI out of yougen
+    /// and into a pluggable trait. A real Android build wires a
+    /// JNI-backed bridge here;
     /// this test wires `MemorySecureKeyStore` behind a thin adapter
     /// so the surface compiles + functions on any target.
     #[cfg(target_os = "android")]
@@ -1993,8 +1983,7 @@ mod tests {
         assert_eq!(store.get_secret("refresh_token").unwrap(), None);
     }
 
-    /// Sprint Q1 第二十二增量 (H1): matching iOS test — same
-    /// rationale as the Android case above.
+    /// Matching iOS test — same rationale as the Android case above.
     #[cfg(target_os = "ios")]
     #[test]
     fn ios_keychain_via_bridge_round_trips_secrets() {
@@ -2012,8 +2001,8 @@ mod tests {
         assert_eq!(store.get_secret("refresh_token").unwrap(), None);
     }
 
-    /// Sprint Q1 第二十二增量 (H1): HostBridgeSecureKeyStore wires
-    /// the right service_name + key tuple through to the bridge.
+    /// HostBridgeSecureKeyStore wires the right service_name + key
+    /// tuple through to the bridge.
     /// Exercised cross-target because the bridge contract MUST be
     /// callable from non-mobile builds too (it's the same trait
     /// surface).
@@ -2034,8 +2023,8 @@ mod tests {
         assert_eq!(store_b.get_secret("k").unwrap().as_deref(), Some("v-b"));
     }
 
-    /// Sprint Q1 第二十二增量 (H1): backend_name flows from the
-    /// bridge's `backend_label` so diagnostic UI can distinguish
+    /// `backend_name` flows from the bridge's `backend_label` so
+    /// diagnostic UI can distinguish
     /// Android Keystore vs iOS Keychain.
     #[test]
     fn host_bridge_store_surface_backend_label_from_bridge() {

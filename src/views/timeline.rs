@@ -66,9 +66,9 @@ pub struct TimelineEvent {
     pub tombstone_reason: Option<String>,
     pub revisions: Vec<TimelineRevision>,
     pub pending: bool,
-    /// B7 (Q1 第十一增量): when present, this message carries an
-    /// `encrypted_payload` object that the local MLS group may be able
-    /// to decrypt. Timeline's audit-accessed emitter watches this field
+    /// When present, this message carries an `encrypted_payload`
+    /// object that the local MLS group may be able to decrypt.
+    /// Timeline's audit-accessed emitter watches this field
     /// — on successful decrypt, fires a single `cx.audit.accessed` for
     /// `id` per session (de-duplicated by `audit_accessed_emitted`).
     pub encrypted_payload: Option<serde_json::Value>,
@@ -364,12 +364,12 @@ pub fn TimelinePanel(
         });
     }
 
-    // B7 (Q1 第十一增量): attested-audit emitter. Spec
+    // Attested-audit emitter. Spec
     // `crypto-media/encryption-and-audit.md §11` says
     // `cx.audit.accessed` MUST be fired by readers on every successful
-    // MLS decrypt — until this hook existed, yougen fired it on user-
-    // initiated Mark Read, which is approximately correct but doesn't
-    // distinguish decrypt-success from "user clicked the button". This
+    // MLS decrypt. User-initiated Mark Read is approximately correct
+    // but doesn't distinguish decrypt-success from "user clicked the
+    // button". This
     // future scans the current `timeline()` snapshot for events
     // carrying `encrypted_payload`, attempts a local MLS decrypt via
     // the persisted snapshot for the Space, and on each new success
@@ -667,9 +667,8 @@ pub fn TimelinePanel(
                                                             )),
                                                         }
 
-                                                        // B7 (Q1 第十一增量):
                                                         // `cx.audit.accessed`
-                                                        // is now owned by the
+                                                        // is owned by the
                                                         // dedicated emitter
                                                         // wired to the MLS
                                                         // decrypt-success
@@ -1618,8 +1617,8 @@ fn plaintext_visible_service(base_url: &str) -> String {
         .unwrap_or_else(|| "configured server".to_owned())
 }
 
-/// B7 (Q1 第十一增量) + Sprint Q1 第十二增量: attempt a local MLS
-/// decrypt of an `encrypted_payload` JSON object emitted by chat.rs
+/// Attempt a local MLS decrypt of an `encrypted_payload` JSON object
+/// emitted by chat.rs
 /// Send Secure. Returns `Some(plaintext_bytes)` on successful decrypt,
 /// `None` for every soft failure (no snapshot, snapshot can't be
 /// hydrated with the supplied passphrase, payload doesn't deserialize

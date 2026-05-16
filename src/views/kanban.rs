@@ -182,11 +182,11 @@ impl CardState {
     }
 }
 
-/// Round 24 (F1): board write records now track a Move pipeline submission
-/// instead of an EventEnvelope. The Move's canonical body lives in
-/// `cell_id` + `effect_summary` (string preview); `move_id` is the
-/// content-addressed `cx:move:sha256:...` id. `kind` mirrors the
-/// MoveSubmissionState classifier (`cx.list.create` / `cx.flow.create` /
+/// Board write records track a Move pipeline submission. The Move's
+/// canonical body lives in `cell_id` + `effect_summary` (string preview);
+/// `move_id` is the content-addressed `cx:move:sha256:...` id. `kind`
+/// mirrors the MoveSubmissionState classifier (`cx.list.create` /
+/// `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`contrix_sdk::Move`] serialised to
@@ -510,8 +510,8 @@ pub fn KanbanPanel(
         }
     });
 
-    // Sync-Projection (Q1 第十增量): hydrate Place / Flow lifecycle state
-    // from the soland `/api/v1/projection/{places|flows}` endpoints so
+    // Hydrate Place / Flow lifecycle state from the soland
+    // `/api/v1/projection/{places|flows}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -690,13 +690,13 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "add-column-button",
                             onclick: {
-                                // Round 24 (F1): list-create now travels
-                                // through the canonical Move pipeline. We
-                                // build a `cx.component.flow.position.v1`
-                                // Move whose subject is the list_id and
-                                // whose value carries the list metadata
-                                // (title + rank + container ref). soland's
-                                // reducer treats it as a cas-register set
+                                // List-create travels through the canonical
+                                // Move pipeline. We build a
+                                // `cx.component.flow.position.v1` Move whose
+                                // subject is the list_id and whose value
+                                // carries the list metadata (title + rank +
+                                // container ref). soland's reducer treats it
+                                // as a cas-register set
                                 // and the position cell becomes the
                                 // canonical source of truth for the list.
                                 let base = base_url.clone();
@@ -743,9 +743,8 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "replay-board-queue",
                             onclick: {
-                                // Round 24 (F1): replay path now resubmits
-                                // a queued Move via api.submit_move (no
-                                // event-envelope path).
+                                // Replay path resubmits a queued Move via
+                                // api.submit_move.
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
                                 move |_| {
@@ -1005,13 +1004,13 @@ pub fn KanbanPanel(
                                         class: "primary",
                                         "data-testid": "save-card-button",
                                         onclick: {
-                                            // Round 24 (F1): card create now
-                                            // submits a flow.position Move
-                                            // (subject = flow_id) carrying
-                                            // the canonical position record
-                                            // {list_id, rank, title}. Soland's
-                                            // reducer treats it as cas-register
-                                            // set on the flow.position cell.
+                                            // Card create submits a
+                                            // flow.position Move (subject =
+                                            // flow_id) carrying the canonical
+                                            // position record {list_id, rank,
+                                            // title}. Soland's reducer treats
+                                            // it as cas-register set on the
+                                            // flow.position cell.
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let space = selected_space.clone();
@@ -1454,10 +1453,9 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "queue-link-discussion-event",
                             onclick: {
-                                // Round 24 (F1): flow track member also
-                                // goes through the Move pipeline. We
-                                // record a flow.position Move whose
-                                // payload carries the track binding —
+                                // Flow track member goes through the Move
+                                // pipeline. We record a flow.position Move
+                                // whose payload carries the track binding -
                                 // soland's reducer treats this as a
                                 // metadata update on the same cell.
                                 let base = base_url.clone();
@@ -1499,12 +1497,12 @@ pub fn KanbanPanel(
     }
 }
 
-/// Round 24 (F1): build + sign + submit a `cx.component.flow.position.v1`
-/// Move via `api.submit_move(...)`, recording a [`BoardWriteRecord`] in
-/// the local queue regardless of submit outcome. Used by both list and
-/// card create paths — `subject` is the cell subject (list_id or
-/// flow_id), `kind` is the classifier the MoveSubmissionState tracker
-/// uses to decorate state pills (`cx.list.create` / `cx.flow.create`).
+/// Build + sign + submit a `cx.component.flow.position.v1` Move via
+/// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
+/// queue regardless of submit outcome. Used by both list and card create
+/// paths - `subject` is the cell subject (list_id or flow_id), `kind` is
+/// the classifier the MoveSubmissionState tracker uses to decorate state
+/// pills (`cx.list.create` / `cx.flow.create`).
 fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -1755,8 +1753,8 @@ fn validate_place_lifecycle_transition(
     Ok(())
 }
 
-/// Sync-Projection (Q1 第十增量): map soland's wire state strings into
-/// `PlaceLifecycleState`. Anything we don't recognise stays `Active`
+/// Map soland's wire state strings into `PlaceLifecycleState`.
+/// Anything we don't recognise stays `Active`
 /// (the safe default — server can correct on next sync).
 fn place_state_from_wire(state: &str) -> PlaceLifecycleState {
     match state {
@@ -2650,8 +2648,8 @@ mod tests {
         );
     }
 
-    /// Sync-Projection (Q1 第十增量): wire state strings emitted by
-    /// soland's `/api/v1/projection/{places|flows}` round-trip into the
+    /// Wire state strings emitted by soland's
+    /// `/api/v1/projection/{places|flows}` round-trip into the
     /// renderer enums. Unknown values stay at the safe `Active` default.
     #[test]
     fn lifecycle_wire_strings_decode_to_enums() {

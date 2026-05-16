@@ -3104,9 +3104,399 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     grid-template-columns: 1fr;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   Agent Workspace (cx.profile.agent_workspace.v1)
+   See views/agent_workspace.rs.
+   ───────────────────────────────────────────────────────────────────── */
+
+.agent-workspace-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.agent-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.agent-workspace-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.agent-workspace-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-workspace-pending.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface, #fff);
+  border: 2px solid #ff8b3d;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 2px 8px rgba(255, 139, 61, 0.15);
+}
+
+.agent-workspace-section-title {
+  margin: 0 0 8px 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.agent-workspace-section-title.pending {
+  color: #b3580f;
+}
+
+.agent-workspace-section-subtitle {
+  margin: 0 0 12px 0;
+  font-size: 0.875rem;
+  color: var(--text-muted, #666);
+}
+
+.agent-workspace-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.agent-task-card {
+  border: 1px solid var(--border, #d9dee5);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-task-card.emphasis-pending {
+  border-color: #ff8b3d;
+  background: #fff8f1;
+}
+
+.agent-task-card.emphasis-muted {
+  opacity: 0.7;
+}
+
+.agent-task-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+}
+
+.agent-task-card-source {
+  font-weight: 600;
+  color: var(--text, #1a1a1a);
+}
+
+.agent-task-card-instruction {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-task-card-banner {
+  background: #fff3e0;
+  border-left: 3px solid #ff8b3d;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color: #b3580f;
+  border-radius: 4px;
+}
+
+.agent-task-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.fsm-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fsm-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border: 1px solid currentColor;
+  background: var(--surface, #fff);
+}
+
+.fsm-chip-kind {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  opacity: 0.75;
+  letter-spacing: 0.05em;
+}
+
+.fsm-chip-label {
+  font-weight: 600;
+}
+
+.fsm-chip-green {
+  color: #1f7a3a;
+  background: #e8f5ec;
+}
+
+.fsm-chip-orange {
+  color: #b3580f;
+  background: #fff3e0;
+  border-color: #ff8b3d;
+}
+
+.fsm-chip-blue {
+  color: #1b4f8f;
+  background: #e8f0fb;
+}
+
+.fsm-chip-grey {
+  color: #555;
+  background: #eee;
+}
+
+.agent-workspace-empty {
+  border: 1px dashed var(--border, #d9dee5);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted, #666);
+}
+
+.agent-workspace-empty-hint {
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+.agent-workspace-agent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-workspace-agent-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-subtle, #f8f9fb);
+}
+
+.agent-workspace-agent-dot {
+  color: #1f7a3a;
+}
+
+.agent-workspace-agent-name {
+  font-weight: 600;
+}
+
+.agent-workspace-agent-consulting-pill {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e8f0fb;
+  color: #1b4f8f;
+  margin-right: 6px;
+}
+
+/* Task detail */
+
+.agent-task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.agent-task-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-task-detail-banner {
+  background: #fff3e0;
+  border: 1px solid #ff8b3d;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-task-detail-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-task-detail-anchor {
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+}
+
+.agent-task-detail-section {
+  border: 1px solid var(--border, #d9dee5);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.agent-task-detail-section h2 {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+}
+
+.agent-task-detail-instruction,
+.agent-task-detail-draft {
+  background: var(--surface-subtle, #f8f9fb);
+  border-radius: 6px;
+  padding: 10px;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.agent-task-detail-draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.agent-task-detail-conversation {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.agent-task-detail-conversation-line {
+  font-size: 0.9rem;
+  padding: 4px 6px;
+}
+
+.agent-task-detail-conversation-line .speaker {
+  font-weight: 600;
+}
+
+.agent-task-detail-conversation-line .ts {
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+  margin-left: 8px;
+}
+
+.agent-task-detail-conversation-compose {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.agent-task-detail-audit {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+}
+
+/* Private routing indicator in compose (chat / discussion). */
+
+.private-compose-mode {
+  border: 2px solid #6d3eaf;
+  background: #f7f1ff;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.private-compose-mode .private-routing-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #4b2784;
+  background: #ede2ff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.private-compose-mode .private-routing-banner::before {
+  content: "🔒";
+}
+
+.private-compose-summary-warning {
+  font-size: 0.8rem;
+  color: #b3580f;
+  margin-top: 4px;
+}
+
+/* Mobile: stack the dashboard, scroll FSM chips horizontally. */
+@media (max-width: 768px) {
+  .agent-workspace-cards {
+    grid-template-columns: 1fr;
+  }
+  .fsm-chip-row {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+}
+
+/* Dark mode tweaks. */
+@media (prefers-color-scheme: dark) {
+  .agent-task-card { background: #1f2229; }
+  .agent-task-card-banner { background: #3a2410; color: #ffb787; }
+  .agent-workspace-pending.sticky { background: #1f2229; }
+  .agent-task-detail-banner { background: #3a2410; }
+  .agent-task-detail-instruction, .agent-task-detail-draft { background: #15171c; }
+  .agent-workspace-agent-row { background: #1a1d22; }
+  .fsm-chip-green { background: #0e2a18; color: #74d68f; }
+  .fsm-chip-orange { background: #3a2410; color: #ffb787; }
+  .fsm-chip-blue { background: #15243a; color: #92baf7; }
+  .fsm-chip-grey { background: #2a2c30; color: #bbb; }
+  .private-compose-mode { background: #251a3a; border-color: #9a76d8; }
+  .private-compose-mode .private-routing-banner { background: #2f2152; color: #cdb6f6; }
+}
 "#;
 
-/// Sprint Q1 第十五增量 (H4): one-shot push-token provider bootstrap.
+/// One-shot push-token provider bootstrap.
 ///
 /// Runs once on first App render. On wasm32 we install
 /// `WebPushTokenProvider::new()` (drives the service-worker +
@@ -3667,8 +4057,8 @@ pub fn RouterView() -> Element {
             crate::i18n::set_locale(&mut sig, locale());
         });
     }
-    // Sprint Q1 第十二增量: shared `Signal<MlsPassphraseStore>` for per-Space
-    // MLS snapshot passphrases. Both chat.rs (encrypt path) and timeline.rs
+    // Shared `Signal<MlsPassphraseStore>` for per-Space MLS snapshot
+    // passphrases. Both chat.rs (encrypt path) and timeline.rs
     // (decrypt-success audit emitter) read from this so a Send Secure
     // followed by a sync round-trip can be decrypted by the same client.
     // Default empty — the placeholder/sealed paths still work; once the
@@ -4154,6 +4544,7 @@ pub fn RouterView() -> Element {
                     }
                 }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
+                Link { class: "secondary", "data-testid": "mobile-agent-workspace-nav-button", to: Route::AgentWorkspace, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.agent_workspace")} }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_spaces.is_empty() {
@@ -4581,6 +4972,15 @@ pub fn RouterView() -> Element {
                             if let Some(ref err) = last_error() {
                                 span { "data-testid": "last-error", "{err}" }
                             }
+                        }
+                        Link {
+                            class: "btn icon sm ghost topbar-agent-workspace-link",
+                            "data-testid": "topbar-agent-workspace-button",
+                            to: Route::AgentWorkspace,
+                            title: crate::i18n::tr("nav.agent_workspace"),
+                            "aria-label": crate::i18n::tr("nav.agent_workspace"),
+                            UiIcon { name: "user" }
+                            span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
                         Link {
                             class: "btn icon sm ghost topbar-notifications-link",
@@ -5150,10 +5550,10 @@ pub fn RouterView() -> Element {
                     },
                     Route::Quarantine => rsx! {
                         crate::views::quarantine::QuarantinePanel {
-                            // Round 23 (M6): coauth and soland may share a
-                            // host in single-server dev deployments — fall
-                            // back to `base_url` until the topology probe
-                            // surfaces a separate coauth URL.
+                            // Coauth and soland may share a host in
+                            // single-server dev deployments - fall back to
+                            // `base_url` until the topology probe surfaces a
+                            // separate coauth URL.
                             coauth_url: base_url(),
                             // Admin scope is currently inferred from the
                             // login profile; until profile claims surface
@@ -5164,7 +5564,6 @@ pub fn RouterView() -> Element {
                             is_admin: true,
                         }
                     },
-                    // Sprint Q1 第十四增量 V1/V2.
                     Route::Applets => rsx! {
                         crate::views::applets::AppletsPanel {
                             base_url: base_url(),
@@ -5181,6 +5580,20 @@ pub fn RouterView() -> Element {
                             token,
                             selected_space: selected_space(),
                             state_store,
+                        }
+                    },
+                    Route::AgentWorkspace => rsx! {
+                        crate::views::agent_workspace::AgentWorkspaceDashboard {
+                            pending: use_signal(Vec::new),
+                            in_flight: use_signal(Vec::new),
+                            recent: use_signal(Vec::new),
+                            agents: use_signal(Vec::new),
+                        }
+                    },
+                    Route::AgentTask { task_id } => rsx! {
+                        crate::views::agent_workspace::AgentTaskDetailPage {
+                            task_id: task_id.clone(),
+                            detail: use_signal(|| None),
                         }
                     },
                 }
@@ -5254,6 +5667,11 @@ fn SpaceContextBar(
 fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "dashboard, recent activity", Route::Dashboard),
+        (
+            "My Agents",
+            "agent workspace, tasks, mention_redirect routing",
+            Route::AgentWorkspace,
+        ),
         ("Notifications", "inbox, mentions, approvals", Route::Notifications),
         ("Directory", "search spaces, orgs, actors", Route::Directory),
         ("Onboarding", "DID, handle, device, recovery", Route::Onboarding),
@@ -5578,6 +5996,8 @@ fn route_label(route: &Route) -> &'static str {
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",
         Route::Agents => "Agents",
+        Route::AgentWorkspace => "My Agents",
+        Route::AgentTask { .. } => "Agent Task",
     }
 }
 
@@ -6232,8 +6652,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Sprint Q1 第十五增量 (H4): the App component installs a default
-    /// push-token provider on first render so `device-summary` never
+    /// The App component installs a default push-token provider on
+    /// first render so `device-summary` never
     /// shows the `"no PushTokenProvider installed"` warning in
     /// production. The helper is idempotent (`OnceLock` inside
     /// `set_push_token_provider`) — calling it twice in the same

@@ -1,13 +1,10 @@
-//! Round 28: MLS group state persistence + cross-device restore.
+//! MLS group state persistence + cross-device restore.
 //!
-//! Until this round, every yougen device's MLS group state lived in
-//! the in-memory `crypto::LocalMlsDevice`. Once the user navigated
-//! away (or the desktop wrapper was relaunched, or the wasm bundle
-//! was hot-reloaded) the group was forgotten — the next message had
-//! to refetch a Welcome and rejoin from scratch. That's not an
-//! option for production: MLS commits are causally tied to the
-//! Anchor lattice and rejoining drops the device's leaf, churning
-//! the epoch.
+//! Yougen needs MLS group state to survive process restarts: without
+//! persistence the next message must refetch a Welcome and rejoin from
+//! scratch, which drops the device's leaf and churns the epoch — not
+//! viable for production, since MLS commits are causally tied to the
+//! Anchor lattice.
 //!
 //! This module wires three pieces together:
 //!
@@ -15,7 +12,11 @@
 //!    exposes `export_state_record()` / `restore_from_state_record()`
 //!    so the openmls provider storage can be round-tripped through a
 //!    typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record
-//! Sprint Q1 第十三增量: also exposes the multi-device Welcome shuttle
+//!    in [`MlsSnapshotEnvelope`] which adds a passphrase-mediated
+//!    confidentiality layer + a SHA-256 MAC so a stolen state.json
+//!    doesn't leak the openmls provider keys.
+//!
+//! Also exposes the multi-device Welcome shuttle
 //! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
 //! used to ship a typed `MlsWelcomeEnvelope` over soland's
 //! `/api/v1/device_messages` (with `type = "cx.mls.welcome"`). The
@@ -23,10 +24,6 @@
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
 //! [`contrix_sdk::ContrixMlsGroup::join_from_welcome`].
-//!
-//!    in [`MlsSnapshotEnvelope`] which adds a passphrase-mediated
-//!    confidentiality layer + a SHA-256 MAC so a stolen state.json
-//!    doesn't leak the openmls provider keys.
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`]
 //!    produces the `cx.schema.key_backup.v1` request body used by
@@ -108,7 +105,7 @@ pub const MLS_ENVELOPE_MAGIC: &[u8] = b"yg-mls-snap-v1";
 const MAC_OUTER_PAD: u8 = 0x5c;
 const MAC_INNER_PAD: u8 = 0x36;
 
-/// Round 28: typed envelope wrapping an encrypted MLS group state
+/// Typed envelope wrapping an encrypted MLS group state
 /// record. Persisted via `LocalStateStore` and (for cross-device
 /// restore) shipped as the `ciphertext` body of a
 /// `PUT /api/v1/keys/backups/{backup_id}` call. The fields here are
@@ -332,7 +329,7 @@ impl MlsSnapshotEnvelope {
     }
 }
 
-/// Round 28: helper used by both the boot path and the "sync from
+/// Helper used by both the boot path and the "sync from
 /// another device" UI button. Decrypts the envelope, sanity-checks
 /// the epoch, and (on native) reconstructs the SDK group via
 /// [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`]. The

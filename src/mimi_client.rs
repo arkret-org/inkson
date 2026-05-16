@@ -1,5 +1,4 @@
-//! Sprint Q1 第二十四增量 (P4-yougen): client for the MIMI provider
-//! facade landed in soland 第二十三增量 (P4).
+//! Client for the soland MIMI provider facade.
 //!
 //! Spec: `contrix-spec/spec/v1/zh/extensions/mimi-interop.md` §5
 //! (Endpoint Surface).

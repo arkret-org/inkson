@@ -37,8 +37,8 @@ pub(crate) fn build_read_receipt_preferences_body(
     })
 }
 
-/// Round 21 helper: spawn a fire-and-forget task that pushes the current
-/// read-receipt preferences to soland's `cx.account_data.set` PUT
+/// Spawn a fire-and-forget task that pushes the current read-receipt
+/// preferences to soland's `cx.account_data.set` PUT
 /// endpoint. Read latest values from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 /// Swallows 404/501/405 via [`AccountDataSetOutcome::Unsupported`] so older
@@ -1156,10 +1156,10 @@ pub fn SettingsPanel(
                                     "Read receipts: default = {}",
                                     if send { "send" } else { "skip" }
                                 ));
-                                // Round 21: also push to soland's
-                                // cx.account_data.set so other devices pick
-                                // up the change. Endpoint may 404/501 — we
-                                // swallow and keep local authoritative.
+                                // Also push to soland's cx.account_data.set
+                                // so other devices pick up the change.
+                                // Endpoint may 404/501 — we swallow and keep
+                                // local authoritative.
                                 let body = build_read_receipt_preferences_body(
                                     send,
                                     &state_store
@@ -1776,8 +1776,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Round 21: the canonical `cx.read_receipt.preferences` body shape
-    /// other devices read via `/sync` account_data. Locks the field names
+    /// The canonical `cx.read_receipt.preferences` body shape other devices
+    /// read via `/sync` account_data. Locks the field names
     /// (`default_send`, `space_overrides`, `flow_overrides`) so a future
     /// rename can't silently desync devices.
     #[test]

@@ -12,7 +12,7 @@ use crate::api::ContrixApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
-// Sprint Q1 第十四增量 (P5): these three constants are **only**
+// These three constants are **only**
 // referenced by `build_authorize_url_preview` — the diagnostic /
 // inspector function that renders an example authorize URL without
 // running the real PKCE round trip. The production path
@@ -206,10 +206,10 @@ pub struct CoauthOidcBrowserBridgeSession {
     pub todo: String,
 }
 
-/// Round 24 (A1): canonical OIDC token endpoint response shape. Used by
+/// Canonical OIDC token endpoint response shape. Used by
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
-/// OpenID Connect Core §3.1.3.3 — extra provider-specific fields
+/// OpenID Connect Core §3.1.3.3 - extra provider-specific fields
 /// flow through `extras` so tokens minted by Auth0 / Keycloak / etc.
 /// don't fail to deserialize on a one-off `provider_session_id` claim.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -438,28 +438,26 @@ impl CoauthApi {
         self.get_json("api/v1/integration/describe").await
     }
 
-    /// Round 23 (M6): list invite-quarantine entries from coauth's
-    /// admin endpoint. Admins receive every quarantined invite in the
-    /// deployment; non-admin tokens 403 — the caller surfaces an
-    /// inline "limited to your own invites" hint and falls back to
-    /// [`Self::invite_quarantine_self`].
+    /// List invite-quarantine entries from coauth's admin endpoint. Admins
+    /// receive every quarantined invite in the deployment; non-admin tokens
+    /// 403 - the caller surfaces an inline "limited to your own invites"
+    /// hint and falls back to [`Self::invite_quarantine_self`].
     pub async fn invite_quarantine_list(&self) -> anyhow::Result<Value> {
         self.get_json("api/admin/v1/invite-quarantine").await
     }
 
-    /// Round 23 (M6): per-user view of the caller's quarantined
-    /// invites — surfaced for non-admin members so they can see
-    /// what's gated on review without admin access. Backed by the
-    /// same coauth admin endpoint via a self-scope query string.
+    /// Per-user view of the caller's quarantined invites - surfaced for
+    /// non-admin members so they can see what's gated on review without
+    /// admin access. Backed by the same coauth admin endpoint via a
+    /// self-scope query string.
     pub async fn invite_quarantine_self(&self) -> anyhow::Result<Value> {
         self.get_json("api/v1/invite-quarantine/self").await
     }
 
-    /// Round 23 (M6): admin decision on a quarantined invite.
-    /// `decision` is `"approve"` or `"reject"`; `reason` is required
-    /// for reject and recommended for approve so the audit trail
-    /// captures why the invite was unblocked. Returns soland's
-    /// updated quarantine record.
+    /// Admin decision on a quarantined invite. `decision` is `"approve"`
+    /// or `"reject"`; `reason` is required for reject and recommended for
+    /// approve so the audit trail captures why the invite was unblocked.
+    /// Returns soland's updated quarantine record.
     pub async fn invite_quarantine_resolve(
         &self,
         invite_id: &str,
@@ -513,11 +511,10 @@ impl CoauthApi {
         .await
     }
 
-    /// Round 24 (A1): real OIDC token-endpoint exchange. Drives the
-    /// PKCE authorization-code flow directly against the configured
-    /// OIDC provider's `token_endpoint` — no coauth bridge in between.
-    /// Returns the parsed [`OidcTokenResponse`] with access + refresh
-    /// tokens + scope + id_token + expires_in.
+    /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
+    /// flow directly against the configured OIDC provider's `token_endpoint` -
+    /// no coauth bridge in between. Returns the parsed [`OidcTokenResponse`]
+    /// with access + refresh tokens + scope + id_token + expires_in.
     ///
     /// Spec refs: RFC 6749 §4.1.3 (token request), RFC 7636 §4.5
     /// (PKCE verifier delivery), OpenID Connect Core §3.1.3 (response
@@ -565,10 +562,10 @@ impl CoauthApi {
         serde_json::from_str(&body).context("parse OIDC token response")
     }
 
-    /// Round 24 (A1): refresh-token grant against the upstream OIDC
-    /// provider. Returns a fresh [`OidcTokenResponse`]; the new
-    /// `refresh_token` MAY be present (rotating refresh tokens) or
-    /// MAY be absent (the previous one stays valid).
+    /// Refresh-token grant against the upstream OIDC provider. Returns a
+    /// fresh [`OidcTokenResponse`]; the new `refresh_token` MAY be present
+    /// (rotating refresh tokens) or MAY be absent (the previous one stays
+    /// valid).
     pub async fn refresh_oidc_tokens(
         &self,
         token_endpoint: &str,
@@ -886,7 +883,7 @@ pub fn oidc_scaffold_bundle_from_bridge_session(
     }
 }
 
-/// Round 24 (A2): session-grant introspection proof claims. Mirrors
+/// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
 /// `coauth/crates/backend/src/handlers/contrix.rs:575`). soland forwards
 /// the proof to coauth's `/api/v1/session-grants/introspect` endpoint
@@ -910,11 +907,10 @@ pub struct SessionGrantIntrospectionProofClaims {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Round 24 (A2): convenience — build the full
+/// Convenience helper: build the full
 /// [`crate::api::SessionGrantIntrospectionProof`] (challenge + proof_jwt
 /// bundle) ready to attach to a soland `session-grant/exchange` request.
-/// The challenge is freshly minted from `current_time + grant_id` per
-/// the round-24 mission spec.
+/// The challenge is freshly minted from `current_time + grant_id`.
 pub fn build_session_grant_introspection_proof_bundle(
     grant_id: &str,
     grant_jwt: &str,
@@ -948,14 +944,14 @@ pub fn session_grant_signing_key_from_pem(pem: &str) -> anyhow::Result<ed25519_d
         .context("decode coauth session grant private key")
 }
 
-/// Round 24 (A2): build a session-grant introspection proof JWS. Signs
-/// the canonical claims with the ephemeral session-grant private key
-/// whose public half is stored by coauth as `session_public_key`.
+/// Build a session-grant introspection proof JWS. Signs the canonical
+/// claims with the ephemeral session-grant private key whose public half
+/// is stored by coauth as `session_public_key`.
 ///
 /// The `challenge` is freshly constructed by the caller, typically
 /// `format!("{ts}-{grant_id}")` where `ts` is the current Unix time.
-/// The `expires_at` window is fixed at 60s — matches coauth's
-/// reference implementation (`Duration::try_minutes(1)`).
+/// The `expires_at` window is fixed at 60s - matches coauth's reference
+/// implementation (`Duration::try_minutes(1)`).
 ///
 /// Returns the JWS in compact serialization (`<header>.<payload>.<sig>`).
 /// Embed the result in a [`SessionGrantIntrospectionProof`] and post it
@@ -992,9 +988,9 @@ pub fn build_session_grant_introspection_proof(
     sign_compact_jws_eddsa(&claims, signing_key)
 }
 
-/// Round 24 (A2): hash the grant JWT bytes per coauth's
-/// `session_grant_jwt_hash` (`"sha256:" + hex(sha256(grant_jwt))`).
-/// Public so callers can verify their proof binding before sending.
+/// Hash the grant JWT bytes per coauth's `session_grant_jwt_hash`
+/// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
+/// their proof binding before sending.
 pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(grant_jwt.as_bytes()))
 }
@@ -1020,14 +1016,14 @@ fn sign_compact_jws_eddsa<C: Serialize>(
     Ok(format!("{header_b64}.{payload_b64}.{sig_b64}"))
 }
 
-/// Round 24 (A1): launch the authorize URL in the user's browser /
-/// webview. On wasm this navigates the current window — the matching
-/// `/auth/callback` handler on the same origin reads `?code=` and
-/// invokes [`CoauthApi::exchange_pkce_code_for_tokens`]. On native
-/// desktop builds this best-effort opens the system browser via the
-/// `cmd /c start` (Windows) / `xdg-open` (Linux) / `open` (macOS) shell
-/// out — production deploys SHOULD swap in a webview crate so the
-/// callback URL can be intercepted in-process.
+/// Launch the authorize URL in the user's browser / webview. On wasm this
+/// navigates the current window - the matching `/auth/callback` handler on
+/// the same origin reads `?code=` and invokes
+/// [`CoauthApi::exchange_pkce_code_for_tokens`]. On native desktop builds
+/// this best-effort opens the system browser via the `cmd /c start`
+/// (Windows) / `xdg-open` (Linux) / `open` (macOS) shell out - production
+/// deploys SHOULD swap in a webview crate so the callback URL can be
+/// intercepted in-process.
 pub fn open_oidc_authorize_url(authorize_url: &str) -> anyhow::Result<()> {
     open_authorize_url_impl(authorize_url)
 }
@@ -1545,10 +1541,10 @@ mod tests {
         );
     }
 
-    /// Round 24 (A1): the token-response → persisted-bundle adapter MUST
-    /// translate `expires_in` into an absolute `expires_at_unix` and
-    /// preserve refresh_token / id_token / scope verbatim. Production
-    /// callers persist the result via `LocalStateStore::set_oidc_tokens`.
+    /// The token-response -> persisted-bundle adapter MUST translate
+    /// `expires_in` into an absolute `expires_at_unix` and preserve
+    /// refresh_token / id_token / scope verbatim. Production callers persist
+    /// the result via `LocalStateStore::set_oidc_tokens`.
     #[test]
     fn oidc_token_response_to_bundle_round_trips_fields() {
         let response = OidcTokenResponse {
@@ -1603,13 +1599,12 @@ mod tests {
         assert_eq!(bundle.audience.as_deref(), Some("https://wire.example/api"));
     }
 
-    /// Round 24 (A2): the introspection proof MUST be a valid Ed25519
-    /// JWS over the canonical claims, MUST embed
-    /// `cx.session_grant.introspection_proof.v1` as `type`, MUST hash
-    /// the grant JWT into `grant_jwt_hash`, and MUST round-trip the
-    /// challenge / audience / grant_id verbatim. coauth's verifier
-    /// requires every one of those exact strings — drift here would
-    /// surface as `InvalidProof` at the principal server.
+    /// The introspection proof MUST be a valid Ed25519 JWS over the
+    /// canonical claims, MUST embed `cx.session_grant.introspection_proof.v1`
+    /// as `type`, MUST hash the grant JWT into `grant_jwt_hash`, and MUST
+    /// round-trip the challenge / audience / grant_id verbatim. coauth's
+    /// verifier requires every one of those exact strings - drift here
+    /// would surface as `InvalidProof` at the principal server.
     #[test]
     fn session_grant_proof_signs_canonical_claims() {
         use ed25519_dalek::{SigningKey, Verifier};

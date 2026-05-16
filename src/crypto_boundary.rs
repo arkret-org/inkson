@@ -1,4 +1,4 @@
-//! Round 26 (R5): browser encryption production boundary audit + typed
+//! Browser encryption production boundary audit + typed
 //! [`CryptoBoundary`] trait.
 //!
 //! # Audit summary

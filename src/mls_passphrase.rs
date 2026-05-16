@@ -1,11 +1,11 @@
 //! Per-Space MLS snapshot passphrase store.
 //!
-//! Sprint Q1 第十二增量: chat.rs (encrypt path) and timeline.rs (decrypt-
-//! success audit emitter) need to agree on the passphrase used to
-//! seal a Space's MLS snapshot. Without a shared store, encryption
-//! would use one passphrase and the decrypt-on-render emitter would
-//! either use a different one or fall back to the empty default — either
-//! way, the `cx.audit.accessed` hook (B7) never fires.
+//! chat.rs (encrypt path) and timeline.rs (decrypt-success audit emitter)
+//! need to agree on the passphrase used to seal a Space's MLS snapshot.
+//! Without a shared store, encryption would use one passphrase and the
+//! decrypt-on-render emitter would either use a different one or fall
+//! back to the empty default — either way, the `cx.audit.accessed` hook
+//! never fires.
 //!
 //! This is an in-memory only store; passphrases are never persisted
 //! to disk. The user re-enters them on each session. That intentionally

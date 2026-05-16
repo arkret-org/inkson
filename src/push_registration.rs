@@ -1,4 +1,4 @@
-//! Round 33 (C33.2): chime-driven push registration orchestrator.
+//! Chime-driven push registration orchestrator.
 //!
 //! `crate::push` has long shipped the building blocks (token source, register
 //! request builder, registration-state persistence helper, VAPID describe
@@ -129,10 +129,9 @@ pub struct RegisterOutcome {
 /// persist the resulting `PushRegistrationState` to `LocalStateStore`.
 ///
 /// On non-wasm targets the chime client uses reqwest+rustls+tokio. On
-/// wasm32 (C34.1) the same client routes through reqwest's
-/// fetch-backed wasm32 backend (no rustls, no tokio runtime), so the
-/// browser build now drives a real HTTP POST to the principal server
-/// instead of the synthetic ok-response that the C33.2 stub returned.
+/// wasm32 the same client routes through reqwest's fetch-backed wasm32
+/// backend (no rustls, no tokio runtime), so the browser build drives a
+/// real HTTP POST to the principal server.
 pub async fn register_via_chime(
     ctx: RegisterContext,
     state_store: &mut LocalStateStore,

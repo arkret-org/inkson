@@ -109,11 +109,11 @@ fn default_true() -> bool {
 /// guard against tampering / accidental edits — but persisting it makes
 /// the file human-debuggable.
 ///
-/// Round 21: this replaces the deterministic `[42; 32]` demo seed used by
-/// every Move builder caller (`consent_demo::demo_signing_key`,
+/// This replaces the deterministic `[42; 32]` demo seed used by every Move
+/// builder caller (`consent_demo::demo_signing_key`,
 /// `space_admin::build_signed_*`, etc.). Fresh installs generate via
 /// `getrandom::fill` on first access; existing dev installs that still
-/// hold a `[42; 32]` cache are simply broken — they regenerate the next
+/// hold a `[42; 32]` cache are simply broken - they regenerate the next
 /// time the store is loaded with no record present (Contrix v1 protocol is
 /// pre-release, no compat path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,8 +225,8 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
     format!("did:key:z{}", bs58::encode(bytes).into_string())
 }
 
-/// Round 23: lifecycle state of a locally-submitted Move. Mirrors the
-/// states soland's Move/Anchor pipeline can report via the
+/// Lifecycle state of a locally-submitted Move. Mirrors the states
+/// soland's Move/Anchor pipeline can report via the
 /// `SubmitMoveResponse.state` field plus the post-anchor effects the
 /// next `/sync` cycle exposes:
 ///
@@ -248,7 +248,7 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 /// - `AnchorerPaused` — the Space's anchorer is paused (recovery
 ///   anchorer not yet rotated, or quorum unmet); the Space cannot
 ///   advance until ops bring it back online.
-/// - `PendingMlsBinding` — Round 23 (M7): the Move targets an E2EE
+/// - `PendingMlsBinding` — the Move targets an E2EE
 ///   message but its `covered_frontier` precondition references a
 ///   governance frontier the local MLS group has not yet acknowledged.
 ///   Held client-side until the binding is observed; the user sees a
@@ -350,11 +350,11 @@ impl MoveSubmissionState {
     }
 }
 
-/// Round 23: per-Move tracking record persisted in the local state
-/// store. `move_id` is content-addressed (`cx:move:sha256:...`); the
-/// reducer round-trips `space_id` so client UIs can scope filtering.
-/// `kind` is a free-form classifier the UI uses for icons (e.g.
-/// `cx.consent.grant`, `cx.message.create`, `mls_commit`).
+/// Per-Move tracking record persisted in the local state store. `move_id`
+/// is content-addressed (`cx:move:sha256:...`); the reducer round-trips
+/// `space_id` so client UIs can scope filtering. `kind` is a free-form
+/// classifier the UI uses for icons (e.g. `cx.consent.grant`,
+/// `cx.message.create`, `mls_commit`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
@@ -399,7 +399,7 @@ pub struct BottomCellInfo {
 /// Snapshot of the latest Anchor view observed for a Space. Surfaced from
 /// the `/sync` Anchor view (P0 M3) and threaded into Move submissions so
 /// every cell-driven write references the right frontier instead of the
-/// `sha256(empty)` placeholder used during Round 18.
+/// `sha256(empty)` placeholder used previously.
 ///
 /// `frontier` lists the Anchor head ids the local client currently treats
 /// as the predecessor set (typically a single id but multiple while a
@@ -436,27 +436,26 @@ pub struct LocalAnchorView {
     /// keep this struct compact.
     #[serde(default)]
     pub bottom_cells: BTreeMap<String, BottomCellInfo>,
-    /// Round 21: the current MLS epoch as published in the
+    /// The current MLS epoch as published in the
     /// `cx.component.mls.epoch.v1` cas-register cell, when sync surfaces
     /// it. `None` means the Space hasn't published an MLS epoch yet (no
     /// E2EE group or pre-genesis state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mls_epoch: Option<u64>,
-    /// Round 21: the current `governance.covered_frontier` cell value —
-    /// the lattice frontier cell that governance Moves require predecessor
-    /// coverage of before they're accepted. Surfaced as a string so the
-    /// UI can render whatever shape soland publishes (typically a
-    /// `cx:state:sha256:...` ref). `None` means the governance cell hasn't
-    /// been observed yet.
+    /// The current `governance.covered_frontier` cell value - the lattice
+    /// frontier cell that governance Moves require predecessor coverage of
+    /// before they're accepted. Surfaced as a string so the UI can render
+    /// whatever shape soland publishes (typically a `cx:state:sha256:...`
+    /// ref). `None` means the governance cell hasn't been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier: Option<String>,
-    /// Round 22: the per-Space MLS `covered_frontier_lag` count — how
-    /// many governance Moves the MLS group has yet to acknowledge. Soland
+    /// The per-Space MLS `covered_frontier_lag` count - how many
+    /// governance Moves the MLS group has yet to acknowledge. Soland
     /// publishes this as `anchor_view.covered_frontier_lag` (a bare
     /// integer) when it knows the lag; clients combine it with a
     /// configurable warn threshold (default 5) to render an alert banner
-    /// in `space_admin`. `None` means soland hasn't surfaced a lag value
-    /// — UI treats that as "no alert".
+    /// in `space_admin`. `None` means soland hasn't surfaced a lag value -
+    /// UI treats that as "no alert".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier_lag: Option<u64>,
     /// MLS key-schedule content hash (`sha256:<hex>`) from the
@@ -493,11 +492,11 @@ impl LocalAnchorView {
         !self.bottom_cells.is_empty()
     }
 
-    /// Round 22: true when soland has surfaced a covered_frontier_lag
-    /// strictly greater than `threshold`. Used by the space_admin
-    /// covered_frontier alert banner to decide whether to render. Returns
-    /// `false` when no lag has been published yet (the field is `None`)
-    /// — the UI treats that as "no signal, no alert".
+    /// True when soland has surfaced a covered_frontier_lag strictly
+    /// greater than `threshold`. Used by the space_admin covered_frontier
+    /// alert banner to decide whether to render. Returns `false` when no
+    /// lag has been published yet (the field is `None`) - the UI treats
+    /// that as "no signal, no alert".
     pub fn covered_frontier_lag_above(&self, threshold: u64) -> bool {
         self.covered_frontier_lag.is_some_and(|lag| lag > threshold)
     }
@@ -622,9 +621,9 @@ impl LocalAnchorView {
         if let Some(s) = anchor.get("state_root").and_then(|v| v.as_str()) {
             view.state_root = Some(s.to_owned());
         }
-        // Round 22: top-level `covered_frontier_lag` — soland publishes
-        // this directly on the anchor view (sibling of `frontier` /
-        // `leaves`) so clients don't have to compute it from cell maps.
+        // Top-level `covered_frontier_lag`: soland publishes this directly
+        // on the anchor view (sibling of `frontier` / `leaves`) so clients
+        // don't have to compute it from cell maps.
         if let Some(lag) = anchor.get("covered_frontier_lag").and_then(|v| v.as_u64()) {
             view.covered_frontier_lag = Some(lag);
         }
@@ -657,11 +656,10 @@ impl LocalAnchorView {
                         },
                     );
                 }
-                // Round 21: well-known named cells surfaced for the
-                // space_admin MLS epoch widget. We accept either a raw
-                // `value` or a typed `register.value` field — soland's
-                // canonical projection uses the latter; tests may emit
-                // the former.
+                // Well-known named cells surfaced for the space_admin MLS
+                // epoch widget. We accept either a raw `value` or a typed
+                // `register.value` field - soland's canonical projection
+                // uses the latter; tests may emit the former.
                 let value_for = |status: &Value| -> Option<Value> {
                     status
                         .get("value")
@@ -752,16 +750,15 @@ pub struct ClientLocalState {
     pub anchor_views: BTreeMap<String, LocalAnchorView>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
-    /// Per-device ed25519 identity (Round 21). Generated + persisted on
-    /// first access via `LocalStateStore::ensure_local_identity`. Move
-    /// builders read this in place of the historical `[42; 32]` demo seed.
+    /// Per-device ed25519 identity. Generated + persisted on first access
+    /// via `LocalStateStore::ensure_local_identity`. Move builders read
+    /// this in place of the historical `[42; 32]` demo seed.
     #[serde(default)]
     pub local_identity: Option<LocalIdentityRecord>,
-    /// Round 23: locally-submitted Move state tracker. Keyed by
-    /// `move_id`; entries arrive when `submit_move` succeeds and get
-    /// updated when the next sync surfaces an Anchor that includes the
-    /// id (or a rejection). M4 — drives the timeline / space_admin
-    /// state pill UI.
+    /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
+    /// arrive when `submit_move` succeeds and get updated when the next
+    /// sync surfaces an Anchor that includes the id (or a rejection).
+    /// Drives the timeline / space_admin state pill UI.
     #[serde(default)]
     pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -771,12 +768,11 @@ pub struct ClientLocalState {
     /// Private cx.marker.read cursors keyed by space + topic/thread scope.
     #[serde(default)]
     pub read_markers: BTreeMap<String, ReadMarkerRecord>,
-    /// Round 24 (A1): persisted OIDC token bundle — access_token,
-    /// refresh_token, expiry, audience. Written when the PKCE token
-    /// endpoint exchange succeeds; read at boot to seed the API
-    /// client. The KeyStore abstraction (round 22) provides the
-    /// signing key for session-grant proofs; this field carries the
-    /// short-lived bearer + the longer-lived refresh handle.
+    /// Persisted OIDC token bundle - access_token, refresh_token, expiry,
+    /// audience. Written when the PKCE token endpoint exchange succeeds;
+    /// read at boot to seed the API client. The KeyStore abstraction
+    /// provides the signing key for session-grant proofs; this field
+    /// carries the short-lived bearer + the longer-lived refresh handle.
     #[serde(default)]
     pub oidc_tokens: Option<OidcTokenBundle>,
     /// Persisted coauth `session_grant` payload. Lets the refresh
@@ -785,23 +781,23 @@ pub struct ClientLocalState {
     /// surfaces a definitive "grant is dead" error.
     #[serde(default)]
     pub session_grant: Option<PersistedSessionGrant>,
-    /// Round 27: client-side telemetry log buffer. Mirrors sodmin's
-    /// `utils/audit.rs` shape — each entry is a structured "user
-    /// action" record (actor / action / outcome / timestamp). Written
-    /// by [`crate::telemetry::emit_user_action_log`] when offline; the
-    /// flush path reads + clears via [`LocalStateStore::drain_telemetry`]
-    /// once a network channel is available.
+    /// Client-side telemetry log buffer. Mirrors sodmin's
+    /// `utils/audit.rs` shape - each entry is a structured "user action"
+    /// record (actor / action / outcome / timestamp). Written by
+    /// [`crate::telemetry::emit_user_action_log`] when offline; the flush
+    /// path reads + clears via [`LocalStateStore::drain_telemetry`] once a
+    /// network channel is available.
     ///
     /// The buffer is bounded at [`TELEMETRY_BUFFER_CAP`] (oldest
     /// entries dropped first) so a long offline session can't grow
     /// `state.json` without bound.
     #[serde(default)]
     pub telemetry_log: Vec<UserActionLogEntry>,
-    /// Round 28: persisted MLS group state snapshots, keyed by
-    /// `space_id`. Each entry is the encrypted envelope produced by
+    /// Persisted MLS group state snapshots, keyed by `space_id`. Each
+    /// entry is the encrypted envelope produced by
     /// [`crate::mls_persistence::encrypt_state`]; the boot path
-    /// rehydrates each space's `LocalMlsDevice` from the latest
-    /// envelope rather than rejoining via Welcome from scratch.
+    /// rehydrates each space's `LocalMlsDevice` from the latest envelope
+    /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope>,
     /// Actor-private Space remarks per
@@ -823,7 +819,7 @@ pub struct ClientLocalState {
 /// `state.json` becomes painful to round-trip.
 pub const TELEMETRY_BUFFER_CAP: usize = 256;
 
-/// Round 27: structured client-side telemetry record produced by
+/// Structured client-side telemetry record produced by
 /// [`crate::telemetry::emit_user_action_log`]. Mirrors sodmin's
 /// `utils/audit.rs` line shape but keeps the fields typed so the
 /// flush path can serialise straight to JSON.
@@ -892,9 +888,9 @@ pub struct PersistedSessionGrant {
     pub stored_at: DateTime<Utc>,
 }
 
-/// Round 24 (A1): persisted OIDC token bundle. Stored next to the
-/// device identity so a single boot sequence can rehydrate both. Fields
-/// mirror the `oauth2` token endpoint response shape.
+/// Persisted OIDC token bundle. Stored next to the device identity so a
+/// single boot sequence can rehydrate both. Fields mirror the `oauth2`
+/// token endpoint response shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OidcTokenBundle {
     pub access_token: String,
@@ -1436,7 +1432,7 @@ impl LocalStateStore {
         self.load().muted_notification_kinds
     }
 
-    // ── Move submission tracking (Round 23 / M4) ─────────────────────────
+    // ── Move submission tracking ─────────────────────────────────────────
 
     /// Record a freshly-submitted Move and its initial state. The
     /// caller has just received soland's `SubmitMoveResponse`; the
@@ -1593,23 +1589,23 @@ impl LocalStateStore {
         Ok(identity)
     }
 
-    /// Round 24 (A1): persisted OIDC token bundle. Returns `None` when no
-    /// successful PKCE exchange has happened yet.
+    /// Persisted OIDC token bundle. Returns `None` when no successful PKCE
+    /// exchange has happened yet.
     pub fn oidc_tokens(&self) -> Option<OidcTokenBundle> {
         self.load().oidc_tokens
     }
 
-    /// Round 24 (A1): persist a fresh OIDC token bundle (or clear via
-    /// `None`). Stores access + refresh + id_token verbatim — the
-    /// KeyStore abstraction is responsible for the at-rest secrecy of
-    /// the underlying state.json file.
+    /// Persist a fresh OIDC token bundle (or clear via `None`). Stores
+    /// access + refresh + id_token verbatim - the KeyStore abstraction is
+    /// responsible for the at-rest secrecy of the underlying state.json
+    /// file.
     pub fn set_oidc_tokens(&mut self, bundle: Option<OidcTokenBundle>) {
         self.ensure_cached_loaded();
         self.cached.oidc_tokens = bundle;
         let _ = self.flush();
     }
 
-    /// Sprint Q1 第十五增量 (H3): persist a fresh OIDC token bundle and
+    /// Persist a fresh OIDC token bundle and
     /// **migrate the refresh_token field into the supplied
     /// `SecureKeyStore`** so the disk-backed `state.json` does not
     /// hold the refresh credential in plaintext. Returns the bundle
@@ -1658,7 +1654,7 @@ impl LocalStateStore {
         stripped
     }
 
-    /// Sprint Q1 第十五增量 (H3): companion to
+    /// Companion to
     /// [`set_oidc_tokens_with_secure_store`]. Reads the bundle from
     /// state.json and reattaches the `refresh_token` from the secure
     /// store under the per-actor key. Returns `None` when no bundle
@@ -1711,9 +1707,9 @@ impl LocalStateStore {
         }
     }
 
-    /// Round 24 (A1): true when a persisted access_token exists AND has
-    /// not yet expired (per `expires_at_unix`). Used by the API client
-    /// boot path to decide whether to refresh before issuing requests.
+    /// True when a persisted access_token exists AND has not yet expired
+    /// (per `expires_at_unix`). Used by the API client boot path to decide
+    /// whether to refresh before issuing requests.
     pub fn oidc_access_token_valid(&self) -> bool {
         let Some(bundle) = self.oidc_tokens() else {
             return false;
@@ -1729,9 +1725,9 @@ impl LocalStateStore {
         }
     }
 
-    /// Round 27 telemetry: append a structured user-action log entry
-    /// to the buffered log. Bounded by [`TELEMETRY_BUFFER_CAP`] —
-    /// excess entries are dropped from the front (oldest-first).
+    /// Append a structured user-action log entry to the buffered telemetry
+    /// log. Bounded by [`TELEMETRY_BUFFER_CAP`] - excess entries are
+    /// dropped from the front (oldest-first).
     pub fn append_telemetry(&mut self, entry: UserActionLogEntry) {
         self.ensure_cached_loaded();
         self.cached.telemetry_log.push(entry);
@@ -1761,7 +1757,7 @@ impl LocalStateStore {
         drained
     }
 
-    // ── MLS group state persistence (Round 28) ──────────────────────
+    // ── MLS group state persistence ─────────────────────────────────
 
     /// Persist (or replace) the MLS snapshot envelope for a space.
     /// Idempotent: a re-snapshot at the same epoch overwrites the
@@ -1807,9 +1803,8 @@ impl LocalStateStore {
         }
     }
 
-    /// Round 28 (Round 27 follow-up): drain the buffered telemetry
-    /// log and POST each entry to soland's audit feed. The endpoint
-    /// is 404-tolerant: until soland wires
+    /// Drain the buffered telemetry log and POST each entry to soland's
+    /// audit feed. The endpoint is 404-tolerant: until soland wires
     /// `cx.audit.user_action.ingest`, the server returns 404 and we
     /// simply restore the buffer (so the entries survive for the next
     /// flush attempt). Any other error class drops the affected entry
@@ -2348,7 +2343,7 @@ mod tests {
         assert!(reader.push_registration().is_none());
     }
 
-    /// Sprint Q1 第十五增量 (H3): `set_oidc_tokens_with_secure_store`
+    /// `set_oidc_tokens_with_secure_store`
     /// MUST move the `refresh_token` out of the disk-backed
     /// `state.json` into the supplied `SecureKeyStore` keyed by
     /// `coauth.refresh_token.<actor_did>`. The companion `load_*`
@@ -2978,9 +2973,9 @@ mod tests {
 
     #[test]
     fn mls_snapshot_persists_and_round_trips_through_store() {
-        // Round 28: MLS snapshot envelope is durable across store
-        // instances and the boot path can rehydrate every space's
-        // group from the persisted record.
+        // MLS snapshot envelope is durable across store instances and the
+        // boot path can rehydrate every space's group from the persisted
+        // record.
         use crate::mls_persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-persist");
         let space = "cx:space:round28-mls";
@@ -3020,14 +3015,13 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test(flavor = "multi_thread")]
     async fn flush_telemetry_404_re_buffers_entries() {
-        // Round 28 (Round 27 follow-up): when the audit endpoint
-        // isn't wired (404), the flush re-buffers each entry so a
-        // later flush attempt picks it up. We simulate the 404 by
-        // pointing the API at a localhost port that nothing's
-        // listening on — reqwest emits a connection error which
-        // maps to `AuditPostError::Other`. To exercise the 404
-        // path specifically we spawn a minimal hyper-free TCP
-        // listener that blanket-replies with 404.
+        // When the audit endpoint isn't wired (404), the flush
+        // re-buffers each entry so a later flush attempt picks it up. We
+        // simulate the 404 by pointing the API at a localhost port that
+        // nothing's listening on - reqwest emits a connection error which
+        // maps to `AuditPostError::Other`. To exercise the 404 path
+        // specifically we spawn a minimal hyper-free TCP listener that
+        // blanket-replies with 404.
         use crate::telemetry::{UserActionOutcome, build_user_action_entry};
         use std::net::SocketAddr;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -3075,9 +3069,9 @@ mod tests {
 
     #[test]
     fn audit_post_error_display_and_classification() {
-        // Round 28: the typed error variants are how callers branch
-        // between "re-buffer" and "drop" — the strings here drive
-        // operator-facing copy and are part of the contract.
+        // The typed error variants are how callers branch between
+        // "re-buffer" and "drop" - the strings here drive operator-facing
+        // copy and are part of the contract.
         let not_wired = crate::api::AuditPostError::NotWired;
         assert!(not_wired.to_string().contains("404"));
         let other = crate::api::AuditPostError::Other("conn refused".to_owned());

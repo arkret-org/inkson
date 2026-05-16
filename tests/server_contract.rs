@@ -446,9 +446,9 @@ fn yougen_parses_submit_anchor_response_with_rejected_moves() {
     assert!(parsed.rejected_moves[0].reason.contains("FSM"));
 }
 
-/// Regression for A3 (Sprint Q1, 2026-05-15). `is_auth_expired_error`
-/// MUST treat a bare 401 (server returned 401 with no parseable error
-/// envelope, e.g. a reverse-proxy injected HTML page) as a *transient*
+/// Regression: `is_auth_expired_error` MUST treat a bare 401
+/// (server returned 401 with no parseable error envelope, e.g. a
+/// reverse-proxy injected HTML page) as a *transient*
 /// denial — not as session death. Otherwise a brief upstream hiccup
 /// wipes the user's persisted session and forces a fresh sign-in.
 #[test]
@@ -490,9 +490,9 @@ fn bare_401_does_not_count_as_session_loss() {
     assert!(!is_auth_expired_error(&unrelated));
 }
 
-/// Regression for the Sprint Q1 decoder fix. `decode_contrix_error` MUST
-/// tolerate three on-the-wire shapes (canonical wrapped, plain envelope
-/// without `request_id`, Matrix-style legacy `errcode`) and synthesise a
+/// Regression: `decode_contrix_error` MUST tolerate three
+/// on-the-wire shapes (canonical wrapped, plain envelope without
+/// `request_id`, Matrix-style legacy `errcode`) and synthesise a
 /// stable `http_status` envelope when none match. A regression here
 /// silently degrades every error message in the UI.
 #[test]

@@ -344,7 +344,7 @@ fn acquire_platform_push_key() -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round 25 (A3): real OS / Web Push token integration.
+// Real OS / Web Push token integration.
 //
 // `PushTokenProvider` is the production trait callers register at boot to
 // resolve the platform-specific push token used by `register_device`. The
@@ -364,7 +364,7 @@ fn acquire_platform_push_key() -> String {
 // regression suite in `tests/dev_token_guard.rs` keeps that gate honest.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Round 25 (A3): production push-token provider trait. One implementation
+/// Production push-token provider trait. One implementation
 /// is installed at boot (`set_push_token_provider`); push-registration
 /// callers go through it instead of the `DevPlaceholderTokenSource` fallback.
 ///
@@ -413,7 +413,7 @@ pub fn push_token_provider() -> Option<Arc<dyn PushTokenProvider>> {
     PUSH_TOKEN_PROVIDER.get().cloned()
 }
 
-/// Round 25 (A3): real Web Push provider for wasm32 targets. Drives
+/// Real Web Push provider for wasm32 targets. Drives
 /// `navigator.serviceWorker.register('/service-worker.js')` and
 /// `registration.pushManager.subscribe({ userVisibleOnly: true,
 /// applicationServerKey })`. The VAPID public key is supplied by the
@@ -474,7 +474,7 @@ impl PushTokenProvider for WebPushTokenProvider {
     }
 }
 
-/// Round 26 (A3): decode the VAPID base64url public key into the raw
+/// Decode the VAPID base64url public key into the raw
 /// 65-byte uncompressed P-256 representation the Web Push API expects in
 /// `applicationServerKey`. The browser actually accepts a `Uint8Array`
 /// (as well as a base64url string in some browsers), but the
@@ -574,7 +574,7 @@ async fn web_push_subscribe(
     Ok(stringified.as_string())
 }
 
-/// Round 25 (A3): FCM provider stub. Production wiring will call into
+/// FCM provider stub. Production wiring will call into
 /// `firebase_messaging::Messaging::get_token`. Until that crate lands the
 /// stub returns `Ok(None)` so registration falls back to the placeholder
 /// guard rather than emitting a fake-but-real-looking FCM token.
@@ -604,7 +604,7 @@ impl PushTokenProvider for FcmPushTokenProvider {
     }
 }
 
-/// Round 25 (A3): APNs provider stub. Wiring lives in the macOS / iOS
+/// APNs provider stub. Wiring lives in the macOS / iOS
 /// host adapter — the trait surface here is what yougen registers with.
 #[derive(Clone, Debug, Default)]
 pub struct ApnsPushTokenProvider;
@@ -632,7 +632,7 @@ impl PushTokenProvider for ApnsPushTokenProvider {
     }
 }
 
-/// Round 25 (A3): the VAPID `applicationServerKey` exposed by soland's
+/// The VAPID `applicationServerKey` exposed by soland's
 /// push-bridge describe endpoint. The current chime describe schema does
 /// not yet expose VAPID material as a typed field — once the schema
 /// graduates `webpush.vapid_public_key`, this helper picks it up
@@ -671,7 +671,7 @@ pub fn vapid_public_key_from_describe(describe: &PushBridgeDescribeResponse) -> 
     None
 }
 
-/// Round 25 (A3): fetch soland's push-bridge describe + extract the
+/// Fetch soland's push-bridge describe + extract the
 /// VAPID public key. Returned `None` means the deploy hasn't published a
 /// VAPID key yet (older soland scaffold) — callers should treat that as
 /// "subscribe without applicationServerKey".
@@ -682,7 +682,7 @@ pub async fn fetch_vapid_application_server_key(
     Ok(vapid_public_key_from_describe(&describe))
 }
 
-/// Round 25 (A3): produce the platform push key by calling the active
+/// Produce the platform push key by calling the active
 /// [`PushTokenProvider`]. Returns `None` if no provider is installed or
 /// the provider declined (permission denied / not yet ready). Callers
 /// blend the result back into the existing acquisition path so the

@@ -1,25 +1,15 @@
-//! Round 22 (2026-05-09): pluggable per-device signing-key store.
+//! Pluggable per-device signing-key store.
 //!
 //! `LocalIdentity` (the per-device ed25519 signing key + derived `did:key`)
-//! used to live entirely inside `LocalStateStore` — the seed sat in the
-//! same `state.json` blob as drafts, sync cursors, and notification
-//! preferences. That made the dev path simple but coupled key custody to
-//! the same plaintext file every other piece of UI state lives in.
-//!
-//! This module introduces a [`KeyStore`] trait so the seed can be loaded
-//! from a different backend (OS keychain, Secret Service, Windows
-//! Credential Manager, hardware key, WebAuthn, ...) without touching any
-//! call site downstream. The default backend, [`InMemoryKeyStore`], wraps
-//! a `LocalStateStore` reference and round-trips the existing on-disk
-//! `state.json` record — semantically identical to Round 21 behaviour, so
-//! flipping the trait in is a no-op for current users.
+//! is loaded via a [`KeyStore`] trait so the seed can be sourced from any
+//! backend (OS keychain, Secret Service, Windows Credential Manager,
+//! hardware key, WebAuthn, ...) without touching call sites downstream.
+//! The default backend, [`InMemoryKeyStore`], wraps a `LocalStateStore`
+//! reference and round-trips the on-disk `state.json` record.
 //!
 //! ## SDK gap
 //!
-//! contrix-rust-sdk Round 22 was scheduled to land a sibling `KeyStore`
-//! trait + `InMemoryKeyStore` + `MacOsKeychainKeyStore` /
-//! `LinuxSecretServiceKeyStore` / `WindowsCredentialKeyStore` stubs. As of
-//! this commit the SDK still only exposes `PlatformKeyStoreDescriptor` /
+//! contrix-rust-sdk currently only exposes `PlatformKeyStoreDescriptor` /
 //! `PlatformKeyStoreKind` (a *descriptor* type — no trait, no actual
 //! key-loading surface). When the SDK trait lands, this module's
 //! [`KeyStore`] will become a thin re-export and the platform stubs here

@@ -99,10 +99,10 @@ pub fn build_consent_revoke_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Round 22: structured constraint payloads attached to a capability
-/// grant. Mirrors `contrix_sdk::authz::ProtocolGrantConstraint` but kept
-/// JSON-shaped because soland's reducer round-trips constraints as
-/// opaque values today — typing them up here would force every UI
+/// Structured constraint payloads attached to a capability grant. Mirrors
+/// `contrix_sdk::authz::ProtocolGrantConstraint` but kept JSON-shaped
+/// because soland's reducer round-trips constraints as opaque values
+/// today - typing them up here would force every UI
 /// surface to re-typing the SDK enum and slow forward compatibility.
 ///
 /// Use [`Self::temporal`] for the most common flavour (`not_before` /
@@ -222,10 +222,10 @@ pub fn build_capability_grant_move(
     )
 }
 
-/// Round 22: same as [`build_capability_grant_move`] but allows attaching
-/// structured grant constraints (temporal / quota / scope_limitation / …)
-/// to the OrSet `add` op. Empty `constraints` slice yields exactly the
-/// pre-Round-22 wire shape, so this function is a strict superset.
+/// Same as [`build_capability_grant_move`] but allows attaching structured
+/// grant constraints (temporal / quota / scope_limitation / ...) to the
+/// OrSet `add` op. An empty `constraints` slice yields exactly the
+/// unconstrained wire shape, so this function is a strict superset.
 pub fn build_capability_grant_move_with_constraints(
     issuer: &str,
     space_id: &str,
@@ -321,7 +321,7 @@ pub fn build_space_organization_update_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Round 23 (M7): construct an MLS commit Move that updates the
+/// Construct an MLS commit Move that updates the
 /// `cx.component.mls.epoch.v1` cas-register cell to `new_epoch` and
 /// records the local actor's understanding of `covered_frontier`. The
 /// message Events can reference the observed frontier in their payload or
@@ -413,8 +413,8 @@ pub fn build_mls_commit_move_with_governance_binding(
     )
 }
 
-/// Round 24 (F1): construct a `cx.component.flow.position.v1` Move that
-/// records a Flow's position inside its containing list. Used for the
+/// Construct a `cx.component.flow.position.v1` Move that records a Flow's
+/// position inside its containing list. Used for the
 /// canonical Move path of board-level entity create + move / position
 /// update operations (kanban.rs add card / move card / add list).
 ///
@@ -591,11 +591,10 @@ pub fn build_flow_position_cas_move(
     )
 }
 
-/// Round 23 (M8): construct a conflict-repair Move that points at two
-/// (or more) competing Anchor heads via `head_in` and references a
-/// `recovery_capability` so soland's authz reducer accepts the merge.
-/// This is the admin-only / moderator-only repair path for
-/// `bottom=expose` cells described in the M8 ticket.
+/// Construct a conflict-repair Move that points at two (or more) competing
+/// Anchor heads via `head_in` and references a `recovery_capability` so
+/// soland's authz reducer accepts the merge. This is the admin-only /
+/// moderator-only repair path for `bottom=expose` cells.
 ///
 /// `cell_id` is the cell that has gone bottom (e.g. the
 /// space.organization cell when two admins concurrently renamed a

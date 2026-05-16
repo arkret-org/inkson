@@ -49,10 +49,10 @@ pub(crate) const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Test-only deterministic signing key used by unit tests so vectors stay
-/// reproducible across runs. Round 21 retired the production callers — UI
-/// builders now load the persisted [`LocalIdentity`] from the local state
-/// store instead. Tests still want a stable key so per-content-address
-/// assertions don't depend on `getrandom`.
+/// reproducible across runs. UI builders load the persisted
+/// [`LocalIdentity`] from the local state store instead; tests still want
+/// a stable key so per-content-address assertions don't depend on
+/// `getrandom`.
 #[cfg(test)]
 pub(crate) fn demo_signing_key() -> SigningKey {
     SigningKey::from_bytes(&[42u8; 32])
@@ -78,8 +78,7 @@ fn identity_from_signing_key(signing_key: SigningKey) -> LocalIdentity {
 /// — crucially — makes it unit-testable without spawning an event loop
 /// or HTTP client.
 ///
-/// Round 21: takes a [`LocalIdentity`] borrow instead of synthesising a
-/// `[42; 32]` deterministic key. UI callers thread in the result of
+/// Takes a [`LocalIdentity`] borrow. UI callers thread in the result of
 /// `state_store.write().ensure_local_identity()`; tests pass an
 /// `identity_from_signing_key(demo_signing_key())` so vectors stay stable.
 pub(crate) fn build_signed_consent_grant(
@@ -296,7 +295,7 @@ pub fn ConsentGrantDemoCard(
                 }
             }
             div { class: "muted",
-                "Round 21: signing key is the per-device ed25519 key persisted in local_state (LocalIdentity). TODO(secure-key-store-handoff): production deploys must move this seed into OS keychain / WebAuthn / HSM. TODO(anchor-frontier-from-sync): plumb the latest Anchor head from sync.rs once P0 M3 lands."
+                "Signing key is the per-device ed25519 key persisted in local_state (LocalIdentity). TODO(secure-key-store-handoff): production deploys must move this seed into OS keychain / WebAuthn / HSM. TODO(anchor-frontier-from-sync): plumb the latest Anchor head from sync.rs."
             }
         }
     }

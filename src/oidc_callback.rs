@@ -1,4 +1,4 @@
-//! Round 27 (C32.6): OIDC callback orchestrator.
+//! OIDC callback orchestrator.
 //!
 //! The lower-level pieces of the PKCE authorization-code flow already
 //! exist:
@@ -157,7 +157,7 @@ pub fn assemble_audience_grant_request(
     build_session_grant_introspection_proof_bundle(grant_id, grant_jwt, audience, signing_key)
 }
 
-/// Round 27 (C32.6): full callback → token-bundle → audience-grant
+/// Full callback → token-bundle → audience-grant
 /// pipeline. Mutates `state_store` in place — successful returns mean
 /// the persisted [`OidcTokenBundle`] has already been written via
 /// [`LocalStateStore::set_oidc_tokens`].
@@ -226,14 +226,13 @@ pub async fn process_callback(
         Some(request.scaffold.principal_audience.as_str())
     };
     let token_bundle = token_response.to_persisted_bundle(audience_hint);
-    // Sprint Q1 第十六增量 (H5): when the audience_grant leg carries a
-    // `principal_did`, route the bundle through the SecureKeyStore
-    // helper so the `refresh_token` field lands in
-    // `coauth.refresh_token.<principal_did>` instead of plain
-    // `state.json`. Without an explicit actor DID at this stage we
-    // fall back to the legacy `set_oidc_tokens` write — the next
-    // refresh poller tick with secure-store wiring will migrate the
-    // bundle on a successful refresh.
+    // When the audience_grant leg carries a `principal_did`, route the
+    // bundle through the SecureKeyStore helper so the `refresh_token`
+    // field lands in `coauth.refresh_token.<principal_did>` instead of
+    // plain `state.json`. Without an explicit actor DID at this stage we
+    // fall back to the legacy `set_oidc_tokens` write — the next refresh
+    // poller tick with secure-store wiring will migrate the bundle on a
+    // successful refresh.
     if let Some(audience_grant) = request.audience_grant.as_ref() {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         state_store.set_oidc_tokens_with_secure_store(

@@ -29,8 +29,8 @@ use crate::move_builder::build_capability_grant_move;
 /// Default `covered_frontier_lag` warning threshold used by the
 /// space_admin alert banner. Mirrors sodmin's
 /// `DEFAULT_LAG_WARN_THRESHOLD` so a member moving between the two
-/// surfaces sees the same alert ceiling. Round 22 — read from the user
-/// preference signal in [`SpaceAdminPanel`].
+/// surfaces sees the same alert ceiling. Read from the user preference
+/// signal in [`SpaceAdminPanel`].
 pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
 /// Placeholder anchor frontier used until sync.rs (P0 M3) surfaces the
@@ -43,9 +43,9 @@ const PLACEHOLDER_ANCHOR_REF: &str =
 
 /// Pure helper: build + sign a `cx.space.update` Move that writes the
 /// space organization cas-register cell. Mirrors the consent-grant signing
-/// flow so the Dioxus closure stays small. Round 21: takes the persisted
-/// per-device [`LocalIdentity`] in place of the historical demo seed —
-/// see `local_state::LocalStateStore::ensure_local_identity`.
+/// flow so the Dioxus closure stays small. Takes the persisted per-device
+/// [`LocalIdentity`] in place of the historical demo seed - see
+/// `local_state::LocalStateStore::ensure_local_identity`.
 pub(crate) fn build_signed_space_organization_update(
     identity: &LocalIdentity,
     space_id: &str,
@@ -62,10 +62,10 @@ pub(crate) fn build_signed_space_organization_update(
 
 /// Pure helper: build + sign a `cx.capability.grant` Move (OrSet add)
 /// targeting `cx.component.capability.grant.v1`. Mirrors the consent
-/// helpers — same signing path, just a different cell family. Round 22
-/// retired the production caller (the UI now goes through
+/// helpers - same signing path, just a different cell family. The
+/// production caller goes through
 /// [`build_signed_capability_grant_with_constraints`] so a temporal
-/// constraint can flow through); this remains for tests so the
+/// constraint can flow through; this remains for tests so the
 /// no-constraint wire shape stays pinned to a stable test vector.
 #[cfg(test)]
 pub(crate) fn build_signed_capability_grant(
@@ -83,7 +83,7 @@ pub(crate) fn build_signed_capability_grant(
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
-/// Round 22 — capability grant with structured constraints. Mirrors
+/// Capability grant with structured constraints. Mirrors
 /// [`build_signed_capability_grant`] but threads a constraint slice
 /// through to the move_builder. The wire shape only differs when the
 /// slice is non-empty (constraints land in the OrSet add op's `value`
@@ -130,11 +130,11 @@ pub(crate) fn build_signed_capability_revoke(
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
-/// Round 23 (M8): pure helper — build + sign a conflict-repair Move
-/// targeting a `bottom=expose` cell. Wraps
-/// [`crate::move_builder::build_conflict_repair_move`] with the
-/// per-device identity / DID URL fields the UI shouldn't have to
-/// recompute. Admin / moderator only — soland's authz reducer rejects
+/// Pure helper: build + sign a conflict-repair Move targeting a
+/// `bottom=expose` cell. Wraps
+/// [`crate::move_builder::build_conflict_repair_move`] with the per-device
+/// identity / DID URL fields the UI shouldn't have to recompute. Admin /
+/// moderator only - soland's authz reducer rejects
 /// unsigned-by-recovery-capability submissions.
 pub(crate) fn build_signed_conflict_repair(
     identity: &LocalIdentity,
@@ -161,10 +161,9 @@ pub(crate) fn build_signed_conflict_repair(
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
-/// Pure helper: format a `SubmitMoveResponse` AND record the outcome
-/// in the local state's [`crate::local_state::MoveSubmissionState`]
-/// tracker. Returns the formatted status string the caller can show
-/// inline. Round 23 (M4).
+/// Pure helper: format a `SubmitMoveResponse` AND record the outcome in
+/// the local state's [`crate::local_state::MoveSubmissionState`] tracker.
+/// Returns the formatted status string the caller can show inline.
 pub(crate) fn record_submit_outcome(
     state_store: &mut LocalStateStore,
     space_id: &str,
@@ -300,42 +299,41 @@ pub fn SpaceAdminPanel(
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
-    // Round 22: structured constraint inputs for the capability grant.
+    // Structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
-    // `scope_limitation` / `none`); the temporal MVP exposes
-    // `not_before` / `not_after` RFC 3339 timestamps. Quota /
-    // scope_limitation are surfaced in the dropdown but show a
-    // "coming soon" hint until matching widgets land.
+    // `scope_limitation` / `none`); the temporal MVP exposes `not_before`
+    // / `not_after` RFC 3339 timestamps. Quota / scope_limitation are
+    // surfaced in the dropdown but show a "coming soon" hint until
+    // matching widgets land.
     let mut cap_constraint_kind = use_signal(|| "none".to_owned());
     let mut cap_temporal_not_before = use_signal(String::new);
     let mut cap_temporal_not_after = use_signal(String::new);
-    // Round 22: covered_frontier alert threshold. Default 5 (mirrors
-    // sodmin's `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the
-    // numeric input next to the banner.
+    // Covered_frontier alert threshold. Default 5 (mirrors sodmin's
+    // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
+    // input next to the banner.
     let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
     // Read-only anchorer cell value fetched from /api/admin/v1/spaces/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
     let mut anchorer_cell_value = use_signal(String::new);
-    // Round 23 (M4): selected Move for the failure detail inline panel.
-    // Clicking a row that's in a failed state stores its move_id here;
-    // the detail block below renders the reason / anchor_ref.
+    // Selected Move for the failure detail inline panel. Clicking a row
+    // that's in a failed state stores its move_id here; the detail block
+    // below renders the reason / anchor_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
-    // Round 23 (M8): conflict-repair dialog state. Surfaces when the
-    // local projection has bottom=expose cells; the operator picks
-    // two of the conflicting heads + a recovery capability ref and
-    // submits a head_in repair Move.
+    // Conflict-repair dialog state. Surfaces when the local projection
+    // has bottom=expose cells; the operator picks two of the conflicting
+    // heads + a recovery capability ref and submits a head_in repair
+    // Move.
     let mut repair_target_cell = use_signal(String::new);
     let mut repair_head_a = use_signal(String::new);
     let mut repair_head_b = use_signal(String::new);
     let mut repair_capability_ref = use_signal(|| "cap.recovery-01".to_owned());
     let mut repair_winner_json = use_signal(String::new);
-    // B5c (Q1 第十增量) — Device-revoke MLS Remove builder. The full
-    // round-trip is: load encrypted snapshot from `state_store`,
-    // decrypt with user-supplied passphrase, run SDK
-    // `remove_member_by_principal`, sign the canonical `mls_commit`
-    // Operation, submit via /api/v1/events, then re-encrypt + persist
-    // the post-commit group state so a crash between submit and
+    // Device-revoke MLS Remove builder. The full round-trip is: load
+    // encrypted snapshot from `state_store`, decrypt with user-supplied
+    // passphrase, run SDK `remove_member_by_principal`, sign the canonical
+    // `mls_commit` Operation, submit via /api/v1/events, then re-encrypt
+    // + persist the post-commit group state so a crash between submit and
     // persist doesn't leave the local cache an epoch behind.
     let mut device_revoke_target = use_signal(String::new);
     let mut device_revoke_passphrase = use_signal(String::new);
@@ -351,9 +349,9 @@ pub fn SpaceAdminPanel(
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    // Round 24 (M9): per-cell safer-winner suggestion, cloned out of the
-    // anchor_view so the rsx! event handlers don't have to borrow it.
-    // Tuple is (cell_ref, head_a_move_id, head_b_move_id, safer_value_json).
+    // Per-cell safer-winner suggestion, cloned out of the anchor_view so
+    // the rsx! event handlers don't have to borrow it. Tuple is
+    // (cell_ref, head_a_move_id, head_b_move_id, safer_value_json).
     let safer_suggestions: Vec<(String, String, String, String)> = bottom_cells
         .iter()
         .filter_map(|(cell_ref, _)| {
@@ -371,9 +369,9 @@ pub fn SpaceAdminPanel(
         .state_root
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
-    // Round 21: MLS epoch + governance covered_frontier for the read-only
-    // widget. `mls_epoch` is the cas-register value of
-    // cx.component.mls.epoch.v1; `covered_frontier` is the
+    // MLS epoch + governance covered_frontier for the read-only widget.
+    // `mls_epoch` is the cas-register value of cx.component.mls.epoch.v1;
+    // `covered_frontier` is the
     // cx.component.governance.covered_frontier.v1 cell value. Both come
     // from the same anchor view the bottom-cells banner reads.
     let mls_epoch_label = anchor_view
@@ -384,10 +382,10 @@ pub fn SpaceAdminPanel(
         .covered_frontier
         .clone()
         .unwrap_or_else(|| "(no governance covered_frontier published)".to_owned());
-    // Round 22: covered_frontier_lag value + threshold check for the
-    // alert banner. We render only when a lag value has actually been
-    // surfaced AND it exceeds the (user-configurable) warning threshold
-    // — matches the sodmin admin page UX.
+    // Covered_frontier_lag value + threshold check for the alert banner.
+    // We render only when a lag value has actually been surfaced AND it
+    // exceeds the (user-configurable) warning threshold - matches the
+    // sodmin admin page UX.
     let covered_frontier_lag_value = anchor_view.covered_frontier_lag;
     let covered_frontier_lag_threshold = covered_frontier_threshold();
     let covered_frontier_alert =
@@ -395,8 +393,8 @@ pub fn SpaceAdminPanel(
     let covered_frontier_lag_label = covered_frontier_lag_value
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
-    // Round 23 (M4): per-Space Move submission tracker. Drives the
-    // state-pill list + the Space-wide anchorer_paused banner.
+    // Per-Space Move submission tracker. Drives the state-pill list +
+    // the Space-wide anchorer_paused banner.
     let move_submissions = state_store
         .read()
         .move_submissions_for_space(&selected_space);
@@ -529,10 +527,9 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            // Round 23 (M4): Space-wide anchorer-paused banner. Fires
-            // whenever any tracked Move for this Space has surfaced
-            // `AnchorerPaused`. The Space cannot advance until ops
-            // rotate the recovery anchorer.
+            // Space-wide anchorer-paused banner. Fires whenever any tracked
+            // Move for this Space has surfaced `AnchorerPaused`. The Space
+            // cannot advance until ops rotate the recovery anchorer.
             if space_paused {
                 div {
                     class: "event error-banner",
@@ -563,9 +560,9 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            // Round 23 (M4): Move submission tracker — pill list of
-            // recent local writes with state badges. Clicking a failed
-            // row reveals the reason inline.
+            // Move submission tracker - pill list of recent local writes
+            // with state badges. Clicking a failed row reveals the reason
+            // inline.
             if active_section == SpaceAdminSection::Repair && !move_submissions.is_empty() {
                 div { class: "event", "data-testid": "move-submission-tracker",
                     div { class: "event-head",
@@ -644,9 +641,9 @@ pub fn SpaceAdminPanel(
                         div { class: "muted", "data-testid": "bottom-cell-row",
                             "{cell_ref} · status={info.status}"
                         }
-                        // Round 24 (M9): side-by-side render of the competing
-                        // heads so the operator can see what they're picking
-                        // between instead of pasting blind JSON.
+                        // Side-by-side render of the competing heads so the
+                        // operator can see what they're picking between
+                        // instead of pasting blind JSON.
                         if !info.heads.is_empty() {
                             div { class: "metric-grid", "data-testid": "bottom-cell-heads",
                                 for head in &info.heads {
@@ -659,11 +656,10 @@ pub fn SpaceAdminPanel(
                                 }
                             }
                         }
-                        // Round 24 (M9): "Prefer safer side" prefill — only
-                        // rendered for cell families where there's a
-                        // semantic safety ordering (member.state,
-                        // capability.grant). For everything else the
-                        // operator picks manually below.
+                        // "Prefer safer side" prefill - only rendered for
+                        // cell families where there's a semantic safety
+                        // ordering (member.state, capability.grant). For
+                        // everything else the operator picks manually below.
                         if let Some((_, head_a, head_b, winner_json)) = safer_suggestions
                             .iter()
                             .find(|(c, _, _, _)| c == cell_ref)
@@ -689,11 +685,10 @@ pub fn SpaceAdminPanel(
                         }
                     }
                 }
-                // Round 23 (M8): conflict-repair Move dialog — only
-                // rendered when bottom_cells is non-empty (i.e. there
-                // is something to repair). Admin / moderator only;
-                // soland's authz reducer rejects unsigned-by-recovery
-                // capability submissions.
+                // Conflict-repair Move dialog - only rendered when
+                // bottom_cells is non-empty (i.e. there is something to
+                // repair). Admin / moderator only; soland's authz reducer
+                // rejects unsigned-by-recovery capability submissions.
                 div { class: "event", "data-testid": "conflict-repair-dialog",
                     div { class: "event-head",
                         span { "Conflict repair (head_in Move)" }
@@ -844,18 +839,18 @@ pub fn SpaceAdminPanel(
                 }
             }
             if active_section == SpaceAdminSection::Security {
-                // Round 22: covered_frontier_lag alert banner. Mirrors
-                // sodmin's admin page banner but stays client-side — it
-                // reads the lag from the LocalAnchorView populated on
-                // /sync, compares to a user-configurable threshold (default
-                // 5, see DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only
-                // renders when soland has surfaced a lag AND it exceeds
-                // threshold. Operators see the same urgency cue here that
-                // sodmin shows on the dedicated covered_frontier page.
+                // Covered_frontier_lag alert banner. Mirrors sodmin's admin
+                // page banner but stays client-side - it reads the lag from
+                // the LocalAnchorView populated on /sync, compares to a
+                // user-configurable threshold (default 5, see
+                // DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD), and only renders
+                // when soland has surfaced a lag AND it exceeds threshold.
+                // Operators see the same urgency cue here that sodmin shows
+                // on the dedicated covered_frontier page.
                 div { class: "event", "data-testid": "covered-frontier-threshold-row",
                     div { class: "event-head",
                         span { "covered_frontier alert threshold" }
-                        span { "Round 22 (client-side)" }
+                        span { "client-side" }
                     }
                     div { class: "muted",
                         "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
@@ -887,12 +882,13 @@ pub fn SpaceAdminPanel(
                         }
                     }
                 }
-                // Round 21: MLS epoch + governance frontier read-only widget.
-                // Reads from the same LocalAnchorView the bottom-cells banner
-                // uses, so it costs no extra fetch — just surfaces two
-                // well-known cells (mls.epoch.v1, governance.covered_frontier.v1)
-                // for admin visibility into E2EE rotation status and governance
-                // gating without leaving the page.
+                // MLS epoch + governance frontier read-only widget. Reads
+                // from the same LocalAnchorView the bottom-cells banner
+                // uses, so it costs no extra fetch - just surfaces two
+                // well-known cells (mls.epoch.v1,
+                // governance.covered_frontier.v1) for admin visibility into
+                // E2EE rotation status and governance gating without leaving
+                // the page.
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
                         span { "MLS epoch & governance frontier" }
@@ -1953,8 +1949,8 @@ pub fn SpaceAdminPanel(
             // Capability grant explanation — claude-design desktop/space-admin.html
             // authz/capabilities.md (delegation, revocation, claim conditions)
             //
-            // Constraint type model (Round 9, 2026-05-05): 14 types collapsed into
-            // 8 family + subtype discriminator per `authz/constraint-schema.md` §2.2:
+            // Constraint type model: 8 family + subtype discriminator per
+            // `authz/constraint-schema.md` §2.2:
             //   temporal (subtype: edit_window / redact_window / session_lifetime / ...)
             //   field_access (subtype: field_write_allow / field_write_deny)
             //   type_restriction (subtype: object_type / morph_type / facet)
@@ -2037,16 +2033,15 @@ pub fn SpaceAdminPanel(
                     value: "{cap_revoke_reason}",
                     oninput: move |evt| cap_revoke_reason.set(evt.value()),
                 }
-                // Round 22: capability constraint editor. Choose a
-                // family from the dropdown (`temporal` / `quota` /
-                // `scope_limitation` / `none`) and fill in the form
-                // for that family. Today only `temporal` is fully
-                // wired — the other options surface their hint copy
-                // but no inputs (matching the move_builder constraint
-                // surface, which only provides a `temporal` builder
-                // helper).
+                // Capability constraint editor. Choose a family from the
+                // dropdown (`temporal` / `quota` / `scope_limitation` /
+                // `none`) and fill in the form for that family. Today only
+                // `temporal` is fully wired - the other options surface
+                // their hint copy but no inputs (matching the move_builder
+                // constraint surface, which only provides a `temporal`
+                // builder helper).
                 div { class: "event-head", "data-testid": "cap-constraint-editor",
-                    span { "Constraint (Round 22)" }
+                    span { "Constraint" }
                     span { "temporal MVP · quota / scope_limitation soon" }
                 }
                 label { "Constraint family" }
@@ -2122,10 +2117,9 @@ pub fn SpaceAdminPanel(
                                             return;
                                         }
                                     };
-                                // Round 22: pull the active constraint
-                                // from the editor signals and thread it
-                                // through the builder. Empty input
-                                // yields no constraint.
+                                // Pull the active constraint from the editor
+                                // signals and thread it through the builder.
+                                // Empty input yields no constraint.
                                 let kind = cap_constraint_kind();
                                 let constraints: Vec<CapabilityConstraintInput> =
                                     if kind == "temporal" {
@@ -2461,7 +2455,7 @@ pub fn SpaceAdminPanel(
                 }
             }
 
-            // B5c (Q1 第十增量) — Device-revoke MLS Remove builder.
+            // Device-revoke MLS Remove builder.
             // Lets an operator turn the persisted MLS snapshot for this
             // Space into a canonical `mls_commit` Operation that removes
             // a target device's leaf, submits it, and re-persists the
@@ -2546,17 +2540,16 @@ pub fn SpaceAdminPanel(
                 }
             }
 
-            // Round 25 (R4): chained MLS Remove + epoch-advance Move
-            // tracker. Reads the local move_submissions store, filters
-            // for `mls_commit` + `mls_epoch_advance` kinds in the
-            // current Space, pairs them by submission timestamp, and
-            // surfaces each pair as a chain entry. Operators monitor
-            // here when a device-revocation chain has stalled (e.g.
-            // anchorer paused before the epoch-advance landed).
+            // Chained MLS Remove + epoch-advance Move tracker. Reads the
+            // local move_submissions store, filters for `mls_commit` +
+            // `mls_epoch_advance` kinds in the current Space, pairs them by
+            // submission timestamp, and surfaces each pair as a chain
+            // entry. Operators monitor here when a device-revocation chain
+            // has stalled (e.g. anchorer paused before the epoch-advance
+            // landed).
             div { class: "event", "data-testid": "mls-revoke-chain-tracker",
                 div { class: "event-head",
                     span { "MLS revoke Move chains" }
-                    span { "round 25 R4" }
                 }
                 div { class: "muted",
                     "Each row shows one chain of MLS Remove (commit) + epoch-advance Moves triggered by a device revocation. Both Moves must reach Effective before the device is fully unspooled from the group; failures are surfaced inline so operators can take corrective action."
@@ -2672,7 +2665,7 @@ pub fn SpaceAdminPanel(
     }
 }
 
-/// B5c (Q1 第十增量) — wasm-fallback for the MLS Remove handler. The
+/// wasm-fallback for the MLS Remove handler. The
 /// browser build can't decrypt the snapshot or talk to OpenMLS, so this
 /// branch surfaces a clear "use desktop" notice and returns without
 /// touching `state_store` or the network.
@@ -2692,7 +2685,7 @@ async fn run_device_revoke_from_snapshot(
     );
 }
 
-/// B5c (Q1 第十增量) — native handler that wraps
+/// Native handler that wraps
 /// [`crate::device_revoke::execute_mls_remove_from_snapshot`]:
 ///
 /// 1. read the encrypted MLS snapshot for the Space out of the local state store;
@@ -3007,7 +3000,7 @@ mod move_flow_tests {
         assert_eq!(effect.op.reason.as_deref(), Some("rotation policy"));
     }
 
-    /// Round 22: capability grant with a temporal constraint folds the
+    /// Capability grant with a temporal constraint folds the
     /// `not_before` / `not_after` window into the OrSet add op's `value`
     /// field; revokes still hit the same cell family so soland's
     /// causal-remove semantics keep working.
@@ -3045,7 +3038,7 @@ mod move_flow_tests {
         );
     }
 
-    /// Round 22: when no constraints are passed, the wire shape (and
+    /// When no constraints are passed, the wire shape (and
     /// content-addressed move id) match the direct no-constraint grant
     /// builder.
     #[test]

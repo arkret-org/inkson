@@ -454,7 +454,7 @@ pub mod cx_ops {
             .body(json!({ "flow_id": flow_id }))
     }
 
-    // ── Applet protocol family (Sprint Q1 第十四增量 P2) ──────────────
+    // ── Applet protocol family ────────────────────────────────────────
     //
     // Spec: `extensions/applet-integration.md` + canonical event-kind
     // registry rows `cx.applet.registration` / `cx.applet.discovery` /
@@ -555,7 +555,7 @@ pub mod cx_ops {
             }))
     }
 
-    // ── Agent protocol family (Sprint Q1 第十四增量 P3) ───────────────
+    // ── Agent protocol family ─────────────────────────────────────────
     //
     // Spec: `extensions/agent-integration.md` + canonical event-kind
     // registry rows `cx.agent.endpoint` / `cx.agent.protocol_session.
@@ -827,10 +827,9 @@ mod tests {
         assert_eq!(restore.target_ref.as_deref(), Some(flow_id));
     }
 
-    /// Sprint Q1 第十四增量 (P2): pin the canonical op_type + target_ref
-    /// + body shape for every `cx.applet.*` builder so server-side
-    /// validators (soland operation requirements) keep accepting them
-    /// after any spec round.
+    /// Pin the canonical op_type + target_ref + body shape for every
+    /// `cx.applet.*` builder so server-side validators (soland operation
+    /// requirements) keep accepting them.
     #[test]
     fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         let service_did = "did:web:applet.example";
@@ -887,7 +886,7 @@ mod tests {
         assert_eq!(err.body["errcode"], "applet_unavailable");
     }
 
-    /// Sprint Q1 第十四增量 (P3): same pinning at the agent layer.
+    /// Same pinning at the agent layer.
     #[test]
     fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         let agent = "did:web:researcher.agent.example";

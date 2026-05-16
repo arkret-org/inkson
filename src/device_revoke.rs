@@ -287,7 +287,7 @@ pub struct DeviceRevokeFullSnapshot {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round 25 (R4): chained MLS Remove + epoch-advance Move tracker.
+// Chained MLS Remove + epoch-advance Move tracker.
 //
 // When the device-revocation handler executes the plan, every MLS group
 // the revoked device was a leaf in needs **two** Moves to fully advance:
@@ -416,7 +416,7 @@ impl ChainMoveState {
     }
 }
 
-/// Round 25 (R4): build the typed chain set from a [`DeviceRevokePlan`].
+/// Build the typed chain set from a [`DeviceRevokePlan`].
 /// One [`MlsRevokeMoveChain`] per `MlsCommit` step in the plan.
 /// `pre_revoke_epochs` maps `group_id` → known current epoch (often
 /// supplied by the local Anchor view); missing entries leave the

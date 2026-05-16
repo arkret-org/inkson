@@ -95,7 +95,7 @@ struct SpaceParticipant {
     is_self: bool,
 }
 
-/// Sprint Q1 第十二增量: hydrate the local MLS group for a Space (or
+/// Hydrate the local MLS group for a Space (or
 /// bootstrap a single-member group when no snapshot exists), encrypt
 /// `plaintext_bytes` against it, persist the post-encrypt group state
 /// back under the same passphrase, and return:
@@ -163,8 +163,8 @@ fn run_local_mls_encrypt(
             Err(_) => return empty,
         }
     };
-    // Sprint Q1 第十六增量 (B1): self-update commit BEFORE encrypting so
-    // the payload runs under the rotated epoch — forward secrecy
+    // Self-update commit BEFORE encrypting so the payload runs under
+    // the rotated epoch — forward secrecy
     // improves and the Move-pipeline `mls_commit` row can carry the
     // real `(group_id, epoch, commit_hash)` triple instead of a
     // synthesized `(space_id, prev_epoch+1, _)` placeholder. Failure
@@ -228,8 +228,8 @@ fn run_local_mls_encrypt(
     )
 }
 
-/// Sprint Q1 第十三增量: walk a `DeviceMessagesReceiveResponse` JSON
-/// representation and pull out every `cx.mls.welcome` content payload.
+/// Walk a `DeviceMessagesReceiveResponse` JSON representation and
+/// pull out every `cx.mls.welcome` content payload.
 /// Soland's wire shape for that endpoint is `{ "messages": { actor:
 /// { device_id: { type, content, ... } } } }`; this helper does NOT
 /// assume only one welcome per poll — multiple inviters into multiple
@@ -268,7 +268,7 @@ fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> 
     welcomes
 }
 
-/// Sprint Q1 第十三增量: multi-device MLS invite handler.
+/// Multi-device MLS invite handler.
 ///
 /// 1. Validate inputs (target actor + device + passphrase non-empty).
 /// 2. Hydrate the local MLS group from the persisted snapshot via the
@@ -477,7 +477,7 @@ async fn run_mls_add_member_and_invite(
     ));
 }
 
-/// Sprint Q1 第十三增量: wasm fallback — desktop-only.
+/// wasm fallback — desktop-only.
 #[cfg(target_arch = "wasm32")]
 async fn run_mls_add_member_and_invite(
     _base_url: String,
@@ -1567,8 +1567,8 @@ pub fn ChatPanel(
     let mut selected_channel = use_signal(String::new);
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
-    // Sprint Q1 第十二增量: read the shared per-Space MLS passphrase
-    // store. Set from the new passphrase input the composer renders
+    // Read the shared per-Space MLS passphrase store. Set from the new
+    // passphrase input the composer renders
     // above Send Secure; read by the secure-send path to actually
     // run `group.encrypt_payload()`. When empty for this Space, the
     // legacy placeholder ciphertext path stays active so non-MLS
@@ -1576,7 +1576,7 @@ pub fn ChatPanel(
     let mls_passphrase_store =
         use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
     let mut mls_passphrase_draft = use_signal(String::new);
-    // Sprint Q1 第十三增量: multi-device Welcome flow controls. The
+    // Multi-device Welcome flow controls. The
     // `Invite to MLS group` button fetches the target (actor, device)
     // key package via `fetch_mls_key_package`, runs `group.add_member`
     // against the hydrated local group, sends the resulting Welcome
@@ -1738,8 +1738,8 @@ pub fn ChatPanel(
         });
     }
 
-    // Sprint Q1 第十三增量: Welcome receive shuttle. Poll
-    // /api/v1/device_messages once per mount; if any incoming message
+    // Welcome receive shuttle. Poll /api/v1/device_messages once per
+    // mount; if any incoming message
     // carries `type = cx.mls.welcome`, run
     // `ContrixMlsGroup::join_from_welcome` against the local identity
     // for that Space and persist the resulting group snapshot under the
@@ -2936,8 +2936,8 @@ pub fn ChatPanel(
                         },
                         {crate::i18n::tr("chat.send")}
                     }
-                    // Sprint Q1 第十二增量: per-Space MLS passphrase
-                    // input. When non-empty, Send Secure switches to the
+                    // Per-Space MLS passphrase input. When non-empty,
+                    // Send Secure switches to the
                     // real `group.encrypt_payload()` path (typed
                     // EncryptedPayload + persisted post-encrypt state).
                     // When empty, the legacy placeholder ciphertext
@@ -2975,8 +2975,7 @@ pub fn ChatPanel(
                         },
                         {crate::i18n::tr("chat.mls_passphrase_save")}
                     }
-                    // Sprint Q1 第十三增量: MLS multi-device invite row.
-                    // Three controls:
+                    // MLS multi-device invite row. Three controls:
                     //   1. Publish my key package → POST keys/upload with
                     //      a fresh MlsKeyPackageRecord so peers can
                     //      fetch + add_member against it.
@@ -3196,8 +3195,8 @@ pub fn ChatPanel(
                                 // single-effect commit so the chat flow
                                 // still works against servers that have
                                 // not turned on the hardening profile.
-                                // Sprint Q1 第十二增量: real MLS encrypt
-                                // path. When the user has entered a
+                                // Real MLS encrypt path. When the user
+                                // has entered a
                                 // passphrase for this Space (or one is
                                 // already persisted via the empty default
                                 // for snapshots written before this
@@ -3286,8 +3285,8 @@ pub fn ChatPanel(
                                     )
                                 })()
                                 .ok();
-                                // Sprint Q1 第十六增量 (B1): prefer the
-                                // real SDK self-update commit envelope's
+                                // Prefer the real SDK self-update commit
+                                // envelope's
                                 // epoch when present. `run_local_mls_encrypt`
                                 // now runs `group.self_update_commit()`
                                 // before encrypting, so the Move-pipeline
@@ -3333,8 +3332,8 @@ pub fn ChatPanel(
                                 };
                                 let commit_signed =
                                     sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
-                                // Sprint Q1 第十二增量: prefer the typed
-                                // `EncryptedPayload` from `run_local_mls_encrypt`
+                                // Prefer the typed `EncryptedPayload`
+                                // from `run_local_mls_encrypt`
                                 // — when the user has supplied a passphrase
                                 // for this Space, that path produces a real
                                 // SDK-typed payload (decryptable by the same
@@ -3373,9 +3372,9 @@ pub fn ChatPanel(
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
                                 let actor_for_audit = actor.clone();
-                                // B6c (Q1 第十一增量): when a local MLS
-                                // group is hydrated for this Space we now
-                                // expand `delivered_to_devices` to every
+                                // When a local MLS group is hydrated
+                                // for this Space, expand
+                                // `delivered_to_devices` to every
                                 // principal DID in the group (returned by
                                 // SDK `member_principal_dids()`). Falls
                                 // back to the local device's did:key — the
@@ -3532,7 +3531,7 @@ fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<se
 mod tests {
     use super::*;
 
-    /// Sprint Q1 第十三增量: the Welcome-receive shuttle iterates
+    /// The Welcome-receive shuttle iterates
     /// `messages -> actor -> device -> {type, content}` from
     /// `DeviceMessagesReceiveResponse`. Pin the parse so multi-actor /
     /// list-vs-object device entries / mixed-type batches all surface

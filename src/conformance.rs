@@ -49,8 +49,7 @@ pub fn known_profiles() -> Vec<ConformanceProfile> {
         .collect()
 }
 
-/// Conformance tier per `artifacts/profiles/conformance-profiles.json` `profile_tiers`
-/// (Round 3 of the 2026-05-05 spec simplification).
+/// Conformance tier per `artifacts/profiles/conformance-profiles.json` `profile_tiers`.
 ///
 /// - `V1Core` — must be implemented to claim v1 conformance. 14 profiles total at
 ///   the spec level; yougen exposes the client-side subset.
@@ -899,7 +898,7 @@ mod tests {
         // audited-e2ee — attested + disclosed audit profiles
         assert!(kinds.contains(&"cx.audit.accessed"));
         assert!(kinds.contains(&"cx.audit.ryw_receipt"));
-        // Removed in spec Round 7 / batch 1
+        // Removed by spec
         assert!(!kinds.contains(&"cx.flow.convert"));
         assert!(!kinds.contains(&"cx.mls.epoch"));
         // Renamed: cx.actor.profile.update -> cx.profile.update

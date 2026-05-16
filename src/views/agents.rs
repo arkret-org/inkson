@@ -1,4 +1,4 @@
-//! Agents — endpoint registry + protocol_session monitor (Sprint Q1 第十四增量 V2).
+//! Agents - endpoint registry + protocol_session monitor.
 //!
 //! Spec: `contrix-spec/spec/v1/zh/extensions/agent-integration.md`.
 //!
@@ -8,14 +8,14 @@
 //!     capability_proof requirement.
 //!   * `cx.agent.protocol_session.{start,status,result}` track agent
 //!     invocations. The terminal `result` event carries a typed result
-//!     payload + the audit_binding proof so the audit timeline can verify
-//!     the agent's output corresponds to the signed input.
+//!     payload + the audit_binding proof so the audit timeline can
+//!     verify the agent's output corresponds to the signed input.
 //!
-//! Sprint Q1 第二十一增量 (V3): incoming `cx.agent.protocol_session.result`
-//! events fetched from soland are decoded + verified via
-//! `contrix_sdk::agent_binding` (both HMAC + Ed25519 binding kinds
-//! supported). The panel renders a per-result badge so operators can
-//! tell at a glance whether the signature actually matches.
+//! Incoming `cx.agent.protocol_session.result` events fetched from
+//! soland are decoded + verified via
+//! `contrix_sdk::agent_binding::verify_ed25519_audit_binding`. The
+//! panel renders a per-result badge so operators can tell at a glance
+//! whether the signature matches.
 
 use dioxus::prelude::*;
 use serde_json::Value;
@@ -76,12 +76,10 @@ impl AuditVerifyStatus {
 /// Reads the binding plus the four canonical-subject inputs
 /// (`session_id`, `result.agent_did`, `result.echo`, `audit_binding.actor`)
 /// out of the event payload itself and dispatches by `binding_kind`:
-///   * `ed25519_v1` → verify via SDK Ed25519 helper using the
+///   * `ed25519_v1` -> verify via SDK Ed25519 helper using the
 ///     `public_key_b64` carried in the envelope.
-///   * anything else → `Unsupported`. The HMAC path was removed in
-///     第二十五增量 (R-Legacy-1) when the soland bridge stopped
-///     writing HMAC bindings; deployments wanting symmetric
-///     authentication can ship their own `binding_kind` and extend
+///   * anything else -> `Unsupported`. Deployments wanting an
+///     alternative scheme ship their own `binding_kind` and extend
 ///     this dispatcher.
 fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
     let Some(binding) = payload.get("audit_binding") else {
@@ -154,13 +152,12 @@ pub fn AgentsPanel(
     let mut capabilities = use_signal(|| "flow.read".to_owned());
     let mut status = use_signal(String::new);
 
-    // Sprint Q1 第二十一增量 (V3) + 第二十四增量 (V3-poll):
-    // incoming agent `protocol_session.result` events polled from
+    // Incoming agent `protocol_session.result` events polled from
     // soland every 4s. Each entry is a (event_id, payload) pair so
     // the render side can call `verify_agent_audit_binding` on each
-    // payload and show the resulting badge. The poll loop self-
-    // bounds at 900 ticks (~1h) to keep cost predictable; operator
-    // can refresh the page to restart it.
+    // payload and show the resulting badge. The poll loop
+    // self-bounds at 900 ticks (~1h) to keep cost predictable;
+    // operator can refresh the page to restart it.
     let mut incoming_results = use_signal(Vec::<(String, Value)>::new);
     let mut incoming_status = use_signal(String::new);
     let mut incoming_last_poll_at = use_signal(String::new);
@@ -476,10 +473,9 @@ pub fn AgentsPanel(
                     }
                 }
             }
-            // Sprint Q1 第二十一增量 (V3): incoming
-            // `cx.agent.protocol_session.result` events fetched from
-            // soland, with per-event Ed25519 / HMAC audit-binding
-            // verification badge.
+            // Incoming `cx.agent.protocol_session.result` events
+            // fetched from soland, with per-event Ed25519
+            // audit-binding verification badge.
             div { class: "event", "data-testid": "agent-incoming-results",
                 div { class: "event-head",
                     span { "Verified results (from soland)" }
@@ -545,9 +541,9 @@ pub fn AgentsPanel(
 
 #[cfg(test)]
 mod tests {
-    /// Sprint Q1 第十四增量 (V2): pin endpoint body shape so the view
-    /// extractor `body.agent_did / body.protocol` keeps matching the
-    /// cx_ops::agent_endpoint builder output.
+    /// Pin endpoint body shape so the view extractor
+    /// `body.agent_did / body.protocol` keeps matching the
+    /// `cx_ops::agent_endpoint` builder output.
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
         let op = crate::operation::cx_ops::agent_endpoint(
@@ -576,8 +572,8 @@ mod tests {
         assert_eq!(op.body["audit_binding"]["merkle_root"], "sha256:abc");
     }
 
-    // Sprint Q1 第二十一增量 (V3): pin the verify helper's outcomes
-    // for each canonical wire shape the panel can encounter.
+    // Pin the verify helper's outcomes for each canonical wire
+    // shape the panel can encounter.
 
     use super::{AuditVerifyStatus, verify_agent_audit_binding};
     use serde_json::{Value, json};
@@ -676,10 +672,8 @@ mod tests {
         );
     }
 
-    /// 第二十五增量 (R-Legacy-1): `hmac_sha256_v1` was the
-    /// pre-第二十一增量 binding kind. The verify helper now treats
-    /// it as `Unsupported` — no special-case path. The SDK HMAC
-    /// helper was also removed.
+    /// The verify helper treats `hmac_sha256_v1` (and any unknown
+    /// `binding_kind`) as `Unsupported` - no special-case path.
     #[test]
     fn verify_helper_returns_unsupported_for_legacy_hmac_binding() {
         let payload = json!({

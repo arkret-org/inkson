@@ -1,4 +1,4 @@
-//! Round 23 (M6): invite-quarantine UI surface.
+//! Invite-quarantine UI surface.
 //!
 //! Lists quarantined invites observed by coauth's
 //! `GET /admin/v1/invite-quarantine` (admin scope) — or the per-user

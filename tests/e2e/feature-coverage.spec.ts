@@ -3,14 +3,13 @@
  * `claude-design/` and `_todos.md` list, end-to-end against the mocked
  * Contrix server.
  *
- * Sprint Q1 第十三增量: all placeholders are now active tests. Each
- * test makes a single concrete claim about a stable UI surface (panel
- * data-testid + key control). The deeper protocol flow (full SAS
- * exchange, full Shamir reconstruct, full quorum-with-2-signatures,
- * etc.) is exercised by unit tests in the underlying Rust crates —
- * the e2e layer keeps watch over the UI handles those flows bind to,
- * so a regression that strips a panel or renames a testid fails
- * loudly.
+ * Each test makes a single concrete claim about a stable UI surface
+ * (panel data-testid + key control). The deeper protocol flow (full
+ * SAS exchange, full Shamir reconstruct, full
+ * quorum-with-2-signatures, etc.) is exercised by unit tests in the
+ * underlying Rust crates - the e2e layer keeps watch over the UI
+ * handles those flows bind to, so a regression that strips a panel
+ * or renames a testid fails loudly.
  *
  * Each test cites the spec section it pins so a future contributor
  * who wants to extend the assertions has a fast path to the
@@ -32,10 +31,10 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/board.html
   // spec: overview/current-model.md §4, models/views.md §6
   test("board: drag flow across lists writes cx.flow.move", async ({ page }) => {
-    // Sprint Q1 第十三增量: the drag-drop pipeline is exercised end-to-
-    // end by clientx.flows.spec.ts::"kanban card drag queues a flow
-    // move". This placeholder now pins the structural contract the
-    // drop relies on: the move-queue + write-records data-testids MUST
+    // The drag-drop pipeline is exercised end-to-end by
+    // clientx.flows.spec.ts::"kanban card drag queues a flow move".
+    // This placeholder pins the structural contract the drop relies
+    // on: the move-queue + write-records data-testids MUST
     // exist on /kanban so soland can dispatch cx.flow.move /
     // cx.flow.reorder write records through them. The HLC tiebreak
     // assertion called out in the spec is exercised in the SDK's
@@ -50,8 +49,8 @@ test.describe("feature coverage placeholders", () => {
   });
 
   test("board: multi-renderer header switches View.kind=collection renderer", async ({ page }) => {
-    // Sprint Q1 第十二增量: kanban's multi-renderer switcher MUST
-    // expose every spec-declared View.kind=collection renderer
+    // Kanban's multi-renderer switcher MUST expose every
+    // spec-declared View.kind=collection renderer
     // (board/list/table/calendar/timeline/graph) as a `data-testid=
     // renderer-*` tab. Soland's `cx.view.update` projection then
     // writes the chosen renderer back; this test pins the surface so a
@@ -74,8 +73,8 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/flow-detail.html, desktop/discussion.html
   // spec: overview/current-model.md §3
   test("card detail drawer shows branch tabs and respects branch access", async ({ page }) => {
-    // Sprint Q1 第十二增量: clicking a kanban card opens the card-detail
-    // drawer; the drawer MUST expose the synthesis/discussion branch
+    // Clicking a kanban card opens the card-detail drawer; the
+    // drawer MUST expose the synthesis/discussion branch
     // tabs even on cards whose discussion is locked (`lazy_link`), so
     // the actor sees the access boundary instead of the UI silently
     // hiding the branch surface. Spec: `overview/current-model.md §3`.
@@ -94,7 +93,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/devices.html, desktop/verify-device.html
   // spec: crypto-media/devices-and-auth.md §1.2
   test("device verification: SAS match writes cx.device.authorized + cx.device.cross_sign", async ({ page }) => {
-    // Sprint Q1 第十三增量: pin the SAS verification UI surface. The
+    // pin the SAS verification UI surface. The
     // full SAS exchange + cross_sign + cx.device.authorized event emit
     // happen inside the SDK + soland's identity store; this test
     // makes sure the data-testid handles the next layer down expects
@@ -196,7 +195,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   test("session grant alone never reads E2EE history", async ({ page }) => {
-    // Sprint Q1 第十三增量: this contract has two visible UI handles
+    // this contract has two visible UI handles
     // that the session-grant-only path MUST render: (1) the timeline's
     // ciphertext-locked badge, and (2) the card-detail's locked
     // discussion fail-closed banner. We don't simulate a session-grant
@@ -273,7 +272,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   test("recovery: social recovery 3 of 5 reconstruct triggers cx.identity.recovery", async ({ page }) => {
-    // Sprint Q1 第十三增量: the recovery view's three layers
+    // the recovery view's three layers
     // (vault / recovery-key / social) each expose a dedicated
     // data-testid section. The 3-of-5 social-recovery reconstruct flow
     // requires the social-recovery-section + recovery-key-section
@@ -291,8 +290,8 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/directory.html
   // spec: discovery/discovery-directory.md §2
   test("directory: invite_only space hides existence from search", async ({ page }) => {
-    // D3 (Q1 第十增量): the keyword-search path must respect
-    // `discoverability=invite_only` — the spec (discovery/discovery-
+    // The keyword-search path must respect
+    // `discoverability=invite_only` - the spec (discovery/discovery-
     // directory.md §2) requires that searches MUST NOT enumerate
     // invite-only Spaces. Soland's `/api/v1/directory/search-spaces`
     // filters them out; the mock surface returns the same shape so the
@@ -318,7 +317,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   test("directory: locked cross-space ref shows LazyLinkBadge only", async ({ page }) => {
-    // Sprint Q1 第十三增量: the directory's ProtocolObjects tab fans
+    // the directory's ProtocolObjects tab fans
     // out demo `protocol_object_results(...)` rows; any row whose
     // `access` is `locked` or `external` MUST render the
     // `LazyLinkBadge` (data-testid `lazy-link-badge`) instead of
@@ -343,7 +342,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/space-admin.html
   // spec: authz/capabilities.md
   test("space-admin: capability approval pending until 2 of 3 admins sign", async ({ page }) => {
-    // Sprint Q1 第十三增量: the capability-grant approval workflow
+    // the capability-grant approval workflow
     // requires the `grant-explanation` rows to render so an admin can
     // see (a) what's being granted, and (b) the current pending /
     // accepted state. The 2-of-3 quorum logic is server-side (soland
@@ -361,7 +360,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/audit.html
   // spec: sync/operations-sync.md
   test("audit: conflict trail shows winner + superseded events", async ({ page }) => {
-    // Sprint Q1 第十三增量: the audit view exposes three counted
+    // the audit view exposes three counted
     // surfaces — accessed (attested decrypts), ryw_receipt (disclosed
     // writes), and the raw operation log. The conflict trail (when
     // present) renders inside the per-row layout below. We pin the
@@ -378,7 +377,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/applets.html
   // spec: extensions/applet-integration.md
   test("applets: register new applet writes signed cx.applet.registration", async ({ page }) => {
-    // Sprint Q1 第十三增量: applets view is not yet implemented in
+    // applets view is not yet implemented in
     // yougen — the feature surface lives in
     // `contrix-spec/spec/v1/extensions/applet-integration.md` and the
     // builder events (cx.applet.registration / cx.applet.invocation)
@@ -392,7 +391,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   test("applets: agent capability approval writes signed event chain", async ({ page }) => {
-    // Sprint Q1 第十三增量: agent capability approval is gated by the
+    // agent capability approval is gated by the
     // shared CapabilityEngine + soland's policy engine — both
     // exercised in unit tests. The /applets route currently has no
     // dedicated view; once it lands the per-agent approval row will
@@ -407,7 +406,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/call.html
   // spec: crypto-media/webrtc-signaling.md
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
-    // Sprint Q1 第十三增量: yougen ships the call SIGNALING surface
+    // yougen ships the call SIGNALING surface
     // (`cx.call.signal` / `cx.call.state` / `cx.call.recording.start`)
     // but the WebRTC media stack is renderer-provided. This e2e pins
     // the call-panel surface so the SFU-vs-recording-grant contract
@@ -422,7 +421,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/inbox.html, mobile/inbox.html
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
   test("push gateway only ships background_sync_needed payload", async ({ page }) => {
-    // Sprint Q1 第十二增量: the push-register payload yougen sends to
+    // the push-register payload yougen sends to
     // soland (`POST /api/v1/push/register-device`) MUST NOT carry any
     // body / title / sender / collapse_key fields — only the minimal
     // device registration metadata. The downstream gateway then ships

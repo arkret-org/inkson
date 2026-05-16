@@ -210,7 +210,7 @@ use crate::models::{
 };
 use crate::operation::{OperationEnvelope, uuid_v7};
 
-/// Sync-Projection (Q1 第十增量) — generic wrapper for soland's
+/// Generic wrapper for soland's
 /// `/api/v1/projection/{places|flows}` lifecycle endpoints. Keeps the
 /// query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck `.places` / `.flows` with the same code.
@@ -255,9 +255,8 @@ pub struct FlowProjectionView {
     pub state: String,
 }
 
-/// Sprint Q1 第十五增量: server-side Morph row from
-/// `GET /api/v1/projection/morphs` (soland round 15a). Same enum as
-/// Flow per spec §5.1.
+/// Server-side Morph row from
+/// `GET /api/v1/projection/morphs`. Same enum as Flow per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
@@ -398,11 +397,11 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         .then(|| sync_token.to_owned())
 }
 
-/// Round 28: typed error class for the `post_audit_user_action`
-/// path. Distinguishes "endpoint isn't wired yet" (404 — caller
-/// should re-buffer the entry) from "server said no" (every other
-/// error — drop and move on). Pulled out so callers can branch
-/// without parsing `anyhow::Error` strings.
+/// Typed error class for the `post_audit_user_action` path.
+/// Distinguishes "endpoint isn't wired yet" (404 - caller should
+/// re-buffer the entry) from "server said no" (every other error -
+/// drop and move on). Pulled out so callers can branch without
+/// parsing `anyhow::Error` strings.
 #[derive(Debug)]
 pub enum AuditPostError {
     /// Server responded 404 — the audit ingest endpoint is not yet
@@ -796,13 +795,12 @@ impl ContrixApi {
         self.post_json("api/v1/admin/anchors/sign", body).await
     }
 
-    /// PUT a per-account `cx.account_data.set` entry. Round 21: thin wrapper
-    /// around `PUT /api/v1/account_data/{type}` so settings UIs can push
-    /// preferences (e.g. `cx.read_receipt.preferences`) up to soland for
-    /// cross-device sync. The endpoint is being implemented in soland on a
-    /// separate track — when it returns 404 / 501 / 405 we treat the
-    /// outcome as `Unsupported` and let the caller swallow it (local state
-    /// stays authoritative). Anything else surfaces as `Err`.
+    /// PUT a per-account `cx.account_data.set` entry. Thin wrapper around
+    /// `PUT /api/v1/account_data/{type}` so settings UIs can push preferences
+    /// (e.g. `cx.read_receipt.preferences`) up to soland for cross-device
+    /// sync. When the endpoint returns 404 / 501 / 405 we treat the outcome
+    /// as `Unsupported` and let the caller swallow it (local state stays
+    /// authoritative). Anything else surfaces as `Err`.
     ///
     /// Structural: the body is `{ "content": <value> }` — soland's existing
     /// `cx.account_data.set` pipeline treats the path's `{type}` segment as
@@ -1120,7 +1118,7 @@ impl ContrixApi {
         .await
     }
 
-    /// Sprint Q1 第十三增量: publish an MLS `MlsKeyPackageRecord` to
+    /// Publish an MLS `MlsKeyPackageRecord` to
     /// soland's `/api/v1/keys/upload` endpoint so peers can fetch it via
     /// `query_keys` and `add_member()` against it. Other key fields
     /// (one_time_keys / fallback_keys / device_signature) carry their
@@ -1151,7 +1149,7 @@ impl ContrixApi {
         .await
     }
 
-    /// Sprint Q1 第十三增量: fetch a peer's MLS key package via
+    /// Fetch a peer's MLS key package via
     /// `query_keys`, decoding the most recent `mls_key_packages` entry
     /// into a typed `MlsKeyPackageRecord`. Returns `Ok(None)` when the
     /// device exists but has no MLS key package on file (in which case
@@ -1295,7 +1293,7 @@ impl ContrixApi {
         .await
     }
 
-    /// Round 28: ship a single client-side telemetry entry to
+    /// Ship a single client-side telemetry entry to
     /// soland's audit ingest endpoint (or, if soland routes the path
     /// through coauth, the coauth audit feed — soland's reverse
     /// proxy makes the choice transparent to the client).
@@ -1552,12 +1550,9 @@ impl ContrixApi {
             .await
     }
 
-    // Sync-Projection (Q1 第十增量):
     // Pull the canonical Place / Flow lifecycle state for a Space so the
     // kanban view can hydrate `column.state` / `card.lifecycle` after a
-    // refresh. Pairs with soland's
-    // `routing::events::projection_query` (round 14d+; surface added in
-    // yougen Q1 第十增量).
+    // refresh. Pairs with soland's `routing::events::projection_query`.
     pub async fn list_place_projections(
         &self,
         space_id: &str,
@@ -1576,10 +1571,9 @@ impl ContrixApi {
         self.get_json(&path).await
     }
 
-    /// Sprint Q1 第十五增量: parity with `list_place_projections` /
-    /// `list_flow_projections`. Soland round 15a added the morphs
-    /// read-side endpoint; this is the symmetric yougen consumer so
-    /// future morph-aware views can hydrate post-refresh state.
+    /// Parity with `list_place_projections` / `list_flow_projections`
+    /// for the morphs read-side endpoint, so future morph-aware views can
+    /// hydrate post-refresh state.
     pub async fn list_morph_projections(
         &self,
         space_id: &str,

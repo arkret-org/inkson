@@ -482,6 +482,51 @@ pub fn english_translations() -> TranslationDict {
     dict.set("verify_device.start_sas", "Start SAS Verification");
     dict.set("verify_device.short_auth_string", "Short Authentication String");
 
+    // Agent Workspace (`cx.profile.agent_workspace.v1`)
+    dict.set("nav.agent_workspace", "Agents");
+    dict.set("agent_workspace.dashboard.title", "My Agents");
+    dict.set("agent_workspace.add_agent", "+ Add Agent");
+    dict.set("agent_workspace.add_agent.hint", "Add one of your agents to a source Flow");
+    dict.set("agent_workspace.add_first_agent", "Add your first agent");
+    dict.set("agent_workspace.protocol_session_monitor", "Protocol sessions");
+    dict.set("agent_workspace.pending", "Needs your attention");
+    dict.set("agent_workspace.pending.subtitle", "Source-side transparency or authority has changed. Reconfirm or cancel.");
+    dict.set("agent_workspace.in_flight", "In flight");
+    dict.set("agent_workspace.recent", "Recently completed");
+    dict.set("agent_workspace.my_agents", "My Agents");
+    dict.set("agent_workspace.back", "Back");
+    dict.set("agent_workspace.task.open", "Open");
+    dict.set("agent_workspace.task.reconfirm", "Continue anyway");
+    dict.set("agent_workspace.task.cancel", "Cancel task");
+    dict.set("agent_workspace.task.no_source", "(no source)");
+    dict.set("agent_workspace.task.loading", "Loading task…");
+    dict.set("agent_workspace.task.anchor", "Source context anchor");
+    dict.set("agent_workspace.task.instruction", "Your instruction");
+    dict.set("agent_workspace.task.draft", "Agent draft");
+    dict.set("agent_workspace.task.publish", "Publish to source Flow");
+    dict.set("agent_workspace.task.publish_hint", "Send the agent draft to the source Flow as your own message (with optional attribution).");
+    dict.set("agent_workspace.task.publish_disabled_reason", "Task is not in active state; please reconfirm or cancel first.");
+    dict.set("agent_workspace.task.mark_complete", "Mark complete");
+    dict.set("agent_workspace.task.rewrite", "Ask agent to rewrite");
+    dict.set("agent_workspace.task.conversation", "Conversation");
+    dict.set("agent_workspace.task.compose_placeholder", "Reply or instruct further…");
+    dict.set("agent_workspace.task.send", "Send");
+    dict.set("agent_workspace.task.audit_trail", "Audit trail");
+    dict.set("agent_workspace.banner.transparency_lost", "Source mention has been redacted. The agent has paused.");
+    dict.set("agent_workspace.banner.source_authority_revoked", "The agent's source-side access has been revoked.");
+    dict.set("agent_workspace.fsm.execution", "Execution");
+    dict.set("agent_workspace.fsm.transparency", "Transparency");
+    dict.set("agent_workspace.fsm.source_authority", "Source authority");
+    dict.set("agent_workspace.fsm.aria_label", "Three orthogonal task state cells");
+    dict.set("agent_workspace.agent.consulting", "consulting");
+    dict.set("agent_workspace.agent.no_active_sources", "(mirror-only; not active in any source Space)");
+    dict.set("agent_workspace.empty.in_flight.message", "No agent tasks are running right now.");
+    dict.set("agent_workspace.empty.in_flight.hint", "Mention one of your agents in a chat or discussion to start a private task.");
+    dict.set("agent_workspace.empty.agents.message", "You haven't added any agents yet.");
+    dict.set("agent_workspace.compose.private_routing_notice", "This instruction will be sent to your private Agent Workspace. Source Flow members will only see a generic summary.");
+    dict.set("agent_workspace.compose.summary_visible_warning", "This summary is visible to all source Flow members.");
+    dict.set("agent_workspace.compose.send_private", "Send (Private to Agent)");
+
     dict
 }
 
@@ -741,6 +786,51 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("verify_device.generate_qr", "生成二维码");
     dict.set("verify_device.start_sas", "开始 SAS 验证");
     dict.set("verify_device.short_auth_string", "短认证串");
+
+    // Agent Workspace (`cx.profile.agent_workspace.v1`)
+    dict.set("nav.agent_workspace", "我的 Agents");
+    dict.set("agent_workspace.dashboard.title", "我的 Agents");
+    dict.set("agent_workspace.add_agent", "+ 添加 Agent");
+    dict.set("agent_workspace.add_agent.hint", "把你的一个 agent 加到某个源 Flow");
+    dict.set("agent_workspace.add_first_agent", "添加你的第一个 agent");
+    dict.set("agent_workspace.protocol_session_monitor", "Agent 协议会话");
+    dict.set("agent_workspace.pending", "待处理");
+    dict.set("agent_workspace.pending.subtitle", "源端透明度或权限有变化。请选择「继续」或「取消」。");
+    dict.set("agent_workspace.in_flight", "进行中");
+    dict.set("agent_workspace.recent", "最近完成");
+    dict.set("agent_workspace.my_agents", "我的 Agents");
+    dict.set("agent_workspace.back", "返回");
+    dict.set("agent_workspace.task.open", "打开");
+    dict.set("agent_workspace.task.reconfirm", "继续执行");
+    dict.set("agent_workspace.task.cancel", "取消任务");
+    dict.set("agent_workspace.task.no_source", "(无源)");
+    dict.set("agent_workspace.task.loading", "正在加载任务…");
+    dict.set("agent_workspace.task.anchor", "源上下文锚点");
+    dict.set("agent_workspace.task.instruction", "你的指令");
+    dict.set("agent_workspace.task.draft", "Agent 草稿");
+    dict.set("agent_workspace.task.publish", "发布到源 Flow");
+    dict.set("agent_workspace.task.publish_hint", "把 agent 草稿以你自己身份发到源 Flow（可选注明）。");
+    dict.set("agent_workspace.task.publish_disabled_reason", "任务不在 active 状态；请先 reconfirm 或 cancel。");
+    dict.set("agent_workspace.task.mark_complete", "标记完成");
+    dict.set("agent_workspace.task.rewrite", "让 agent 重写");
+    dict.set("agent_workspace.task.conversation", "对话");
+    dict.set("agent_workspace.task.compose_placeholder", "回复或追加指令…");
+    dict.set("agent_workspace.task.send", "发送");
+    dict.set("agent_workspace.task.audit_trail", "审计 trail");
+    dict.set("agent_workspace.banner.transparency_lost", "源 mention 已被撤回。Agent 已暂停。");
+    dict.set("agent_workspace.banner.source_authority_revoked", "Agent 在源 Space 的权限已被撤销。");
+    dict.set("agent_workspace.fsm.execution", "执行");
+    dict.set("agent_workspace.fsm.transparency", "透明度");
+    dict.set("agent_workspace.fsm.source_authority", "源权限");
+    dict.set("agent_workspace.fsm.aria_label", "三个正交任务状态 cell");
+    dict.set("agent_workspace.agent.consulting", "consulting");
+    dict.set("agent_workspace.agent.no_active_sources", "(仅 mirror；不在任何源 Space 中)");
+    dict.set("agent_workspace.empty.in_flight.message", "当前没有任何 agent 任务在跑。");
+    dict.set("agent_workspace.empty.in_flight.hint", "在聊天或讨论里 @ 你的 agent 即可开启私人任务。");
+    dict.set("agent_workspace.empty.agents.message", "你还没有添加任何 agent。");
+    dict.set("agent_workspace.compose.private_routing_notice", "此指令将发送到你的私人 Agent Workspace。源 Flow 其他成员只会看到通用摘要。");
+    dict.set("agent_workspace.compose.summary_visible_warning", "此摘要对源 Flow 所有成员可见。");
+    dict.set("agent_workspace.compose.send_private", "发送 (Private to Agent)");
 
     dict
 }

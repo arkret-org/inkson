@@ -1,4 +1,4 @@
-//! Applets — registry + protocol_session controls (Sprint Q1 第十四增量 V1).
+//! Applets — registry + protocol_session controls.
 //!
 //! Spec: `contrix-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
@@ -285,10 +285,10 @@ pub fn AppletsPanel(
 #[cfg(test)]
 mod tests {
 
-    /// Sprint Q1 第十四增量 (V1): pin that the registry row body shape
-    /// matches the canonical wire `body.service_did` / `body.namespace`
-    /// schema the cx_ops::applet_registration builder emits. If the
-    /// builder changes shape this test catches the view drift.
+    /// Pin that the registry row body shape matches the canonical wire
+    /// `body.service_did` / `body.namespace` schema the
+    /// cx_ops::applet_registration builder emits. If the builder changes
+    /// shape this test catches the view drift.
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
         let op = crate::operation::cx_ops::applet_registration(

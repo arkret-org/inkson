@@ -1,4 +1,4 @@
-//! Round 25 (A4): main session OIDC token lifecycle.
+//! Main session OIDC token lifecycle.
 //!
 //! This module owns the **client-side** half of the token-refresh /
 //! 401-retry contract that keeps a yougen session alive without
@@ -46,7 +46,7 @@ pub const REFRESH_SKEW_SECS: i64 = 60;
 /// refresh) and mobile-battery friendliness.
 pub const POLL_INTERVAL_SECS: u64 = 30;
 
-/// Round 25 (A4): typed lifecycle event surfaced by the polling /
+/// Typed lifecycle event surfaced by the polling /
 /// retry helpers. UIs subscribe to this stream and route
 /// `LoginRequired` to the login page; `Refreshed` is informational and
 /// drives a "session refreshed" toast.
@@ -90,7 +90,7 @@ pub fn has_refresh_token(bundle: &OidcTokenBundle) -> bool {
         .is_some_and(|rt| !rt.is_empty())
 }
 
-/// Round 25 (A4): runs the refresh policy decision on the persisted
+/// Runs the refresh policy decision on the persisted
 /// bundle. Pure function — no I/O — so the caller (background poller
 /// or 401 retry path) can decide whether to actually issue the
 /// refresh request without holding a network handle.
@@ -101,13 +101,13 @@ pub fn evaluate_refresh_policy(store: &LocalStateStore) -> RefreshDecision {
     evaluate_refresh_decision_from_bundle(&bundle)
 }
 
-/// Sprint Q1 第十六增量 (H5): SecureKeyStore-aware variant. Reads the
-/// bundle via [`LocalStateStore::load_oidc_tokens_with_secure_store`]
-/// so the `refresh_token` actually surfaces (the disk-backed bundle
-/// holds `refresh_token: None` after the H3 migration; the live secret
-/// only exists in the SecureKeyStore). Use this from the production
-/// refresh poller; tests that don't care about secure-store wiring keep
-/// using [`evaluate_refresh_policy`].
+/// SecureKeyStore-aware variant. Reads the bundle via
+/// [`LocalStateStore::load_oidc_tokens_with_secure_store`] so the
+/// `refresh_token` actually surfaces (the disk-backed bundle holds
+/// `refresh_token: None`; the live secret only exists in the
+/// SecureKeyStore). Use this from the production refresh poller; tests
+/// that don't care about secure-store wiring keep using
+/// [`evaluate_refresh_policy`].
 pub fn evaluate_refresh_policy_with_secure_store(
     store: &LocalStateStore,
     actor_did: &str,
@@ -166,7 +166,7 @@ impl RefreshDecision {
     }
 }
 
-/// Round 25 (A4): apply a token-endpoint refresh response to the
+/// Apply a token-endpoint refresh response to the
 /// persisted bundle. Returns the resulting [`OidcTokenBundle`] so the
 /// caller can both persist it (via `set_oidc_tokens`) and use the
 /// fresh access token for the in-flight request.
@@ -189,7 +189,7 @@ pub fn apply_refresh_response(
     next
 }
 
-/// Round 25 (A4): polling tick. Called every
+/// Polling tick. Called every
 /// [`POLL_INTERVAL_SECS`] (default 30s). Returns the lifecycle event
 /// for the UI to route. Network calls go through `coauth_api`; the
 /// `token_endpoint` is the OIDC provider's token endpoint URL
@@ -203,8 +203,8 @@ pub async fn refresh_if_due(
     refresh_if_due_inner(store, coauth_api, token_endpoint, None).await
 }
 
-/// Sprint Q1 第十六增量 (H5): SecureKeyStore-aware variant of
-/// [`refresh_if_due`]. The refresh poller in production code MUST call
+/// SecureKeyStore-aware variant of [`refresh_if_due`].
+/// The refresh poller in production code MUST call
 /// this — it reads the refresh_token via
 /// [`LocalStateStore::load_oidc_tokens_with_secure_store`] and writes
 /// the rotated refresh_token back through
@@ -315,7 +315,7 @@ async fn refresh_if_due_inner(
     }
 }
 
-/// Round 25 (A4): outcome of a soland call wrapped in `with_oidc_retry`.
+/// Outcome of a soland call wrapped in `with_oidc_retry`.
 /// Generic over the success type so any typed API call composes the same
 /// way; the caller handles `LoginRequired` by routing to the login view.
 #[derive(Debug)]
@@ -431,8 +431,8 @@ mod tests {
         assert!(!has_refresh_token(&bundle));
     }
 
-    /// Sprint Q1 第十六增量 (H5): with a SecureKeyStore-aware persist
-    /// pre-run, the on-disk bundle's `refresh_token` is `None` — but
+    /// With a SecureKeyStore-aware persist pre-run, the on-disk bundle's
+    /// `refresh_token` is `None` — but
     /// `evaluate_refresh_policy_with_secure_store` MUST surface the
     /// refresh_token from the secure store so the policy decision is
     /// `Refresh { refresh_token: "rt-1", .. }` not `NoRefreshToken`.
