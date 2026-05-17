@@ -1290,6 +1290,30 @@ impl ContrixApi {
             .await
     }
 
+    /// Owned-bytes variant of [`upload_blob`] used by the composer
+    /// drag-drop path (A6.2). The drop event yields `Vec<u8>` from
+    /// the browser File API which cannot satisfy the `'static`
+    /// bound that the original method requires for fixture
+    /// attachments.
+    pub async fn upload_blob_bytes(
+        &self,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> anyhow::Result<BlobUploadResponse> {
+        let content_type = if content_type.trim().is_empty() {
+            "application/octet-stream"
+        } else {
+            content_type
+        };
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/blob/upload")?)
+            .header("content-type", content_type)
+            .body(bytes);
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
+    }
+
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let request = self
             .http

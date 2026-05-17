@@ -293,6 +293,10 @@ pub fn SpaceAdminPanel(
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(|| String::new());
     let mut members = use_signal(Vec::<String>::new);
+    // A5 — personal blocklist confirm state. `Some(did)` while a
+    // block-this-user confirmation modal is open for that DID; resets
+    // to `None` on cancel or confirm.
+    let mut block_confirm_did = use_signal(|| Option::<String>::None);
     let mut space_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
@@ -1416,6 +1420,44 @@ pub fn SpaceAdminPanel(
                     div { class: "event", "data-testid": "member-row",
                         div { class: "event-head",
                             span { "{member}" }
+                            {
+                                // Mark agent-endpoint DIDs (registered via
+                                // `cx.agent.endpoint`) so admins can tell bots
+                                // apart from real members at a glance. Sourced
+                                // from the same local raw_operations cache the
+                                // Agents panel uses.
+                                let is_agent = state_store
+                                    .read()
+                                    .load()
+                                    .raw_operations
+                                    .iter()
+                                    .any(|r| {
+                                        r.payload
+                                            .get("kind")
+                                            .and_then(|k| k.as_str())
+                                            == Some("cx.agent.endpoint")
+                                            && r.space_id
+                                                .as_deref()
+                                                .map(|s| s == selected_space)
+                                                .unwrap_or(true)
+                                            && r.payload
+                                                .get("body")
+                                                .and_then(|b| b.get("agent_did"))
+                                                .and_then(|d| d.as_str())
+                                                == Some(member.as_str())
+                                    });
+                                rsx! {
+                                    if is_agent {
+                                        span {
+                                            class: "badge member-badge member-badge-agent",
+                                            "data-testid": "member-badge-agent",
+                                            title: "Registered agent endpoint (cx.agent.endpoint)",
+                                            "\u{1f916} "
+                                            {crate::i18n::tr("member.badge.agent")}
+                                        }
+                                    }
+                                }
+                            }
                             span { "member" }
                         }
                         div { class: "actions",
@@ -1616,6 +1658,88 @@ pub fn SpaceAdminPanel(
                                     }
                                 },
                                 {crate::i18n::tr("space_admin.ban_member_move")}
+                            }
+                            // A5 — personal blocklist entry-point. Block is
+                            // a purely actor-private action (writes
+                            // `cx.account_data.set("client.blocklist", …)`)
+                            // and does NOT touch the Space's member-state
+                            // FSM. Confirm modal renders below the row.
+                            button {
+                                class: "secondary",
+                                "data-testid": "member-row-block-button",
+                                onclick: {
+                                    let m = member.clone();
+                                    move |_| block_confirm_did.set(Some(m.clone()))
+                                },
+                                {crate::i18n::tr("member.block")}
+                            }
+                        }
+                        if block_confirm_did().as_deref() == Some(member.as_str()) {
+                            div {
+                                class: "event",
+                                "data-testid": "block-user-confirm-modal",
+                                div { class: "space-title", {crate::i18n::tr("member.block_confirm.title")} }
+                                div { class: "muted", "{member}" }
+                                div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "block-user-confirm-button",
+                                        onclick: {
+                                            let m = member.clone();
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let changed = state_store
+                                                    .write()
+                                                    .block_user(&m, None);
+                                                block_confirm_did.set(None);
+                                                if changed {
+                                                    status_msg.set(format!("Blocked {m}"));
+                                                    // Best-effort push to soland.
+                                                    let entries = state_store
+                                                        .read()
+                                                        .client_blocklist();
+                                                    let body =
+                                                        crate::account_data::build_blocklist_account_data_body(
+                                                            &entries,
+                                                        );
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    spawn(async move {
+                                                        if let Err(err) =
+                                                            crate::views::helpers::with_authed_api(
+                                                                &base,
+                                                                api_token,
+                                                                |api| async move {
+                                                                    api.set_account_data(
+                                                                        "client.blocklist",
+                                                                        body,
+                                                                    )
+                                                                    .await
+                                                                },
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::debug!(
+                                                                "account_data PUT for client.blocklist failed: {}",
+                                                                err.display()
+                                                            );
+                                                        }
+                                                    });
+                                                } else {
+                                                    status_msg.set(format!("{m} is already blocked"));
+                                                }
+                                            }
+                                        },
+                                        {crate::i18n::tr("member.block_confirm.confirm")}
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "block-user-cancel-button",
+                                        onclick: move |_| block_confirm_did.set(None),
+                                        {crate::i18n::tr("timeline.cancel")}
+                                    }
+                                }
                             }
                         }
                     }

@@ -807,6 +807,15 @@ pub struct ClientLocalState {
     /// `local_name` when set.
     #[serde(default)]
     pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,
+    /// Actor-private personal blocklist per
+    /// `discovery/client-preferences.md` (`client.blocklist`). Each
+    /// entry hides messages from the targeted DID in the timeline/chat
+    /// renderers and surfaces in the Settings → Privacy panel. The
+    /// shape mirrors the wire body so the future
+    /// `cx.account_data.set("client.blocklist", …)` push can serialise
+    /// straight from this `Vec`.
+    #[serde(default)]
+    pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
 }
 
 /// Hard cap on the number of buffered telemetry entries kept in
@@ -941,6 +950,7 @@ impl Default for ClientLocalState {
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             space_remarks: BTreeMap::new(),
+            client_blocklist: Vec::new(),
         }
     }
 }
@@ -1286,6 +1296,55 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.cached.space_remarks.remove(space_id);
         let _ = self.flush();
+    }
+
+    // ── Personal blocklist (spec client-preferences.md "client.blocklist") ─
+
+    /// Current personal blocklist. Cheap clone — the underlying `Vec`
+    /// is short by design (curated by the user).
+    pub fn client_blocklist(&self) -> Vec<crate::account_data::BlocklistEntry> {
+        self.load().client_blocklist
+    }
+
+    /// True when `did` appears in the local blocklist. Used by the
+    /// timeline + chat renderers to gate message bodies behind a
+    /// "Show anyway" affordance.
+    pub fn is_user_blocked(&self, did: &str) -> bool {
+        crate::account_data::is_blocked(&self.load().client_blocklist, did)
+    }
+
+    /// Append `did` to the personal blocklist. Idempotent — duplicate
+    /// DIDs are not inserted twice. `reason` is shown back to the user
+    /// in Settings → Privacy; pass `None` to skip.
+    ///
+    /// Persists synchronously to disk; the caller is responsible for
+    /// pushing the new list to soland via
+    /// `cx.account_data.set("client.blocklist", …)`.
+    pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
+        self.ensure_cached_loaded();
+        let now = chrono::Utc::now().to_rfc3339();
+        let changed = crate::account_data::block_user_in(
+            &mut self.cached.client_blocklist,
+            did.as_ref(),
+            reason,
+            Some(now),
+        );
+        if changed {
+            let _ = self.flush();
+        }
+        changed
+    }
+
+    /// Remove every entry for `did` from the personal blocklist.
+    /// Returns `true` when at least one entry was removed.
+    pub fn unblock_user(&mut self, did: impl AsRef<str>) -> bool {
+        self.ensure_cached_loaded();
+        let changed =
+            crate::account_data::unblock_user_in(&mut self.cached.client_blocklist, did.as_ref());
+        if changed {
+            let _ = self.flush();
+        }
+        changed
     }
 
     /// Best-effort name for `space_id`: trimmed `local_name` from the

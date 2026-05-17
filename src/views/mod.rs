@@ -75,9 +75,6 @@ pub enum View {
     Settings,
     VerifyDevice,
     SpaceAdmin,
-    /// Audit log view — surfaces `cx.audit.accessed` and
-    /// `cx.audit.ryw_receipt` from the local raw-operation projection.
-    Audit,
     Kanban,
     Chat,
     /// Notifications. Per `models/object-model-core.md` §1,
@@ -88,9 +85,6 @@ pub enum View {
     /// on a synthetic `cx.notification.*` event.
     Notifications,
     Document,
-    /// Call signaling status (signaling-only preview — WebRTC media is
-    /// renderer-provided).
-    Call,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
     /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
@@ -103,12 +97,6 @@ pub enum View {
     /// quarantined invites. Approve / reject buttons POST
     /// `/admin/v1/invite-quarantine/{id}/resolve`.
     Quarantine,
-    /// Applet registry + discovery + per-session controls.
-    /// Spec `extensions/applet-integration.md`. Writes
-    /// `cx.applet.registration` / `cx.applet.discovery` /
-    /// `cx.applet.protocol_session.{start,status}` / `cx.applet.bridge_error`
-    /// via `crate::operation::cx_ops::applet_*` builders.
-    Applets,
     /// Agent endpoint + protocol_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `cx.agent.endpoint` /
     /// `cx.agent.protocol_session.{start,status,result}` via

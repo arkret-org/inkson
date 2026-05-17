@@ -813,6 +813,108 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 .badge.dim { background: var(--surface-3); color: var(--text-2); }
 .badge.danger { background: var(--danger); }
 
+/* Member visual indicators (A1): agent/bot badge surfaced in member
+   lists, @mention picker rows, and chat sender attribution wherever a
+   DID registered via `cx.agent.endpoint` is rendered. */
+.member-badge { font-weight: 600; letter-spacing: 0.02em; }
+.member-badge-agent {
+  background: var(--accent-2, #6f42c1);
+  color: #fff;
+}
+
+/* Compose drop-zone (A6.2): outlines the composer while a drag is
+   pending and surfaces a translucent overlay with the file-drop hint. */
+.compose-drop-zone { position: relative; }
+.compose-drop-zone.is-dragover {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: var(--surface-2);
+}
+.compose-drop-zone-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.compose-upload-progress {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 4px 8px;
+}
+.compose-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+/* Pinned bar (A6.3): horizontal scrollable strip at the top of a
+   space showing every pinned message. Click a pill to scroll the
+   timeline to that message. */
+.pinned-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--surface-3);
+}
+.pinned-bar-empty {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 6px 8px;
+}
+.pinned-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-bar-item:hover { border-color: var(--accent); }
+
+/* Right-click context menu for messages (A6.3 Pin/Unpin entry).
+   Absolutely positioned over the message that triggered it. */
+.message-context-menu {
+  position: absolute;
+  z-index: 50;
+  background: var(--surface-1);
+  border: 1px solid var(--surface-3);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 140px;
+}
+.message-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-1);
+}
+.message-context-menu button:hover { background: var(--surface-2); }
+
 /* ----- 7.4 Avatar ----- */
 
 .avatar {

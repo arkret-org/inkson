@@ -22,6 +22,57 @@ use crate::{
 /// `discovery/client-preferences.md` §3.6.
 pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "cx.read_receipt.preferences";
 
+/// `cx.account_data` key used by the cross-device UI preferences entry
+/// (theme, sidebar collapsed, per-Space view). Spec:
+/// `discovery/client-preferences.md` §2.
+pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
+
+/// A4a — push the current `client.ui` payload (theme + sidebar
+/// collapsed) to soland's `cx.account_data.set` endpoint so other
+/// devices pick up the same preference. Same graceful-degradation
+/// contract as [`push_read_receipt_account_data`].
+///
+/// `local_theme` MUST already match the local `LocalConfigStore` write —
+/// we never re-read it from the store here because the Signal copy from
+/// the caller is the freshest one.
+pub(crate) fn push_client_ui_account_data(
+    base_url: String,
+    api_token: String,
+    local_theme: String,
+) {
+    if api_token.trim().is_empty() {
+        // No active session — nothing to sync; the next login will pick
+        // up the local value once the user signs in.
+        return;
+    }
+    let body = crate::account_data::build_client_ui_body(
+        Some(local_theme.as_str()),
+        None,
+        &std::collections::BTreeMap::new(),
+    );
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(CLIENT_UI_ACCOUNT_DATA_KEY, body).await
+        })
+        .await
+        {
+            Ok(AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT for client.ui returned {status}; \
+                     local state still authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "account_data PUT for client.ui failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
 /// Build the canonical `content` body for a read-receipt preferences
 /// account-data entry. Mirrors the SDK's `ReadReceiptPreferences` shape so
 /// other devices reading the value via `/sync` get the same field names.
@@ -1678,6 +1729,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 theme.set("light".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "light");
+                                push_client_ui_account_data(base_url(), token(), "light".to_owned());
                                 status.set("Theme set to light".to_owned());
                             },
                             UiIcon { name: "sun" }
@@ -1690,6 +1742,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 theme.set("night".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "night");
+                                push_client_ui_account_data(base_url(), token(), "night".to_owned());
                                 status.set("Theme set to night".to_owned());
                             },
                             UiIcon { name: "moon" }
@@ -1702,6 +1755,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 theme.set("system".to_owned());
                                 state_store.write().save_private_data(&account_did(), "theme", "system");
+                                push_client_ui_account_data(base_url(), token(), "system".to_owned());
                                 status.set("Theme set to system".to_owned());
                             },
                             UiIcon { name: "monitor" }

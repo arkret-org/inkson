@@ -1,3 +1,4 @@
+use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
@@ -93,6 +94,12 @@ struct SpaceParticipant {
     display_name_rank: u8,
     role: SpaceParticipantRole,
     is_self: bool,
+    /// `true` when this DID was registered as an agent endpoint
+    /// (`cx.agent.endpoint`). Surfaces a 🤖 badge in member lists,
+    /// @mention picker rows, and chat sender attribution so operators
+    /// can immediately distinguish bot/agent principals from real
+    /// human members.
+    is_agent: bool,
 }
 
 /// Hydrate the local MLS group for a Space (or
@@ -701,7 +708,70 @@ fn upsert_participant(
             display_name_rank,
             role,
             is_self,
+            // Default; the caller annotates agent DIDs via
+            // `annotate_agent_participants` after the projection-based
+            // upsert pass completes.
+            is_agent: false,
         });
+    }
+}
+
+/// Scan the local store's raw_operations for `cx.agent.endpoint`
+/// rows and return the set of agent DIDs that were registered in
+/// `space_id`. Used to mark `SpaceParticipant::is_agent` so member /
+/// mention / sender rows can render a 🤖 badge.
+///
+/// Reads the agent DID from `payload.body.agent_did` (per
+/// `crate::operation::cx_ops::agent_endpoint`). Returns an empty Vec
+/// when no agent endpoints are registered.
+fn agent_dids_from_raw_operations(
+    raw_operations: &[crate::local_state::RawOperationRecord],
+    space_id: &str,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for record in raw_operations {
+        let kind = record
+            .payload
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if kind != "cx.agent.endpoint" {
+            continue;
+        }
+        // Filter by space_id when the record carries one; the
+        // `cx.agent.endpoint` builder always stamps `space_id` on the
+        // payload, but tolerate older rows by also accepting records
+        // with `space_id = None`.
+        if let Some(record_space) = record.space_id.as_deref() {
+            if record_space != space_id {
+                continue;
+            }
+        }
+        let did = record
+            .payload
+            .get("body")
+            .and_then(|b| b.get("agent_did"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(did) = did {
+            if !out.iter().any(|existing| existing == &did) {
+                out.push(did);
+            }
+        }
+    }
+    out
+}
+
+/// Mark every participant whose DID appears in `agent_dids` as
+/// `is_agent = true`. No-op for unknown DIDs.
+fn annotate_agent_participants(participants: &mut [SpaceParticipant], agent_dids: &[String]) {
+    if agent_dids.is_empty() {
+        return;
+    }
+    for participant in participants.iter_mut() {
+        if agent_dids.iter().any(|did| did == &participant.did) {
+            participant.is_agent = true;
+        }
     }
 }
 
@@ -1562,6 +1632,25 @@ pub fn ChatPanel(
     let mut selected_channel = use_signal(String::new);
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
+    // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
+    // the `is-dragover` outline as the user holds a file over the
+    // textarea; `compose_upload_status` shows an inline progress / error
+    // string for the most recent drop or hidden-input upload.
+    let mut compose_dragover = use_signal(|| false);
+    let mut compose_upload_status = use_signal(|| String::new());
+    // A6.3 message pinning. Local-only scaffolding: the spec does not
+    // yet define a `cx.message.pin` event_kind, so we keep pin state in
+    // a per-space Signal and surface it at the top of the discussion.
+    // When soland exposes the pin endpoint (see TODO below) we'll
+    // replace this with a real API call + projection sync.
+    //
+    // TODO(soland): replace `pinned_messages` with the canonical
+    // `cx.message.pin` event family per spec
+    // `flow-and-message.md §8.6` once soland ships it.
+    let mut pinned_messages = use_signal(Vec::<String>::new);
+    // Currently-open context menu (right-click on a message). Stores
+    // the message id whose menu is open; None means no menu visible.
+    let mut message_context_menu = use_signal(|| Option::<String>::None);
     // Read the shared per-Space MLS passphrase store. Set from the new
     // passphrase input the composer renders
     // above Send Secure; read by the secure-send path to actually
@@ -1569,6 +1658,12 @@ pub fn ChatPanel(
     // legacy placeholder ciphertext path stays active so non-MLS
     // users / sealed pages don't break.
     let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    // A2 / AW-3.10: shared owned-agent list so the composer can mount
+    // [`PrivateComposeBanner`] + apply the `private-compose-mode` class
+    // once the active draft mentions an owned agent. Default empty
+    // until the SDK projection hydrates it.
+    let owned_agents_ctx =
+        use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
     let mut mls_passphrase_draft = use_signal(String::new);
     // Multi-device Welcome flow controls. The
     // `Invite to MLS group` button fetches the target (actor, device)
@@ -1597,6 +1692,17 @@ pub fn ChatPanel(
     let mut redact_confirm = use_signal(|| Option::<String>::None);
     let mut reaction_picker = use_signal(|| Option::<String>::None);
     let mut initial_sync_requested = use_signal(|| false);
+    // A5 — personal blocklist. `blocked_did_set` snapshots the local
+    // store at render time; `blocked_show_anyway` tracks per-message
+    // reveal opt-ins so the user can peek at an otherwise-hidden body
+    // without clearing the block.
+    let mut blocked_show_anyway = use_signal(std::collections::BTreeSet::<String>::new);
+    let blocked_did_set: std::collections::BTreeSet<String> = state_store
+        .read()
+        .client_blocklist()
+        .into_iter()
+        .map(|entry| entry.did)
+        .collect();
     let account_display_name = use_signal(String::new);
     let mut track_filter = use_signal(|| "discussion_only".to_owned());
     let mut left_panel_open = use_signal(|| true);
@@ -1656,7 +1762,16 @@ pub fn ChatPanel(
         .space_projections
         .get(&selected_space)
         .cloned();
-    let participants = space_participants(participant_projection.as_ref(), &account_did);
+    let mut participants = space_participants(participant_projection.as_ref(), &account_did);
+    // Mark agent endpoints registered in this space so the @mention
+    // picker, member list, and sender row can render a 🤖 badge.
+    // Source of truth is the local store's `cx.agent.endpoint` raw
+    // operations (same projection the Agents panel reads from).
+    {
+        let agent_dids =
+            agent_dids_from_raw_operations(&state_store.read().load().raw_operations, &selected_space);
+        annotate_agent_participants(&mut participants, &agent_dids);
+    }
     let participants_for_messages = participants.clone();
     let account_display_label = account_display_name();
 
@@ -1851,6 +1966,30 @@ pub fn ChatPanel(
         });
     }
 
+    // A2 / AW-3.10: precompute private-compose state outside the rsx
+    // block so the let bindings live in Rust scope (rsx parses `if {}`
+    // bodies as nodes, not statements). When the active chat draft
+    // mentions one of the controller's owned agents we apply the
+    // `private-compose-mode` class so the textarea border + background
+    // flip to the private routing palette, and mount the
+    // [`PrivateComposeBanner`] underneath.
+    let private_compose_owned_agents = owned_agents_ctx.read().clone();
+    let private_compose_mentions =
+        crate::views::helpers::parse_structured_mentions(&chat_draft());
+    let private_compose_target_did = private_compose_mentions
+        .iter()
+        .map(|m| m.target.clone())
+        .find(|target| crate::views::agent_workspace::is_controller_owned_agent(
+            target,
+            &private_compose_owned_agents,
+        ));
+    let private_compose_active = private_compose_target_did.is_some();
+    let composer_class = if private_compose_active {
+        "discussion-composer private-compose-mode"
+    } else {
+        "discussion-composer"
+    };
+
     rsx! {
         div { class: "{shell_class}", "data-testid": "chat-panel",
             if left_open {
@@ -2012,6 +2151,7 @@ pub fn ChatPanel(
                                                 {
                                                     let did_for_click = participant.did.clone();
                                                     let did_for_label = participant.did.clone();
+                                                    let is_agent = participant.is_agent;
                                                     let display = participant
                                                         .display_name
                                                         .clone()
@@ -2029,6 +2169,15 @@ pub fn ChatPanel(
                                                                 new_channel_members.set(next);
                                                             },
                                                             span { class: "mention-suggestion-name", "{display}" }
+                                                            if is_agent {
+                                                                span {
+                                                                    class: "badge member-badge member-badge-agent",
+                                                                    "data-testid": "member-badge-agent",
+                                                                    title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                                    "\u{1f916} "
+                                                                    {crate::i18n::tr("member.badge.agent")}
+                                                                }
+                                                            }
                                                             span { class: "mention-suggestion-did muted", "{did_for_label}" }
                                                         }
                                                     }
@@ -2227,6 +2376,75 @@ pub fn ChatPanel(
                     }
                 }
 
+                // A6.3 pinned bar (above the chat feed). Lists every
+                // pinned message id with a short body preview. Clicking
+                // a pill scrolls (well, focuses) the corresponding
+                // message via its `data-testid` anchor.
+                //
+                // Local-only scaffolding — see TODO at `pinned_messages`
+                // signal declaration. Replace with the soland pinning
+                // projection when the spec lands.
+                {
+                    let pinned_now = pinned_messages();
+                    let pinned_view: Vec<(String, String)> = pinned_now
+                        .iter()
+                        .filter_map(|id| {
+                            messages_for_reply_lookup
+                                .iter()
+                                .find(|m| m.id == *id)
+                                .map(|m| (m.id.clone(), m.body.clone()))
+                        })
+                        .collect();
+                    rsx! {
+                        div {
+                            class: "pinned-bar",
+                            "data-testid": "pinned-bar",
+                            if pinned_view.is_empty() {
+                                span {
+                                    class: "pinned-bar-empty",
+                                    "data-testid": "pinned-bar-empty",
+                                    {crate::i18n::tr("pinned_bar.empty")}
+                                }
+                            } else {
+                                for (id, body) in pinned_view {
+                                    {
+                                        let id_for_click = id.clone();
+                                        let preview = if body.len() > 40 {
+                                            format!("{}…", &body[..40])
+                                        } else {
+                                            body
+                                        };
+                                        rsx! {
+                                            button {
+                                                r#type: "button",
+                                                class: "pinned-bar-item",
+                                                "data-testid": "pinned-bar-item",
+                                                title: crate::i18n::tr("pinned_bar.scroll_to"),
+                                                onclick: move |_| {
+                                                    // Best-effort scroll: emit
+                                                    // a console hint via
+                                                    // status_msg so QA can see
+                                                    // the click registered.
+                                                    // Real scroll-into-view
+                                                    // wires into Dioxus's
+                                                    // mounted ref API; deferred
+                                                    // until A6.3 lands the
+                                                    // soland projection.
+                                                    status_msg.set(format!(
+                                                        "jump to pinned message {}",
+                                                        id_for_click
+                                                    ));
+                                                },
+                                                "{preview}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
                     for msg in visible_messages {
                         div {
@@ -2238,9 +2456,100 @@ pub fn ChatPanel(
                                 "discussion-message"
                             },
                             "data-testid": "chat-message",
+                            // A6.3: right-click toggles a tiny context
+                            // menu offering Pin/Unpin for this message.
+                            // prevent_default suppresses the browser's
+                            // native context menu so ours surfaces alone.
+                            oncontextmenu: {
+                                let msg_id = msg.id.clone();
+                                move |evt| {
+                                    evt.prevent_default();
+                                    let next = if message_context_menu()
+                                        .as_deref()
+                                        == Some(msg_id.as_str())
+                                    {
+                                        None
+                                    } else {
+                                        Some(msg_id.clone())
+                                    };
+                                    message_context_menu.set(next);
+                                }
+                            },
+                            // Tiny pop-out menu — Pin / Unpin / Cancel.
+                            // The render condition checks per-message
+                            // so only one menu is visible at a time.
+                            if message_context_menu().as_deref() == Some(msg.id.as_str()) {
+                                div {
+                                    class: "message-context-menu",
+                                    "data-testid": "message-context-menu",
+                                    {
+                                        let is_pinned = pinned_messages()
+                                            .iter()
+                                            .any(|id| id == &msg.id);
+                                        let msg_id = msg.id.clone();
+                                        let msg_id_for_label = msg.id.clone();
+                                        rsx! {
+                                            button {
+                                                r#type: "button",
+                                                "data-testid": "message-pin-button",
+                                                onclick: move |_| {
+                                                    let mut current = pinned_messages();
+                                                    if let Some(idx) = current
+                                                        .iter()
+                                                        .position(|id| id == &msg_id)
+                                                    {
+                                                        current.remove(idx);
+                                                    } else {
+                                                        current.push(msg_id.clone());
+                                                    }
+                                                    pinned_messages.set(current);
+                                                    message_context_menu.set(None);
+                                                    // TODO(soland): when the
+                                                    // pinning endpoint lands,
+                                                    // call
+                                                    // `POST /api/v1/spaces/{id}/pinned`
+                                                    // here and replace the
+                                                    // local-only Signal with
+                                                    // the projection.
+                                                },
+                                                if is_pinned {
+                                                    {crate::i18n::tr("message.unpin")}
+                                                } else {
+                                                    {crate::i18n::tr("message.pin")}
+                                                }
+                                            }
+                                            button {
+                                                r#type: "button",
+                                                class: "secondary",
+                                                onclick: move |_| {
+                                                    let _ = msg_id_for_label.clone();
+                                                    message_context_menu.set(None);
+                                                },
+                                                "Cancel"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             div { class: "msg-body",
                                 div { class: "msg-head",
                                     span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
+                                    {
+                                        let sender_is_agent = participants_for_messages
+                                            .iter()
+                                            .any(|p| p.did == msg.sender && p.is_agent);
+                                        rsx! {
+                                            if sender_is_agent {
+                                                span {
+                                                    class: "badge member-badge member-badge-agent",
+                                                    "data-testid": "member-badge-agent",
+                                                    title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                    "\u{1f916} "
+                                                    {crate::i18n::tr("member.badge.agent")}
+                                                }
+                                            }
+                                        }
+                                    }
                                     time { "{msg.timestamp}" }
                                     if msg.failed {
                                         span { class: "message-failure-icon", title: "Message send failed",
@@ -2272,6 +2581,28 @@ pub fn ChatPanel(
                                 }
                                 if msg.redacted {
                                     div { class: "msg-content redacted", "data-testid": "chat-redacted-tombstone", "[Message redacted]" }
+                                } else if blocked_did_set.contains(&msg.sender)
+                                    && !blocked_show_anyway.read().contains(&msg.id)
+                                {
+                                    // A5 — sender is on the personal
+                                    // blocklist; show a placeholder
+                                    // body + a "Show anyway" reveal.
+                                    div {
+                                        class: "msg-content muted",
+                                        "data-testid": "timeline-blocked-row",
+                                        {crate::i18n::tr("timeline.blocked_user")}
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "timeline-blocked-show-anyway",
+                                        onclick: {
+                                            let eid = msg.id.clone();
+                                            move |_| {
+                                                blocked_show_anyway.write().insert(eid.clone());
+                                            }
+                                        },
+                                        {crate::i18n::tr("timeline.show_anyway")}
+                                    }
                                 } else {
                                     div { class: "msg-content", "{msg.body}" }
                                 }
@@ -2705,6 +3036,15 @@ pub fn ChatPanel(
                                         if participant.is_self {
                                             span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
                                         }
+                                        if participant.is_agent {
+                                            span {
+                                                class: "badge member-badge member-badge-agent",
+                                                "data-testid": "member-badge-agent",
+                                                title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                "\u{1f916} "
+                                                {crate::i18n::tr("member.badge.agent")}
+                                            }
+                                        }
                                         span {
                                             class: match participant.role {
                                                 SpaceParticipantRole::Owner => "badge participant-badge admin",
@@ -2753,7 +3093,7 @@ pub fn ChatPanel(
             }
 
             if !visible_channels_empty {
-            div { class: "discussion-composer", "data-testid": "chat-composer",
+            div { class: "{composer_class}", "data-testid": "chat-composer",
                 if let Some(reply_id) = reply_to_message() {
                     div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
                         if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
@@ -2779,11 +3119,137 @@ pub fn ChatPanel(
                         }
                     }
                 }
-                textarea {
-                    "data-testid": "chat-input",
-                    value: "{chat_draft}",
-                    placeholder: "Message this discussion. Use @did:web:alice.example or #cx:task:123.",
-                    oninput: move |evt| chat_draft.set(evt.value()),
+                if let Some(agent_did) = private_compose_target_did.as_ref() {
+                    crate::views::agent_workspace::PrivateComposeBanner {
+                        agent_display_name: crate::views::agent_workspace::owned_agent_display_name(
+                            agent_did,
+                            &private_compose_owned_agents,
+                        ),
+                    }
+                }
+                // A6.2: drag-drop attachment zone wrapping the textarea.
+                // Dropping a file uploads the bytes via
+                // `upload_blob_bytes`, then appends `[Attachment: {ref}]`
+                // to the draft so the existing send pipeline picks it
+                // up as message body. `ondragover` is required to
+                // prevent the browser's default open-the-file behaviour.
+                div {
+                    class: if compose_dragover() {
+                        "compose-drop-zone is-dragover"
+                    } else {
+                        "compose-drop-zone"
+                    },
+                    "data-testid": "compose-drop-zone",
+                    ondragover: move |evt| {
+                        evt.prevent_default();
+                        if !compose_dragover() { compose_dragover.set(true); }
+                    },
+                    ondragleave: move |_| compose_dragover.set(false),
+                    ondrop: {
+                        let base = base_url.clone();
+                        move |evt| {
+                            evt.prevent_default();
+                            compose_dragover.set(false);
+                            let files = evt.files();
+                            if files.is_empty() {
+                                // Some platforms (notably the desktop
+                                // web embedder) deliver drops without
+                                // file payloads — surface that rather
+                                // than silently no-op.
+                                compose_upload_status.set(
+                                    crate::i18n::tr("compose.upload_error"),
+                                );
+                                return;
+                            }
+                            let api_token = token();
+                            let base = base.clone();
+                            compose_upload_status.set(
+                                crate::i18n::tr("compose.upload_progress"),
+                            );
+                            spawn(async move {
+                                let api = match crate::views::helpers::authed_api_with_sync(
+                                    &base,
+                                    api_token,
+                                    None,
+                                ) {
+                                    Ok(api) => api,
+                                    Err(err) => {
+                                        compose_upload_status.set(format!(
+                                            "{}: {err}",
+                                            crate::i18n::tr("compose.upload_error"),
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let mut ok_count = 0usize;
+                                let mut last_error: Option<String> = None;
+                                for file in files {
+                                    let content_type = file
+                                        .content_type()
+                                        .unwrap_or_else(|| "application/octet-stream".to_owned());
+                                    let bytes = match file.read_bytes().await {
+                                        Ok(b) => b.to_vec(),
+                                        Err(err) => {
+                                            last_error = Some(format!("{err}"));
+                                            continue;
+                                        }
+                                    };
+                                    match api.upload_blob_bytes(bytes, &content_type).await {
+                                        Ok(resp) => {
+                                            let current = chat_draft();
+                                            let needs_space = !current.is_empty()
+                                                && !current.ends_with(' ')
+                                                && !current.ends_with('\n');
+                                            let attachment = format!(
+                                                "{}[Attachment: {}]",
+                                                if needs_space { " " } else { "" },
+                                                resp.blob_ref
+                                            );
+                                            chat_draft.set(format!("{current}{attachment}"));
+                                            ok_count += 1;
+                                        }
+                                        Err(err) => {
+                                            last_error = Some(err.to_string());
+                                        }
+                                    }
+                                }
+                                if let Some(err) = last_error {
+                                    compose_upload_status.set(format!(
+                                        "{}: {err}",
+                                        crate::i18n::tr("compose.upload_error"),
+                                    ));
+                                } else if ok_count > 0 {
+                                    compose_upload_status.set(format!(
+                                        "{ok_count} attachment(s) uploaded"
+                                    ));
+                                } else {
+                                    compose_upload_status.set(
+                                        crate::i18n::tr("compose.upload_error"),
+                                    );
+                                }
+                            });
+                        }
+                    },
+                    textarea {
+                        "data-testid": "chat-input",
+                        value: "{chat_draft}",
+                        placeholder: "Message this discussion. Use @did:web:alice.example or #cx:task:123.",
+                        oninput: move |evt| chat_draft.set(evt.value()),
+                    }
+                    if compose_dragover() {
+                        div {
+                            class: "compose-drop-zone-hint",
+                            "data-testid": "compose-drop-hint",
+                            {crate::i18n::tr("compose.drop_zone.hint")}
+                        }
+                    }
+                }
+                if !compose_upload_status().is_empty() {
+                    div {
+                        class: "compose-upload-progress",
+                        "data-testid": "compose-upload-progress",
+                        "{compose_upload_status}"
+                    }
                 }
                 div { class: "actions",
                     button {
@@ -3705,6 +4171,7 @@ mod tests {
             display_name_rank: 0,
             role: SpaceParticipantRole::Member,
             is_self: false,
+            is_agent: false,
         }];
 
         assert_eq!(
@@ -3746,6 +4213,99 @@ mod tests {
             .unwrap();
 
         assert_eq!(bob.display_name.as_deref(), Some("Bob from ops"));
+    }
+
+    #[test]
+    fn participant_with_agent_did_renders_with_agent_badge() {
+        // Three participants in the space: Alice (the local account),
+        // Bob (a real human member), and a Researcher Agent registered
+        // via `cx.agent.endpoint`. After `annotate_agent_participants`
+        // the agent DID must carry `is_agent = true` while the human
+        // members stay `false`.
+        let mut participants = vec![
+            SpaceParticipant {
+                did: "did:web:alice.example".to_owned(),
+                display_name: Some("Alice".to_owned()),
+                display_name_rank: 0,
+                role: SpaceParticipantRole::Owner,
+                is_self: true,
+                is_agent: false,
+            },
+            SpaceParticipant {
+                did: "did:web:bob.example".to_owned(),
+                display_name: Some("Bob".to_owned()),
+                display_name_rank: 1,
+                role: SpaceParticipantRole::Member,
+                is_self: false,
+                is_agent: false,
+            },
+            SpaceParticipant {
+                did: "did:web:researcher-agent.example".to_owned(),
+                display_name: None,
+                display_name_rank: u8::MAX,
+                role: SpaceParticipantRole::Member,
+                is_self: false,
+                is_agent: false,
+            },
+        ];
+
+        annotate_agent_participants(
+            &mut participants,
+            &["did:web:researcher-agent.example".to_owned()],
+        );
+
+        let alice = &participants[0];
+        let bob = &participants[1];
+        let agent = &participants[2];
+        assert!(!alice.is_agent, "human owner must not be flagged as agent");
+        assert!(!bob.is_agent, "human member must not be flagged as agent");
+        assert!(
+            agent.is_agent,
+            "DID registered via cx.agent.endpoint must be flagged as agent"
+        );
+    }
+
+    #[test]
+    fn agent_dids_from_raw_operations_filters_by_space_and_kind() {
+        use crate::local_state::RawOperationRecord;
+        use chrono::Utc;
+
+        // Mixed bag of raw ops: an agent endpoint for the right space,
+        // an agent endpoint for a different space (should be filtered
+        // out by space_id), and a non-agent kind (should be filtered
+        // out by kind).
+        let records = vec![
+            RawOperationRecord {
+                operation_id: "op-1".to_owned(),
+                space_id: Some("cx:space:demo".to_owned()),
+                received_at: Utc::now(),
+                payload: json!({
+                    "kind": "cx.agent.endpoint",
+                    "body": { "agent_did": "did:web:researcher-agent.example" }
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "op-2".to_owned(),
+                space_id: Some("cx:space:other".to_owned()),
+                received_at: Utc::now(),
+                payload: json!({
+                    "kind": "cx.agent.endpoint",
+                    "body": { "agent_did": "did:web:other-agent.example" }
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "op-3".to_owned(),
+                space_id: Some("cx:space:demo".to_owned()),
+                received_at: Utc::now(),
+                payload: json!({
+                    "kind": "cx.message.create",
+                    "body": { "body": "hello" }
+                }),
+            },
+        ];
+
+        let agent_dids = agent_dids_from_raw_operations(&records, "cx:space:demo");
+        assert_eq!(agent_dids, vec!["did:web:researcher-agent.example".to_owned()]);
     }
 
     #[test]

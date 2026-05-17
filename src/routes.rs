@@ -178,16 +178,20 @@ impl Route {
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
             Route::VerifyDevice => View::VerifyDevice,
             Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => View::SpaceAdmin,
-            Route::Audit => View::Audit,
+            // Audit / Call / Applets routes still render their own panels
+            // (see `Route::Audit`/`Route::Call`/`Route::Applets` arms in
+            // `app.rs`) but no longer have dedicated `View` enum variants —
+            // the variants were unreferenced anywhere except this mapping,
+            // and nothing in the UI dispatches on them. Map to Dashboard so
+            // `view` signal stays consistent for sidebar / palette state.
+            Route::Audit | Route::Call | Route::Applets => View::Dashboard,
             Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
             Route::Chat | Route::ChatSpace { .. } => View::Chat,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentSpace { .. } => View::Document,
-            Route::Call => View::Call,
             Route::Recovery => View::Recovery,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
-            Route::Applets => View::Applets,
             Route::Agents => View::Agents,
             Route::AgentWorkspace | Route::AgentTask { .. } | Route::AgentWorkspaceSettings => {
                 View::AgentWorkspace
@@ -248,16 +252,13 @@ impl From<View> for Route {
             View::SpaceAdmin => Route::SpaceAdmin {
                 space_id: String::new(),
             },
-            View::Audit => Route::Audit,
             View::Kanban => Route::Kanban,
             View::Chat => Route::Chat,
             View::Notifications => Route::Notifications,
             View::Document => Route::Document,
-            View::Call => Route::Call,
             View::Recovery => Route::Recovery,
             View::Onboarding => Route::Onboarding,
             View::Quarantine => Route::Quarantine,
-            View::Applets => Route::Applets,
             View::Agents => Route::Agents,
             View::AgentWorkspace => Route::AgentWorkspace,
         }
@@ -288,12 +289,16 @@ mod tests {
                 space_id: "cx:space:roundtrip".to_owned(),
                 section: "members".to_owned(),
             },
-            Route::Audit,
+            // NOTE: Route::Audit / Route::Call / Route::Applets are
+            // intentionally omitted — their `View` enum variants were
+            // removed (zombie-variant cleanup A6.7), so they map to
+            // `View::Dashboard` and would not roundtrip. The routes still
+            // exist and still render their panels via the `Route::*` match
+            // in `app.rs`; just the View-enum roundtrip no longer applies.
             Route::Kanban,
             Route::Chat,
             Route::Notifications,
             Route::Document,
-            Route::Call,
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,

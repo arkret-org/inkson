@@ -1866,7 +1866,14 @@ fn dispatch_place_lifecycle(
             crate::operation::cx_ops::place_restore(&space_id, &actor_did, &place_id)
         }
         PlaceLifecycleState::Tombstoned => {
-            unreachable!("validate_place_lifecycle_transition rejects Tombstone target")
+            // Invariant: `validate_place_lifecycle_transition` (called above)
+            // already rejects any move to Tombstone, so by construction the
+            // only targets that reach this match are Active|Archived. If we
+            // ever land here something upstream broke the contract — fail
+            // loud rather than emitting a silently-wrong Move.
+            panic!(
+                "invariant violation: validate_place_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
+            )
         }
     };
     let op = builder.build("yougen");
@@ -1967,7 +1974,14 @@ fn dispatch_flow_lifecycle(
             crate::operation::cx_ops::flow_restore(&space_id, &actor_did, &flow_id)
         }
         FlowLifecycleState::Tombstoned => {
-            unreachable!("validate_flow_lifecycle_transition rejects Tombstone target")
+            // Invariant: `validate_flow_lifecycle_transition` (called above)
+            // already rejects any move to Tombstone, so by construction the
+            // only targets that reach this match are Active|Archived. If we
+            // ever land here something upstream broke the contract — fail
+            // loud rather than emitting a silently-wrong Move.
+            panic!(
+                "invariant violation: validate_flow_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
+            )
         }
     };
     let op = builder.build("yougen");

@@ -2,12 +2,16 @@ use dioxus::prelude::*;
 
 pub mod empty_state;
 pub mod permission_pill;
+pub mod shortcut_help;
 pub mod sync_badge;
 pub mod write_state;
 
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
+};
+pub use shortcut_help::{
+    ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,
 };
 pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use write_state::{WriteState, WriteStateExplainer, WriteStatePill};

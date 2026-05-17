@@ -2,6 +2,10 @@
 name = "yougen"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
+description = "Dioxus cross-platform Contrix v1 reference client (macOS/Windows/Linux/iOS/Android/Web)"
+license = "Apache-2.0"
+repository = "https://github.com/contrix/yougen"
 
 [profile.wasm-dev]
 inherits = "dev"

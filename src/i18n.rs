@@ -498,6 +498,22 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.button.react", "React");
     dict.set("chat.button.redact", "Redact");
     dict.set("chat.you_badge", "You");
+    // Member visual indicators surfaced wherever a principal DID is
+    // rendered (space-admin member list, @mention picker, chat sender
+    // attribution).
+    dict.set("member.badge.agent", "Agent");
+    // Compose drop-zone + attachment upload (A6.2).
+    dict.set(
+        "compose.drop_zone.hint",
+        "Drop files here to attach, or click Attach",
+    );
+    dict.set("compose.upload_progress", "Uploading…");
+    dict.set("compose.upload_error", "Upload failed");
+    // Message pinning (A6.3).
+    dict.set("message.pin", "Pin");
+    dict.set("message.unpin", "Unpin");
+    dict.set("pinned_bar.empty", "No pinned messages.");
+    dict.set("pinned_bar.scroll_to", "Jump to message");
     dict.set("chat.empty.title", "No discussions yet");
     dict.set(
         "chat.empty.description",
@@ -640,6 +656,46 @@ pub fn english_translations() -> TranslationDict {
         "agent_workspace.compose.send_private",
         "Send (Private to Agent)",
     );
+    // A6.4 — keyboard shortcut help overlay.
+    dict.set("shortcuts.title", "Keyboard shortcuts");
+    dict.set("shortcuts.dismiss", "Dismiss");
+    dict.set("shortcuts.list.help", "Show this shortcut help");
+    dict.set("shortcuts.list.dismiss", "Close any open dialog");
+    dict.set("shortcuts.list.palette", "Open command palette");
+    dict.set(
+        "shortcuts.list.palette_mac",
+        "Open command palette (macOS)",
+    );
+    dict.set("shortcuts.list.send", "Send the current message");
+    // A2 — mirror Space banner + compose banner + nav tooltip text.
+    dict.set(
+        "agent_workspace.private_mirror.title",
+        "Private Mirror Space",
+    );
+    dict.set(
+        "agent_workspace.private_mirror.body",
+        "Drafts in this mirror Space are only visible to you. The agent may publish a redacted summary to source Space {source}.",
+    );
+    dict.set(
+        "agent_workspace.private_mirror.body_no_source",
+        "Drafts in this mirror Space are only visible to you. The agent may publish a redacted summary back to the source Space.",
+    );
+    dict.set(
+        "agent_workspace.compose.private_to_agent_banner",
+        "Composing privately to {agent}: only the agent receives this message; source Flow members see only the generic summary.",
+    );
+    dict.set(
+        "agent_workspace.nav.info_title",
+        "What is My Agents?",
+    );
+    dict.set(
+        "agent_workspace.nav.info_body",
+        "Your private Agent Workspace mirrors source Spaces where your agents act. Drafts stay private; only redacted summaries cross back to the source Space.",
+    );
+    dict.set(
+        "agent_workspace.nav.info_button",
+        "About My Agents",
+    );
 
     // Publish modal (AW-3.7 + AW-3.20)
     dict.set("agent_workspace.publish.signer_legend", "Signing identity");
@@ -707,6 +763,27 @@ pub fn english_translations() -> TranslationDict {
         "agent_workspace.notification.unknown_target",
         "(unknown source)",
     );
+
+    // Personal blocklist (A5) — actor-private `client.blocklist`
+    // account-data namespace. Used by the Settings → Privacy panel, the
+    // member-row context action, and the timeline/chat "blocked user"
+    // placeholder row.
+    dict.set("settings.privacy.title", "Privacy");
+    dict.set("settings.privacy.blocked_users.title", "Blocked users");
+    dict.set(
+        "settings.privacy.blocked_users.empty",
+        "No users blocked. Block someone from a member list or message row to manage entries here.",
+    );
+    dict.set("settings.privacy.unblock", "Unblock");
+    dict.set("member.block", "Block this user");
+    dict.set("member.block_confirm.title", "Block this user?");
+    dict.set(
+        "member.block_confirm.body",
+        "Their messages will be hidden behind a placeholder. You can unblock them anytime from Settings → Privacy.",
+    );
+    dict.set("member.block_confirm.confirm", "Block");
+    dict.set("timeline.blocked_user", "[Blocked user]");
+    dict.set("timeline.show_anyway", "Show anyway");
 
     dict
 }
@@ -945,6 +1022,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.button.react", "回应");
     dict.set("chat.button.redact", "撤回");
     dict.set("chat.you_badge", "我");
+    // 成员视觉标识 (member.badge.*)
+    dict.set("member.badge.agent", "智能体");
+    // 撰写区拖拽附件 (A6.2)
+    dict.set("compose.drop_zone.hint", "将文件拖放到此处以附加,或点击「附加」");
+    dict.set("compose.upload_progress", "上传中…");
+    dict.set("compose.upload_error", "上传失败");
+    // 消息钉选 (A6.3)
+    dict.set("message.pin", "钉选");
+    dict.set("message.unpin", "取消钉选");
+    dict.set("pinned_bar.empty", "暂无钉选消息。");
+    dict.set("pinned_bar.scroll_to", "跳转到消息");
     dict.set("chat.empty.title", "还没有讨论");
     dict.set(
         "chat.empty.description",
@@ -1075,6 +1163,34 @@ pub fn chinese_translations() -> TranslationDict {
         "agent_workspace.compose.send_private",
         "发送 (Private to Agent)",
     );
+    // A6.4 — keyboard shortcut help overlay。
+    dict.set("shortcuts.title", "键盘快捷键");
+    dict.set("shortcuts.dismiss", "关闭");
+    dict.set("shortcuts.list.help", "显示此快捷键面板");
+    dict.set("shortcuts.list.dismiss", "关闭任何打开的对话框");
+    dict.set("shortcuts.list.palette", "打开命令面板");
+    dict.set("shortcuts.list.palette_mac", "打开命令面板 (macOS)");
+    dict.set("shortcuts.list.send", "发送当前消息");
+    // A2 — mirror Space banner + compose banner + nav tooltip 文案。
+    dict.set("agent_workspace.private_mirror.title", "私人 Mirror Space");
+    dict.set(
+        "agent_workspace.private_mirror.body",
+        "此 mirror Space 中的草稿仅对你可见。Agent 可以将经过 redaction 的摘要发布到源 Space {source}。",
+    );
+    dict.set(
+        "agent_workspace.private_mirror.body_no_source",
+        "此 mirror Space 中的草稿仅对你可见。Agent 可以将经过 redaction 的摘要发布回源 Space。",
+    );
+    dict.set(
+        "agent_workspace.compose.private_to_agent_banner",
+        "正在私聊 {agent}：仅 agent 收到该消息；源 Flow 其他成员只会看到通用摘要。",
+    );
+    dict.set("agent_workspace.nav.info_title", "什么是「我的 Agents」？");
+    dict.set(
+        "agent_workspace.nav.info_body",
+        "私人 Agent Workspace 镜像了 agent 在源 Space 中工作的状态。草稿保持私有；只有经过 redaction 的摘要会回到源 Space。",
+    );
+    dict.set("agent_workspace.nav.info_button", "关于「我的 Agents」");
 
     // Publish modal (AW-3.7 + AW-3.20)
     dict.set("agent_workspace.publish.signer_legend", "签名身份");
@@ -1148,6 +1264,24 @@ pub fn chinese_translations() -> TranslationDict {
         "agent_workspace.notification.unknown_target",
         "（未知来源）",
     );
+
+    // Personal blocklist (A5)
+    dict.set("settings.privacy.title", "隐私");
+    dict.set("settings.privacy.blocked_users.title", "已屏蔽的用户");
+    dict.set(
+        "settings.privacy.blocked_users.empty",
+        "尚未屏蔽任何用户。在成员列表或消息行中屏蔽用户后，可在此管理。",
+    );
+    dict.set("settings.privacy.unblock", "取消屏蔽");
+    dict.set("member.block", "屏蔽此用户");
+    dict.set("member.block_confirm.title", "屏蔽此用户？");
+    dict.set(
+        "member.block_confirm.body",
+        "其消息将被占位符替代。您可随时在 设置 → 隐私 中取消屏蔽。",
+    );
+    dict.set("member.block_confirm.confirm", "屏蔽");
+    dict.set("timeline.blocked_user", "[已屏蔽用户]");
+    dict.set("timeline.show_anyway", "仍要查看");
 
     dict
 }

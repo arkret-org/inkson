@@ -605,6 +605,13 @@ pub fn AgentTaskDetailPage(task_id: String, detail: Signal<Option<AgentTaskDetai
                 }
             }
 
+            // A2 — every agent_task detail page renders inside a private
+            // mirror Space; make that explicit so the controller can never
+            // mistake this surface for a regular shared Space.
+            MirrorSpaceBanner {
+                source_space_label: d.summary.source_space_label.clone(),
+            }
+
             if let Some(msg) = banner_message {
                 div {
                     class: "agent-task-detail-banner",
@@ -1141,6 +1148,25 @@ pub fn AgentWorkspaceSettings(
 // round (see `_todos.md` AW-3.10 follow-up).
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Shared context type: the controller's list of owned agents, surfaced
+/// to chat.rs and timeline.rs composers so they can mount
+/// [`PrivateComposeBanner`] when the active draft mentions one of them.
+///
+/// Provided by `app.rs` via `use_context_provider`. Defaults to an empty
+/// vec until the SDK projection hydrates it.
+pub type OwnedAgentsContext = dioxus::prelude::Signal<Vec<OwnedAgentSummary>>;
+
+/// Best-effort display-name lookup for an agent DID. Returns the DID
+/// itself when no matching summary is loaded yet, so the banner is still
+/// informative on first render.
+pub fn owned_agent_display_name(did: &str, owned_agents: &[OwnedAgentSummary]) -> String {
+    owned_agents
+        .iter()
+        .find(|a| a.agent_did == did)
+        .map(|a| a.display_name.clone())
+        .unwrap_or_else(|| did.to_owned())
+}
+
 /// Returns true iff `did` is one of the controller's owned agents.
 ///
 /// chat.rs and timeline.rs MUST call this on each mention candidate's DID
@@ -1172,6 +1198,15 @@ pub fn draft_mentions_owned_agent(
 /// that the message will be privately routed.
 #[component]
 pub fn PrivateComposeBanner(agent_display_name: String) -> Element {
+    // A2 — render the full "{agent}" substituted banner alongside the
+    // shorter heading. Falls back to the legacy concise text if the
+    // template key has not been translated yet (back-compat for tests).
+    let template = tr("agent_workspace.compose.private_to_agent_banner");
+    let body = if template.contains("{agent}") {
+        template.replace("{agent}", &agent_display_name)
+    } else {
+        format!("🤖 → {agent_display_name}")
+    };
     rsx! {
         div {
             class: "private-routing-banner",
@@ -1181,8 +1216,40 @@ pub fn PrivateComposeBanner(agent_display_name: String) -> Element {
             br {}
             span {
                 class: "private-compose-summary-warning",
-                "🤖 → {agent_display_name}"
+                "{body}"
             }
+        }
+    }
+}
+
+/// Header panel rendered at the top of an [`AgentTaskDetailPage`] (and any
+/// other surface inside a private mirror Space) telling the controller
+/// that everything they see is private to them, and naming the source
+/// Space the agent may eventually publish a redacted summary back to.
+///
+/// Spec: `extensions/agent-workspace-profile.md` §4.1 (mirror Space
+/// semantics) + §4.7 (publish-back disclosure).
+#[component]
+pub fn MirrorSpaceBanner(source_space_label: Option<String>) -> Element {
+    let template = match source_space_label.as_deref() {
+        Some(label) if !label.trim().is_empty() => {
+            let body = tr("agent_workspace.private_mirror.body");
+            if body.contains("{source}") {
+                body.replace("{source}", label)
+            } else {
+                body
+            }
+        }
+        _ => tr("agent_workspace.private_mirror.body_no_source"),
+    };
+    rsx! {
+        aside {
+            class: "agent-mirror-space-banner private-routing-banner",
+            "role": "note",
+            "data-testid": "agent-mirror-space-banner",
+            strong { "🔒 {tr(\"agent_workspace.private_mirror.title\")}" }
+            " — "
+            span { "{template}" }
         }
     }
 }

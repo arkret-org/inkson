@@ -130,6 +130,72 @@ impl AccountDataStore {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// A4a — `client.ui` payload (theme, sidebar collapsed, per-space view).
+// Spec: `discovery/client-preferences.md` §2 — the `client.ui`
+// account-data key carries cross-device UI preferences. Yougen persists
+// theme + sidebar state locally and best-effort syncs them across
+// devices via `cx.account_data.set`.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build the canonical `content` body for the `client.ui` account-data
+/// entry. Mirrors the shape clients on other platforms agree on so a
+/// device that joins later sees the same field names.
+///
+/// Empty / `None` fields are skipped so we don't ship stale defaults.
+/// `theme` MUST be one of `"light" | "night" | "system"`.
+pub fn build_client_ui_body(
+    theme: Option<&str>,
+    sidebar_collapsed: Option<bool>,
+    per_space_view: &BTreeMap<String, String>,
+) -> Value {
+    let mut map = serde_json::Map::new();
+    if let Some(value) = theme {
+        if !value.is_empty() {
+            map.insert("theme".to_owned(), Value::String(value.to_owned()));
+        }
+    }
+    if let Some(value) = sidebar_collapsed {
+        map.insert("sidebar_collapsed".to_owned(), Value::Bool(value));
+    }
+    if !per_space_view.is_empty() {
+        let mut obj = serde_json::Map::new();
+        for (k, v) in per_space_view {
+            obj.insert(k.clone(), Value::String(v.clone()));
+        }
+        map.insert("per_space_view".to_owned(), Value::Object(obj));
+    }
+    Value::Object(map)
+}
+
+/// Theme preference recovered from a `client.ui` account-data payload.
+///
+/// Returns one of `"light" | "night" | "system"` when the remote payload
+/// carries a valid `theme` field, otherwise `None`. Invalid / unknown
+/// theme strings are dropped (caller should keep the existing local
+/// value).
+pub fn theme_from_client_ui(value: &Value) -> Option<String> {
+    value
+        .get("theme")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| matches!(*s, "light" | "night" | "system"))
+        .map(ToOwned::to_owned)
+}
+
+/// Merge a remote `client.ui` theme into the local cached theme. Local
+/// state stays authoritative when the remote payload doesn't carry a
+/// valid `theme` field — that means the entry was written by an older
+/// client that only synced `sidebar_collapsed`.
+///
+/// Returns `Some(new_theme)` when the merged value differs from the
+/// local one (caller should update the UI Signal + persist locally), or
+/// `None` when no change is required.
+pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<String> {
+    let remote = theme_from_client_ui(remote_value)?;
+    if remote == local_theme { None } else { Some(remote) }
+}
+
 /// Wire-key for an actor-private Space remark per
 /// `discovery/client-preferences.md` §3.7: `cx.contacts.space.<space_id>`.
 ///
@@ -239,6 +305,103 @@ impl SpaceRemark {
             trimmed
         }
     }
+}
+
+/// A single entry in the actor-private personal blocklist
+/// (`client.blocklist` per `discovery/client-preferences.md`).
+///
+/// The wire shape is intentionally permissive — older clients SHOULD
+/// tolerate unknown fields — but every entry MUST carry `did`. `reason`
+/// is free-form text shown back to the user in the Privacy settings;
+/// `blocked_at` is an RFC 3339 timestamp set at the time of the block,
+/// useful for the UI "blocked since…" hint and for conflict resolution
+/// across devices.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlocklistEntry {
+    /// Target DID. Lower-cased + trimmed by [`block_user_in`] before
+    /// insertion.
+    pub did: String,
+    /// Optional user-supplied reason. Empty strings tombstone to `None`
+    /// on the wire to keep payloads tight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// RFC 3339 timestamp at which the block was first written.
+    /// Optional because legacy entries hydrated from older clients may
+    /// not carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_at: Option<String>,
+}
+
+impl BlocklistEntry {
+    /// Construct a new entry. Normalises `did` (trim) and treats an
+    /// empty `reason` as `None`.
+    pub fn new(did: impl Into<String>, reason: Option<String>) -> Self {
+        let did = did.into().trim().to_owned();
+        let reason = reason.and_then(|r| {
+            let trimmed = r.trim().to_owned();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        });
+        Self {
+            did,
+            reason,
+            blocked_at: None,
+        }
+    }
+}
+
+/// True when `did` appears in `list`. Empty + whitespace `did` is
+/// always `false`. Matching is exact on the (already trimmed) DID
+/// string — callers are expected to feed canonical DIDs.
+pub fn is_blocked(list: &[BlocklistEntry], did: &str) -> bool {
+    let needle = did.trim();
+    if needle.is_empty() {
+        return false;
+    }
+    list.iter().any(|e| e.did == needle)
+}
+
+/// Append `did` to `list` (idempotent — duplicate DIDs are not
+/// inserted). Returns `true` when the list changed. `blocked_at` is
+/// stamped with the supplied timestamp; pass `chrono::Utc::now()` at
+/// the call site so this module stays time-source agnostic.
+pub fn block_user_in(
+    list: &mut Vec<BlocklistEntry>,
+    did: &str,
+    reason: Option<String>,
+    blocked_at: Option<String>,
+) -> bool {
+    let mut entry = BlocklistEntry::new(did, reason);
+    if entry.did.is_empty() {
+        return false;
+    }
+    if list.iter().any(|e| e.did == entry.did) {
+        return false;
+    }
+    entry.blocked_at = blocked_at;
+    list.push(entry);
+    true
+}
+
+/// Remove every entry matching `did` from `list`. Returns `true` when
+/// at least one entry was removed.
+pub fn unblock_user_in(list: &mut Vec<BlocklistEntry>, did: &str) -> bool {
+    let needle = did.trim();
+    if needle.is_empty() {
+        return false;
+    }
+    let before = list.len();
+    list.retain(|e| e.did != needle);
+    list.len() != before
+}
+
+/// Canonical wire body for the `client.blocklist` account-data entry.
+/// The settings UI calls this just before POSTing via
+/// [`crate::api::ContrixApi::set_account_data`]; keep the shape stable
+/// so other clients agree on the layout.
+pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
+    serde_json::json!({
+        "entries": entries,
+    })
 }
 
 /// Build a `cx.account_data.set` operation envelope for `key` -> `value`.
@@ -357,6 +520,149 @@ mod tests {
             ..SpaceRemark::default()
         };
         assert!(!r2.is_empty());
+    }
+
+    #[test]
+    fn is_blocked_returns_true_for_blocked_did() {
+        let list = vec![
+            BlocklistEntry::new("did:web:alice.example", None),
+            BlocklistEntry::new("did:web:bob.example", Some("spam".into())),
+        ];
+        assert!(is_blocked(&list, "did:web:alice.example"));
+        assert!(is_blocked(&list, "did:web:bob.example"));
+        assert!(!is_blocked(&list, "did:web:carol.example"));
+        // Whitespace-only / empty needle short-circuits to false.
+        assert!(!is_blocked(&list, ""));
+        assert!(!is_blocked(&list, "   "));
+    }
+
+    #[test]
+    fn block_user_appends_to_list_without_duplicates() {
+        let mut list: Vec<BlocklistEntry> = Vec::new();
+        assert!(block_user_in(
+            &mut list,
+            "did:web:alice.example",
+            Some("spam".into()),
+            Some("2026-05-18T00:00:00Z".into()),
+        ));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].did, "did:web:alice.example");
+        assert_eq!(list[0].reason.as_deref(), Some("spam"));
+        assert_eq!(list[0].blocked_at.as_deref(), Some("2026-05-18T00:00:00Z"));
+        // Second call with the same DID is a no-op.
+        assert!(!block_user_in(
+            &mut list,
+            "did:web:alice.example",
+            Some("different".into()),
+            None,
+        ));
+        assert_eq!(list.len(), 1);
+        // Empty DID is rejected.
+        assert!(!block_user_in(&mut list, "   ", None, None));
+        assert_eq!(list.len(), 1);
+        // Empty reason tombstones to None on the wire.
+        assert!(block_user_in(
+            &mut list,
+            "did:web:bob.example",
+            Some("   ".into()),
+            None,
+        ));
+        assert_eq!(list[1].reason, None);
+    }
+
+    #[test]
+    fn unblock_user_removes_matching_did() {
+        let mut list = vec![
+            BlocklistEntry::new("did:web:alice.example", None),
+            BlocklistEntry::new("did:web:bob.example", Some("spam".into())),
+        ];
+        assert!(unblock_user_in(&mut list, "did:web:alice.example"));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].did, "did:web:bob.example");
+        // Idempotent: removing a missing DID returns false.
+        assert!(!unblock_user_in(&mut list, "did:web:alice.example"));
+        assert_eq!(list.len(), 1);
+        // Empty needle is rejected.
+        assert!(!unblock_user_in(&mut list, ""));
+    }
+
+    #[test]
+    fn build_blocklist_account_data_body_emits_entries_array() {
+        let entries = vec![BlocklistEntry::new(
+            "did:web:alice.example",
+            Some("spam".into()),
+        )];
+        let body = build_blocklist_account_data_body(&entries);
+        assert_eq!(body["entries"][0]["did"], "did:web:alice.example");
+        assert_eq!(body["entries"][0]["reason"], "spam");
+        // `blocked_at` is None on `BlocklistEntry::new` so the wire
+        // payload elides it.
+        assert!(body["entries"][0].get("blocked_at").is_none());
+    }
+
+    // ── A4a — client.ui shape + merge logic ────────────────────────────
+    #[test]
+    fn build_client_ui_body_only_emits_present_fields() {
+        let body = build_client_ui_body(Some("light"), None, &BTreeMap::new());
+        assert_eq!(body["theme"], "light");
+        assert!(body.get("sidebar_collapsed").is_none());
+        assert!(body.get("per_space_view").is_none());
+
+        let mut per_space = BTreeMap::new();
+        per_space.insert("cx:space:abc".to_owned(), "kanban".to_owned());
+        let body = build_client_ui_body(Some("night"), Some(true), &per_space);
+        assert_eq!(body["theme"], "night");
+        assert_eq!(body["sidebar_collapsed"], true);
+        assert_eq!(body["per_space_view"]["cx:space:abc"], "kanban");
+
+        // Empty theme string is dropped (treated as unset).
+        let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new());
+        assert!(body.get("theme").is_none());
+        assert_eq!(body["sidebar_collapsed"], false);
+    }
+
+    #[test]
+    fn theme_from_client_ui_only_accepts_known_themes() {
+        assert_eq!(
+            theme_from_client_ui(&json!({"theme": "light"})),
+            Some("light".to_owned())
+        );
+        assert_eq!(
+            theme_from_client_ui(&json!({"theme": "night"})),
+            Some("night".to_owned())
+        );
+        assert_eq!(
+            theme_from_client_ui(&json!({"theme": "system"})),
+            Some("system".to_owned())
+        );
+        assert_eq!(theme_from_client_ui(&json!({"theme": "neon"})), None);
+        assert_eq!(theme_from_client_ui(&json!({"theme": ""})), None);
+        assert_eq!(theme_from_client_ui(&json!({})), None);
+    }
+
+    #[test]
+    fn merge_client_ui_theme_prefers_remote_when_different() {
+        // remote has a different valid theme → return it
+        assert_eq!(
+            merge_client_ui_theme("light", &json!({"theme": "night"})),
+            Some("night".to_owned())
+        );
+        // remote matches local → no change
+        assert_eq!(
+            merge_client_ui_theme("light", &json!({"theme": "light"})),
+            None
+        );
+        // remote has no theme field → no change (older client wrote only
+        // sidebar_collapsed); local stays authoritative
+        assert_eq!(
+            merge_client_ui_theme("light", &json!({"sidebar_collapsed": true})),
+            None
+        );
+        // remote has an invalid theme → no change
+        assert_eq!(
+            merge_client_ui_theme("system", &json!({"theme": "neon"})),
+            None
+        );
     }
 
     #[test]

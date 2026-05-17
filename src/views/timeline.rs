@@ -1,4 +1,7 @@
 use chrono::Utc;
+// A6.2: HasFileData trait surfaces `event.files()` on DragData /
+// FormData events; not re-exported via the prelude root.
+use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
@@ -303,6 +306,29 @@ pub fn TimelinePanel(
     let mut private_plaintext = use_signal(|| false);
     let mut plaintext_ack = use_signal(|| false);
     let mut initial_sync_requested = use_signal(|| false);
+    // A6.2 composer drag-drop attachment state. `compose_dragover`
+    // toggles the `is-dragover` outline as the user holds a file
+    // over the composer; `compose_upload_status` shows an inline
+    // progress / error string for the most recent drop.
+    let mut compose_dragover = use_signal(|| false);
+    let mut compose_upload_status = use_signal(|| String::new());
+    // A5 — personal blocklist. Renderers hide bodies from blocked
+    // senders behind a "Show anyway" placeholder; `blocked_show_anyway`
+    // tracks per-event opt-ins so once the user clicks reveal, the row
+    // stays expanded for the lifetime of the render.
+    let mut blocked_show_anyway = use_signal(std::collections::BTreeSet::<String>::new);
+    let blocked_did_set: std::collections::BTreeSet<String> = state_store
+        .read()
+        .client_blocklist()
+        .into_iter()
+        .map(|entry| entry.did)
+        .collect();
+    // A2 / AW-3.10: shared owned-agent list so the timeline composer
+    // can mount [`PrivateComposeBanner`] + apply the
+    // `private-compose-mode` class when the active draft mentions one
+    // of the controller's agents.
+    let owned_agents_ctx =
+        use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
 
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
@@ -442,6 +468,30 @@ pub fn TimelinePanel(
         });
     }
 
+    // A2 / AW-3.10: precompute private-compose state outside rsx so
+    // the let bindings live in Rust statement scope (rsx parses node
+    // contexts as nodes, not statements). When the active timeline
+    // draft mentions one of the controller's owned agents we apply
+    // the `private-compose-mode` class so the textarea border +
+    // background flip to the private routing palette, and mount the
+    // [`PrivateComposeBanner`] underneath.
+    let private_compose_owned_agents = owned_agents_ctx.read().clone();
+    let private_compose_mentions =
+        crate::views::helpers::parse_structured_mentions(&draft());
+    let private_compose_target_did = private_compose_mentions
+        .iter()
+        .map(|m| m.target.clone())
+        .find(|target| crate::views::agent_workspace::is_controller_owned_agent(
+            target,
+            &private_compose_owned_agents,
+        ));
+    let private_compose_active = private_compose_target_did.is_some();
+    let composer_class = if private_compose_active {
+        "composer private-compose-mode"
+    } else {
+        "composer"
+    };
+
     rsx! {
         div {
             class: "timeline",
@@ -512,6 +562,30 @@ pub fn TimelinePanel(
                             div { class: "muted", "data-testid": "redacted-tombstone", "[Message redacted]" }
                             if let Some(reason) = &event.tombstone_reason {
                                 div { class: "muted", "Tombstone reason: {reason}" }
+                            }
+                        } else if blocked_did_set.contains(&event.sender)
+                            && !blocked_show_anyway.read().contains(&event.id)
+                        {
+                            // A5 — sender is on the actor-private
+                            // blocklist. Render a placeholder + a
+                            // reveal button rather than dropping the
+                            // row entirely so the user still knows the
+                            // message exists.
+                            div {
+                                class: "muted",
+                                "data-testid": "timeline-blocked-row",
+                                {crate::i18n::tr("timeline.blocked_user")}
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "timeline-blocked-show-anyway",
+                                onclick: {
+                                    let eid = event.id.clone();
+                                    move |_| {
+                                        blocked_show_anyway.write().insert(eid.clone());
+                                    }
+                                },
+                                {crate::i18n::tr("timeline.show_anyway")}
                             }
                         } else {
                             div { "data-testid": "event-body", "{event.body}" }
@@ -981,7 +1055,18 @@ pub fn TimelinePanel(
             }
         }
 
-        div { class: "composer", "data-testid": "composer",
+        // A2 / AW-3.10: `composer_class` + `private_compose_target_did`
+        // are precomputed above the rsx block so the let bindings live
+        // in Rust statement scope rather than node-context.
+        div { class: "{composer_class}", "data-testid": "composer",
+            if let Some(agent_did) = private_compose_target_did.as_ref() {
+                crate::views::agent_workspace::PrivateComposeBanner {
+                    agent_display_name: crate::views::agent_workspace::owned_agent_display_name(
+                        agent_did,
+                        &private_compose_owned_agents,
+                    ),
+                }
+            }
             div {
                 class: "event",
                 "data-testid": "plaintext-boundary-panel",
@@ -1060,11 +1145,109 @@ pub fn TimelinePanel(
                 }
             }
 
-            textarea {
-                "data-testid": "composer-input",
-                "aria-label": "Message composer",
-                value: "{draft}",
-                placeholder: if encrypt_toggle() { "Write an encrypted message (Ctrl+Enter to send)" } else { "Write a plaintext dev-mode message (Ctrl+Enter to send)" },
+            // A6.2: drag-drop attachment zone wrapping the composer
+            // textarea. Drop a file → upload via `upload_blob_bytes`
+            // → append `[Attachment: {ref}]` to the draft so the
+            // existing Ctrl+Enter send path attaches it. `ondragover`
+            // calls `prevent_default` so the browser doesn't open the
+            // file in place of the app.
+            div {
+                class: if compose_dragover() {
+                    "compose-drop-zone is-dragover"
+                } else {
+                    "compose-drop-zone"
+                },
+                "data-testid": "compose-drop-zone",
+                ondragover: move |evt| {
+                    evt.prevent_default();
+                    if !compose_dragover() { compose_dragover.set(true); }
+                },
+                ondragleave: move |_| compose_dragover.set(false),
+                ondrop: {
+                    let base = base_url_sig.clone();
+                    move |evt| {
+                        evt.prevent_default();
+                        compose_dragover.set(false);
+                        let files = evt.files();
+                        if files.is_empty() {
+                            compose_upload_status.set(
+                                crate::i18n::tr("compose.upload_error"),
+                            );
+                            return;
+                        }
+                        let api_token = token();
+                        let base = base();
+                        compose_upload_status.set(
+                            crate::i18n::tr("compose.upload_progress"),
+                        );
+                        spawn(async move {
+                            let api = match authed_api_with_sync(&base, api_token, None) {
+                                Ok(api) => api,
+                                Err(err) => {
+                                    compose_upload_status.set(format!(
+                                        "{}: {err}",
+                                        crate::i18n::tr("compose.upload_error"),
+                                    ));
+                                    return;
+                                }
+                            };
+                            let mut ok_count = 0usize;
+                            let mut last_error: Option<String> = None;
+                            for file in files {
+                                let content_type = file
+                                    .content_type()
+                                    .unwrap_or_else(|| "application/octet-stream".to_owned());
+                                let bytes = match file.read_bytes().await {
+                                    Ok(b) => b.to_vec(),
+                                    Err(err) => {
+                                        last_error = Some(format!("{err}"));
+                                        continue;
+                                    }
+                                };
+                                match api.upload_blob_bytes(bytes, &content_type).await {
+                                    Ok(resp) => {
+                                        let current = draft();
+                                        let needs_space = !current.is_empty()
+                                            && !current.ends_with(' ')
+                                            && !current.ends_with('\n');
+                                        let attachment = format!(
+                                            "{}[Attachment: {}]",
+                                            if needs_space { " " } else { "" },
+                                            resp.blob_ref
+                                        );
+                                        draft.set(format!("{current}{attachment}"));
+                                        ok_count += 1;
+                                    }
+                                    Err(err) => {
+                                        last_error = Some(err.to_string());
+                                    }
+                                }
+                            }
+                            if let Some(err) = last_error {
+                                compose_upload_status.set(format!(
+                                    "{}: {err}",
+                                    crate::i18n::tr("compose.upload_error"),
+                                ));
+                            } else if ok_count > 0 {
+                                compose_upload_status.set(format!(
+                                    "{ok_count} attachment(s) uploaded"
+                                ));
+                            }
+                        });
+                    }
+                },
+                if compose_dragover() {
+                    div {
+                        class: "compose-drop-zone-hint",
+                        "data-testid": "compose-drop-hint",
+                        {crate::i18n::tr("compose.drop_zone.hint")}
+                    }
+                }
+                textarea {
+                    "data-testid": "composer-input",
+                    "aria-label": "Message composer",
+                    value: "{draft}",
+                    placeholder: if encrypt_toggle() { "Write an encrypted message (Ctrl+Enter to send)" } else { "Write a plaintext dev-mode message (Ctrl+Enter to send)" },
                 oninput: {
                     let sc = selected_space_c.clone();
                     move |event| {
@@ -1182,6 +1365,15 @@ pub fn TimelinePanel(
                         plaintext_ack.set(false);
                     }
                 },
+            }
+            } // close compose-drop-zone wrapper
+
+            if !compose_upload_status().is_empty() {
+                div {
+                    class: "compose-upload-progress",
+                    "data-testid": "compose-upload-progress",
+                    "{compose_upload_status}"
+                }
             }
 
             div { class: "actions",

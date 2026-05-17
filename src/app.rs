@@ -4293,6 +4293,14 @@ pub fn RouterView() -> Element {
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
+    // A2 / AW-3.10: the controller's owned-agent list. chat.rs +
+    // timeline.rs composers read this Signal (via `use_context`) to
+    // decide whether to mount the PrivateComposeBanner above the
+    // textarea. Default empty until the SDK agent-workspace projection
+    // hydrates it.
+    use_context_provider::<crate::views::agent_workspace::OwnedAgentsContext>(|| {
+        Signal::new(Vec::<crate::views::agent_workspace::OwnedAgentSummary>::new())
+    });
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
@@ -4304,6 +4312,10 @@ pub fn RouterView() -> Element {
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
+    // A2 — popover next to topbar "My Agents" nav entry.
+    let mut agent_workspace_info_open = use_signal(|| false);
+    // A6.4 — `?` keyboard shortcut help overlay state.
+    let mut shortcut_help_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
 
     // On first render with a live session, fetch the directory + sync so
@@ -4423,6 +4435,7 @@ pub fn RouterView() -> Element {
                     last_error,
                     server_description,
                     server_probe_status,
+                    theme,
                     navigator,
                 },
             );
@@ -4663,6 +4676,27 @@ pub fn RouterView() -> Element {
             "data-locale": locale_attr,
             "data-theme": theme_attr,
             "data-testid": "client-shell",
+            tabindex: "-1",
+            // A6.4 — global key handler. `?` (Shift+/) opens the
+            // shortcut-help overlay unless the event originated from a
+            // text input / textarea / contenteditable surface. `Esc`
+            // dismisses it.
+            onkeydown: move |event| {
+                let key = event.key().to_string();
+                if crate::components::shortcut_help::key_event_is_help_trigger(&key) {
+                    // We can't reliably inspect event.target() in
+                    // dioxus 0.7 (the target type is opaque); however
+                    // text inputs already swallow the key event before
+                    // it reaches the shell when they're focused — so
+                    // this handler is only reached for "global" key
+                    // presses. Toggle the overlay.
+                    shortcut_help_open.set(true);
+                    event.stop_propagation();
+                } else if key == "Escape" && shortcut_help_open() {
+                    shortcut_help_open.set(false);
+                    event.stop_propagation();
+                }
+            },
             onmousemove: move |event| {
                 if sidebar_resizing() && !sidebar_collapsed() {
                     let next_width = clamp_sidebar_width(event.client_coordinates().x);
@@ -4705,7 +4739,14 @@ pub fn RouterView() -> Element {
                     onclick: move |_| {
                         let next = if theme() == "night" { "light" } else { "night" }.to_owned();
                         theme.set(next.clone());
-                        state_store.write().save_private_data(&account_did(), "theme", next);
+                        state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                        // A4a — best-effort cross-device sync via
+                        // `cx.account_data.set(client.ui)`.
+                        crate::views::settings::push_client_ui_account_data(
+                            base_url(),
+                            token(),
+                            next,
+                        );
                     },
                     UiIcon { name: theme_toggle_icon }
                 }
@@ -4751,6 +4792,7 @@ pub fn RouterView() -> Element {
                                 last_error,
                                 server_description,
                                 server_probe_status,
+                                theme,
                                 navigator,
                             },
                         ),
@@ -4910,6 +4952,7 @@ pub fn RouterView() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        theme,
                                                         navigator,
                                                     },
                                                 );
@@ -5132,7 +5175,14 @@ pub fn RouterView() -> Element {
                             onclick: move |_| {
                                 let next = if theme() == "night" { "light" } else { "night" }.to_owned();
                                 theme.set(next.clone());
-                                state_store.write().save_private_data(&account_did(), "theme", next);
+                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                                // A4a — best-effort cross-device sync
+                                // via `cx.account_data.set(client.ui)`.
+                                crate::views::settings::push_client_ui_account_data(
+                                    base_url(),
+                                    token(),
+                                    next,
+                                );
                             },
                             UiIcon { name: theme_toggle_icon }
                         }
@@ -5187,14 +5237,52 @@ pub fn RouterView() -> Element {
                                 span { "data-testid": "last-error", "{err}" }
                             }
                         }
-                        Link {
-                            class: "btn icon sm ghost topbar-agent-workspace-link",
-                            "data-testid": "topbar-agent-workspace-button",
-                            to: Route::AgentWorkspace,
-                            title: crate::i18n::tr("nav.agent_workspace"),
-                            "aria-label": crate::i18n::tr("nav.agent_workspace"),
-                            UiIcon { name: "user" }
-                            span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                        div { class: "topbar-agent-workspace-wrap", style: "position: relative; display: inline-flex; align-items: center;",
+                            Link {
+                                class: "btn icon sm ghost topbar-agent-workspace-link",
+                                "data-testid": "topbar-agent-workspace-button",
+                                to: Route::AgentWorkspace,
+                                title: crate::i18n::tr("nav.agent_workspace"),
+                                "aria-label": crate::i18n::tr("nav.agent_workspace"),
+                                UiIcon { name: "user" }
+                                span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                            }
+                            // A2 — info-icon + popover next to the My
+                            // Agents nav entry. Pressing it toggles a
+                            // small explanation card that surfaces the
+                            // mirror-Space semantics so users
+                            // understand the boundary before opening
+                            // the surface.
+                            button {
+                                class: "btn icon sm ghost topbar-agent-workspace-info",
+                                "data-testid": "topbar-agent-workspace-info-button",
+                                title: crate::i18n::tr("agent_workspace.nav.info_title"),
+                                "aria-label": crate::i18n::tr("agent_workspace.nav.info_button"),
+                                "aria-expanded": format!("{}", agent_workspace_info_open()),
+                                onclick: move |evt| {
+                                    evt.stop_propagation();
+                                    agent_workspace_info_open.toggle();
+                                },
+                                "?"
+                            }
+                            if agent_workspace_info_open() {
+                                div {
+                                    class: "topbar-agent-workspace-info-popover",
+                                    "role": "dialog",
+                                    "data-testid": "topbar-agent-workspace-info-popover",
+                                    style: "position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 280px; max-width: 360px; padding: 12px; border-radius: 8px; background: var(--bg-elevated, #1a1d22); color: var(--text-strong, #fff); border: 1px solid var(--border-default, #333); box-shadow: 0 6px 24px rgba(0,0,0,0.35);",
+                                    strong { "{crate::i18n::tr(\"agent_workspace.nav.info_title\")}" }
+                                    p { style: "margin: 6px 0 8px 0; line-height: 1.4;",
+                                        "{crate::i18n::tr(\"agent_workspace.nav.info_body\")}"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "topbar-agent-workspace-info-dismiss",
+                                        onclick: move |_| agent_workspace_info_open.set(false),
+                                        "{crate::i18n::tr(\"common.close\")}"
+                                    }
+                                }
+                            }
                         }
                         Link {
                             class: "btn icon sm ghost topbar-notifications-link",
@@ -5819,7 +5907,11 @@ pub fn RouterView() -> Element {
                 }
             }
             }
-
+            // A6.4 — shortcut help overlay; toggled by the `?` global
+            // key handler on the shell div above.
+            crate::components::shortcut_help::ShortcutHelpOverlay {
+                visible: shortcut_help_open,
+            }
         }
     }
 }
@@ -6383,6 +6475,10 @@ struct ConnectContext {
     last_error: Signal<Option<String>>,
     server_description: Signal<Option<ServerDescription>>,
     server_probe_status: Signal<String>,
+    /// A4a: shared UI theme signal so `/sync` can hydrate the theme
+    /// from the remote `client.ui` account-data payload right after
+    /// session bootstrap. Stub field — wire-up is tracked under A4a.
+    theme: Signal<String>,
     navigator: Navigator,
 }
 
@@ -6409,6 +6505,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut last_error = ctx.last_error;
         let mut server_description = ctx.server_description;
         let mut server_probe_status = ctx.server_probe_status;
+        let mut theme = ctx.theme;
         let navigator = ctx.navigator;
 
         status.set(ConnectionState::Loading.label().to_owned());
@@ -6564,6 +6661,31 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 else {
                                     continue;
                                 };
+                                // A4a — hydrate `client.ui` theme from
+                                // the remote payload. Cross-device wins:
+                                // when remote carries a valid theme that
+                                // differs from the local cached value
+                                // we update the UI Signal +
+                                // LocalConfigStore synchronously.
+                                if data_type == "client.ui" {
+                                    if let Some(content) = entry.get("content") {
+                                        let local_theme = theme();
+                                        if let Some(remote_theme) =
+                                            crate::account_data::merge_client_ui_theme(
+                                                &local_theme,
+                                                content,
+                                            )
+                                        {
+                                            theme.set(remote_theme.clone());
+                                            store.save_private_data(
+                                                &account_did(),
+                                                "theme",
+                                                remote_theme,
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
                                 let Some(space_id) =
                                     crate::account_data::space_id_from_space_remark_key(data_type)
                                 else {
