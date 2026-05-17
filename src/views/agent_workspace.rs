@@ -732,6 +732,541 @@ pub fn AgentTaskDetailPage(task_id: String, detail: Signal<Option<AgentTaskDetai
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Publish-to-source modal
+// (AW-3.7 + AW-3.20: default signing identity = self + 仅文字最小披露)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishSignerChoice {
+    /// `created_by = controller principal` — agent draft is sent as user's
+    /// own message. **v1 default**: maximum attribution simplicity.
+    AsSelf,
+    /// `created_by = controller principal` + `cx.content.import_attestation`
+    /// block annotating "drafted by agent X" (audit-transparent fork).
+    AsSelfWithAgentAttribution,
+}
+
+impl Default for PublishSignerChoice {
+    fn default() -> Self {
+        // AW-3.20 — default = my-own + 仅文字 (minimal disclosure).
+        PublishSignerChoice::AsSelf
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublishToSourceArgs {
+    pub task_id: String,
+    pub source_flow_label: String,
+    pub draft_preview: String,
+    pub current_execution_state: ExecutionState,
+}
+
+impl PublishToSourceArgs {
+    /// AW-3.7 + AW-3.20 + §4.7 read-then-write: publish is enabled iff the
+    /// task is still `active`. Terminal / pending / locked states show a
+    /// disabled button with explanatory tooltip.
+    pub fn publish_enabled(&self) -> bool {
+        self.current_execution_state == ExecutionState::Active
+    }
+
+    pub fn publish_disabled_reason(&self) -> Option<&'static str> {
+        match self.current_execution_state {
+            ExecutionState::Active => None,
+            ExecutionState::PendingSourceStub => Some(
+                "task pending Phase 3 reconcile; agent has not produced a final draft yet",
+            ),
+            ExecutionState::Completed => Some("task already completed"),
+            ExecutionState::CancelledStubRejected
+            | ExecutionState::CancelledOrphan
+            | ExecutionState::CancelledByController => Some("task cancelled"),
+        }
+    }
+}
+
+#[component]
+pub fn PublishToSourceModal(
+    args: PublishToSourceArgs,
+    visible: Signal<bool>,
+    signer_choice: Signal<PublishSignerChoice>,
+) -> Element {
+    if !visible() {
+        return rsx! { div {} };
+    }
+    let publish_enabled = args.publish_enabled();
+    let disabled_reason = args.publish_disabled_reason();
+    let current_choice = signer_choice();
+    let testid = format!("publish-modal-{}", args.task_id);
+    rsx! {
+        div {
+            class: "publish-to-source-modal-backdrop",
+            "data-testid": "{testid}-backdrop",
+            div {
+                class: "publish-to-source-modal",
+                "role": "dialog",
+                "aria-modal": "true",
+                "data-testid": "{testid}",
+                header {
+                    class: "publish-to-source-modal-header",
+                    h2 { {format!("{} {}", tr("agent_workspace.task.publish"), args.source_flow_label)} }
+                }
+                section {
+                    class: "publish-to-source-modal-body",
+                    fieldset {
+                        legend { "{tr(\"agent_workspace.publish.signer_legend\")}" }
+                        label {
+                            input {
+                                r#type: "radio",
+                                name: "publish-signer",
+                                value: "as_self",
+                                checked: current_choice == PublishSignerChoice::AsSelf,
+                                "data-testid": "publish-modal-signer-self",
+                                onchange: move |_| signer_choice.set(PublishSignerChoice::AsSelf),
+                            }
+                            "{tr(\"agent_workspace.publish.signer_self\")}"
+                        }
+                        label {
+                            input {
+                                r#type: "radio",
+                                name: "publish-signer",
+                                value: "as_self_with_attribution",
+                                checked: current_choice == PublishSignerChoice::AsSelfWithAgentAttribution,
+                                "data-testid": "publish-modal-signer-self-with-attribution",
+                                onchange: move |_| signer_choice.set(PublishSignerChoice::AsSelfWithAgentAttribution),
+                            }
+                            "{tr(\"agent_workspace.publish.signer_self_with_attribution\")}"
+                        }
+                    }
+                    pre {
+                        class: "publish-to-source-modal-preview",
+                        "{args.draft_preview}"
+                    }
+                    if let Some(reason) = disabled_reason {
+                        p {
+                            class: "publish-to-source-modal-disabled-note",
+                            "role": "status",
+                            "⚠ Cannot publish: {reason}"
+                        }
+                    }
+                }
+                footer {
+                    class: "publish-to-source-modal-footer",
+                    button {
+                        class: "secondary",
+                        "data-testid": "publish-modal-cancel",
+                        onclick: move |_| visible.set(false),
+                        "{tr(\"agent_workspace.publish.cancel\")}"
+                    }
+                    button {
+                        class: "primary",
+                        disabled: !publish_enabled,
+                        title: disabled_reason.unwrap_or("Publish to source Flow"),
+                        "data-testid": "publish-modal-confirm",
+                        "{tr(\"agent_workspace.publish.confirm\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Add Agent modal
+// (AW-3.8: add a controller-owned agent to a source Space, with capability
+// preset selection)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentMemberProfile {
+    /// `cx.agent_member.observer` — read_history + read_messages.
+    Observer,
+    /// `cx.agent_member.read_only` — observer + react.
+    ReadOnly,
+    /// `cx.agent_member.mention_respond_only` — read_only + write only when
+    /// `in_reply_to.mentions=self`. **v1 default** for newly added agents.
+    MentionRespondOnly,
+    /// `cx.agent_member.full_collaborator` — standard member capability set.
+    FullCollaborator,
+}
+
+impl Default for AgentMemberProfile {
+    fn default() -> Self {
+        AgentMemberProfile::MentionRespondOnly
+    }
+}
+
+impl AgentMemberProfile {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            AgentMemberProfile::Observer => "agent_workspace.add_agent.profile.observer",
+            AgentMemberProfile::ReadOnly => "agent_workspace.add_agent.profile.read_only",
+            AgentMemberProfile::MentionRespondOnly => {
+                "agent_workspace.add_agent.profile.mention_respond_only"
+            }
+            AgentMemberProfile::FullCollaborator => {
+                "agent_workspace.add_agent.profile.full_collaborator"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddAgentArgs {
+    /// The source Space the agent will be added to (display label).
+    pub source_space_label: String,
+    /// Controller-owned agent choices.
+    pub available_agents: Vec<OwnedAgentSummary>,
+}
+
+#[component]
+pub fn AddAgentModal(
+    args: AddAgentArgs,
+    visible: Signal<bool>,
+    selected_agent: Signal<Option<String>>,
+    selected_profile: Signal<AgentMemberProfile>,
+) -> Element {
+    if !visible() {
+        return rsx! { div {} };
+    }
+    let testid = "add-agent-modal";
+    let current_agent = selected_agent.read().clone();
+    let current_profile = selected_profile();
+    let selectable = !args.available_agents.is_empty();
+    rsx! {
+        div {
+            class: "add-agent-modal-backdrop",
+            "data-testid": "{testid}-backdrop",
+            div {
+                class: "add-agent-modal",
+                "role": "dialog",
+                "aria-modal": "true",
+                "data-testid": "{testid}",
+                header {
+                    class: "add-agent-modal-header",
+                    h2 {
+                        {format!("{} {}", tr("agent_workspace.add_agent"), args.source_space_label)}
+                    }
+                }
+                section {
+                    class: "add-agent-modal-body",
+                    fieldset {
+                        legend { "{tr(\"agent_workspace.add_agent.select_legend\")}" }
+                        if selectable {
+                            for agent in args.available_agents.iter() {
+                                {
+                                    let did = agent.agent_did.clone();
+                                    let name = agent.display_name.clone();
+                                    let is_selected = current_agent.as_deref() == Some(agent.agent_did.as_str());
+                                    let did_for_change = did.clone();
+                                    rsx! {
+                                        label {
+                                            input {
+                                                r#type: "radio",
+                                                name: "add-agent-pick",
+                                                value: "{did}",
+                                                checked: is_selected,
+                                                "data-testid": "add-agent-modal-pick-{did}",
+                                                onchange: move |_| selected_agent.set(Some(did_for_change.clone())),
+                                            }
+                                            "{name}"
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            p {
+                                class: "add-agent-modal-empty",
+                                {tr("agent_workspace.add_agent.no_owned_agents")}
+                            }
+                        }
+                    }
+                    fieldset {
+                        legend { "{tr(\"agent_workspace.add_agent.profile_legend\")}" }
+                        for choice in [
+                            AgentMemberProfile::Observer,
+                            AgentMemberProfile::ReadOnly,
+                            AgentMemberProfile::MentionRespondOnly,
+                            AgentMemberProfile::FullCollaborator,
+                        ] {
+                            {
+                                let testid_value = match choice {
+                                    AgentMemberProfile::Observer => "observer",
+                                    AgentMemberProfile::ReadOnly => "read-only",
+                                    AgentMemberProfile::MentionRespondOnly => "mention-respond-only",
+                                    AgentMemberProfile::FullCollaborator => "full-collaborator",
+                                };
+                                let label = tr(choice.label_key());
+                                rsx! {
+                                    label {
+                                        input {
+                                            r#type: "radio",
+                                            name: "add-agent-profile",
+                                            value: "{testid_value}",
+                                            checked: current_profile == choice,
+                                            "data-testid": "add-agent-modal-profile-{testid_value}",
+                                            onchange: move |_| selected_profile.set(choice),
+                                        }
+                                        "{label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    p {
+                        class: "add-agent-modal-disclosure",
+                        {tr("agent_workspace.add_agent.disclosure")}
+                    }
+                }
+                footer {
+                    class: "add-agent-modal-footer",
+                    button {
+                        class: "secondary",
+                        "data-testid": "add-agent-modal-cancel",
+                        onclick: move |_| visible.set(false),
+                        "{tr(\"agent_workspace.add_agent.cancel\")}"
+                    }
+                    button {
+                        class: "primary",
+                        disabled: current_agent.is_none() || !selectable,
+                        "data-testid": "add-agent-modal-confirm",
+                        "{tr(\"agent_workspace.add_agent.send_invite\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Agent Workspace settings page (AW-3.4)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[component]
+pub fn AgentWorkspaceSettings(
+    agents: Signal<Vec<OwnedAgentSummary>>,
+    default_profile: Signal<AgentMemberProfile>,
+) -> Element {
+    let agents_count = agents.read().len();
+    let current_default = default_profile();
+    rsx! {
+        section {
+            class: "agent-workspace-settings",
+            "data-testid": "agent-workspace-settings",
+            header {
+                class: "agent-workspace-settings-header",
+                h1 { {tr("agent_workspace.settings.title")} }
+            }
+            div {
+                class: "agent-workspace-settings-section",
+                h2 { {tr("agent_workspace.settings.agents")} }
+                if agents_count == 0 {
+                    p { {tr("agent_workspace.empty.agents.message")} }
+                } else {
+                    ul {
+                        class: "agent-workspace-agent-list",
+                        for agent in agents.read().iter() {
+                            OwnedAgentRow { agent: agent.clone() }
+                        }
+                    }
+                }
+                button {
+                    class: "primary",
+                    "data-testid": "agent-workspace-settings-add-agent",
+                    "{tr(\"agent_workspace.add_agent\")}"
+                }
+            }
+            div {
+                class: "agent-workspace-settings-section",
+                h2 { {tr("agent_workspace.settings.default_profile")} }
+                p {
+                    class: "agent-workspace-settings-hint",
+                    {tr("agent_workspace.settings.default_profile_hint")}
+                }
+                for choice in [
+                    AgentMemberProfile::Observer,
+                    AgentMemberProfile::ReadOnly,
+                    AgentMemberProfile::MentionRespondOnly,
+                    AgentMemberProfile::FullCollaborator,
+                ] {
+                    {
+                        let testid_value = match choice {
+                            AgentMemberProfile::Observer => "observer",
+                            AgentMemberProfile::ReadOnly => "read-only",
+                            AgentMemberProfile::MentionRespondOnly => "mention-respond-only",
+                            AgentMemberProfile::FullCollaborator => "full-collaborator",
+                        };
+                        let label = tr(choice.label_key());
+                        rsx! {
+                            label {
+                                input {
+                                    r#type: "radio",
+                                    name: "default-profile",
+                                    value: "{testid_value}",
+                                    checked: current_default == choice,
+                                    "data-testid": "agent-workspace-settings-profile-{testid_value}",
+                                    onchange: move |_| default_profile.set(choice),
+                                }
+                                "{label}"
+                            }
+                        }
+                    }
+                }
+            }
+            details {
+                class: "agent-workspace-settings-section danger-zone",
+                summary {
+                    h2 { {tr("agent_workspace.settings.danger_zone")} }
+                }
+                p {
+                    {tr("agent_workspace.settings.teardown_hint")}
+                }
+                button {
+                    class: "danger",
+                    "data-testid": "agent-workspace-settings-teardown",
+                    {tr("agent_workspace.settings.teardown")}
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Private compose banner + helpers (AW-3.10 scaffolding)
+//
+// Full SDK `compose_mention_redirect_pair` plumbing is a follow-up; this
+// module exposes the detection helper + a tiny banner component that
+// chat.rs / timeline.rs can mount when the current draft mentions a
+// controller-owned agent. The actual two-Event saga (source-side
+// mention_redirect + mirror-side cx.agent_task.create) is still scaffolded
+// in the SDK (`contrix::agent_workspace::compute_mirror_*_reservation`)
+// but the integration into chat compose send-paths lands in a later
+// round (see `_todos.md` AW-3.10 follow-up).
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Returns true iff `did` is one of the controller's owned agents.
+///
+/// chat.rs and timeline.rs MUST call this on each mention candidate's DID
+/// to drive (a) the "my agents" mention candidate group highlight, and
+/// (b) the private compose banner mount decision.
+pub fn is_controller_owned_agent(
+    did: &str,
+    owned_agents: &[OwnedAgentSummary],
+) -> bool {
+    owned_agents.iter().any(|a| a.agent_did == did)
+}
+
+/// Returns true iff a current draft string ends with an `@my-agent`-style
+/// mention pointing at one of the controller's owned agents. Compose UIs
+/// should mount [`PrivateComposeBanner`] when this returns true.
+///
+/// This is a structural check (we don't try to parse a full structured
+/// mention from a textarea here — chat.rs already has
+/// `parse_structured_mentions`). Callers MAY combine this with their
+/// existing mention candidate list to drive a more precise decision.
+pub fn draft_mentions_owned_agent(
+    last_mentioned_did: Option<&str>,
+    owned_agents: &[OwnedAgentSummary],
+) -> bool {
+    last_mentioned_did
+        .map(|did| is_controller_owned_agent(did, owned_agents))
+        .unwrap_or(false)
+}
+
+/// Banner mounted under the compose textarea when the user is composing a
+/// message that targets a controller-owned agent. Visually + a11y signals
+/// that the message will be privately routed.
+#[component]
+pub fn PrivateComposeBanner(agent_display_name: String) -> Element {
+    rsx! {
+        div {
+            class: "private-routing-banner",
+            "role": "status",
+            "data-testid": "private-compose-banner",
+            "{tr(\"agent_workspace.compose.private_routing_notice\")}"
+            br {}
+            span {
+                class: "private-compose-summary-warning",
+                "🤖 → {agent_display_name}"
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// agent_membership_change notification renderer (AW-3.12)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentMembershipChangeKind {
+    /// Agent was added to a source Space.
+    Add,
+    /// Agent was removed (or capability revoked).
+    Remove,
+    /// Agent's capability profile was changed.
+    ProfileChange,
+}
+
+impl AgentMembershipChangeKind {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            AgentMembershipChangeKind::Add => "agent_workspace.notification.added",
+            AgentMembershipChangeKind::Remove => "agent_workspace.notification.removed",
+            AgentMembershipChangeKind::ProfileChange => {
+                "agent_workspace.notification.profile_changed"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentMembershipChangeNotification {
+    pub change_kind: AgentMembershipChangeKind,
+    pub agent_display_name: String,
+    pub source_space_label: Option<String>,
+    pub source_flow_label: Option<String>,
+    pub new_profile_label: Option<String>,
+}
+
+#[component]
+pub fn AgentMembershipChangeRow(notif: AgentMembershipChangeNotification) -> Element {
+    let icon = match notif.change_kind {
+        AgentMembershipChangeKind::Add => "➕",
+        AgentMembershipChangeKind::Remove => "➖",
+        AgentMembershipChangeKind::ProfileChange => "🔄",
+    };
+    let kind_label = tr(notif.change_kind.label_key());
+    let target_label = match (&notif.source_space_label, &notif.source_flow_label) {
+        (Some(s), Some(f)) => format!("#{}/{}", s, f),
+        (Some(s), None) => format!("#{}", s),
+        _ => tr("agent_workspace.notification.unknown_target"),
+    };
+    let testid = format!(
+        "notification-agent-membership-{}",
+        match notif.change_kind {
+            AgentMembershipChangeKind::Add => "add",
+            AgentMembershipChangeKind::Remove => "remove",
+            AgentMembershipChangeKind::ProfileChange => "profile-change",
+        }
+    );
+    rsx! {
+        Link {
+            class: "notification-row notification-row-agent-membership",
+            "data-testid": "{testid}",
+            to: Route::AgentWorkspace,
+            span { class: "notification-icon", "{icon}" }
+            div {
+                class: "notification-body",
+                span { class: "notification-headline",
+                    "{notif.agent_display_name} {kind_label} {target_label}"
+                }
+                if let Some(profile) = &notif.new_profile_label {
+                    span { class: "notification-detail", "({profile})" }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -864,5 +1399,130 @@ mod tests {
             SourceAuthorityState::ReconfirmedAfterRevoke,
         );
         assert!(!reconfirmed.needs_attention());
+    }
+
+    // ── AW-3.7 + AW-3.20: publish modal gating ──────────────────────────
+
+    fn publish_args_with(state: ExecutionState) -> PublishToSourceArgs {
+        PublishToSourceArgs {
+            task_id: "cx:agent_task:01".to_owned(),
+            source_flow_label: "ProjectX/legal".to_owned(),
+            draft_preview: "agent draft text".to_owned(),
+            current_execution_state: state,
+        }
+    }
+
+    #[test]
+    fn publish_enabled_only_when_execution_active() {
+        assert!(publish_args_with(ExecutionState::Active).publish_enabled());
+        assert!(!publish_args_with(ExecutionState::PendingSourceStub).publish_enabled());
+        assert!(!publish_args_with(ExecutionState::Completed).publish_enabled());
+        assert!(!publish_args_with(ExecutionState::CancelledByController).publish_enabled());
+        assert!(!publish_args_with(ExecutionState::CancelledStubRejected).publish_enabled());
+        assert!(!publish_args_with(ExecutionState::CancelledOrphan).publish_enabled());
+    }
+
+    #[test]
+    fn publish_disabled_reason_present_for_terminal_states() {
+        assert!(
+            publish_args_with(ExecutionState::Active)
+                .publish_disabled_reason()
+                .is_none()
+        );
+        for state in [
+            ExecutionState::PendingSourceStub,
+            ExecutionState::Completed,
+            ExecutionState::CancelledByController,
+            ExecutionState::CancelledStubRejected,
+            ExecutionState::CancelledOrphan,
+        ] {
+            assert!(
+                publish_args_with(state).publish_disabled_reason().is_some(),
+                "state {:?} MUST have a disabled reason",
+                state
+            );
+        }
+    }
+
+    #[test]
+    fn publish_signer_default_is_minimum_disclosure() {
+        // AW-3.20: default = AsSelf (no attribution disclosure).
+        assert_eq!(PublishSignerChoice::default(), PublishSignerChoice::AsSelf);
+    }
+
+    // ── AW-3.8: add-agent profile default ──────────────────────────────
+
+    #[test]
+    fn agent_member_profile_default_is_mention_respond_only() {
+        // §3.1 + §3.2.5: principle of least authority.
+        assert_eq!(
+            AgentMemberProfile::default(),
+            AgentMemberProfile::MentionRespondOnly
+        );
+    }
+
+    #[test]
+    fn agent_member_profile_label_keys_distinct() {
+        let keys = [
+            AgentMemberProfile::Observer.label_key(),
+            AgentMemberProfile::ReadOnly.label_key(),
+            AgentMemberProfile::MentionRespondOnly.label_key(),
+            AgentMemberProfile::FullCollaborator.label_key(),
+        ];
+        let unique: std::collections::HashSet<_> = keys.iter().collect();
+        assert_eq!(unique.len(), keys.len());
+    }
+
+    // ── AW-3.12: notification renderer kind mapping ──────────────────────
+
+    #[test]
+    fn membership_change_kinds_have_distinct_label_keys() {
+        let keys = [
+            AgentMembershipChangeKind::Add.label_key(),
+            AgentMembershipChangeKind::Remove.label_key(),
+            AgentMembershipChangeKind::ProfileChange.label_key(),
+        ];
+        let unique: std::collections::HashSet<_> = keys.iter().collect();
+        assert_eq!(unique.len(), keys.len());
+    }
+
+    // ── AW-3.10: private compose detection ───────────────────────────────
+
+    fn agent(did: &str) -> OwnedAgentSummary {
+        OwnedAgentSummary {
+            agent_did: did.to_owned(),
+            display_name: did.to_owned(),
+            active_in_sources: Vec::new(),
+            in_mirror_space: true,
+        }
+    }
+
+    #[test]
+    fn is_controller_owned_agent_matches_did() {
+        let owned = vec![
+            agent("did:web:agent1.example"),
+            agent("did:web:agent2.example"),
+        ];
+        assert!(is_controller_owned_agent("did:web:agent1.example", &owned));
+        assert!(is_controller_owned_agent("did:web:agent2.example", &owned));
+        assert!(!is_controller_owned_agent(
+            "did:web:other-agent.example",
+            &owned
+        ));
+        assert!(!is_controller_owned_agent("did:web:human.example", &owned));
+    }
+
+    #[test]
+    fn draft_mentions_owned_agent_handles_none() {
+        let owned = vec![agent("did:web:agent.example")];
+        assert!(draft_mentions_owned_agent(
+            Some("did:web:agent.example"),
+            &owned
+        ));
+        assert!(!draft_mentions_owned_agent(None, &owned));
+        assert!(!draft_mentions_owned_agent(
+            Some("did:web:bob.example"),
+            &owned
+        ));
     }
 }

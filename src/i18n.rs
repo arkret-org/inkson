@@ -527,6 +527,40 @@ pub fn english_translations() -> TranslationDict {
     dict.set("agent_workspace.compose.summary_visible_warning", "This summary is visible to all source Flow members.");
     dict.set("agent_workspace.compose.send_private", "Send (Private to Agent)");
 
+    // Publish modal (AW-3.7 + AW-3.20)
+    dict.set("agent_workspace.publish.signer_legend", "Signing identity");
+    dict.set("agent_workspace.publish.signer_self", "Post as me");
+    dict.set("agent_workspace.publish.signer_self_with_attribution", "Post as me, with \"drafted by agent\" note");
+    dict.set("agent_workspace.publish.cancel", "Cancel");
+    dict.set("agent_workspace.publish.confirm", "Publish");
+
+    // Add agent modal (AW-3.8)
+    dict.set("agent_workspace.add_agent.select_legend", "Pick one of your agents");
+    dict.set("agent_workspace.add_agent.profile_legend", "Capability profile");
+    dict.set("agent_workspace.add_agent.profile.observer", "Observer (read-only history)");
+    dict.set("agent_workspace.add_agent.profile.read_only", "Read + react");
+    dict.set("agent_workspace.add_agent.profile.mention_respond_only", "Respond only when @-mentioned (recommended)");
+    dict.set("agent_workspace.add_agent.profile.full_collaborator", "Full collaborator");
+    dict.set("agent_workspace.add_agent.no_owned_agents", "You haven't created any controllable agents yet. Visit Settings → Agents to add one.");
+    dict.set("agent_workspace.add_agent.disclosure", "Agent membership is publicly visible to all source-Space members; the agent's work in your mirror Workspace remains private.");
+    dict.set("agent_workspace.add_agent.cancel", "Cancel");
+    dict.set("agent_workspace.add_agent.send_invite", "Send invite");
+
+    // Settings page (AW-3.4)
+    dict.set("agent_workspace.settings.title", "Agent Workspace settings");
+    dict.set("agent_workspace.settings.agents", "My agents");
+    dict.set("agent_workspace.settings.default_profile", "Default capability profile for new agent invites");
+    dict.set("agent_workspace.settings.default_profile_hint", "Applied as the pre-selected option in the Add Agent modal. You can still override per-invite.");
+    dict.set("agent_workspace.settings.danger_zone", "Danger zone");
+    dict.set("agent_workspace.settings.teardown_hint", "Tear down the entire Agent Workspace (`cx.space.tombstone(workspace_root)`). Mirror Spaces cascade-tombstone via housekeeping. Existing mention_redirect events in source Spaces are preserved for audit.");
+    dict.set("agent_workspace.settings.teardown", "Tear down workspace");
+
+    // Notification renderer (AW-3.12)
+    dict.set("agent_workspace.notification.added", "was added to");
+    dict.set("agent_workspace.notification.removed", "was removed from");
+    dict.set("agent_workspace.notification.profile_changed", "had its capability changed in");
+    dict.set("agent_workspace.notification.unknown_target", "(unknown source)");
+
     dict
 }
 
@@ -831,6 +865,40 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("agent_workspace.compose.private_routing_notice", "此指令将发送到你的私人 Agent Workspace。源 Flow 其他成员只会看到通用摘要。");
     dict.set("agent_workspace.compose.summary_visible_warning", "此摘要对源 Flow 所有成员可见。");
     dict.set("agent_workspace.compose.send_private", "发送 (Private to Agent)");
+
+    // Publish modal (AW-3.7 + AW-3.20)
+    dict.set("agent_workspace.publish.signer_legend", "签名身份");
+    dict.set("agent_workspace.publish.signer_self", "作为我自己发布");
+    dict.set("agent_workspace.publish.signer_self_with_attribution", "作为我自己发布，附注「由 agent 起草」");
+    dict.set("agent_workspace.publish.cancel", "取消");
+    dict.set("agent_workspace.publish.confirm", "发布");
+
+    // Add agent modal (AW-3.8)
+    dict.set("agent_workspace.add_agent.select_legend", "选择你的一个 agent");
+    dict.set("agent_workspace.add_agent.profile_legend", "权限 (capability profile)");
+    dict.set("agent_workspace.add_agent.profile.observer", "Observer (只读历史)");
+    dict.set("agent_workspace.add_agent.profile.read_only", "只读 + reaction");
+    dict.set("agent_workspace.add_agent.profile.mention_respond_only", "仅在被 @ 时回复 (推荐)");
+    dict.set("agent_workspace.add_agent.profile.full_collaborator", "完整成员");
+    dict.set("agent_workspace.add_agent.no_owned_agents", "你还没有创建任何受控 agent。前往 Settings → Agents 添加。");
+    dict.set("agent_workspace.add_agent.disclosure", "Agent 成员身份对源 Space 所有成员可见；agent 在你的私人 Workspace 内的工作过程仍然私密。");
+    dict.set("agent_workspace.add_agent.cancel", "取消");
+    dict.set("agent_workspace.add_agent.send_invite", "发送邀请");
+
+    // Settings page (AW-3.4)
+    dict.set("agent_workspace.settings.title", "Agent Workspace 设置");
+    dict.set("agent_workspace.settings.agents", "我的 Agents");
+    dict.set("agent_workspace.settings.default_profile", "新邀请的默认 capability profile");
+    dict.set("agent_workspace.settings.default_profile_hint", "Add Agent 弹窗的预选项。每次邀请仍可单独覆盖。");
+    dict.set("agent_workspace.settings.danger_zone", "危险区域");
+    dict.set("agent_workspace.settings.teardown_hint", "解散整个 Agent Workspace（`cx.space.tombstone(workspace_root)`）。所有 mirror Space 会通过 housekeeping 级联 tombstone；源 Space 中已发出的 mention_redirect 会保留用于 audit。");
+    dict.set("agent_workspace.settings.teardown", "解散 workspace");
+
+    // Notification renderer (AW-3.12)
+    dict.set("agent_workspace.notification.added", "被加入到");
+    dict.set("agent_workspace.notification.removed", "被移出");
+    dict.set("agent_workspace.notification.profile_changed", "的权限发生变化于");
+    dict.set("agent_workspace.notification.unknown_target", "（未知来源）");
 
     dict
 }

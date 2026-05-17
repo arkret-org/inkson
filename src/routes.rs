@@ -99,6 +99,10 @@ pub enum Route {
     /// Single agent_task detail page.
     #[route("/agent-workspace/task/:task_id", AgentTaskPage)]
     AgentTask { task_id: String },
+
+    /// Agent Workspace per-agent settings + workspace teardown.
+    #[route("/agent-workspace/settings", crate::app::RouterView)]
+    AgentWorkspaceSettings,
 }
 
 #[component]
@@ -185,7 +189,9 @@ impl Route {
             Route::Quarantine => View::Quarantine,
             Route::Applets => View::Applets,
             Route::Agents => View::Agents,
-            Route::AgentWorkspace | Route::AgentTask { .. } => View::AgentWorkspace,
+            Route::AgentWorkspace
+            | Route::AgentTask { .. }
+            | Route::AgentWorkspaceSettings => View::AgentWorkspace,
         }
     }
 

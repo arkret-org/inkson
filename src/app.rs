@@ -3494,6 +3494,215 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   .private-compose-mode { background: #251a3a; border-color: #9a76d8; }
   .private-compose-mode .private-routing-banner { background: #2f2152; color: #cdb6f6; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   Publish-to-source + Add-agent modals + Settings page
+   (AW-3.4 + AW-3.7 + AW-3.8 + AW-3.12)
+   ───────────────────────────────────────────────────────────────────── */
+
+.publish-to-source-modal-backdrop,
+.add-agent-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.publish-to-source-modal,
+.add-agent-modal {
+  background: var(--surface, #fff);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  width: min(560px, 90vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.publish-to-source-modal-header,
+.add-agent-modal-header {
+  padding: 16px 20px 8px;
+  border-bottom: 1px solid var(--border, #d9dee5);
+}
+
+.publish-to-source-modal-header h2,
+.add-agent-modal-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.publish-to-source-modal-body,
+.add-agent-modal-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.publish-to-source-modal-body fieldset,
+.add-agent-modal-body fieldset {
+  border: 1px solid var(--border, #d9dee5);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.publish-to-source-modal-body legend,
+.add-agent-modal-body legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.publish-to-source-modal-body label,
+.add-agent-modal-body label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.publish-to-source-modal-preview {
+  background: var(--surface-subtle, #f8f9fb);
+  border-radius: 6px;
+  padding: 10px;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.publish-to-source-modal-disabled-note,
+.add-agent-modal-empty {
+  color: #b3580f;
+  background: #fff3e0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+.publish-to-source-modal-footer,
+.add-agent-modal-footer {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--border, #d9dee5);
+}
+
+.add-agent-modal-disclosure {
+  font-size: 0.8rem;
+  color: var(--text-muted, #666);
+  background: var(--surface-subtle, #f8f9fb);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+}
+
+/* Settings page */
+
+.agent-workspace-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.agent-workspace-settings-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.agent-workspace-settings-section {
+  border: 1px solid var(--border, #d9dee5);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-workspace-settings-section h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.agent-workspace-settings-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+  margin: 0;
+}
+
+.agent-workspace-settings-section.danger-zone {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+
+.agent-workspace-settings-section.danger-zone summary {
+  cursor: pointer;
+}
+
+.agent-workspace-settings-section.danger-zone button.danger {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+/* Notification row */
+
+.notification-row-agent-membership {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 6px;
+}
+
+.notification-row-agent-membership:hover {
+  background: var(--surface-subtle, #f8f9fb);
+}
+
+.notification-row-agent-membership .notification-icon {
+  font-size: 1.2rem;
+}
+
+.notification-row-agent-membership .notification-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notification-row-agent-membership .notification-detail {
+  font-size: 0.8rem;
+  color: var(--text-muted, #666);
+}
+
+@media (prefers-color-scheme: dark) {
+  .publish-to-source-modal,
+  .add-agent-modal { background: #1f2229; }
+  .publish-to-source-modal-preview,
+  .add-agent-modal-disclosure { background: #15171c; }
+  .agent-workspace-settings-section.danger-zone { background: #2a1818; border-color: #d44; }
+  .publish-to-source-modal-disabled-note,
+  .add-agent-modal-empty { background: #3a2410; color: #ffb787; }
+  .notification-row-agent-membership:hover { background: #1a1d22; }
+}
 "#;
 
 /// One-shot push-token provider bootstrap.
@@ -5596,6 +5805,12 @@ pub fn RouterView() -> Element {
                             detail: use_signal(|| None),
                         }
                     },
+                    Route::AgentWorkspaceSettings => rsx! {
+                        crate::views::agent_workspace::AgentWorkspaceSettings {
+                            agents: use_signal(Vec::new),
+                            default_profile: use_signal(crate::views::agent_workspace::AgentMemberProfile::default),
+                        }
+                    },
                 }
             }
             }
@@ -5998,6 +6213,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Agents => "Agents",
         Route::AgentWorkspace => "My Agents",
         Route::AgentTask { .. } => "Agent Task",
+        Route::AgentWorkspaceSettings => "My Agents · Settings",
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod account_data;
+pub mod agent_workspace_watcher;
 pub mod api;
 pub mod app;
 pub mod audit;
