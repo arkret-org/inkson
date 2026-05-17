@@ -41,8 +41,8 @@ fn load_fixture(name: &str) -> Value {
         eprintln!("skipping fixture {name}: not found at {}", path.display());
         return Value::Null;
     }
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|err| panic!("read fixture {}: {err}", path.display()));
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|err| panic!("read fixture {}: {err}", path.display()));
     serde_json::from_slice(&bytes)
         .unwrap_or_else(|err| panic!("parse fixture {}: {err}", path.display()))
 }
@@ -81,8 +81,7 @@ fn encoding_fixture_canonical_bytes_match() {
         let bytes_consistent_with_digest = vector["expected_digest"]
             .as_str()
             .map(|claimed| {
-                let digest_of_bytes =
-                    canonical_sha256_of_str(expected_bytes);
+                let digest_of_bytes = canonical_sha256_of_str(expected_bytes);
                 digest_of_bytes == claimed
             })
             .unwrap_or(true);
@@ -103,7 +102,10 @@ fn encoding_fixture_canonical_bytes_match() {
             // When the fixture is inconsistent, we still record the actual
             // digest but accept that the upstream fixture needs a refresh.
             if bytes_consistent_with_digest {
-                assert_eq!(actual_digest, expected_digest, "{vector_id}: digest mismatch");
+                assert_eq!(
+                    actual_digest, expected_digest,
+                    "{vector_id}: digest mismatch"
+                );
             } else {
                 eprintln!(
                     "{vector_id}: actual yougen digest = {actual_digest}, fixture digest = {expected_digest}"
@@ -155,8 +157,8 @@ fn crypto_signature_fixture_canonical_binding_matches() {
         let expected_canonical = vector["canonical_binding_payload"]
             .as_str()
             .expect("canonical_binding_payload");
-        let actual_canonical = canonical_json_string(binding_object)
-            .expect("canonical encode binding_object");
+        let actual_canonical =
+            canonical_json_string(binding_object).expect("canonical encode binding_object");
         assert_eq!(
             actual_canonical, expected_canonical,
             "{name}: canonical_binding_payload mismatch"
@@ -171,11 +173,17 @@ fn crypto_signature_fixture_canonical_binding_matches() {
         if let Some(expected_header) = vector["protected_header_canonical"].as_str() {
             let actual_header =
                 canonical_json_string(&vector["protected_header"]).expect("encode header");
-            assert_eq!(actual_header, expected_header, "{name}: protected_header mismatch");
+            assert_eq!(
+                actual_header, expected_header,
+                "{name}: protected_header mismatch"
+            );
         }
         covered += 1;
     }
-    assert_eq!(covered, 1, "ed25519_detached_jws vector must be present once");
+    assert_eq!(
+        covered, 1,
+        "ed25519_detached_jws vector must be present once"
+    );
 }
 
 #[test]
@@ -195,5 +203,8 @@ fn event_envelope_negative_fixture_loads() {
         .as_array()
         .or_else(|| fixture["vectors"].as_array())
         .expect("cases[] or vectors[] present");
-    assert!(!cases.is_empty(), "negative fixture must list at least one case");
+    assert!(
+        !cases.is_empty(),
+        "negative fixture must list at least one case"
+    );
 }

@@ -56,6 +56,8 @@ pub struct CoauthLoginResponse {
     #[serde(default)]
     pub session_grant: Option<CoauthSessionGrantInfo>,
     #[serde(default)]
+    pub oidc_tokens: Option<OidcTokenResponse>,
+    #[serde(default)]
     pub warnings: Vec<String>,
 }
 
@@ -349,7 +351,11 @@ pub struct OidcScaffoldBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PersistedOidcScaffold {
     pub expected_state: String,
+    #[serde(default)]
+    pub expected_nonce: String,
     pub code_verifier: String,
+    #[serde(default)]
+    pub client_id: String,
     pub auth_server_url: String,
     #[serde(default)]
     pub principal_server_url: String,
@@ -490,6 +496,7 @@ impl CoauthApi {
         principal_audience: Option<&str>,
         state: Option<&str>,
         expected_state: Option<&str>,
+        expected_nonce: Option<&str>,
     ) -> anyhow::Result<CoauthLoginResponse> {
         self.post_json(
             exchange_path,
@@ -506,6 +513,7 @@ impl CoauthApi {
                 "principal_audience": principal_audience,
                 "state": state,
                 "expected_state": expected_state,
+                "expected_nonce": expected_nonce,
             }),
         )
         .await
@@ -1185,7 +1193,9 @@ pub fn persist_oidc_scaffold(
         .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))?;
     let payload = PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
+        expected_nonce: bundle.nonce.clone(),
         code_verifier: bundle.code_verifier.clone(),
+        client_id: bundle.client_id.clone(),
         auth_server_url: auth_server_url.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
         principal_actor_did: principal_actor_did.to_owned(),

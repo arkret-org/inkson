@@ -20,8 +20,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// `covered_frontier_cell` add-effect through [`contrix_sdk::mls_move`]. The
 /// commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str =
-    "cx.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
 
 /// Conformance profile declarations per contrix-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,12 +555,7 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
             // cell additions; the SDK already validates the cell shape, but
             // the wire route is fronted by events.submit.
             require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
-            require_feature_or_operation(
-                server,
-                "keys.upload",
-                "cx.keys.upload",
-                &mut missing,
-            );
+            require_feature_or_operation(server, "keys.upload", "cx.keys.upload", &mut missing);
         }
         _ => missing.push(format!("unknown profile {profile_id}")),
     }

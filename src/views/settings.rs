@@ -55,7 +55,8 @@ fn push_read_receipt_account_data(
     );
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body).await
+            api.set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body)
+                .await
         })
         .await
         {
@@ -66,7 +67,10 @@ fn push_read_receipt_account_data(
                 );
             }
             Err(err) => {
-                tracing::warn!("account_data PUT for read-receipt prefs failed: {}", err.display());
+                tracing::warn!(
+                    "account_data PUT for read-receipt prefs failed: {}",
+                    err.display()
+                );
             }
         }
     });
@@ -121,7 +125,10 @@ fn push_space_remark_account_data(
                 );
             }
             Err(err) => {
-                tracing::warn!("account_data PUT for {key_for_log} failed: {}", err.display());
+                tracing::warn!(
+                    "account_data PUT for {key_for_log} failed: {}",
+                    err.display()
+                );
             }
         }
     });
@@ -317,8 +324,7 @@ pub fn SettingsPanel(
     // `new_space_remark_id` / `new_space_remark_name` drive the "Add by
     // Space ID" row for Spaces the user has joined but isn't yet
     // tracking locally.
-    let mut space_remarks_snapshot =
-        use_signal(|| state_store.read().space_remarks());
+    let mut space_remarks_snapshot = use_signal(|| state_store.read().space_remarks());
     let mut space_remark_inputs = use_signal(|| {
         state_store
             .read()

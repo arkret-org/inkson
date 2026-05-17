@@ -79,7 +79,10 @@ fn private_compose_detected_only_for_owned_agents() {
         Some("did:web:agent.example"),
         &owned
     ));
-    assert!(!draft_mentions_owned_agent(Some("did:web:bob.example"), &owned));
+    assert!(!draft_mentions_owned_agent(
+        Some("did:web:bob.example"),
+        &owned
+    ));
     assert!(!draft_mentions_owned_agent(None, &owned));
 }
 
@@ -96,12 +99,9 @@ fn watcher_classifies_redaction_with_pair_id_as_transparency_lost() {
             }
         }),
     );
-    matches!(
-        result,
-        WatcherIntent::MarkTransparencyLost { .. }
-    )
-    .then_some(())
-    .expect("redaction with redirect_pair_id must classify to MarkTransparencyLost");
+    matches!(result, WatcherIntent::MarkTransparencyLost { .. })
+        .then_some(())
+        .expect("redaction with redirect_pair_id must classify to MarkTransparencyLost");
 }
 
 #[test]

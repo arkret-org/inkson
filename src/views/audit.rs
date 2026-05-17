@@ -26,15 +26,15 @@ struct AuditRow {
 }
 
 fn extract_string(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|v| v.as_str()).map(|s| s.to_owned())
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned())
 }
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(
-        kind.as_str(),
-        "cx.audit.accessed" | "cx.audit.ryw_receipt"
-    ) {
+    if !matches!(kind.as_str(), "cx.audit.accessed" | "cx.audit.ryw_receipt") {
         return None;
     }
     Some(AuditRow {
@@ -53,9 +53,7 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
     let rows: Vec<AuditRow> = state
         .raw_operations
         .iter()
-        .filter_map(|record| {
-            classify_audit_row(&record.operation_id, &record.payload)
-        })
+        .filter_map(|record| classify_audit_row(&record.operation_id, &record.payload))
         .collect();
     let attested_count = rows
         .iter()
@@ -126,7 +124,7 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_audit_row, AuditRow};
+    use super::{AuditRow, classify_audit_row};
     use serde_json::json;
 
     #[test]

@@ -8,9 +8,8 @@ use serde::Serialize;
 
 pub use contrix_sdk::canonical::{
     canonical_json_bytes as sdk_canonical_json_bytes,
-    canonical_json_string as sdk_canonical_json_string,
-    canonical_sha256 as sdk_canonical_sha256, sha256_digest as sdk_sha256_digest,
-    validate_timestamp_canonical,
+    canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
+    sha256_digest as sdk_sha256_digest, validate_timestamp_canonical,
 };
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per

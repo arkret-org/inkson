@@ -682,7 +682,10 @@ mod tests {
         assert_eq!(op.op_type, "cx.flow.create");
         assert_eq!(op.body["flow_id"], "cx:flow:doc-1");
         assert_eq!(op.body["kind"], "document");
-        assert_eq!(op.body["fields"]["document"]["blocks"][0]["kind"], "Heading");
+        assert_eq!(
+            op.body["fields"]["document"]["blocks"][0]["kind"],
+            "Heading"
+        );
     }
 
     #[test]
@@ -719,7 +722,10 @@ mod tests {
             op.body["object"]["tracks"]["discussion"]["profile"],
             "discussion"
         );
-        assert_eq!(op.body["object"]["tracks"]["discussion"]["is_primary"], true);
+        assert_eq!(
+            op.body["object"]["tracks"]["discussion"]["is_primary"],
+            true
+        );
         assert!(op.body["object"].get("kind").is_none());
     }
 
@@ -735,16 +741,18 @@ mod tests {
         let mut op_b = op_a.clone();
         op_b.body = json!({"a": 1, "b": 2});
 
-        assert_eq!(op_a.canonical_digest().unwrap(), op_b.canonical_digest().unwrap());
+        assert_eq!(
+            op_a.canonical_digest().unwrap(),
+            op_b.canonical_digest().unwrap()
+        );
     }
 
     #[test]
     fn sign_ed25519_attaches_typed_proof() {
         use ed25519_dalek::SigningKey;
-        let mut op =
-            OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
-                .body(json!({"body": "hi"}))
-                .build("node");
+        let mut op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+            .body(json!({"body": "hi"}))
+            .build("node");
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
             .expect("sign ok");
@@ -798,14 +806,14 @@ mod tests {
     #[test]
     fn place_lifecycle_helpers_emit_canonical_kinds() {
         let place_id = "cx:place:01904100-0000-7000-8000-1fb50799ad42";
-        let archive = cx_ops::place_archive("cx:space:test", "did:web:alice.example", place_id)
-            .build("node");
+        let archive =
+            cx_ops::place_archive("cx:space:test", "did:web:alice.example", place_id).build("node");
         assert_eq!(archive.op_type, "cx.place.archive");
         assert_eq!(archive.body["place_id"], place_id);
         assert_eq!(archive.target_ref.as_deref(), Some(place_id));
 
-        let restore = cx_ops::place_restore("cx:space:test", "did:web:alice.example", place_id)
-            .build("node");
+        let restore =
+            cx_ops::place_restore("cx:space:test", "did:web:alice.example", place_id).build("node");
         assert_eq!(restore.op_type, "cx.place.restore");
         assert_eq!(restore.body["place_id"], place_id);
         assert_eq!(restore.target_ref.as_deref(), Some(place_id));
@@ -814,14 +822,14 @@ mod tests {
     #[test]
     fn flow_lifecycle_helpers_emit_canonical_kinds() {
         let flow_id = "cx:flow:01904100-0000-7000-8000-1fb50799ad50";
-        let archive = cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id)
-            .build("node");
+        let archive =
+            cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(archive.op_type, "cx.flow.archive");
         assert_eq!(archive.body["flow_id"], flow_id);
         assert_eq!(archive.target_ref.as_deref(), Some(flow_id));
 
-        let restore = cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id)
-            .build("node");
+        let restore =
+            cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(restore.op_type, "cx.flow.restore");
         assert_eq!(restore.body["flow_id"], flow_id);
         assert_eq!(restore.target_ref.as_deref(), Some(flow_id));

@@ -91,9 +91,7 @@ impl DeviceRevokeStep {
     /// preview.
     pub fn description(&self) -> String {
         match self {
-            Self::LocalRevoke => {
-                "Mark revoked in local DeviceManager + E2eeManager".to_owned()
-            }
+            Self::LocalRevoke => "Mark revoked in local DeviceManager + E2eeManager".to_owned(),
             Self::CxDeviceRevoked => "Write cx.device.revoked to the actor event chain".to_owned(),
             Self::MlsProposeRemove { group_id } => {
                 format!("Issue MLS Remove proposal · group={group_id}")
@@ -270,10 +268,7 @@ pub fn execute_mls_remove_from_snapshot(
     let post_state = group
         .export_state_record()
         .map_err(|err| anyhow::anyhow!("export mls state record: {err:?}"))?;
-    Ok(DeviceRevokeFullSnapshot {
-        output,
-        post_state,
-    })
+    Ok(DeviceRevokeFullSnapshot { output, post_state })
 }
 
 /// Combined result of [`execute_mls_remove_from_snapshot`]: the

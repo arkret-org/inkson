@@ -35,11 +35,11 @@
 // 5. The Auth Service can only issue short-lived `cx.session.grant`; any
 //    change to the long-lived device set must go through `cx.device.authorized`.
 
-pub mod audit;
-pub mod call;
 pub mod agent_workspace;
 pub mod agents;
 pub mod applets;
+pub mod audit;
+pub mod call;
 pub mod chat;
 /// First end-to-end UI Move-flow PoC.
 /// "Grant consent" button under settings → Privacy that builds + signs +

@@ -70,7 +70,7 @@ pub fn build_consent_grant_move(
     let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
-        "op": { "type": "add", "tag": tag }
+        "op": { "kind": "add", "tag": tag }
     });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
@@ -91,7 +91,7 @@ pub fn build_consent_revoke_move(
     hlc: &str,
 ) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
-    let mut op = serde_json::json!({ "type": "remove", "tag": tag });
+    let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
     }
@@ -236,7 +236,7 @@ pub fn build_capability_grant_move_with_constraints(
     hlc: &str,
 ) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
-    let mut op = serde_json::json!({ "type": "add", "tag": tag });
+    let mut op = serde_json::json!({ "kind": "add", "tag": tag });
     let constraint_values: Vec<serde_json::Value> = constraints
         .iter()
         .filter(|c| c.is_effective())
@@ -272,7 +272,7 @@ pub fn build_capability_revoke_move(
     hlc: &str,
 ) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
-    let mut op = serde_json::json!({ "type": "remove", "tag": tag });
+    let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
     }
@@ -296,7 +296,7 @@ pub fn build_member_state_transition_move(
     let cell_id = format!("cx:cell:cx.component.member.state.v1:{actor_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
-        "op": { "type": "transition", "from": from_state, "to": to_state }
+        "op": { "kind": "transition", "from": from_state, "to": to_state }
     });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
@@ -316,7 +316,7 @@ pub fn build_space_organization_update_move(
     let cell_id = format!("cx:cell:cx.component.space.organization.v1:{space_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
-        "op": { "type": "set", "value": value }
+        "op": { "kind": "set", "value": value }
     });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
@@ -346,7 +346,7 @@ pub fn build_mls_commit_move(
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": {
-            "type": "set",
+            "kind": "set",
             "value": {
                 "epoch": new_epoch,
                 "covered_frontier": covered_frontier,
@@ -478,10 +478,7 @@ pub enum FlowPositionExpectation {
     /// `head_eq null`.
     Initial,
     /// Flow currently at `(list_place_id, rank)` on the target Board.
-    At {
-        list_place_id: String,
-        rank: String,
-    },
+    At { list_place_id: String, rank: String },
 }
 
 impl FlowPositionExpectation {
@@ -512,10 +509,7 @@ impl FlowPositionExpectation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlowPositionEffect {
     /// Flow lands at `(list_place_id, rank)` on the target Board.
-    Place {
-        list_place_id: String,
-        rank: String,
-    },
+    Place { list_place_id: String, rank: String },
     /// Flow is removed from the target Board.
     Remove,
 }
@@ -630,26 +624,20 @@ pub fn build_conflict_repair_move(
         .collect();
     let augmented_winner = match winner_value {
         serde_json::Value::Object(mut obj) => {
-            obj.insert(
-                "repair_of".to_owned(),
-                serde_json::Value::Array(repair_of),
-            );
+            obj.insert("repair_of".to_owned(), serde_json::Value::Array(repair_of));
             serde_json::Value::Object(obj)
         }
         other => {
             let mut obj = serde_json::Map::new();
             obj.insert("value".to_owned(), other);
-            obj.insert(
-                "repair_of".to_owned(),
-                serde_json::Value::Array(repair_of),
-            );
+            obj.insert("repair_of".to_owned(), serde_json::Value::Array(repair_of));
             serde_json::Value::Object(obj)
         }
     };
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": {
-            "type": "set",
+            "kind": "set",
             "value": augmented_winner,
         }
     });
@@ -1320,12 +1308,15 @@ mod tests {
 
         let space_id =
             SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
-        let anchor =
-            AnchorId::new(format!("cx:anchor:sha256:{}", "a".repeat(64))).unwrap();
-        let schedule =
-            Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
+        let anchor = AnchorId::new(format!("cx:anchor:sha256:{}", "a".repeat(64))).unwrap();
+        let schedule = Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
         let binding = GovernanceBindingPayload::from_anchor(
-            "mls-group-chat", &space_id, 11, 12, &schedule, &anchor,
+            "mls-group-chat",
+            &space_id,
+            11,
+            12,
+            &schedule,
+            &anchor,
         )
         .unwrap();
 
@@ -1352,9 +1343,7 @@ mod tests {
         let binding_hash = binding.canonical_hash().unwrap();
         assert!(
             unsigned.move_obj.refs.iter().any(|r| {
-                r.role == "mls_governance_binding"
-                    && r.id == binding_hash
-                    && r.critical
+                r.role == "mls_governance_binding" && r.id == binding_hash && r.critical
             }),
             "governance binding hash must be referenced in Move.refs"
         );
@@ -1437,14 +1426,8 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("repair_of array on effect value");
         assert_eq!(repair_of.len(), 2);
-        assert_eq!(
-            repair_of[0].as_str(),
-            Some("cx:anchor:sha256:headA"),
-        );
-        assert_eq!(
-            repair_of[1].as_str(),
-            Some("cx:anchor:sha256:headB"),
-        );
+        assert_eq!(repair_of[0].as_str(), Some("cx:anchor:sha256:headA"),);
+        assert_eq!(repair_of[1].as_str(), Some("cx:anchor:sha256:headB"),);
     }
 
     #[test]

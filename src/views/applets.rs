@@ -307,7 +307,10 @@ mod tests {
     #[test]
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
         // The view filters with `kind.starts_with("cx.applet.protocol_session.")`.
-        for kind in ["cx.applet.protocol_session.start", "cx.applet.protocol_session.status"] {
+        for kind in [
+            "cx.applet.protocol_session.start",
+            "cx.applet.protocol_session.status",
+        ] {
             assert!(kind.starts_with("cx.applet.protocol_session."));
         }
         assert!(!"cx.applet.registration".starts_with("cx.applet.protocol_session."));

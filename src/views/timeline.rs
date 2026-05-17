@@ -8,7 +8,9 @@ use crate::{
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
     operation::{OperationBuilder, OperationEnvelope, uuid_v7},
-    views::helpers::{active_sync_token, authed_api_with_sync, with_authed_api, with_authed_api_with_sync},
+    views::helpers::{
+        active_sync_token, authed_api_with_sync, with_authed_api, with_authed_api_with_sync,
+    },
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
@@ -347,13 +349,11 @@ pub fn TimelinePanel(
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
         spawn(async move {
-            if let Ok(sync) = with_authed_api_with_sync(
-                &base,
-                api_token,
-                wait_for,
-                |api| async move { api.sync(None).await },
-            )
-            .await
+            if let Ok(sync) =
+                with_authed_api_with_sync(&base, api_token, wait_for, |api| async move {
+                    api.sync(None).await
+                })
+                .await
             {
                 let events = timeline_events_from_sync_spaces(&sync.spaces);
                 if !events.is_empty() {
@@ -376,8 +376,7 @@ pub fn TimelinePanel(
     // emits a single `cx.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
     let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
-    let mls_passphrase_store =
-        use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
     {
         let base_a = base_url.clone();
         let token_a = token;
@@ -416,12 +415,9 @@ pub fn TimelinePanel(
                     .unwrap_or_default();
                 let api_token = token_a();
                 for (event_id, payload_value) in candidates {
-                    let Some(plaintext) = try_local_mls_decrypt(
-                        state_store,
-                        &space,
-                        &passphrase,
-                        &payload_value,
-                    ) else {
+                    let Some(plaintext) =
+                        try_local_mls_decrypt(state_store, &space, &passphrase, &payload_value)
+                    else {
                         continue;
                     };
                     let _ = plaintext;
@@ -1631,9 +1627,7 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// uniformly return `None` so the emitter is a no-op there.
 ///
 /// `passphrase` is sourced from the shared `MlsPassphraseStore` context;
-/// an empty string falls through to the legacy placeholder ciphertext
-/// path which never deserializes as a typed payload — so decrypt fails
-/// closed without firing audit. This is the right behaviour: only real
+/// an empty string fails closed without firing audit. Only real
 /// SDK-encrypted payloads should trigger the audit hook.
 #[cfg(not(target_arch = "wasm32"))]
 fn try_local_mls_decrypt(

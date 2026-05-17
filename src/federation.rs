@@ -14,9 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use contrix_sdk::{
-    FederationManager, FederationTransaction, TrustAnchor, WellKnownContrixServer,
-};
+use contrix_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownContrixServer};
 use serde::{Deserialize, Serialize};
 
 /// Outcome of trust bundle verification.
@@ -137,7 +135,10 @@ mod tests {
     use super::*;
 
     fn anchor(domain: &str, key: &str) -> TrustAnchor {
-        TrustAnchor { domain: domain.to_owned(), public_key: key.to_owned() }
+        TrustAnchor {
+            domain: domain.to_owned(),
+            public_key: key.to_owned(),
+        }
     }
 
     #[test]
@@ -193,12 +194,8 @@ mod tests {
         let mut sdk_mgr = FederationManager::new();
         let signing_key = "shared-secret-for-bob";
         sdk_mgr.add_trust_anchor(anchor("bob.example", signing_key));
-        let tx = sdk_mgr.create_transaction(
-            "bob.example",
-            "alice.example",
-            Vec::new(),
-            signing_key,
-        );
+        let tx =
+            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), signing_key);
 
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", signing_key));
@@ -232,12 +229,8 @@ mod tests {
         // mix the key into the hash chain, so they diverge.
         let mut sdk_mgr = FederationManager::new();
         sdk_mgr.add_trust_anchor(anchor("bob.example", "wrong-key"));
-        let tx = sdk_mgr.create_transaction(
-            "bob.example",
-            "alice.example",
-            Vec::new(),
-            "wrong-key",
-        );
+        let tx =
+            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), "wrong-key");
 
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "right-key"));
@@ -258,7 +251,10 @@ mod tests {
             endpoints: Vec::new(),
             capabilities: Default::default(),
         };
-        assert_eq!(bundle.verify_well_known("bob.example", &record), TrustCheck::Trusted);
+        assert_eq!(
+            bundle.verify_well_known("bob.example", &record),
+            TrustCheck::Trusted
+        );
     }
 
     #[test]

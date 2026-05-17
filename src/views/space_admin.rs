@@ -2774,27 +2774,19 @@ async fn run_device_revoke_from_snapshot(
         .and_then(|v| v.as_str())
         .unwrap_or("yougen-operator")
         .to_owned();
-    let target_ref = full
-        .output
-        .commit_operation
-        .object_id
-        .clone();
-    let mut envelope_builder = crate::operation::OperationBuilder::new(
-        space_id.clone(),
-        actor,
-        "mls_commit",
-    )
-    .body(full.output.commit_operation.payload.clone());
+    let target_ref = full.output.commit_operation.object_id.clone();
+    let mut envelope_builder =
+        crate::operation::OperationBuilder::new(space_id.clone(), actor, "mls_commit")
+            .body(full.output.commit_operation.payload.clone());
     if let Some(tref) = target_ref {
         envelope_builder = envelope_builder.target_ref(tref);
     }
     let envelope = envelope_builder.build("yougen");
-    let submit_result = crate::views::helpers::with_authed_api(
-        &base_url,
-        api_token,
-        |api| async move { api.submit_operation_event(&envelope).await },
-    )
-    .await;
+    let submit_result =
+        crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_operation_event(&envelope).await
+        })
+        .await;
     match submit_result {
         Ok(_) => {
             // Re-encrypt and persist the post-commit group state so a

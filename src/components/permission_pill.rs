@@ -218,6 +218,9 @@ mod tests {
             HistoryVisibility::from_str_loose("world_readable"),
             HistoryVisibility::WorldReadable
         );
-        assert_eq!(HistoryVisibility::from_str_loose("shared"), HistoryVisibility::Shared);
+        assert_eq!(
+            HistoryVisibility::from_str_loose("shared"),
+            HistoryVisibility::Shared
+        );
     }
 }

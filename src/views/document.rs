@@ -15,11 +15,7 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{
-    local_state::LocalStateStore,
-    operation::cx_ops,
-    views::helpers::with_authed_api,
-};
+use crate::{local_state::LocalStateStore, operation::cx_ops, views::helpers::with_authed_api};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum BlockKind {
@@ -523,8 +519,8 @@ pub fn DocumentPanel(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_draft, document_body_payload, flow_id_storage_key, mint_flow_id, storage_key,
-        BlockKind, DocumentBlock, DocumentDraft, SyncState,
+        BlockKind, DocumentBlock, DocumentDraft, SyncState, default_draft, document_body_payload,
+        flow_id_storage_key, mint_flow_id, storage_key,
     };
 
     #[test]

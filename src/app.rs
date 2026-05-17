@@ -19,7 +19,6 @@ use crate::{
     views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
 };
 
-const DEMO_SPACE: &str = "cx:space:0196419b-0000-7000-8000-000000000000";
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const SPACE_SCOPE_PREFERENCE_KEY: &str = "layout.space.scope";
@@ -3727,11 +3726,15 @@ fn ensure_default_push_token_provider() {
     }
     #[cfg(all(not(target_arch = "wasm32"), target_os = "android"))]
     {
-        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::FcmPushTokenProvider));
+        crate::push::set_push_token_provider(std::sync::Arc::new(
+            crate::push::FcmPushTokenProvider,
+        ));
     }
     #[cfg(all(not(target_arch = "wasm32"), target_os = "ios"))]
     {
-        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::ApnsPushTokenProvider));
+        crate::push::set_push_token_provider(std::sync::Arc::new(
+            crate::push::ApnsPushTokenProvider,
+        ));
     }
     #[cfg(all(
         not(target_arch = "wasm32"),
@@ -3745,7 +3748,9 @@ fn ensure_default_push_token_provider() {
         // available on this platform" signal `device-summary` reads —
         // not a misconfiguration. The point is to install *something*
         // so `push_token_provider().is_some()`.
-        crate::push::set_push_token_provider(std::sync::Arc::new(crate::push::FcmPushTokenProvider));
+        crate::push::set_push_token_provider(std::sync::Arc::new(
+            crate::push::FcmPushTokenProvider,
+        ));
     }
 }
 
@@ -4234,10 +4239,11 @@ pub fn RouterView() -> Element {
     let timeline = use_signal(Vec::<TimelineEvent>::new);
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
+        let initial_spaces = initial_spaces.clone();
         move || {
-            initial_local_state
-                .drafts
-                .get(DEMO_SPACE)
+            initial_spaces
+                .first()
+                .and_then(|space| initial_local_state.drafts.get(&space.space_id))
                 .cloned()
                 .unwrap_or_default()
         }
@@ -4343,8 +4349,7 @@ pub fn RouterView() -> Element {
                 let outcome = match prepared {
                     crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
                     crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-                        let result =
-                            crate::session_refresh::exchange_refresh(&grant, &proof).await;
+                        let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
                         let mut store = state_store.write();
                         crate::session_refresh::commit_refresh(&mut store, result)
                     }
@@ -5887,14 +5892,42 @@ fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
             "agent workspace, tasks, mention_redirect routing",
             Route::AgentWorkspace,
         ),
-        ("Notifications", "inbox, mentions, approvals", Route::Notifications),
+        (
+            "Notifications",
+            "inbox, mentions, approvals",
+            Route::Notifications,
+        ),
         ("Directory", "search spaces, orgs, actors", Route::Directory),
-        ("Onboarding", "DID, handle, device, recovery", Route::Onboarding),
-        ("Settings", "account, encryption, push, server", Route::Settings),
-        ("Recovery", "vault, social, recovery key (preview)", Route::Recovery),
-        ("Verify device", "QR / SAS device verification", Route::VerifyDevice),
-        ("Quarantine", "review held invites (admin)", Route::Quarantine),
-        ("Workspace setup", "bootstrap a Space and policy", Route::Setup),
+        (
+            "Onboarding",
+            "DID, handle, device, recovery",
+            Route::Onboarding,
+        ),
+        (
+            "Settings",
+            "account, encryption, push, server",
+            Route::Settings,
+        ),
+        (
+            "Recovery",
+            "vault, social, recovery key (preview)",
+            Route::Recovery,
+        ),
+        (
+            "Verify device",
+            "QR / SAS device verification",
+            Route::VerifyDevice,
+        ),
+        (
+            "Quarantine",
+            "review held invites (admin)",
+            Route::Quarantine,
+        ),
+        (
+            "Workspace setup",
+            "bootstrap a Space and policy",
+            Route::Setup,
+        ),
     ]
 }
 
@@ -5904,9 +5937,7 @@ fn palette_filter(query: &str, haystack: &str) -> bool {
     }
     let needle = query.trim().to_lowercase();
     let hay = haystack.to_lowercase();
-    needle
-        .split_whitespace()
-        .all(|token| hay.contains(token))
+    needle.split_whitespace().all(|token| hay.contains(token))
 }
 
 #[component]
@@ -5920,19 +5951,12 @@ fn CommandPalette(
     let dest_list = palette_destinations();
     let matched_dests: Vec<_> = dest_list
         .iter()
-        .filter(|(label, hint, _)| {
-            palette_filter(&query, &format!("{label} {hint}"))
-        })
+        .filter(|(label, hint, _)| palette_filter(&query, &format!("{label} {hint}")))
         .cloned()
         .collect();
     let matched_spaces: Vec<SpacePreview> = spaces
         .iter()
-        .filter(|space| {
-            palette_filter(
-                &query,
-                &format!("{} {}", space.name, space.space_id),
-            )
-        })
+        .filter(|space| palette_filter(&query, &format!("{} {}", space.name, space.space_id)))
         .take(10)
         .cloned()
         .collect();
@@ -6535,24 +6559,22 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // `content`. Entries for other namespaces are
                             // ignored here.
                             for entry in &sync.account_data {
-                                let Some(data_type) = entry
-                                    .get("data_type")
-                                    .and_then(serde_json::Value::as_str)
+                                let Some(data_type) =
+                                    entry.get("data_type").and_then(serde_json::Value::as_str)
                                 else {
                                     continue;
                                 };
-                                let Some(space_id) = crate::account_data::
-                                    space_id_from_space_remark_key(data_type)
+                                let Some(space_id) =
+                                    crate::account_data::space_id_from_space_remark_key(data_type)
                                 else {
                                     continue;
                                 };
                                 let Some(content) = entry.get("content") else {
                                     continue;
                                 };
-                                match serde_json::from_value::<
-                                    crate::account_data::SpaceRemark,
-                                >(content.clone())
-                                {
+                                match serde_json::from_value::<crate::account_data::SpaceRemark>(
+                                    content.clone(),
+                                ) {
                                     Ok(remark) => {
                                         store.set_space_remark(space_id.to_owned(), remark);
                                     }
@@ -6572,8 +6594,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // WriteGuard's Drop, neither of which is guaranteed
                             // before the browser tears down the page.
                             if let Err(error) = store.flush() {
-                                last_error
-                                    .set(Some(format!("state_store flush failed: {error}")));
+                                last_error.set(Some(format!("state_store flush failed: {error}")));
                             }
                         }
                         let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
@@ -6591,8 +6612,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         let first_space = merged.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset = trimmed.is_empty()
-                            || !merged.iter().any(|s| s.space_id == trimmed);
+                        let needs_reset =
+                            trimmed.is_empty() || !merged.iter().any(|s| s.space_id == trimmed);
                         spaces.set(merged);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());
@@ -6638,8 +6659,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         let first_space = merged.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset = trimmed.is_empty()
-                            || !merged.iter().any(|s| s.space_id == trimmed);
+                        let needs_reset =
+                            trimmed.is_empty() || !merged.iter().any(|s| s.space_id == trimmed);
                         spaces.set(merged);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());

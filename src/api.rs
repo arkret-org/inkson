@@ -7,8 +7,11 @@ use std::{
     time::Duration,
 };
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
+use ed25519_dalek::Signer;
 use reqwest::{
     Client, Method, StatusCode,
     header::{HeaderMap, RETRY_AFTER},
@@ -363,7 +366,12 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
             }
             matches!(
                 api_error.error.code(),
-                "auth_expired" | "M_UNKNOWN_TOKEN" | "invalid_token" | "token_expired"
+                "auth_expired"
+                    | "unauthenticated"
+                    | "soft_logged_out"
+                    | "M_UNKNOWN_TOKEN"
+                    | "invalid_token"
+                    | "token_expired"
             )
         })
 }
@@ -1076,6 +1084,7 @@ impl ContrixApi {
     }
 
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResponse> {
+        self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         self.post_json(
             "api/v1/keys/upload",
             json!({
@@ -1129,6 +1138,7 @@ impl ContrixApi {
         device_id: &str,
         record: &contrix_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<KeysUploadResponse> {
+        self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
         self.post_json(
             "api/v1/keys/upload",
             json!({
@@ -1176,8 +1186,7 @@ impl ContrixApi {
         let Some((_, value)) = map.iter().next() else {
             return Ok(None);
         };
-        let record: contrix_sdk::MlsKeyPackageRecord =
-            serde_json::from_value(value.clone())?;
+        let record: contrix_sdk::MlsKeyPackageRecord = serde_json::from_value(value.clone())?;
         Ok(Some(record))
     }
 
@@ -1186,6 +1195,7 @@ impl ContrixApi {
         actor: &str,
         device_id: &str,
     ) -> anyhow::Result<DeviceMessagesSendResponse> {
+        self.ensure_demo_crypto_fallback_allowed("device_messages opaque test ciphertext")?;
         self.send_device_message_envelope(
             "yougen-txn-1",
             actor,
@@ -1194,6 +1204,22 @@ impl ContrixApi {
             json!({"ciphertext": "opaque-yougen-test"}),
         )
         .await
+    }
+
+    fn ensure_demo_crypto_fallback_allowed(&self, label: &str) -> anyhow::Result<()> {
+        if std::env::var("YOUGEN_ALLOW_DEMO_CRYPTO_FALLBACK")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        {
+            return Ok(());
+        }
+        if matches!(
+            self.base_url.host_str().unwrap_or_default(),
+            "localhost" | "127.0.0.1" | "::1" | "local.host"
+        ) {
+            return Ok(());
+        }
+        anyhow::bail!("{label} is disabled for non-local production servers")
     }
 
     /// POST a typed `cx.schema.device_message.v1` envelope to soland's
@@ -1604,6 +1630,7 @@ impl ContrixApi {
         method: &str,
         proof: Value,
     ) -> anyhow::Result<VerifyDeviceResponse> {
+        ensure_device_verification_proof_is_signed(&proof)?;
         self.post_json(
             &format!("api/v1/devices/{device_id}/verify"),
             json!({"method": method, "proof": proof}),
@@ -2250,6 +2277,78 @@ pub fn build_device_message_envelope(
     })
 }
 
+pub fn build_signed_device_verification_proof(
+    from_actor: &str,
+    from_device: &str,
+    target_device: &str,
+    method: &str,
+    sas_decimal: Option<[u16; 3]>,
+    local_public_key: Option<&str>,
+    peer_public_key: Option<&str>,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> anyhow::Result<Value> {
+    let mut body = json!({
+        "type": "cx.device.verification.proof.v1",
+        "from_actor": from_actor,
+        "from_device": from_device,
+        "target_device": target_device,
+        "method": method,
+        "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    });
+    if let Some(sas_decimal) = sas_decimal {
+        body["sas_decimal"] = json!(sas_decimal);
+    }
+    if let Some(local_public_key) = local_public_key {
+        body["local_public_key"] = Value::String(local_public_key.to_owned());
+    }
+    if let Some(peer_public_key) = peer_public_key {
+        body["peer_public_key"] = Value::String(peer_public_key.to_owned());
+    }
+    let canonical = contrix_sdk::canonical::canonical_json_bytes(&body)
+        .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
+    let header = json!({
+        "alg": "EdDSA",
+        "typ": "JWT",
+        "verification_method": format!("{}#yougen-device", from_device),
+    });
+    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
+    let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+    let jws = format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature));
+    Ok(json!({
+        "device_envelope": body,
+        "signature": {
+            "kind": "detached_jws",
+            "alg": "EdDSA",
+            "verification_method": format!("{}#yougen-device", from_device),
+            "payload_hash": format!("sha256:{:x}", Sha256::digest(&canonical)),
+            "jws": jws,
+        }
+    }))
+}
+
+pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Result<()> {
+    let Some(signature) = proof.get("signature") else {
+        anyhow::bail!("device verification proof must include a signed device envelope")
+    };
+    let alg = signature
+        .get("alg")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let jws = signature
+        .get("jws")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if alg != "EdDSA" || jws.split('.').count() != 3 {
+        anyhow::bail!("device verification proof must carry an EdDSA compact JWS")
+    }
+    if proof.get("device_envelope").is_none() {
+        anyhow::bail!("device verification proof missing device_envelope")
+    }
+    Ok(())
+}
+
 /// Project chime's full [`RegisterDeviceResponse`](chime::RegisterDeviceResponse)
 /// onto yougen's slimmer `PushRegisterResponse` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
@@ -2560,10 +2659,15 @@ mod tests {
         assert!(!is_auth_expired_error(&bare));
 
         // Common aliases for the same condition should all trigger.
-        for code in ["M_UNKNOWN_TOKEN", "invalid_token", "token_expired"] {
-            let body = format!(
-                r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#
-            );
+        for code in [
+            "unauthenticated",
+            "soft_logged_out",
+            "M_UNKNOWN_TOKEN",
+            "invalid_token",
+            "token_expired",
+        ] {
+            let body =
+                format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
             let aliased: anyhow::Error = ContrixApiError {
                 status: StatusCode::UNAUTHORIZED,
                 error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
@@ -2768,5 +2872,50 @@ mod tests {
         let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
         assert_eq!(inner["type"], "cx.key.verification.done");
         assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
+    }
+
+    #[test]
+    fn device_verification_proof_requires_signed_envelope() {
+        assert!(ensure_device_verification_proof_is_signed(&json!({})).is_err());
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let proof = build_signed_device_verification_proof(
+            "did:web:alice.example",
+            "cx:device:alice",
+            "cx:device:bob",
+            "sas",
+            Some([1234, 5678, 9012]),
+            Some("alice-x25519"),
+            Some("bob-x25519"),
+            &signing,
+        )
+        .unwrap();
+        ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
+        assert_eq!(
+            proof["device_envelope"]["type"].as_str(),
+            Some("cx.device.verification.proof.v1")
+        );
+        assert_eq!(proof["signature"]["alg"].as_str(), Some("EdDSA"));
+        assert_eq!(
+            proof["signature"]["jws"]
+                .as_str()
+                .unwrap()
+                .split('.')
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn demo_crypto_fallbacks_are_local_only_by_default() {
+        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        local
+            .ensure_demo_crypto_fallback_allowed("test fallback")
+            .expect("local dev fallback");
+        let remote = ContrixApi::new("https://contrix.example").unwrap();
+        assert!(
+            remote
+                .ensure_demo_crypto_fallback_allowed("test fallback")
+                .is_err()
+        );
     }
 }

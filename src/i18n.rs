@@ -293,7 +293,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.reconnecting", "reconnecting");
 
     // R-i18n-002 extra keys for the highest-visibility surfaces.
-    dict.set("topbar.search_placeholder", "Jump to a space, view or action…");
+    dict.set(
+        "topbar.search_placeholder",
+        "Jump to a space, view or action…",
+    );
     dict.set("topbar.notifications", "Notifications");
     dict.set("topbar.new_space", "New Space");
     dict.set("topbar.account_menu", "Account menu");
@@ -304,21 +307,36 @@ pub fn english_translations() -> TranslationDict {
 
     dict.set("dashboard.home", "Home");
     dict.set("dashboard.notifications_label", "Notifications");
-    dict.set("dashboard.notifications_delta_unread", "Unread and approvals");
+    dict.set(
+        "dashboard.notifications_delta_unread",
+        "Unread and approvals",
+    );
     dict.set("dashboard.notifications_delta_signin", "Sign in required");
     dict.set("dashboard.spaces_label", "Spaces");
     dict.set("dashboard.spaces_delta_search", "Search or join a Space");
     dict.set("dashboard.spaces_delta_signin", "Sign in to load spaces");
     dict.set("dashboard.current_space", "Current Space");
     dict.set("dashboard.workspace_setup", "Workspace Setup");
-    dict.set("dashboard.workspace_setup_delta", "Bootstrap your first Space and initial policy");
+    dict.set(
+        "dashboard.workspace_setup_delta",
+        "Bootstrap your first Space and initial policy",
+    );
     dict.set("dashboard.onboarding", "Onboarding");
     dict.set("dashboard.onboarding_steps", "4 steps");
-    dict.set("dashboard.onboarding_delta", "Identity, device, and recovery setup");
+    dict.set(
+        "dashboard.onboarding_delta",
+        "Identity, device, and recovery setup",
+    );
     dict.set("dashboard.recent_spaces", "Recent Spaces");
     dict.set("dashboard.no_spaces", "No spaces loaded");
-    dict.set("dashboard.no_spaces_help", "The connected server did not return spaces yet.");
-    dict.set("dashboard.no_session_help", "The client is not showing placeholder spaces.");
+    dict.set(
+        "dashboard.no_spaces_help",
+        "The connected server did not return spaces yet.",
+    );
+    dict.set(
+        "dashboard.no_session_help",
+        "The client is not showing placeholder spaces.",
+    );
 
     dict.set("notifications.archived", "Show archived");
     dict.set("notifications.mark_all_read", "Mark all read");
@@ -326,11 +344,17 @@ pub fn english_translations() -> TranslationDict {
 
     dict.set("composer.send", "Send");
     dict.set("composer.encrypted_toggle", "Encrypt locally");
-    dict.set("composer.plaintext_warning", "Plaintext messages may be visible to the configured server.");
+    dict.set(
+        "composer.plaintext_warning",
+        "Plaintext messages may be visible to the configured server.",
+    );
 
     dict.set("command_palette.spaces", "Spaces");
     dict.set("command_palette.jump_to", "Jump to");
-    dict.set("command_palette.empty", "No matching spaces or views. Press Esc to close.");
+    dict.set(
+        "command_palette.empty",
+        "No matching spaces or views. Press Esc to close.",
+    );
     dict.set("command_palette.close", "Close (Esc)");
 
     dict.set("mobile.filter_spaces", "Filter spaces…");
@@ -343,7 +367,10 @@ pub fn english_translations() -> TranslationDict {
         "kanban.board_hint",
         "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available.",
     );
-    dict.set("chat.mls_passphrase_placeholder", "MLS passphrase (this Space)");
+    dict.set(
+        "chat.mls_passphrase_placeholder",
+        "MLS passphrase (this Space)",
+    );
     dict.set("chat.mls_passphrase_save", "Save passphrase");
     dict.set("chat.mls_publish_key_package", "Publish key package");
     dict.set("chat.mls_invite_actor_placeholder", "Invite actor DID");
@@ -351,14 +378,20 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.mls_invite_member", "Invite to MLS group");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
-    dict.set("chat.plaintext_blocked", "Type a message before secure send");
+    dict.set(
+        "chat.plaintext_blocked",
+        "Type a message before secure send",
+    );
     dict.set("recovery.vault_encrypt_button", "Encrypt and upload");
     dict.set("recovery.vault_rotate_button", "Rotate passphrase");
     dict.set(
         "recovery.vault_rotate_hint",
         "Reuses the existing backup_id but re-derives a fresh KEK / nonce.",
     );
-    dict.set("recovery.vault_rotate_prompt", "Enter a new passphrase above and click Encrypt and upload to rotate.");
+    dict.set(
+        "recovery.vault_rotate_prompt",
+        "Enter a new passphrase above and click Encrypt and upload to rotate.",
+    );
     dict.set("space_admin.save_metadata", "Save Metadata");
     dict.set("space_admin.save_metadata_move", "Save Metadata (Move)");
     dict.set("space_admin.tombstone_delete", "Tombstone / Delete");
@@ -378,8 +411,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.save_card", "Save");
     dict.set("kanban.cancel_card", "Cancel");
     dict.set("space_admin.apply_policy", "Apply Policy");
-    dict.set("space_admin.grant_capability_move", "Grant capability (Move)");
-    dict.set("space_admin.revoke_capability_move", "Revoke capability (Move)");
+    dict.set(
+        "space_admin.grant_capability_move",
+        "Grant capability (Move)",
+    );
+    dict.set(
+        "space_admin.revoke_capability_move",
+        "Revoke capability (Move)",
+    );
     dict.set("space_admin.refresh_members", "Refresh");
     dict.set("space_admin.kick_member", "Kick");
     dict.set("space_admin.ban_member", "Ban");
@@ -404,8 +443,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.move_queue_empty", "No local board Moves queued.");
 
     // Directory view (tabs share the existing `directory.tab.*` keys).
-    dict.set("directory.org_empty_body", "No organizations found. Try a search.");
-    dict.set("directory.actors_empty_body", "No actors found. Try a search.");
+    dict.set(
+        "directory.org_empty_body",
+        "No organizations found. Try a search.",
+    );
+    dict.set(
+        "directory.actors_empty_body",
+        "No actors found. Try a search.",
+    );
 
     // Recovery view (top-level section headers)
     dict.set("recovery.title", "Recovery");
@@ -420,14 +465,23 @@ pub fn english_translations() -> TranslationDict {
     dict.set("space_admin.members", "Members");
     dict.set("space_admin.access", "Access");
     dict.set("space_admin.security_mls", "Security & MLS");
-    dict.set("space_admin.mls_remove_header", "MLS Remove (device revoke)");
+    dict.set(
+        "space_admin.mls_remove_header",
+        "MLS Remove (device revoke)",
+    );
     dict.set(
         "space_admin.mls_remove_hint",
         "Decrypt the local MLS snapshot, run remove_member_by_principal against the target device, and submit cx.mls.commit. Post-commit state is re-encrypted on success.",
     );
     dict.set("space_admin.mls_remove_button", "Build & submit MLS Remove");
-    dict.set("space_admin.mls_remove_target_placeholder", "Target device DID (did:web:…)");
-    dict.set("space_admin.mls_remove_passphrase_placeholder", "Snapshot passphrase");
+    dict.set(
+        "space_admin.mls_remove_target_placeholder",
+        "Target device DID (did:web:…)",
+    );
+    dict.set(
+        "space_admin.mls_remove_passphrase_placeholder",
+        "Snapshot passphrase",
+    );
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
     // generic verbs like Save/Cancel/Retry/Edit/Confirm).
@@ -444,6 +498,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.button.react", "React");
     dict.set("chat.button.redact", "Redact");
     dict.set("chat.you_badge", "You");
+    dict.set("chat.empty.title", "No discussions yet");
+    dict.set(
+        "chat.empty.description",
+        "Create a discussion to start chatting in this Space.",
+    );
+    dict.set("chat.empty.create_button", "Create your first discussion");
 
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.group.all", "All");
@@ -461,7 +521,10 @@ pub fn english_translations() -> TranslationDict {
         "Notification rules, muted spaces, and push delivery preferences now live in Settings.",
     );
     dict.set("notifications.settings_card_open", "Open settings");
-    dict.set("notifications.empty_body", "No server-derived notifications loaded yet.");
+    dict.set(
+        "notifications.empty_body",
+        "No server-derived notifications loaded yet.",
+    );
     dict.set(
         "notifications.filtered_body",
         "All loaded notifications are currently hidden by archive, type, or per-space mute rules.",
@@ -477,20 +540,35 @@ pub fn english_translations() -> TranslationDict {
     dict.set("verify_device.sas_section", "SAS Verification");
     dict.set("verify_device.sas_section_hint", "emoji comparison");
     dict.set("verify_device.target_device_id", "Target Device ID");
-    dict.set("verify_device.target_device_placeholder", "Device ID to verify");
+    dict.set(
+        "verify_device.target_device_placeholder",
+        "Device ID to verify",
+    );
     dict.set("verify_device.generate_qr", "Generate QR Data");
     dict.set("verify_device.start_sas", "Start SAS Verification");
-    dict.set("verify_device.short_auth_string", "Short Authentication String");
+    dict.set(
+        "verify_device.short_auth_string",
+        "Short Authentication String",
+    );
 
     // Agent Workspace (`cx.profile.agent_workspace.v1`)
     dict.set("nav.agent_workspace", "Agents");
     dict.set("agent_workspace.dashboard.title", "My Agents");
     dict.set("agent_workspace.add_agent", "+ Add Agent");
-    dict.set("agent_workspace.add_agent.hint", "Add one of your agents to a source Flow");
+    dict.set(
+        "agent_workspace.add_agent.hint",
+        "Add one of your agents to a source Flow",
+    );
     dict.set("agent_workspace.add_first_agent", "Add your first agent");
-    dict.set("agent_workspace.protocol_session_monitor", "Protocol sessions");
+    dict.set(
+        "agent_workspace.protocol_session_monitor",
+        "Protocol sessions",
+    );
     dict.set("agent_workspace.pending", "Needs your attention");
-    dict.set("agent_workspace.pending.subtitle", "Source-side transparency or authority has changed. Reconfirm or cancel.");
+    dict.set(
+        "agent_workspace.pending.subtitle",
+        "Source-side transparency or authority has changed. Reconfirm or cancel.",
+    );
     dict.set("agent_workspace.in_flight", "In flight");
     dict.set("agent_workspace.recent", "Recently completed");
     dict.set("agent_workspace.my_agents", "My Agents");
@@ -504,44 +582,104 @@ pub fn english_translations() -> TranslationDict {
     dict.set("agent_workspace.task.instruction", "Your instruction");
     dict.set("agent_workspace.task.draft", "Agent draft");
     dict.set("agent_workspace.task.publish", "Publish to source Flow");
-    dict.set("agent_workspace.task.publish_hint", "Send the agent draft to the source Flow as your own message (with optional attribution).");
-    dict.set("agent_workspace.task.publish_disabled_reason", "Task is not in active state; please reconfirm or cancel first.");
+    dict.set(
+        "agent_workspace.task.publish_hint",
+        "Send the agent draft to the source Flow as your own message (with optional attribution).",
+    );
+    dict.set(
+        "agent_workspace.task.publish_disabled_reason",
+        "Task is not in active state; please reconfirm or cancel first.",
+    );
     dict.set("agent_workspace.task.mark_complete", "Mark complete");
     dict.set("agent_workspace.task.rewrite", "Ask agent to rewrite");
     dict.set("agent_workspace.task.conversation", "Conversation");
-    dict.set("agent_workspace.task.compose_placeholder", "Reply or instruct further…");
+    dict.set(
+        "agent_workspace.task.compose_placeholder",
+        "Reply or instruct further…",
+    );
     dict.set("agent_workspace.task.send", "Send");
     dict.set("agent_workspace.task.audit_trail", "Audit trail");
-    dict.set("agent_workspace.banner.transparency_lost", "Source mention has been redacted. The agent has paused.");
-    dict.set("agent_workspace.banner.source_authority_revoked", "The agent's source-side access has been revoked.");
+    dict.set(
+        "agent_workspace.banner.transparency_lost",
+        "Source mention has been redacted. The agent has paused.",
+    );
+    dict.set(
+        "agent_workspace.banner.source_authority_revoked",
+        "The agent's source-side access has been revoked.",
+    );
     dict.set("agent_workspace.fsm.execution", "Execution");
     dict.set("agent_workspace.fsm.transparency", "Transparency");
     dict.set("agent_workspace.fsm.source_authority", "Source authority");
-    dict.set("agent_workspace.fsm.aria_label", "Three orthogonal task state cells");
+    dict.set(
+        "agent_workspace.fsm.aria_label",
+        "Three orthogonal task state cells",
+    );
     dict.set("agent_workspace.agent.consulting", "consulting");
-    dict.set("agent_workspace.agent.no_active_sources", "(mirror-only; not active in any source Space)");
-    dict.set("agent_workspace.empty.in_flight.message", "No agent tasks are running right now.");
-    dict.set("agent_workspace.empty.in_flight.hint", "Mention one of your agents in a chat or discussion to start a private task.");
-    dict.set("agent_workspace.empty.agents.message", "You haven't added any agents yet.");
+    dict.set(
+        "agent_workspace.agent.no_active_sources",
+        "(mirror-only; not active in any source Space)",
+    );
+    dict.set(
+        "agent_workspace.empty.in_flight.message",
+        "No agent tasks are running right now.",
+    );
+    dict.set(
+        "agent_workspace.empty.in_flight.hint",
+        "Mention one of your agents in a chat or discussion to start a private task.",
+    );
+    dict.set(
+        "agent_workspace.empty.agents.message",
+        "You haven't added any agents yet.",
+    );
     dict.set("agent_workspace.compose.private_routing_notice", "This instruction will be sent to your private Agent Workspace. Source Flow members will only see a generic summary.");
-    dict.set("agent_workspace.compose.summary_visible_warning", "This summary is visible to all source Flow members.");
-    dict.set("agent_workspace.compose.send_private", "Send (Private to Agent)");
+    dict.set(
+        "agent_workspace.compose.summary_visible_warning",
+        "This summary is visible to all source Flow members.",
+    );
+    dict.set(
+        "agent_workspace.compose.send_private",
+        "Send (Private to Agent)",
+    );
 
     // Publish modal (AW-3.7 + AW-3.20)
     dict.set("agent_workspace.publish.signer_legend", "Signing identity");
     dict.set("agent_workspace.publish.signer_self", "Post as me");
-    dict.set("agent_workspace.publish.signer_self_with_attribution", "Post as me, with \"drafted by agent\" note");
+    dict.set(
+        "agent_workspace.publish.signer_self_with_attribution",
+        "Post as me, with \"drafted by agent\" note",
+    );
     dict.set("agent_workspace.publish.cancel", "Cancel");
     dict.set("agent_workspace.publish.confirm", "Publish");
 
     // Add agent modal (AW-3.8)
-    dict.set("agent_workspace.add_agent.select_legend", "Pick one of your agents");
-    dict.set("agent_workspace.add_agent.profile_legend", "Capability profile");
-    dict.set("agent_workspace.add_agent.profile.observer", "Observer (read-only history)");
-    dict.set("agent_workspace.add_agent.profile.read_only", "Read + react");
-    dict.set("agent_workspace.add_agent.profile.mention_respond_only", "Respond only when @-mentioned (recommended)");
-    dict.set("agent_workspace.add_agent.profile.full_collaborator", "Full collaborator");
-    dict.set("agent_workspace.add_agent.no_owned_agents", "You haven't created any controllable agents yet. Visit Settings → Agents to add one.");
+    dict.set(
+        "agent_workspace.add_agent.select_legend",
+        "Pick one of your agents",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile_legend",
+        "Capability profile",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.observer",
+        "Observer (read-only history)",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.read_only",
+        "Read + react",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.mention_respond_only",
+        "Respond only when @-mentioned (recommended)",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.full_collaborator",
+        "Full collaborator",
+    );
+    dict.set(
+        "agent_workspace.add_agent.no_owned_agents",
+        "You haven't created any controllable agents yet. Visit Settings → Agents to add one.",
+    );
     dict.set("agent_workspace.add_agent.disclosure", "Agent membership is publicly visible to all source-Space members; the agent's work in your mirror Workspace remains private.");
     dict.set("agent_workspace.add_agent.cancel", "Cancel");
     dict.set("agent_workspace.add_agent.send_invite", "Send invite");
@@ -549,7 +687,10 @@ pub fn english_translations() -> TranslationDict {
     // Settings page (AW-3.4)
     dict.set("agent_workspace.settings.title", "Agent Workspace settings");
     dict.set("agent_workspace.settings.agents", "My agents");
-    dict.set("agent_workspace.settings.default_profile", "Default capability profile for new agent invites");
+    dict.set(
+        "agent_workspace.settings.default_profile",
+        "Default capability profile for new agent invites",
+    );
     dict.set("agent_workspace.settings.default_profile_hint", "Applied as the pre-selected option in the Add Agent modal. You can still override per-invite.");
     dict.set("agent_workspace.settings.danger_zone", "Danger zone");
     dict.set("agent_workspace.settings.teardown_hint", "Tear down the entire Agent Workspace (`cx.space.tombstone(workspace_root)`). Mirror Spaces cascade-tombstone via housekeeping. Existing mention_redirect events in source Spaces are preserved for audit.");
@@ -558,8 +699,14 @@ pub fn english_translations() -> TranslationDict {
     // Notification renderer (AW-3.12)
     dict.set("agent_workspace.notification.added", "was added to");
     dict.set("agent_workspace.notification.removed", "was removed from");
-    dict.set("agent_workspace.notification.profile_changed", "had its capability changed in");
-    dict.set("agent_workspace.notification.unknown_target", "(unknown source)");
+    dict.set(
+        "agent_workspace.notification.profile_changed",
+        "had its capability changed in",
+    );
+    dict.set(
+        "agent_workspace.notification.unknown_target",
+        "(unknown source)",
+    );
 
     dict
 }
@@ -651,7 +798,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.spaces_delta_signin", "登录后加载空间");
     dict.set("dashboard.current_space", "当前空间");
     dict.set("dashboard.workspace_setup", "工作区设置");
-    dict.set("dashboard.workspace_setup_delta", "创建第一个空间与初始策略");
+    dict.set(
+        "dashboard.workspace_setup_delta",
+        "创建第一个空间与初始策略",
+    );
     dict.set("dashboard.onboarding", "引导");
     dict.set("dashboard.onboarding_steps", "4 步");
     dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
@@ -666,11 +816,17 @@ pub fn chinese_translations() -> TranslationDict {
 
     dict.set("composer.send", "发送");
     dict.set("composer.encrypted_toggle", "本地加密");
-    dict.set("composer.plaintext_warning", "明文消息对所配置的服务器可见。");
+    dict.set(
+        "composer.plaintext_warning",
+        "明文消息对所配置的服务器可见。",
+    );
 
     dict.set("command_palette.spaces", "空间");
     dict.set("command_palette.jump_to", "跳转到");
-    dict.set("command_palette.empty", "未找到匹配的空间或视图。按 Esc 关闭。");
+    dict.set(
+        "command_palette.empty",
+        "未找到匹配的空间或视图。按 Esc 关闭。",
+    );
     dict.set("command_palette.close", "关闭 (Esc)");
 
     dict.set("mobile.filter_spaces", "筛选空间…");
@@ -698,7 +854,10 @@ pub fn chinese_translations() -> TranslationDict {
         "recovery.vault_rotate_hint",
         "复用现有 backup_id，但重新派生 KEK / nonce。",
     );
-    dict.set("recovery.vault_rotate_prompt", "请在上方输入新口令并点击「加密并上传」完成轮换。");
+    dict.set(
+        "recovery.vault_rotate_prompt",
+        "请在上方输入新口令并点击「加密并上传」完成轮换。",
+    );
     dict.set("space_admin.save_metadata", "保存元数据");
     dict.set("space_admin.save_metadata_move", "通过 Move 保存元数据");
     dict.set("space_admin.tombstone_delete", "终结 / 删除");
@@ -766,7 +925,10 @@ pub fn chinese_translations() -> TranslationDict {
         "用本地 MLS 快照口令解密群状态，运行 remove_member_by_principal，提交 cx.mls.commit；成功后重新加密持久化新一轮 epoch。",
     );
     dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
-    dict.set("space_admin.mls_remove_target_placeholder", "目标设备 DID（did:web:…）");
+    dict.set(
+        "space_admin.mls_remove_target_placeholder",
+        "目标设备 DID（did:web:…）",
+    );
     dict.set("space_admin.mls_remove_passphrase_placeholder", "快照口令");
 
     // Chat / Discussion view
@@ -783,6 +945,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.button.react", "回应");
     dict.set("chat.button.redact", "撤回");
     dict.set("chat.you_badge", "我");
+    dict.set("chat.empty.title", "还没有讨论");
+    dict.set(
+        "chat.empty.description",
+        "创建一个讨论,以在该空间中开始聊天。",
+    );
+    dict.set("chat.empty.create_button", "创建第一个讨论");
 
     // Notifications panel
     dict.set("notifications.group.all", "全部");
@@ -825,11 +993,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.agent_workspace", "我的 Agents");
     dict.set("agent_workspace.dashboard.title", "我的 Agents");
     dict.set("agent_workspace.add_agent", "+ 添加 Agent");
-    dict.set("agent_workspace.add_agent.hint", "把你的一个 agent 加到某个源 Flow");
+    dict.set(
+        "agent_workspace.add_agent.hint",
+        "把你的一个 agent 加到某个源 Flow",
+    );
     dict.set("agent_workspace.add_first_agent", "添加你的第一个 agent");
     dict.set("agent_workspace.protocol_session_monitor", "Agent 协议会话");
     dict.set("agent_workspace.pending", "待处理");
-    dict.set("agent_workspace.pending.subtitle", "源端透明度或权限有变化。请选择「继续」或「取消」。");
+    dict.set(
+        "agent_workspace.pending.subtitle",
+        "源端透明度或权限有变化。请选择「继续」或「取消」。",
+    );
     dict.set("agent_workspace.in_flight", "进行中");
     dict.set("agent_workspace.recent", "最近完成");
     dict.set("agent_workspace.my_agents", "我的 Agents");
@@ -843,53 +1017,122 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("agent_workspace.task.instruction", "你的指令");
     dict.set("agent_workspace.task.draft", "Agent 草稿");
     dict.set("agent_workspace.task.publish", "发布到源 Flow");
-    dict.set("agent_workspace.task.publish_hint", "把 agent 草稿以你自己身份发到源 Flow（可选注明）。");
-    dict.set("agent_workspace.task.publish_disabled_reason", "任务不在 active 状态；请先 reconfirm 或 cancel。");
+    dict.set(
+        "agent_workspace.task.publish_hint",
+        "把 agent 草稿以你自己身份发到源 Flow（可选注明）。",
+    );
+    dict.set(
+        "agent_workspace.task.publish_disabled_reason",
+        "任务不在 active 状态；请先 reconfirm 或 cancel。",
+    );
     dict.set("agent_workspace.task.mark_complete", "标记完成");
     dict.set("agent_workspace.task.rewrite", "让 agent 重写");
     dict.set("agent_workspace.task.conversation", "对话");
-    dict.set("agent_workspace.task.compose_placeholder", "回复或追加指令…");
+    dict.set(
+        "agent_workspace.task.compose_placeholder",
+        "回复或追加指令…",
+    );
     dict.set("agent_workspace.task.send", "发送");
     dict.set("agent_workspace.task.audit_trail", "审计 trail");
-    dict.set("agent_workspace.banner.transparency_lost", "源 mention 已被撤回。Agent 已暂停。");
-    dict.set("agent_workspace.banner.source_authority_revoked", "Agent 在源 Space 的权限已被撤销。");
+    dict.set(
+        "agent_workspace.banner.transparency_lost",
+        "源 mention 已被撤回。Agent 已暂停。",
+    );
+    dict.set(
+        "agent_workspace.banner.source_authority_revoked",
+        "Agent 在源 Space 的权限已被撤销。",
+    );
     dict.set("agent_workspace.fsm.execution", "执行");
     dict.set("agent_workspace.fsm.transparency", "透明度");
     dict.set("agent_workspace.fsm.source_authority", "源权限");
     dict.set("agent_workspace.fsm.aria_label", "三个正交任务状态 cell");
     dict.set("agent_workspace.agent.consulting", "consulting");
-    dict.set("agent_workspace.agent.no_active_sources", "(仅 mirror；不在任何源 Space 中)");
-    dict.set("agent_workspace.empty.in_flight.message", "当前没有任何 agent 任务在跑。");
-    dict.set("agent_workspace.empty.in_flight.hint", "在聊天或讨论里 @ 你的 agent 即可开启私人任务。");
-    dict.set("agent_workspace.empty.agents.message", "你还没有添加任何 agent。");
-    dict.set("agent_workspace.compose.private_routing_notice", "此指令将发送到你的私人 Agent Workspace。源 Flow 其他成员只会看到通用摘要。");
-    dict.set("agent_workspace.compose.summary_visible_warning", "此摘要对源 Flow 所有成员可见。");
-    dict.set("agent_workspace.compose.send_private", "发送 (Private to Agent)");
+    dict.set(
+        "agent_workspace.agent.no_active_sources",
+        "(仅 mirror；不在任何源 Space 中)",
+    );
+    dict.set(
+        "agent_workspace.empty.in_flight.message",
+        "当前没有任何 agent 任务在跑。",
+    );
+    dict.set(
+        "agent_workspace.empty.in_flight.hint",
+        "在聊天或讨论里 @ 你的 agent 即可开启私人任务。",
+    );
+    dict.set(
+        "agent_workspace.empty.agents.message",
+        "你还没有添加任何 agent。",
+    );
+    dict.set(
+        "agent_workspace.compose.private_routing_notice",
+        "此指令将发送到你的私人 Agent Workspace。源 Flow 其他成员只会看到通用摘要。",
+    );
+    dict.set(
+        "agent_workspace.compose.summary_visible_warning",
+        "此摘要对源 Flow 所有成员可见。",
+    );
+    dict.set(
+        "agent_workspace.compose.send_private",
+        "发送 (Private to Agent)",
+    );
 
     // Publish modal (AW-3.7 + AW-3.20)
     dict.set("agent_workspace.publish.signer_legend", "签名身份");
     dict.set("agent_workspace.publish.signer_self", "作为我自己发布");
-    dict.set("agent_workspace.publish.signer_self_with_attribution", "作为我自己发布，附注「由 agent 起草」");
+    dict.set(
+        "agent_workspace.publish.signer_self_with_attribution",
+        "作为我自己发布，附注「由 agent 起草」",
+    );
     dict.set("agent_workspace.publish.cancel", "取消");
     dict.set("agent_workspace.publish.confirm", "发布");
 
     // Add agent modal (AW-3.8)
-    dict.set("agent_workspace.add_agent.select_legend", "选择你的一个 agent");
-    dict.set("agent_workspace.add_agent.profile_legend", "权限 (capability profile)");
-    dict.set("agent_workspace.add_agent.profile.observer", "Observer (只读历史)");
-    dict.set("agent_workspace.add_agent.profile.read_only", "只读 + reaction");
-    dict.set("agent_workspace.add_agent.profile.mention_respond_only", "仅在被 @ 时回复 (推荐)");
-    dict.set("agent_workspace.add_agent.profile.full_collaborator", "完整成员");
-    dict.set("agent_workspace.add_agent.no_owned_agents", "你还没有创建任何受控 agent。前往 Settings → Agents 添加。");
-    dict.set("agent_workspace.add_agent.disclosure", "Agent 成员身份对源 Space 所有成员可见；agent 在你的私人 Workspace 内的工作过程仍然私密。");
+    dict.set(
+        "agent_workspace.add_agent.select_legend",
+        "选择你的一个 agent",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile_legend",
+        "权限 (capability profile)",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.observer",
+        "Observer (只读历史)",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.read_only",
+        "只读 + reaction",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.mention_respond_only",
+        "仅在被 @ 时回复 (推荐)",
+    );
+    dict.set(
+        "agent_workspace.add_agent.profile.full_collaborator",
+        "完整成员",
+    );
+    dict.set(
+        "agent_workspace.add_agent.no_owned_agents",
+        "你还没有创建任何受控 agent。前往 Settings → Agents 添加。",
+    );
+    dict.set(
+        "agent_workspace.add_agent.disclosure",
+        "Agent 成员身份对源 Space 所有成员可见；agent 在你的私人 Workspace 内的工作过程仍然私密。",
+    );
     dict.set("agent_workspace.add_agent.cancel", "取消");
     dict.set("agent_workspace.add_agent.send_invite", "发送邀请");
 
     // Settings page (AW-3.4)
     dict.set("agent_workspace.settings.title", "Agent Workspace 设置");
     dict.set("agent_workspace.settings.agents", "我的 Agents");
-    dict.set("agent_workspace.settings.default_profile", "新邀请的默认 capability profile");
-    dict.set("agent_workspace.settings.default_profile_hint", "Add Agent 弹窗的预选项。每次邀请仍可单独覆盖。");
+    dict.set(
+        "agent_workspace.settings.default_profile",
+        "新邀请的默认 capability profile",
+    );
+    dict.set(
+        "agent_workspace.settings.default_profile_hint",
+        "Add Agent 弹窗的预选项。每次邀请仍可单独覆盖。",
+    );
     dict.set("agent_workspace.settings.danger_zone", "危险区域");
     dict.set("agent_workspace.settings.teardown_hint", "解散整个 Agent Workspace（`cx.space.tombstone(workspace_root)`）。所有 mirror Space 会通过 housekeeping 级联 tombstone；源 Space 中已发出的 mention_redirect 会保留用于 audit。");
     dict.set("agent_workspace.settings.teardown", "解散 workspace");
@@ -897,8 +1140,14 @@ pub fn chinese_translations() -> TranslationDict {
     // Notification renderer (AW-3.12)
     dict.set("agent_workspace.notification.added", "被加入到");
     dict.set("agent_workspace.notification.removed", "被移出");
-    dict.set("agent_workspace.notification.profile_changed", "的权限发生变化于");
-    dict.set("agent_workspace.notification.unknown_target", "（未知来源）");
+    dict.set(
+        "agent_workspace.notification.profile_changed",
+        "的权限发生变化于",
+    );
+    dict.set(
+        "agent_workspace.notification.unknown_target",
+        "（未知来源）",
+    );
 
     dict
 }

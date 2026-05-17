@@ -840,6 +840,7 @@ dependencies = [
  "base64",
  "chrono",
  "contrix-identifiers",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

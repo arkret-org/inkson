@@ -441,8 +441,7 @@ pub fn KanbanPanel(
     // carries no grants for the actor the gate stays open (yougen still
     // trusts the server). Cap-Gate-3 (below) computes the per-button
     // gate inside the render path.
-    let capability_engine =
-        use_context::<Signal<crate::capability::CapabilityEngine>>();
+    let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
     let mut projection_source = use_signal(|| initial_source);
     let mut new_column_title = use_signal(String::new);
     let mut new_card_title = use_signal(String::new);
@@ -562,8 +561,7 @@ pub fn KanbanPanel(
                 if let Ok(resp) = flows_res {
                     for view in &resp.items {
                         for col in cols.iter_mut() {
-                            if let Some(card) =
-                                col.cards.iter_mut().find(|c| c.id == view.flow_id)
+                            if let Some(card) = col.cards.iter_mut().find(|c| c.id == view.flow_id)
                             {
                                 let new_lifecycle = flow_lifecycle_from_wire(&view.state);
                                 if card.lifecycle != new_lifecycle {
@@ -2204,8 +2202,9 @@ fn submit_flow_position_cas_move_with_attempt(
                     MoveSubmissionState::Effective | MoveSubmissionState::PendingAnchor => {
                         CardState::Accepted
                     }
-                    MoveSubmissionState::FailedPrecondition
-                    | MoveSubmissionState::FailedBottom => CardState::Conflict,
+                    MoveSubmissionState::FailedPrecondition | MoveSubmissionState::FailedBottom => {
+                        CardState::Conflict
+                    }
                     _ => CardState::SoftFailed,
                 };
                 if let Some(record) = write_records
@@ -2318,7 +2317,8 @@ fn rebase_flow_position_after_conflict(
             Ok(projection) => locate_flow_position_in_projection(&projection, &flow_id),
             Err(err) => {
                 board_status.set(format!(
-                    "rebase aborted (projection refresh failed): {}", err.display()
+                    "rebase aborted (projection refresh failed): {}",
+                    err.display()
                 ));
                 return;
             }
@@ -2359,11 +2359,7 @@ fn locate_flow_position_in_projection(
 ) -> FlowPositionExpectation {
     for group in &projection.groups {
         for item in &group.items {
-            let item_id = item
-                .object
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let item_id = item.object.get("id").and_then(|v| v.as_str()).unwrap_or("");
             if item_id == flow_id {
                 if let Some(position) = item.position.as_ref() {
                     return FlowPositionExpectation::At {
@@ -2445,15 +2441,10 @@ fn replay_first_move(
                         } else {
                             CardState::Accepted
                         };
-                        record.note = format!(
-                            "replay state={} reason={:?}",
-                            resp.state, resp.reason
-                        );
+                        record.note =
+                            format!("replay state={} reason={:?}", resp.state, resp.reason);
                     }
-                    board_status.set(format!(
-                        "{kind_for_record} replay state={}",
-                        resp.state
-                    ));
+                    board_status.set(format!("{kind_for_record} replay state={}", resp.state));
                 }
                 Err(err) => {
                     if let Some(record) = write_records
@@ -2662,7 +2653,10 @@ mod tests {
             place_state_from_wire("tombstoned"),
             PlaceLifecycleState::Tombstoned
         );
-        assert_eq!(place_state_from_wire("garbage"), PlaceLifecycleState::Active);
+        assert_eq!(
+            place_state_from_wire("garbage"),
+            PlaceLifecycleState::Active
+        );
 
         assert_eq!(
             flow_lifecycle_from_wire("active"),
@@ -2944,25 +2938,26 @@ mod tests {
                 id: "cx:place:list-a".to_owned(),
                 title: "A".to_owned(),
                 rank: "U".to_owned(),
-                cards: vec![
-                    test_card("cx:flow:a1", "U"),
-                    test_card("cx:flow:a2", "f"),
-                ],
+                cards: vec![test_card("cx:flow:a1", "U"), test_card("cx:flow:a2", "f")],
                 state: PlaceLifecycleState::Active,
             },
             KanbanColumn {
                 id: "cx:place:list-b".to_owned(),
                 title: "B".to_owned(),
                 rank: "f".to_owned(),
-                cards: vec![
-                    test_card("cx:flow:b1", "U"),
-                    test_card("cx:flow:b3", "z"),
-                ],
+                cards: vec![test_card("cx:flow:b1", "U"), test_card("cx:flow:b3", "z")],
                 state: PlaceLifecycleState::Active,
             },
         ];
         // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
-        let moved = relocate_card(&mut cols, "cx:flow:a1", "cx:place:list-a", "cx:place:list-b", "m").unwrap();
+        let moved = relocate_card(
+            &mut cols,
+            "cx:flow:a1",
+            "cx:place:list-a",
+            "cx:place:list-b",
+            "m",
+        )
+        .unwrap();
         assert_eq!(moved.id, "cx:flow:a1");
         assert_eq!(moved.rank, "m");
         // Source column no longer contains a1, still has a2.
@@ -2994,7 +2989,14 @@ mod tests {
             state: PlaceLifecycleState::Active,
         }];
         // Move a3 to the top of the same list (rank "0" — before "U").
-        let moved = relocate_card(&mut cols, "cx:flow:a3", "cx:place:list-a", "cx:place:list-a", "0").unwrap();
+        let moved = relocate_card(
+            &mut cols,
+            "cx:flow:a3",
+            "cx:place:list-a",
+            "cx:place:list-a",
+            "0",
+        )
+        .unwrap();
         assert_eq!(moved.rank, "0");
         let a = &cols[0];
         assert_eq!(a.cards.len(), 3);
@@ -3051,9 +3053,7 @@ mod tests {
     /// is actually non-initial, which is the safe behaviour.
     #[test]
     fn locate_flow_position_missing_flow_returns_initial() {
-        use contrix_sdk::{
-            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
-        };
+        use contrix_sdk::{CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer};
         let projection = CollectionProjectionResponse {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,

@@ -14,7 +14,10 @@ use contrix_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 pub enum SnapshotVerifyResult {
     /// All chunks matched their declared content hash and the manifest's
     /// `merkle_root` reconciled with the recomputed root.
-    Verified { manifest_chunks: usize, total_bytes: usize },
+    Verified {
+        manifest_chunks: usize,
+        total_bytes: usize,
+    },
     /// One or more chunks failed verification. The error message names the
     /// first offending chunk for diagnostics.
     Mismatch(String),
@@ -35,7 +38,10 @@ pub fn verify_snapshot(
     let manifest_chunks = chunk_vec.len();
 
     match verify_snapshot_chunks(manifest, chunk_vec.iter().map(|b| b.as_slice())) {
-        Ok(()) => SnapshotVerifyResult::Verified { manifest_chunks, total_bytes },
+        Ok(()) => SnapshotVerifyResult::Verified {
+            manifest_chunks,
+            total_bytes,
+        },
         Err(e) => SnapshotVerifyResult::Mismatch(format!("{e:?}")),
     }
 }
@@ -67,7 +73,10 @@ mod tests {
     fn empty_manifest_verifies_with_no_chunks() {
         let manifest = empty_manifest();
         match verify_snapshot(&manifest, std::iter::empty()) {
-            SnapshotVerifyResult::Verified { manifest_chunks, total_bytes } => {
+            SnapshotVerifyResult::Verified {
+                manifest_chunks,
+                total_bytes,
+            } => {
                 assert_eq!(manifest_chunks, 0);
                 assert_eq!(total_bytes, 0);
             }
@@ -108,7 +117,10 @@ mod tests {
         manifest.chunks = vec![chunk];
 
         match verify_snapshot(&manifest, std::iter::once(bytes)) {
-            SnapshotVerifyResult::Verified { manifest_chunks, total_bytes } => {
+            SnapshotVerifyResult::Verified {
+                manifest_chunks,
+                total_bytes,
+            } => {
                 assert_eq!(manifest_chunks, 1);
                 assert_eq!(total_bytes, 11);
             }

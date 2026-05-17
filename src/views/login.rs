@@ -256,6 +256,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
             Some(&plan.principal_audience),
             Some(&returned_state),
             Some(&scaffold.expected_state),
+            Some(&scaffold.expected_nonce),
         )
         .await
         .map_err(|error| format!("Server sign-in exchange failed: {error}"))?;
@@ -331,6 +332,32 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         Ok(account) if !account.did.trim().is_empty() => account.did,
         _ => session.actor.clone(),
     };
+    if let Some(tokens) = login.oidc_tokens.as_ref() {
+        if tokens
+            .refresh_token
+            .as_deref()
+            .is_some_and(|rt| !rt.trim().is_empty())
+        {
+            let bundle = tokens.to_persisted_bundle(Some(&plan.principal_audience));
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let mut token_store = LocalStateStore::default();
+            token_store.set_oidc_tokens_with_secure_store(
+                Some(bundle),
+                &principal_did,
+                secure_store.as_ref(),
+            );
+        } else if requires_oidc_refresh_token(&principal_target) {
+            return Err(
+                "Server sign-in returned OIDC tokens without a refresh_token; refusing a production session without a secure refresh path."
+                    .to_owned(),
+            );
+        }
+    } else if requires_oidc_refresh_token(&principal_target) {
+        return Err(
+            "Server sign-in did not return an OIDC token bundle; refusing a production session without a secure refresh-token handoff."
+                .to_owned(),
+        );
+    }
     let _ = clear_persisted_oidc_scaffold();
 
     let persisted_grant = PersistedSessionGrant {
@@ -360,4 +387,20 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value.trim())
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn requires_oidc_refresh_token(principal_server_url: &str) -> bool {
+    if std::env::var("YOUGEN_ALLOW_SESSION_GRANT_ONLY_LOGIN")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(principal_server_url) else {
+        return true;
+    };
+    !matches!(
+        url.host_str().unwrap_or_default(),
+        "localhost" | "127.0.0.1" | "::1" | "local.host"
+    )
 }

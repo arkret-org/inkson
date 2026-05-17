@@ -171,13 +171,11 @@ fn run_local_mls_encrypt(
     // here is non-fatal: we fall back to encrypt-without-commit so a
     // single Send Secure still succeeds even if `self_update` rejects.
     let commit_envelope = group.self_update_commit().ok();
-    let encrypted = match group.encrypt_payload(
-        "application/vnd.contrix.message+json",
-        plaintext_bytes,
-    ) {
-        Ok(p) => p,
-        Err(_) => return empty,
-    };
+    let encrypted =
+        match group.encrypt_payload("application/vnd.contrix.message+json", plaintext_bytes) {
+            Ok(p) => p,
+            Err(_) => return empty,
+        };
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_dids();
     let payload_value = match serde_json::to_value(&encrypted) {
@@ -305,9 +303,7 @@ async fn run_mls_add_member_and_invite(
         return;
     }
     if passphrase.is_empty() {
-        status.set(
-            "MLS invite needs an active passphrase; set one in this row first".to_owned(),
-        );
+        status.set("MLS invite needs an active passphrase; set one in this row first".to_owned());
         return;
     }
     let Some(envelope) = state_store.read().mls_snapshot_for(&space_id) else {
@@ -347,7 +343,8 @@ async fn run_mls_add_member_and_invite(
         }
         Err(err) => {
             status.set(format!(
-                "MLS invite: fetch_mls_key_package failed: {}", err.display()
+                "MLS invite: fetch_mls_key_package failed: {}",
+                err.display()
             ));
             return;
         }
@@ -409,12 +406,12 @@ async fn run_mls_add_member_and_invite(
             return;
         }
     };
-    let commit_operation = match add_result
-        .commit_operation(typed_op_id, typed_space)
-    {
+    let commit_operation = match add_result.commit_operation(typed_op_id, typed_space) {
         Ok(op) => op,
         Err(err) => {
-            status.set(format!("MLS invite: commit_operation build failed: {err:?}"));
+            status.set(format!(
+                "MLS invite: commit_operation build failed: {err:?}"
+            ));
             return;
         }
     };
@@ -429,11 +426,9 @@ async fn run_mls_add_member_and_invite(
         envelope_builder = envelope_builder.target_ref(tref);
     }
     let envelope = envelope_builder.build("yougen");
-    let submit = crate::views::helpers::with_authed_api(
-        &base_url,
-        api_token,
-        |api| async move { api.submit_operation_event(&envelope).await },
-    )
+    let submit = crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
+        api.submit_operation_event(&envelope).await
+    })
     .await;
     if let Err(err) = submit {
         status.set(format!(
@@ -1573,8 +1568,7 @@ pub fn ChatPanel(
     // run `group.encrypt_payload()`. When empty for this Space, the
     // legacy placeholder ciphertext path stays active so non-MLS
     // users / sealed pages don't break.
-    let mls_passphrase_store =
-        use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
     let mut mls_passphrase_draft = use_signal(String::new);
     // Multi-device Welcome flow controls. The
     // `Invite to MLS group` button fetches the target (actor, device)
@@ -1624,7 +1618,7 @@ pub fn ChatPanel(
     let selected_channel_name = selected_channel_info
         .as_ref()
         .map(|channel| channel.name.clone())
-        .unwrap_or_else(|| "Select a discussion".to_owned());
+        .unwrap_or_else(|| crate::i18n::tr("chat.empty.title"));
     let selected_channel_category = selected_channel_info
         .as_ref()
         .map(|channel| channel.category.clone())
@@ -1805,11 +1799,10 @@ pub fn ChatPanel(
                             Ok(d) => d,
                             Err(_) => continue,
                         };
-                        let device_id_typed =
-                            match contrix_sdk::DeviceId::new(device_did.clone()) {
-                                Ok(d) => d,
-                                Err(_) => continue,
-                            };
+                        let device_id_typed = match contrix_sdk::DeviceId::new(device_did.clone()) {
+                            Ok(d) => d,
+                            Err(_) => continue,
+                        };
                         let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
                             principal_did,
                             device_id_typed,
@@ -1818,8 +1811,7 @@ pub fn ChatPanel(
                             Err(_) => continue,
                         };
                         let group = match contrix_sdk::ContrixMlsGroup::join_from_welcome(
-                            identity,
-                            &welcome,
+                            identity, &welcome,
                         ) {
                             Ok(g) => g,
                             Err(_) => continue,
@@ -2673,7 +2665,21 @@ pub fn ChatPanel(
                             }
                         }
                     }
-                    if visible_message_count == 0 {
+                    if visible_channels_empty {
+                        div { class: "empty-state discussion-empty-main", "data-testid": "discussion-main-empty",
+                            div { class: "ico", UiIcon { name: "plus" } }
+                            div { class: "t", {crate::i18n::tr("chat.empty.title")} }
+                            div { class: "s", {crate::i18n::tr("chat.empty.description")} }
+                            div { class: "actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "discussion-empty-create-button",
+                                    onclick: move |_| create_dialog_open.set(true),
+                                    {crate::i18n::tr("chat.empty.create_button")}
+                                }
+                            }
+                        }
+                    } else if visible_message_count == 0 {
                         div { class: "discussion-empty", "No messages yet." }
                     }
                 }
@@ -2746,6 +2752,7 @@ pub fn ChatPanel(
                 }
             }
 
+            if !visible_channels_empty {
             div { class: "discussion-composer", "data-testid": "chat-composer",
                 if let Some(reply_id) = reply_to_message() {
                     div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
@@ -3496,6 +3503,7 @@ pub fn ChatPanel(
                 if !status_msg().is_empty() {
                     div { class: "muted discussion-status", "data-testid": "chat-status", "{status_msg}" }
                 }
+            }
             }
         }
     }

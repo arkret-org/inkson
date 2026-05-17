@@ -30,6 +30,8 @@
 //! exercise the network surface against a `wiremock` IdP.
 
 use anyhow::Context;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::{
     api::{ContrixApi, SessionGrantIntrospectionProof},
@@ -143,6 +145,36 @@ pub fn extract_callback_error(callback_url: &str) -> Option<(String, Option<Stri
     Some((error, description))
 }
 
+/// Validate the OIDC `nonce` claim from an ID token against the scaffolded
+/// nonce generated before opening the authorization URL. This does not replace
+/// issuer signature validation at coauth; it is the client-side replay guard
+/// that prevents accepting a token minted for a different browser flow.
+pub fn validate_id_token_nonce(id_token: Option<&str>, expected_nonce: &str) -> anyhow::Result<()> {
+    let expected_nonce = expected_nonce.trim();
+    if expected_nonce.is_empty() {
+        return Ok(());
+    }
+    let token = id_token.ok_or_else(|| anyhow::anyhow!("id_token missing for nonce check"))?;
+    let payload_b64 = token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("id_token is not a compact JWT"))?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_b64.as_bytes())
+        .context("decode id_token payload")?;
+    let claims: serde_json::Value =
+        serde_json::from_slice(&payload).context("parse id_token payload")?;
+    let observed = claims
+        .get("nonce")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if observed == expected_nonce {
+        Ok(())
+    } else {
+        anyhow::bail!("id_token nonce mismatch")
+    }
+}
+
 /// Build the [`SessionGrantIntrospectionProof`] envelope the principal
 /// server requires when accepting an audience grant. Pure helper so
 /// callers that want to assemble the body themselves (e.g. for a custom
@@ -216,6 +248,15 @@ pub async fn process_callback(
             };
         }
     };
+    if let Err(error) = validate_id_token_nonce(
+        token_response.id_token.as_deref(),
+        &request.scaffold.expected_nonce,
+    ) {
+        return CallbackOutcome::Failed {
+            stage: "validate_id_token_nonce",
+            error,
+        };
+    }
     // 5. Persist the token bundle. The `audience_hint` is the
     //    principal-audience the scaffold was minted for — the bundle
     //    records it so the 401-retry path in `oidc_lifecycle` knows
@@ -297,7 +338,9 @@ mod tests {
     fn scaffold(expected_state: &str) -> PersistedOidcScaffold {
         PersistedOidcScaffold {
             expected_state: expected_state.to_owned(),
+            expected_nonce: "nonce-1".to_owned(),
             code_verifier: "verifier-bytes".to_owned(),
+            client_id: "yougen-web".to_owned(),
             auth_server_url: "https://issuer.example".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
             principal_actor_did: "did:web:alice.example".to_owned(),
@@ -356,6 +399,25 @@ mod tests {
         let (error, description) = extract_callback_error(url).expect("error present");
         assert_eq!(error, "server_error");
         assert!(description.is_none());
+    }
+
+    fn unsigned_id_token_with_nonce(nonce: &str) -> String {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"alice","nonce":"{nonce}"}}"#));
+        format!("{header}.{payload}.")
+    }
+
+    #[test]
+    fn validate_id_token_nonce_accepts_matching_nonce() {
+        let token = unsigned_id_token_with_nonce("nonce-ok");
+        validate_id_token_nonce(Some(&token), "nonce-ok").expect("matching nonce");
+    }
+
+    #[test]
+    fn validate_id_token_nonce_rejects_missing_or_mismatched_nonce() {
+        assert!(validate_id_token_nonce(None, "nonce-required").is_err());
+        let token = unsigned_id_token_with_nonce("other");
+        assert!(validate_id_token_nonce(Some(&token), "nonce-required").is_err());
     }
 
     #[test]

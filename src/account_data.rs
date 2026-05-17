@@ -95,10 +95,20 @@ impl AccountDataStore {
 
     /// Insert or replace `key` with `value`. Recomputes the canonical digest.
     /// Returns the new record's digest.
-    pub fn set(&mut self, key: AccountDataKey, value: Value, hlc: String) -> anyhow::Result<String> {
+    pub fn set(
+        &mut self,
+        key: AccountDataKey,
+        value: Value,
+        hlc: String,
+    ) -> anyhow::Result<String> {
         let digest = canonical_sha256(&value)?;
         let wire = key.as_wire().to_owned();
-        let record = AccountDataRecord { key: wire.clone(), value, digest: digest.clone(), hlc };
+        let record = AccountDataRecord {
+            key: wire.clone(),
+            value,
+            digest: digest.clone(),
+            hlc,
+        };
         self.entries.insert(wire, record);
         Ok(digest)
     }
@@ -312,7 +322,10 @@ mod tests {
             "Acme · Eng",
         );
         let wire = serde_json::to_value(&remark).unwrap();
-        assert_eq!(wire["space_id"], "cx:space:0196419b-0000-7000-8000-000000000000");
+        assert_eq!(
+            wire["space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000000"
+        );
         assert_eq!(wire["local_name"], "Acme · Eng");
         assert_eq!(wire["version"], 1);
         assert!(wire.get("note").is_none());

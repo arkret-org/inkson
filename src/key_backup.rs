@@ -175,7 +175,10 @@ mod tests {
         assert_eq!(body["encryption"]["kdf"]["t"], 3);
         assert_eq!(body["encryption"]["kdf"]["p"], 4);
         assert_eq!(body["encryption"]["aead"]["name"], "xchacha20_poly1305");
-        assert_eq!(body["encryption"]["aead"]["nonce"], "Tk9OQ0VfQjY0XzI0Ynl0ZXM");
+        assert_eq!(
+            body["encryption"]["aead"]["nonce"],
+            "Tk9OQ0VfQjY0XzI0Ynl0ZXM"
+        );
         assert_eq!(body["contents"][0]["item_type"], "recovery_credentials");
         assert_eq!(body["ciphertext"], "AAAA_CIPHERTEXT_B64");
         assert_eq!(

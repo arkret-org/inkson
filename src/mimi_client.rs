@@ -315,9 +315,7 @@ pub fn parse_provider_directory_summary(
     })
 }
 
-pub fn parse_identifier_query(
-    value: &Value,
-) -> Result<MimiIdentifierQueryResult, MimiClientError> {
+pub fn parse_identifier_query(value: &Value) -> Result<MimiIdentifierQueryResult, MimiClientError> {
     let query = value
         .get("query")
         .and_then(Value::as_str)
@@ -397,10 +395,12 @@ mod tests {
         let summary = parse_provider_directory_summary(&v).expect("ok");
         assert_eq!(summary.service_did, "did:web:chat.example");
         assert_eq!(summary.service_type, "mimi_provider_facade");
-        assert!(summary
-            .supported_profiles
-            .iter()
-            .any(|p| p == "cx.profile.mimi_interop.v1"));
+        assert!(
+            summary
+                .supported_profiles
+                .iter()
+                .any(|p| p == "cx.profile.mimi_interop.v1")
+        );
         assert_eq!(summary.protocol_draft, "draft-ietf-mimi-protocol-06");
         assert!(summary.features.iter().any(|f| f == "submit_message"));
     }

@@ -135,16 +135,16 @@ mod tests {
     fn personal_node_allows_did_web() {
         let policy = policy_for(DeploymentProfile::PersonalNode);
         assert!(policy.permits(&parse("did:web:alice.example")));
-        assert!(policy.permits(&parse("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")));
+        assert!(policy.permits(&parse(
+            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        )));
     }
 
     #[test]
     fn organization_rejects_plain_did_web_principal() {
         let policy = policy_for(DeploymentProfile::Organization);
         assert!(!policy.permits(&parse("did:web:alice.example")));
-        assert!(policy.permits(&parse(
-            "did:webvh:QmExampleScidValue123456:alice.example"
-        )));
+        assert!(policy.permits(&parse("did:webvh:QmExampleScidValue123456:alice.example")));
     }
 
     #[test]

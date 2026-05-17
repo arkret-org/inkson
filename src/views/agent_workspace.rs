@@ -585,8 +585,7 @@ pub fn AgentTaskDetailPage(task_id: String, detail: Signal<Option<AgentTaskDetai
     drop(detail_value);
 
     let banner_message = pending_banner_message(&d.summary);
-    let publish_disabled = d.summary.execution.is_terminal()
-        || d.summary.needs_attention();
+    let publish_disabled = d.summary.execution.is_terminal() || d.summary.needs_attention();
 
     rsx! {
         section {
@@ -772,9 +771,9 @@ impl PublishToSourceArgs {
     pub fn publish_disabled_reason(&self) -> Option<&'static str> {
         match self.current_execution_state {
             ExecutionState::Active => None,
-            ExecutionState::PendingSourceStub => Some(
-                "task pending Phase 3 reconcile; agent has not produced a final draft yet",
-            ),
+            ExecutionState::PendingSourceStub => {
+                Some("task pending Phase 3 reconcile; agent has not produced a final draft yet")
+            }
             ExecutionState::Completed => Some("task already completed"),
             ExecutionState::CancelledStubRejected
             | ExecutionState::CancelledOrphan
@@ -1147,10 +1146,7 @@ pub fn AgentWorkspaceSettings(
 /// chat.rs and timeline.rs MUST call this on each mention candidate's DID
 /// to drive (a) the "my agents" mention candidate group highlight, and
 /// (b) the private compose banner mount decision.
-pub fn is_controller_owned_agent(
-    did: &str,
-    owned_agents: &[OwnedAgentSummary],
-) -> bool {
+pub fn is_controller_owned_agent(did: &str, owned_agents: &[OwnedAgentSummary]) -> bool {
     owned_agents.iter().any(|a| a.agent_did == did)
 }
 

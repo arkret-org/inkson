@@ -103,11 +103,10 @@ fn default_true() -> bool {
     true
 }
 
-/// Persisted shape of the device identity. Stored on disk as 32 raw seed
-/// bytes hex-encoded plus the cached `did:key:z<multibase>` derived from
-/// the verifying key. The `did_key` is recomputed from the seed on load to
-/// guard against tampering / accidental edits — but persisting it makes
-/// the file human-debuggable.
+/// Persisted shape of the device identity. Production callers store this
+/// record in [`crate::secure_key_store::SecureKeyStore`]; plaintext
+/// `state.json` storage is retained only for tests and explicitly enabled
+/// development fallback.
 ///
 /// This replaces the deterministic `[42; 32]` demo seed used by every Move
 /// builder caller (`consent_demo::demo_signing_key`,
@@ -531,14 +530,13 @@ impl LocalAnchorView {
 /// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
 /// not a safety call, so we surface no preference and the operator picks.
 fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
-    let rank: fn(&Value) -> u8 =
-        if cell_ref.starts_with("cx:cell:cx.component.member.state.v1") {
-            member_state_safety_rank
-        } else if cell_ref.starts_with("cx:cell:cx.component.capability.grant.v1") {
-            capability_grant_safety_rank
-        } else {
-            return None;
-        };
+    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("cx:cell:cx.component.member.state.v1") {
+        member_state_safety_rank
+    } else if cell_ref.starts_with("cx:cell:cx.component.capability.grant.v1") {
+        capability_grant_safety_rank
+    } else {
+        return None;
+    };
     let ra = rank(a);
     let rb = rank(b);
     match ra.cmp(&rb) {
@@ -965,6 +963,8 @@ impl Default for LocalStateStore {
 }
 
 impl LocalStateStore {
+    const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
+
     pub fn load(&self) -> ClientLocalState {
         if self.cached != ClientLocalState::default() {
             return self.cached.clone();
@@ -1539,6 +1539,16 @@ impl LocalStateStore {
     /// yet (e.g. fresh install before `ensure_local_identity` has been
     /// called).
     pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Some(record) = load_identity_record_from_secure_store(secure_store.as_ref()) {
+                return Some(record);
+            }
+            if !plaintext_identity_seed_fallback_allowed() {
+                return None;
+            }
+        }
         self.load().local_identity
     }
 
@@ -1574,6 +1584,74 @@ impl LocalStateStore {
     /// alternative is bricking the client, and Contrix v1 is pre-release
     /// so there is no user-facing key recovery story to preserve.
     pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            return self.ensure_local_identity_with_secure_store(secure_store.as_ref());
+        }
+        #[cfg(test)]
+        {
+            self.ensure_local_identity_in_plaintext_state()
+        }
+    }
+
+    pub fn ensure_local_identity_with_secure_store(
+        &mut self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<LocalIdentity> {
+        self.ensure_cached_loaded();
+        if let Some(record) = load_identity_record_from_secure_store(secure_store) {
+            return LocalIdentity::from_record(&record);
+        }
+
+        if let Some(record) = self.cached.local_identity.clone() {
+            let identity = LocalIdentity::from_record(&record)?;
+            match store_identity_record_in_secure_store(secure_store, &record) {
+                Ok(()) => {
+                    self.cached.local_identity = None;
+                    let _ = self.flush();
+                    return Ok(identity);
+                }
+                Err(error) if plaintext_identity_seed_fallback_allowed() => {
+                    tracing::warn!(
+                        ?error,
+                        "secure identity handoff failed; using explicit plaintext identity fallback",
+                    );
+                    return Ok(identity);
+                }
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "secure identity handoff failed and plaintext identity fallback is disabled: {error}"
+                    ));
+                }
+            }
+        }
+
+        let identity = LocalIdentity::generate()?;
+        let record = identity.to_record();
+        match store_identity_record_in_secure_store(secure_store, &record) {
+            Ok(()) => {
+                self.cached.local_identity = None;
+                let _ = self.flush();
+                Ok(identity)
+            }
+            Err(error) if plaintext_identity_seed_fallback_allowed() => {
+                tracing::warn!(
+                    ?error,
+                    "secure identity store unavailable; using explicit plaintext identity fallback",
+                );
+                self.cached.local_identity = Some(record);
+                let _ = self.flush();
+                Ok(identity)
+            }
+            Err(error) => Err(anyhow::anyhow!(
+                "secure identity store unavailable and plaintext identity fallback is disabled: {error}"
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    fn ensure_local_identity_in_plaintext_state(&mut self) -> anyhow::Result<LocalIdentity> {
         self.ensure_cached_loaded();
         if let Some(record) = self.cached.local_identity.as_ref() {
             match LocalIdentity::from_record(record) {
@@ -2040,9 +2118,42 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+fn load_identity_record_from_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Option<LocalIdentityRecord> {
+    match secure_store.get_secret(LocalStateStore::SECURE_IDENTITY_KEY) {
+        Ok(Some(json)) => serde_json::from_str(&json).ok(),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(?error, "secure identity read failed");
+            None
+        }
+    }
+}
+
+fn store_identity_record_in_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    record: &LocalIdentityRecord,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    let json = serde_json::to_string(record).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "serialize identity record: {error}"
+        ))
+    })?;
+    secure_store.store_secret(LocalStateStore::SECURE_IDENTITY_KEY, &json)
+}
+
+fn plaintext_identity_seed_fallback_allowed() -> bool {
+    cfg!(test)
+        || std::env::var("YOUGEN_ALLOW_PLAINTEXT_IDENTITY_SEED")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secure_key_store::SecureKeyStore;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -2681,9 +2792,7 @@ mod tests {
                 ],
             },
         );
-        let (_, _, winner) = view
-            .safer_winner_for(&cell)
-            .expect("revoked beats active");
+        let (_, _, winner) = view.safer_winner_for(&cell).expect("revoked beats active");
         assert_eq!(
             winner.get("status").and_then(|v| v.as_str()),
             Some("revoked")
@@ -2793,7 +2902,10 @@ mod tests {
         assert_eq!(info.heads.len(), 2);
         assert_eq!(info.heads[0].move_id, "cx:event:joined");
         assert_eq!(
-            info.heads[1].value.get("membership").and_then(|v| v.as_str()),
+            info.heads[1]
+                .value
+                .get("membership")
+                .and_then(|v| v.as_str()),
             Some("ban")
         );
     }
@@ -2914,6 +3026,69 @@ mod tests {
         let loaded = reader.local_identity().expect("persisted identity loads");
         assert_eq!(loaded.device_did, id.device_did);
         assert_eq!(loaded.signing_key.to_bytes(), id.signing_key.to_bytes());
+    }
+
+    #[test]
+    fn secure_identity_handoff_moves_seed_out_of_state_record() {
+        let path = temp_state_path("local-identity-secure");
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let id = {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store
+                .ensure_local_identity_with_secure_store(&secure)
+                .expect("secure identity")
+        };
+        assert!(
+            LocalStateStore::with_path(path)
+                .load()
+                .local_identity
+                .is_none(),
+            "state.json must not keep the identity seed after secure-store handoff",
+        );
+        let stored = secure
+            .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
+            .expect("secure read")
+            .expect("identity secret");
+        let record: LocalIdentityRecord = serde_json::from_str(&stored).unwrap();
+        assert_eq!(record.did_key, id.device_did);
+        assert_eq!(
+            LocalIdentity::from_record(&record)
+                .unwrap()
+                .signing_key
+                .to_bytes(),
+            id.signing_key.to_bytes(),
+        );
+    }
+
+    #[test]
+    fn secure_identity_handoff_migrates_existing_plaintext_seed() {
+        let path = temp_state_path("local-identity-migrate");
+        let existing = {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store
+                .ensure_local_identity_in_plaintext_state()
+                .expect("plaintext test identity")
+        };
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let migrated = {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store
+                .ensure_local_identity_with_secure_store(&secure)
+                .expect("secure migration")
+        };
+        assert_eq!(migrated.device_did, existing.device_did);
+        assert!(
+            LocalStateStore::with_path(path)
+                .load()
+                .local_identity
+                .is_none()
+        );
+        assert!(
+            secure
+                .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

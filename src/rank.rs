@@ -36,7 +36,10 @@ pub enum RankError {
     Exhausted,
     /// Input string contained characters outside the alphabet or
     /// exceeded `MAX_RANK_LEN`. Position points at the first bad byte.
-    Invalid { reason: &'static str, position: usize },
+    Invalid {
+        reason: &'static str,
+        position: usize,
+    },
 }
 
 impl fmt::Display for RankError {
@@ -57,10 +60,7 @@ impl std::error::Error for RankError {}
 /// Map an alphabet character to its 0..=61 index. Returns `None` for
 /// any byte outside the alphabet — callers convert to [`RankError::Invalid`].
 fn char_value(b: u8) -> Option<i32> {
-    ALPHABET
-        .iter()
-        .position(|&c| c == b)
-        .map(|v| v as i32)
+    ALPHABET.iter().position(|&c| c == b).map(|v| v as i32)
 }
 
 /// Returns `Ok(())` when every byte in `s` is in the alphabet and
@@ -207,13 +207,7 @@ mod tests {
     #[test]
     fn validate_rejects_non_alphabet_characters() {
         let err = validate("ab cd").unwrap_err();
-        assert!(matches!(
-            err,
-            RankError::Invalid {
-                position: 2,
-                ..
-            }
-        ));
+        assert!(matches!(err, RankError::Invalid { position: 2, .. }));
     }
 
     #[test]

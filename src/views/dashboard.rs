@@ -36,10 +36,7 @@ pub fn DashboardPanel(
             .notification_projection
             .iter()
             .filter(|value| {
-                let id = value
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
+                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or_default();
                 let client_state = snapshot
                     .notification_client_state
                     .get(id)

@@ -15,7 +15,11 @@ use crate::operation::OperationBuilder;
 
 /// Build a `cx.morph.create` operation. Body shape mirrors
 /// `models/morph.md` §3 (typed Morph object).
-pub fn build_morph_create(space_id: &str, actor: &str, morph: &Morph) -> anyhow::Result<OperationBuilder> {
+pub fn build_morph_create(
+    space_id: &str,
+    actor: &str,
+    morph: &Morph,
+) -> anyhow::Result<OperationBuilder> {
     let value = serde_json::to_value(morph)?;
     Ok(OperationBuilder::new(space_id, actor, "cx.morph.create")
         .target_ref(space_id)

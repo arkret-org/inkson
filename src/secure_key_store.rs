@@ -592,7 +592,10 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
             }
         }
     }
-    #[cfg(all(not(target_arch = "wasm32"), any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
     {
         Arc::new(KeyringSecureKeyStore::new(service_name.to_owned()))
     }
@@ -716,9 +719,7 @@ impl LocalStorageSecureKeyStore {
         window
             .local_storage()
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage: {err:?}")))?
-            .ok_or_else(|| {
-                SecureKeyStoreError::Unsupported("window.localStorage not available")
-            })
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage not available"))
     }
 
     pub(super) fn wrapping_seed_key(service_name: &str) -> String {
@@ -939,8 +940,8 @@ impl IndexedDbSecureKeyStore {
         let result = JsFuture::from(js_sys::Promise::new(&mut |resolve, reject| {
             let resolve_clone = resolve.clone();
             let reject_clone = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
                     if let Some(request) = event
                         .target()
                         .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
@@ -954,26 +955,25 @@ impl IndexedDbSecureKeyStore {
                             }
                         }
                     }
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |event: web_sys::Event| {
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
                     let err = event
                         .target()
                         .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
                         .and_then(|r| r.error().ok())
                         .map(|opt| {
-                            opt.map(wasm_bindgen::JsValue::from)
-                                .unwrap_or(wasm_bindgen::JsValue::from_str(
+                            opt.map(wasm_bindgen::JsValue::from).unwrap_or(
+                                wasm_bindgen::JsValue::from_str(
                                     "indexedDB open error (no DOMException)",
-                                ))
+                                ),
+                            )
                         })
                         .unwrap_or_else(|| {
                             wasm_bindgen::JsValue::from_str("indexedDB open error (no target)")
                         });
                     let _ = reject.call1(&wasm_bindgen::JsValue::NULL, &err);
-                },
-            );
+                });
             open_req.set_onsuccess(Some(on_success.unchecked_ref()));
             open_req.set_onerror(Some(on_error.unchecked_ref()));
         }))
@@ -983,9 +983,9 @@ impl IndexedDbSecureKeyStore {
         // intentionally leaks because the closure has the lifetime
         // of the request which is consumed once.
         on_upgrade.forget();
-        let db: web_sys::IdbDatabase = result
-            .dyn_into()
-            .map_err(|_| SecureKeyStoreError::Backend("open did not return IdbDatabase".to_owned()))?;
+        let db: web_sys::IdbDatabase = result.dyn_into().map_err(|_| {
+            SecureKeyStoreError::Backend("open did not return IdbDatabase".to_owned())
+        })?;
         Ok(db)
     }
 
@@ -1018,9 +1018,8 @@ impl IndexedDbSecureKeyStore {
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
-        let window = web_sys::window().ok_or_else(|| {
-            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
-        })?;
+        let window = web_sys::window()
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -1145,8 +1144,8 @@ impl IndexedDbSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("get: {err:?}")))?;
         let promise = js_sys::Promise::new(&mut |resolve, reject| {
             let reject_for_error = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
                     if let Some(req) = event
                         .target()
                         .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
@@ -1160,16 +1159,12 @@ impl IndexedDbSecureKeyStore {
                             }
                         }
                     }
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
-                    let _ = reject_for_error.call1(
-                        &JsValue::NULL,
-                        &JsValue::from_str("indexedDB get error"),
-                    );
-                },
-            );
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
+                    let _ = reject_for_error
+                        .call1(&JsValue::NULL, &JsValue::from_str("indexedDB get error"));
+                });
             request.set_onsuccess(Some(on_success.unchecked_ref()));
             request.set_onerror(Some(on_error.unchecked_ref()));
         });
@@ -1204,19 +1199,14 @@ impl IndexedDbSecureKeyStore {
         let promise = js_sys::Promise::new(&mut |resolve, reject| {
             let resolve = resolve.clone();
             let reject = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
                     let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
-                    let _ = reject.call1(
-                        &JsValue::NULL,
-                        &JsValue::from_str("indexedDB put error"),
-                    );
-                },
-            );
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
+                    let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("indexedDB put error"));
+                });
             request.set_onsuccess(Some(on_success.unchecked_ref()));
             request.set_onerror(Some(on_error.unchecked_ref()));
         });
@@ -1246,19 +1236,15 @@ impl IndexedDbSecureKeyStore {
         let promise = js_sys::Promise::new(&mut |resolve, reject| {
             let resolve = resolve.clone();
             let reject = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
                     let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
-                    let _ = reject.call1(
-                        &JsValue::NULL,
-                        &JsValue::from_str("indexedDB delete error"),
-                    );
-                },
-            );
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
+                    let _ =
+                        reject.call1(&JsValue::NULL, &JsValue::from_str("indexedDB delete error"));
+                });
             request.set_onsuccess(Some(on_success.unchecked_ref()));
             request.set_onerror(Some(on_error.unchecked_ref()));
         });
@@ -1293,8 +1279,8 @@ impl IndexedDbSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys: {err:?}")))?;
         let values_promise = js_sys::Promise::new(&mut |resolve, reject| {
             let reject_for_error = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
                     if let Some(req) = event
                         .target()
                         .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
@@ -1308,23 +1294,19 @@ impl IndexedDbSecureKeyStore {
                             }
                         }
                     }
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
-                    let _ = reject_for_error.call1(
-                        &JsValue::NULL,
-                        &JsValue::from_str("indexedDB getAll error"),
-                    );
-                },
-            );
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
+                    let _ = reject_for_error
+                        .call1(&JsValue::NULL, &JsValue::from_str("indexedDB getAll error"));
+                });
             values_req.set_onsuccess(Some(on_success.unchecked_ref()));
             values_req.set_onerror(Some(on_error.unchecked_ref()));
         });
         let keys_promise = js_sys::Promise::new(&mut |resolve, reject| {
             let reject_for_error = reject.clone();
-            let on_success = wasm_bindgen::closure::Closure::once_into_js(
-                move |event: web_sys::Event| {
+            let on_success =
+                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
                     if let Some(req) = event
                         .target()
                         .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
@@ -1338,16 +1320,14 @@ impl IndexedDbSecureKeyStore {
                             }
                         }
                     }
-                },
-            );
-            let on_error = wasm_bindgen::closure::Closure::once_into_js(
-                move |_event: web_sys::Event| {
+                });
+            let on_error =
+                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
                     let _ = reject_for_error.call1(
                         &JsValue::NULL,
                         &JsValue::from_str("indexedDB getAllKeys error"),
                     );
-                },
-            );
+                });
             keys_req.set_onsuccess(Some(on_success.unchecked_ref()));
             keys_req.set_onerror(Some(on_error.unchecked_ref()));
         });
@@ -1404,9 +1384,8 @@ impl IndexedDbSecureKeyStore {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
-        let window = web_sys::window().ok_or_else(|| {
-            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
-        })?;
+        let window = web_sys::window()
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -1437,9 +1416,9 @@ impl IndexedDbSecureKeyStore {
         let result = JsFuture::from(promise)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("encrypt awaited: {err:?}")))?;
-        let buf: js_sys::ArrayBuffer = result
-            .dyn_into()
-            .map_err(|_| SecureKeyStoreError::Backend("encrypt did not return ArrayBuffer".to_owned()))?;
+        let buf: js_sys::ArrayBuffer = result.dyn_into().map_err(|_| {
+            SecureKeyStoreError::Backend("encrypt did not return ArrayBuffer".to_owned())
+        })?;
         let view = Uint8Array::new(&buf);
         let mut ct = vec![0u8; view.length() as usize];
         view.copy_to(&mut ct);
@@ -1459,9 +1438,8 @@ impl IndexedDbSecureKeyStore {
             ));
         }
         let (iv, ct) = packed.split_at(12);
-        let window = web_sys::window().ok_or_else(|| {
-            SecureKeyStoreError::Unsupported("web_sys::window unavailable")
-        })?;
+        let window = web_sys::window()
+            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -1489,9 +1467,9 @@ impl IndexedDbSecureKeyStore {
         let result = JsFuture::from(promise)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("decrypt awaited: {err:?}")))?;
-        let buf: js_sys::ArrayBuffer = result
-            .dyn_into()
-            .map_err(|_| SecureKeyStoreError::Backend("decrypt did not return ArrayBuffer".to_owned()))?;
+        let buf: js_sys::ArrayBuffer = result.dyn_into().map_err(|_| {
+            SecureKeyStoreError::Backend("decrypt did not return ArrayBuffer".to_owned())
+        })?;
         let view = Uint8Array::new(&buf);
         let mut out = vec![0u8; view.length() as usize];
         view.copy_to(&mut out);
@@ -1655,9 +1633,7 @@ pub async fn upgrade_wasm_secure_key_store_async(
             0
         });
     if migrated > 0 {
-        tracing::info!(
-            "H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB"
-        );
+        tracing::info!("H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB");
     }
     Ok(Some(Arc::new(store)))
 }
@@ -1769,11 +1745,7 @@ fn indexeddb_and_subtle_available() -> bool {
     let Some(window) = web_sys::window() else {
         return false;
     };
-    let idb_present = window
-        .indexed_db()
-        .ok()
-        .flatten()
-        .is_some();
+    let idb_present = window.indexed_db().ok().flatten().is_some();
     // `crypto.subtle()` on web_sys returns a `SubtleCrypto` directly
     // (no `Result` / `Option`), but the underlying property access
     // panics on browsers that don't expose it. Probe by catching the
@@ -1823,7 +1795,11 @@ mod tests {
         let last_idx = tampered.len() - 1;
         // Flip a single base64 character — close to guaranteed to break
         // the MAC.
-        tampered[last_idx] = if tampered[last_idx] == b'A' { b'B' } else { b'A' };
+        tampered[last_idx] = if tampered[last_idx] == b'A' {
+            b'B'
+        } else {
+            b'A'
+        };
         let tampered = String::from_utf8(tampered).unwrap();
         let recovered_tampered = unwrap_secret(&tampered, &key).expect("unwrap call ok");
         assert!(recovered_tampered.is_none());
@@ -1839,7 +1815,11 @@ mod tests {
         assert!(unwrap_secret("not-base64-@@!!", &key).unwrap().is_none());
         assert!(unwrap_secret("", &key).unwrap().is_none());
         // Valid base64 but shorter than 12 bytes (no nonce).
-        assert!(unwrap_secret(&STANDARD_NO_PAD.encode([0u8; 8]), &key).unwrap().is_none());
+        assert!(
+            unwrap_secret(&STANDARD_NO_PAD.encode([0u8; 8]), &key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1987,8 +1967,7 @@ mod tests {
     #[cfg(target_os = "ios")]
     #[test]
     fn ios_keychain_via_bridge_round_trips_secrets() {
-        let bridge: Arc<dyn HostSecretBridge> =
-            Arc::new(TestHostSecretBridge::new("ios-keychain"));
+        let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("ios-keychain"));
         let store = IosKeychainSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
         assert_eq!(store.service_name(), "yougen.test.unit");
         assert_eq!(store.backend_name(), "ios-keychain");
@@ -2008,8 +1987,7 @@ mod tests {
     /// surface).
     #[test]
     fn host_bridge_store_namespaces_by_service_name() {
-        let bridge: Arc<dyn HostSecretBridge> =
-            Arc::new(TestHostSecretBridge::new("test-bridge"));
+        let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("test-bridge"));
         let store_a = HostBridgeSecureKeyStore::new("svc.a", bridge.clone());
         let store_b = HostBridgeSecureKeyStore::new("svc.b", bridge.clone());
         store_a.store_secret("k", "v-a").unwrap();
@@ -2028,8 +2006,7 @@ mod tests {
     /// Android Keystore vs iOS Keychain.
     #[test]
     fn host_bridge_store_surface_backend_label_from_bridge() {
-        let bridge: Arc<dyn HostSecretBridge> =
-            Arc::new(TestHostSecretBridge::new("custom-label"));
+        let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("custom-label"));
         let store = HostBridgeSecureKeyStore::new("svc", bridge);
         assert_eq!(store.backend_name(), "custom-label");
     }

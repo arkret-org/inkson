@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
-use qrcode::{render::svg, EcLevel, QrCode};
-use serde_json::json;
+use qrcode::{EcLevel, QrCode, render::svg};
 
 use crate::{
     cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan},
@@ -51,7 +50,11 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
             .get("body")
             .or_else(|| entry.get("content"))
             .and_then(|v| v.as_object())?;
-        let key = body.get("key").and_then(|v| v.as_str())?;
+        let key = body.get("key").and_then(|v| v.as_str()).or_else(|| {
+            body.get("device_envelope")
+                .and_then(|v| v.get("local_public_key"))
+                .and_then(|v| v.as_str())
+        })?;
         if key.trim().is_empty() {
             return None;
         }
@@ -146,6 +149,27 @@ mod verification_key_poll_tests {
         });
         assert!(extract_peer_verification_key(&resp).is_none());
     }
+
+    #[test]
+    fn picks_key_out_of_signed_device_envelope() {
+        let resp = json!({
+            "events": [
+                {
+                    "type": "cx.key.verification.key",
+                    "body": {
+                        "device_envelope": {
+                            "local_public_key": "signed-pub-b64=="
+                        },
+                        "signature": {"alg": "EdDSA", "jws": "a.b.c"}
+                    }
+                }
+            ]
+        });
+        assert_eq!(
+            extract_peer_verification_key(&resp).as_deref(),
+            Some("signed-pub-b64==")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -188,7 +212,9 @@ pub fn VerifyDevicePanel(
     let persisted_publish_label = state_store
         .read()
         .load_private_data(&account_did, "cross_signing.publish.latest")
-        .and_then(|json| serde_json::from_str::<contrix_sdk::CrossSigningPublishContent>(&json).ok())
+        .and_then(|json| {
+            serde_json::from_str::<contrix_sdk::CrossSigningPublishContent>(&json).ok()
+        })
         .map(|p| {
             format!(
                 "Last cross-signing publish for {} (generation {})",
@@ -212,9 +238,9 @@ pub fn VerifyDevicePanel(
     // emoji + decimal pair from the real X25519 shared secret
     // instead of the `target_device_did + sas_code` placeholder
     // info.
-    let mut ephemeral_keypair = use_signal(
-        || Option::<std::sync::Arc<contrix_sdk::key_verification::EphemeralX25519Keypair>>::None,
-    );
+    let mut ephemeral_keypair = use_signal(|| {
+        Option::<std::sync::Arc<contrix_sdk::key_verification::EphemeralX25519Keypair>>::None
+    });
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
 
@@ -391,16 +417,45 @@ pub fn VerifyDevicePanel(
                                 "data-testid": "start-sas-button",
                                 onclick: {
                                     let base = base_url.clone();
+                                    let actor_for_sas_start = account_did.clone();
+                                    let from_device_for_sas_start = device_id.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let target = target_device();
                                         let api_token = token();
+                                        let actor = actor_for_sas_start.clone();
+                                        let from_device = from_device_for_sas_start.clone();
                                         spawn(async move {
+                                            let identity = match state_store.write().ensure_local_identity() {
+                                                Ok(identity) => identity,
+                                                Err(error) => {
+                                                    verify_status.set(format!(
+                                                        "SAS failed: secure device signing key unavailable: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            let proof = match crate::api::build_signed_device_verification_proof(
+                                                &actor,
+                                                &from_device,
+                                                &target,
+                                                "sas",
+                                                None,
+                                                None,
+                                                None,
+                                                &identity.signing_key,
+                                            ) {
+                                                Ok(proof) => proof,
+                                                Err(error) => {
+                                                    verify_status.set(format!("SAS failed: could not sign proof: {error}"));
+                                                    return;
+                                                }
+                                            };
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.verify_device(&target, "sas", json!({})).await
+                                                    api.verify_device(&target, "sas", proof).await
                                                 },
                                             )
                                             .await
@@ -457,6 +512,7 @@ pub fn VerifyDevicePanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let account = account_did.clone();
+                                        let from_device_for_send = device_id.clone();
                                         move |_| {
                                             let Some(pair) = ephemeral_keypair() else {
                                                 sas_send_status.set("generate a keypair first".to_owned());
@@ -470,8 +526,34 @@ pub fn VerifyDevicePanel(
                                             let public_b64 = pair.public_base64();
                                             let base = base.clone();
                                             let account = account.clone();
+                                            let from_device = from_device_for_send.clone();
                                             let api_token = token();
                                             spawn(async move {
+                                                let identity = match state_store.write().ensure_local_identity() {
+                                                    Ok(identity) => identity,
+                                                    Err(error) => {
+                                                        sas_send_status.set(format!(
+                                                            "send failed: secure device signing key unavailable: {error}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
+                                                let signed_content = match crate::api::build_signed_device_verification_proof(
+                                                    &account,
+                                                    &from_device,
+                                                    &target,
+                                                    "sas_key",
+                                                    None,
+                                                    Some(&public_b64),
+                                                    None,
+                                                    &identity.signing_key,
+                                                ) {
+                                                    Ok(proof) => proof,
+                                                    Err(error) => {
+                                                        sas_send_status.set(format!("send failed: could not sign key envelope: {error}"));
+                                                        return;
+                                                    }
+                                                };
                                                 match crate::views::helpers::with_authed_api(
                                                     &base,
                                                     api_token,
@@ -481,10 +563,7 @@ pub fn VerifyDevicePanel(
                                                             &account,
                                                             &target,
                                                             "cx.key.verification.key",
-                                                            json!({
-                                                                "key": public_b64.clone(),
-                                                                "from_device": target.clone(),
-                                                            }),
+                                                            signed_content,
                                                         )
                                                         .await
                                                     },
@@ -601,7 +680,70 @@ pub fn VerifyDevicePanel(
                                     button {
                                         class: "primary",
                                         "data-testid": "sas-match-button",
-                                        onclick: move |_| verify_status.set("Verified. Preparing device authorization and cross-signing.".to_owned()),
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let actor = account_did.clone();
+                                            let from_device = device_id.clone();
+                                            let target = target_device();
+                                            let local_public = ephemeral_keypair()
+                                                .map(|pair| pair.public_base64())
+                                                .unwrap_or_default();
+                                            let peer_public = peer_public_b64();
+                                            let sas_decimal = sas.decimal_digits;
+                                            move |_| {
+                                                if local_public.trim().is_empty() || peer_public.trim().is_empty() {
+                                                    verify_status.set("SAS proof requires both signed X25519 public keys; generate/send your key and wait for the peer key first.".to_owned());
+                                                    return;
+                                                }
+                                                let base = base.clone();
+                                                let actor = actor.clone();
+                                                let from_device = from_device.clone();
+                                                let target = target.clone();
+                                                let local_public = local_public.clone();
+                                                let peer_public = peer_public.clone();
+                                                let api_token = token();
+                                                spawn(async move {
+                                                    let identity = match state_store.write().ensure_local_identity() {
+                                                        Ok(identity) => identity,
+                                                        Err(error) => {
+                                                            verify_status.set(format!(
+                                                                "SAS failed: secure device signing key unavailable: {error}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let proof = match crate::api::build_signed_device_verification_proof(
+                                                        &actor,
+                                                        &from_device,
+                                                        &target,
+                                                        "sas",
+                                                        Some(sas_decimal),
+                                                        Some(&local_public),
+                                                        Some(&peer_public),
+                                                        &identity.signing_key,
+                                                    ) {
+                                                        Ok(proof) => proof,
+                                                        Err(error) => {
+                                                            verify_status.set(format!("SAS failed: could not sign proof: {error}"));
+                                                            return;
+                                                        }
+                                                    };
+                                                    match crate::views::helpers::with_authed_api(
+                                                        &base,
+                                                        api_token,
+                                                        |api| async move { api.verify_device(&target, "sas", proof).await },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(resp) => verify_status.set(format!(
+                                                            "Verified {} with signed SAS proof ({})",
+                                                            resp.device_id, resp.trust_state
+                                                        )),
+                                                        Err(err) => verify_status.set(format!("SAS proof rejected: {}", err.display())),
+                                                    }
+                                                });
+                                            }
+                                        },
                                         "They Match"
                                     }
                                     button {
@@ -707,16 +849,45 @@ pub fn VerifyDevicePanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let dev_id = entry.device_id.clone();
+                                    let actor_for_verify = account_did.clone();
+                                    let from_device_for_verify = device_id.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let dev_id = dev_id.clone();
                                         let api_token = token();
+                                        let actor = actor_for_verify.clone();
+                                        let from_device = from_device_for_verify.clone();
                                         spawn(async move {
+                                            let identity = match state_store.write().ensure_local_identity() {
+                                                Ok(identity) => identity,
+                                                Err(error) => {
+                                                    verify_status.set(format!(
+                                                        "verify failed: secure device signing key unavailable: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            let proof = match crate::api::build_signed_device_verification_proof(
+                                                &actor,
+                                                &from_device,
+                                                &dev_id,
+                                                "sas",
+                                                None,
+                                                None,
+                                                None,
+                                                &identity.signing_key,
+                                            ) {
+                                                Ok(proof) => proof,
+                                                Err(error) => {
+                                                    verify_status.set(format!("verify failed: could not sign proof: {error}"));
+                                                    return;
+                                                }
+                                            };
                                             let _ = crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.verify_device(&dev_id, "sas", json!({})).await
+                                                    api.verify_device(&dev_id, "sas", proof).await
                                                 },
                                             )
                                             .await;
@@ -1000,10 +1171,7 @@ mod cross_signing_view_tests {
 
     #[test]
     fn initial_plan_lists_publish_and_device_authorized_events() {
-        let plan = CrossSigningSetupPlan::build_initial(
-            "did:webvh:alice.example",
-            "cx:device:01a",
-        );
+        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "cx:device:01a");
         let kinds = plan.event_kinds();
         assert!(kinds.contains(&"cx.cross_signing.publish.v1"));
         assert!(kinds.contains(&"cx.device.authorized"));

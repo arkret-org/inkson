@@ -151,7 +151,10 @@ mod restore_parse_tests {
             "ciphertext": "Q1Q"
         }))
         .unwrap();
-        assert_eq!(row.backup_id, "cx:backup:01964137-0000-7000-8000-000000000000");
+        assert_eq!(
+            row.backup_id,
+            "cx:backup:01964137-0000-7000-8000-000000000000"
+        );
         assert_eq!(row.backup_class, "recovery_vault");
         assert_eq!(row.backup_version, "kb_1");
         assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
@@ -227,17 +230,16 @@ fn load_state(state_store: &Signal<LocalStateStore>, account_key: &str) -> Recov
     if account_key.is_empty() {
         return RecoveryState::default();
     }
-    match state_store.read().load_private_data(account_key, RECOVERY_STATE_KEY) {
+    match state_store
+        .read()
+        .load_private_data(account_key, RECOVERY_STATE_KEY)
+    {
         Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         None => RecoveryState::default(),
     }
 }
 
-fn save_state(
-    state_store: &mut Signal<LocalStateStore>,
-    account_key: &str,
-    state: &RecoveryState,
-) {
+fn save_state(state_store: &mut Signal<LocalStateStore>, account_key: &str, state: &RecoveryState) {
     if account_key.is_empty() {
         return;
     }

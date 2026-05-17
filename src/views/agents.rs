@@ -85,7 +85,10 @@ fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
     let Some(binding) = payload.get("audit_binding") else {
         return AuditVerifyStatus::Absent;
     };
-    let kind = binding.get("binding_kind").and_then(Value::as_str).unwrap_or("");
+    let kind = binding
+        .get("binding_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if kind != "ed25519_v1" {
         return AuditVerifyStatus::Unsupported;
     }
@@ -108,7 +111,10 @@ fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
         .get("canonical_subject")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let signature = binding.get("signature").and_then(Value::as_str).unwrap_or("");
+    let signature = binding
+        .get("signature")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let public_key_b64 = match binding.get("public_key_b64").and_then(Value::as_str) {
         Some(s) => s,
         None => return AuditVerifyStatus::Malformed,
@@ -193,10 +199,8 @@ pub fn AgentsPanel(
                     {
                         Ok(r) => r,
                         Err(err) => {
-                            incoming_status.set(format!(
-                                "agent results fetch failed: {}",
-                                err.display()
-                            ));
+                            incoming_status
+                                .set(format!("agent results fetch failed: {}", err.display()));
                             crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
                             continue;
                         }
@@ -215,10 +219,7 @@ pub fn AgentsPanel(
                             .and_then(Value::as_str)
                             .unwrap_or("?")
                             .to_owned();
-                        let payload = event
-                            .get("payload")
-                            .cloned()
-                            .unwrap_or(Value::Null);
+                        let payload = event.get("payload").cloned().unwrap_or(Value::Null);
                         collected.push((event_id, payload));
                     }
                     let new_count = collected.len();
@@ -228,9 +229,7 @@ pub fn AgentsPanel(
                     let prev_count = incoming_results.read().len();
                     let delta = new_count.saturating_sub(prev_count);
                     incoming_status.set(if delta > 0 {
-                        format!(
-                            "{new_count} result event(s) ({delta} new since last poll)"
-                        )
+                        format!("{new_count} result event(s) ({delta} new since last poll)")
                     } else {
                         format!("{new_count} result event(s) fetched")
                     });

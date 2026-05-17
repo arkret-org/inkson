@@ -29,9 +29,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     api::{ContrixApi, SessionGrantIntrospectionProof},
-    coauth::{
-        build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
-    },
+    coauth::{build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem},
     local_state::{LocalStateStore, PersistedSessionGrant},
     models::DevLoginResponse,
 };

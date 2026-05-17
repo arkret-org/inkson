@@ -304,8 +304,8 @@ mod tests {
     fn decrypt_rejects_wrong_passphrase() {
         let kek = derive_vault_kek_with_salt(b"first", &[3u8; VAULT_SALT_LEN]).unwrap();
         let ct = encrypt_vault(&kek, b"payload").unwrap();
-        let err = decrypt_vault(b"second", &ct.salt_b64, &ct.nonce_b64, &ct.ciphertext_b64)
-            .unwrap_err();
+        let err =
+            decrypt_vault(b"second", &ct.salt_b64, &ct.nonce_b64, &ct.ciphertext_b64).unwrap_err();
         assert!(err.to_string().contains("vault decrypt failed"));
     }
 
@@ -358,7 +358,11 @@ mod tests {
         let fp = fingerprint_recovery_key("EAGLE-HARP-SUNDAY-ROOK-9F2C-Q1A0");
         assert!(fp.starts_with("sha256:"));
         assert_eq!(fp.len(), "sha256:".len() + 64);
-        assert!(fp.chars().skip("sha256:".len()).all(|c| c.is_ascii_hexdigit()));
+        assert!(
+            fp.chars()
+                .skip("sha256:".len())
+                .all(|c| c.is_ascii_hexdigit())
+        );
         let fp2 = fingerprint_recovery_key("EAGLE-HARP-SUNDAY-ROOK-9F2C-Q1A0");
         assert_eq!(fp, fp2);
     }
@@ -366,7 +370,10 @@ mod tests {
     #[test]
     fn passphrase_strength_grows_with_length_and_classes() {
         assert_eq!(estimate_passphrase_strength(""), 0);
-        assert!(estimate_passphrase_strength("short") < estimate_passphrase_strength("longerpassphrase"));
+        assert!(
+            estimate_passphrase_strength("short")
+                < estimate_passphrase_strength("longerpassphrase")
+        );
         assert!(
             estimate_passphrase_strength("alllowercaseonly")
                 < estimate_passphrase_strength("Alllowercaseonly1!")

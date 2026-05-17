@@ -336,7 +336,11 @@ impl CrossSigningSetupOutput {
     ) -> Result<(), SecureKeyStoreError> {
         let generation = self.publish_content.generation;
         store.store_secret(
-            &secure_key_store_key(principal_did, generation, CrossSigningKeyRole::PrincipalSigning),
+            &secure_key_store_key(
+                principal_did,
+                generation,
+                CrossSigningKeyRole::PrincipalSigning,
+            ),
             &hex_encode(&self.principal_signing_key.to_bytes()),
         )?;
         store.store_secret(
@@ -363,10 +367,12 @@ impl CrossSigningSetupOutput {
     ) -> anyhow::Result<OperationEnvelope> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
-        Ok(OperationBuilder::new(space_id, actor, "cx.cross_signing.publish.v1")
-            .target_ref(self.publish_content.principal_id.as_str())
-            .body(body)
-            .build("yougen"))
+        Ok(
+            OperationBuilder::new(space_id, actor, "cx.cross_signing.publish.v1")
+                .target_ref(self.publish_content.principal_id.as_str())
+                .body(body)
+                .build("yougen"),
+        )
     }
 }
 
@@ -450,9 +456,21 @@ impl CrossSigningExecutor {
         // method on the principal DID. Stable suffixes mirror the
         // `cx_principal_signing_v1` / `cx_self_signing_v1` / `cx_user_signing_v1`
         // names recommended by the v1 core registry.
-        let psk_kid = format!("{}#cx_principal_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
-        let ssk_kid = format!("{}#cx_self_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
-        let usk_kid = format!("{}#cx_user_signing_v{}", self.principal_did.as_str(), self.plan.new_generation);
+        let psk_kid = format!(
+            "{}#cx_principal_signing_v{}",
+            self.principal_did.as_str(),
+            self.plan.new_generation
+        );
+        let ssk_kid = format!(
+            "{}#cx_self_signing_v{}",
+            self.principal_did.as_str(),
+            self.plan.new_generation
+        );
+        let usk_kid = format!(
+            "{}#cx_user_signing_v{}",
+            self.principal_did.as_str(),
+            self.plan.new_generation
+        );
 
         let psk_record = CrossSigningKeyRecord {
             kid: psk_kid.clone(),
@@ -647,14 +665,8 @@ mod tests {
             a.principal_signing_key.to_bytes(),
             b.principal_signing_key.to_bytes()
         );
-        assert_ne!(
-            a.self_signing_key.to_bytes(),
-            b.self_signing_key.to_bytes()
-        );
-        assert_ne!(
-            a.user_signing_key.to_bytes(),
-            b.user_signing_key.to_bytes()
-        );
+        assert_ne!(a.self_signing_key.to_bytes(), b.self_signing_key.to_bytes());
+        assert_ne!(a.user_signing_key.to_bytes(), b.user_signing_key.to_bytes());
     }
 
     #[test]
@@ -667,7 +679,8 @@ mod tests {
         let out = executor.run().unwrap();
 
         let store = MemorySecureKeyStore::new();
-        out.persist_private_keys(&store, principal.as_str()).unwrap();
+        out.persist_private_keys(&store, principal.as_str())
+            .unwrap();
 
         let generation = out.publish_content.generation;
         let psk = load_signing_key(

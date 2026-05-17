@@ -189,9 +189,9 @@ impl Route {
             Route::Quarantine => View::Quarantine,
             Route::Applets => View::Applets,
             Route::Agents => View::Agents,
-            Route::AgentWorkspace
-            | Route::AgentTask { .. }
-            | Route::AgentWorkspaceSettings => View::AgentWorkspace,
+            Route::AgentWorkspace | Route::AgentTask { .. } | Route::AgentWorkspaceSettings => {
+                View::AgentWorkspace
+            }
         }
     }
 

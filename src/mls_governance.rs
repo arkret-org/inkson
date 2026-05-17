@@ -19,8 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use contrix_sdk::mls_move::{
-    covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects,
-    mls_commit_preconditions,
+    covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
 };
 use contrix_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
 
@@ -77,13 +76,9 @@ impl GovernanceBindingPayload {
         // server enforces `mls_governance_binding.full.v1` by checking that
         // the submitted Move's preconditions/effects EXACTLY match these
         // SDK-derived shapes — yougen must not re-derive or shorten them.
-        let preconditions = mls_commit_preconditions(
-            &group_id,
-            space_id,
-            prev_epoch,
-            attested_governance_anchor,
-        )
-        .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;
+        let preconditions =
+            mls_commit_preconditions(&group_id, space_id, prev_epoch, attested_governance_anchor)
+                .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;
         let effects = mls_commit_effects(
             &group_id,
             space_id,
@@ -138,8 +133,7 @@ impl GovernanceBindingPayload {
 
 /// The `cx.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str =
-    "cx.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
 
 #[cfg(test)]
 mod tests {
@@ -155,11 +149,7 @@ mod tests {
     }
 
     fn schedule_hash() -> Hash {
-        Hash::new(format!(
-            "sha256:{}",
-            "0".repeat(64)
-        ))
-        .unwrap()
+        Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap()
     }
 
     #[test]
@@ -176,10 +166,7 @@ mod tests {
         assert_eq!(payload.prev_epoch, 7);
         assert_eq!(payload.new_epoch, 8);
         assert!(payload.covered_frontier_cell.contains("covered_frontier"));
-        assert_eq!(
-            payload.covered_frontier_tag,
-            anchor().as_str()
-        );
+        assert_eq!(payload.covered_frontier_tag, anchor().as_str());
     }
 
     #[test]
@@ -200,10 +187,7 @@ mod tests {
         assert_eq!(payload.preconditions.len(), 2);
         assert_eq!(payload.effects.len(), 3);
         let body = payload.to_commit_body();
-        assert_eq!(
-            body["preconditions"].as_array().map(|a| a.len()),
-            Some(2)
-        );
+        assert_eq!(body["preconditions"].as_array().map(|a| a.len()), Some(2));
         assert_eq!(body["effects"].as_array().map(|a| a.len()), Some(3));
     }
 

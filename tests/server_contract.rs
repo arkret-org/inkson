@@ -331,9 +331,16 @@ fn yougen_config_store_preserves_server_actor_device_and_token() {
 
 #[test]
 fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
-    let mut alice =
-        yougen::crypto::LocalMlsDevice::new("did:web:alice.example", "dev_alice_1").unwrap();
-    let mut bob = yougen::crypto::LocalMlsDevice::new("did:web:bob.example", "dev_bob_1").unwrap();
+    let mut alice = yougen::crypto::LocalMlsDevice::new(
+        "did:web:alice.example",
+        "cx:device:01904100-0000-7000-8000-000000000001",
+    )
+    .unwrap();
+    let mut bob = yougen::crypto::LocalMlsDevice::new(
+        "did:web:bob.example",
+        "cx:device:01904100-0000-7000-8000-000000000002",
+    )
+    .unwrap();
     let bob_keys = bob.key_package_record().unwrap();
 
     alice
@@ -462,12 +469,19 @@ fn bare_401_does_not_count_as_session_loss() {
 
     // A 401 with an unrelated error code (e.g. rate-limit / policy_denied
     // wrapped at the 401 layer) must also stay transient. Only explicit
-    // session-death codes from the spec — auth_expired / M_UNKNOWN_TOKEN /
-    // invalid_token / token_expired — should drop the session.
-    for code in ["auth_expired", "M_UNKNOWN_TOKEN", "invalid_token", "token_expired"] {
-        let body = format!(
-            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#
-        );
+    // session-death codes from the spec — auth_expired / unauthenticated /
+    // soft_logged_out / M_UNKNOWN_TOKEN / invalid_token / token_expired —
+    // should drop the session.
+    for code in [
+        "auth_expired",
+        "unauthenticated",
+        "soft_logged_out",
+        "M_UNKNOWN_TOKEN",
+        "invalid_token",
+        "token_expired",
+    ] {
+        let body =
+            format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let envelope: anyhow::Error = ContrixApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),

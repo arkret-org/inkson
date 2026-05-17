@@ -201,6 +201,11 @@ fn compose_local_encrypted_message_inner(
     message_id: &str,
     body: &str,
 ) -> anyhow::Result<ClientEncryptedMessage> {
+    if !wasm_placeholder_ciphertext_fallback_allowed() {
+        anyhow::bail!(
+            "MLS encryption is unavailable in this wasm build; refusing to emit placeholder ciphertext"
+        );
+    }
     let payload_digest = Hash::new(format!(
         "sha256:{:0>64}",
         format!("{:x}", body.len() + device_id.len() + space_id.len())
@@ -221,6 +226,11 @@ fn compose_local_encrypted_message_inner(
             key_ref: Some(KeyRefObject::mls_rfc9420(space_id.replace(':', "_"), 0)),
         },
     })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_placeholder_ciphertext_fallback_allowed() -> bool {
+    option_env!("YOUGEN_ALLOW_PLACEHOLDER_CIPHERTEXT") == Some("1")
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -142,11 +142,8 @@ mod tests {
 
     #[test]
     fn unrelated_event_kinds_are_noop() {
-        let result = classify_source_event(
-            "cx:event:01",
-            "cx.message.create",
-            &json!({ "body": "hi" }),
-        );
+        let result =
+            classify_source_event("cx:event:01", "cx.message.create", &json!({ "body": "hi" }));
         assert_eq!(result, WatcherIntent::NoOp);
     }
 
@@ -242,13 +239,7 @@ mod tests {
     #[test]
     fn classify_does_not_panic_on_malformed_payload() {
         // Defensive: any well-formed JSON Value must be safe to feed.
-        let inputs = [
-            json!(null),
-            json!(0),
-            json!("scalar"),
-            json!([]),
-            json!({}),
-        ];
+        let inputs = [json!(null), json!(0), json!("scalar"), json!([]), json!({})];
         for kind in ["cx.redaction", "cx.capability.revoke", "cx.member.state"] {
             for payload in &inputs {
                 let _ = classify_source_event("cx:event:x", kind, payload);
