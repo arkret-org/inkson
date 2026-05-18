@@ -105,6 +105,31 @@ a.primary, a.secondary { line-height: 1.5; }
   border: 0;
 }
 .settings, .workflow-form { display: grid; gap: 10px; }
+.settings-inline-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(160px, 0.9fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.settings-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.settings-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border, #d8e0e8);
+}
+.settings-list-row strong,
+.settings-list-row .muted {
+  overflow-wrap: anywhere;
+}
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .badge-info { background: #e7edf3; color: #18212f; }
 .badge-success { background: #d4edda; color: #155724; }
@@ -709,7 +734,9 @@ body {
   .board-grid { grid-template-columns: 1fr; }
   .home-card-list.compact { grid-template-columns: 1fr; }
   .settings-shell,
-  .settings-card-grid { grid-template-columns: 1fr; }
+  .settings-card-grid,
+  .settings-inline-form,
+  .settings-list-row { grid-template-columns: 1fr; }
   .setup-review-column { position: static; }
 }
 @media (max-width: 1100px) {
@@ -4185,6 +4212,8 @@ pub fn RouterView() -> Element {
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
+    let initial_agent_workspace =
+        agent_workspace_projection_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
@@ -4237,6 +4266,26 @@ pub fn RouterView() -> Element {
         move || initial_spaces.clone()
     });
     let timeline = use_signal(Vec::<TimelineEvent>::new);
+    let agent_workspace_pending = use_signal({
+        let initial_agent_workspace = initial_agent_workspace.clone();
+        move || initial_agent_workspace.pending.clone()
+    });
+    let agent_workspace_in_flight = use_signal({
+        let initial_agent_workspace = initial_agent_workspace.clone();
+        move || initial_agent_workspace.in_flight.clone()
+    });
+    let agent_workspace_recent = use_signal({
+        let initial_agent_workspace = initial_agent_workspace.clone();
+        move || initial_agent_workspace.recent.clone()
+    });
+    let agent_workspace_agents = use_signal({
+        let initial_agent_workspace = initial_agent_workspace.clone();
+        move || initial_agent_workspace.agents.clone()
+    });
+    let agent_workspace_details = use_signal({
+        let initial_agent_workspace = initial_agent_workspace.clone();
+        move || initial_agent_workspace.details.clone()
+    });
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         let initial_spaces = initial_spaces.clone();
@@ -4298,9 +4347,9 @@ pub fn RouterView() -> Element {
     // decide whether to mount the PrivateComposeBanner above the
     // textarea. Default empty until the SDK agent-workspace projection
     // hydrates it.
-    use_context_provider::<crate::views::agent_workspace::OwnedAgentsContext>(|| {
-        Signal::new(Vec::<crate::views::agent_workspace::OwnedAgentSummary>::new())
-    });
+    let owned_agents_context = use_context_provider::<
+        crate::views::agent_workspace::OwnedAgentsContext,
+    >(|| Signal::new(initial_agent_workspace.agents.clone()));
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
@@ -4426,6 +4475,12 @@ pub fn RouterView() -> Element {
                     selected_space,
                     spaces,
                     timeline,
+                    agent_workspace_pending,
+                    agent_workspace_in_flight,
+                    agent_workspace_recent,
+                    agent_workspace_agents,
+                    agent_workspace_details,
+                    owned_agents_context,
                     device_queue,
                     frontier_state,
                     crypto_state,
@@ -4796,6 +4851,12 @@ pub fn RouterView() -> Element {
                                 selected_space,
                                 spaces,
                                 timeline,
+                                agent_workspace_pending,
+                                agent_workspace_in_flight,
+                                agent_workspace_recent,
+                                agent_workspace_agents,
+                                agent_workspace_details,
+                                owned_agents_context,
                                 device_queue,
                                 frontier_state,
                                 crypto_state,
@@ -4956,6 +5017,12 @@ pub fn RouterView() -> Element {
                                                         selected_space,
                                                         spaces,
                                                         timeline,
+                                                        agent_workspace_pending,
+                                                        agent_workspace_in_flight,
+                                                        agent_workspace_recent,
+                                                        agent_workspace_agents,
+                                                        agent_workspace_details,
+                                                        owned_agents_context,
                                                         device_queue,
                                                         frontier_state,
                                                         crypto_state,
@@ -5661,7 +5728,7 @@ pub fn RouterView() -> Element {
                             }
                         }
                     },
-                    Route::Timeline | Route::TimelineSpace { .. } => {
+                    Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
                         if let Some(sid) = route.space_id() {
                             if selected_space() != sid {
                                 selected_space.set(sid.to_owned());
@@ -5778,7 +5845,7 @@ pub fn RouterView() -> Element {
                     Route::Audit => rsx! {
                         crate::views::audit::AuditPanel { state_store }
                     },
-                    Route::Kanban | Route::KanbanSpace { .. } => {
+                    Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
                         if let Some(sid) = route.space_id() {
                             if selected_space() != sid {
                                 selected_space.set(sid.to_owned());
@@ -5910,21 +5977,25 @@ pub fn RouterView() -> Element {
                     },
                     Route::AgentWorkspace => rsx! {
                         crate::views::agent_workspace::AgentWorkspaceDashboard {
-                            pending: use_signal(Vec::new),
-                            in_flight: use_signal(Vec::new),
-                            recent: use_signal(Vec::new),
-                            agents: use_signal(Vec::new),
+                            pending: agent_workspace_pending,
+                            in_flight: agent_workspace_in_flight,
+                            recent: agent_workspace_recent,
+                            agents: agent_workspace_agents,
                         }
                     },
                     Route::AgentTask { task_id } => rsx! {
                         crate::views::agent_workspace::AgentTaskDetailPage {
                             task_id: task_id.clone(),
-                            detail: use_signal(|| None),
+                            detail: use_signal({
+                                let task_id = task_id.clone();
+                                let details = agent_workspace_details.read().clone();
+                                move || details.get(&task_id).cloned()
+                            }),
                         }
                     },
                     Route::AgentWorkspaceSettings => rsx! {
                         crate::views::agent_workspace::AgentWorkspaceSettings {
-                            agents: use_signal(Vec::new),
+                            agents: agent_workspace_agents,
                             default_profile: use_signal(crate::views::agent_workspace::AgentMemberProfile::default),
                         }
                     },
@@ -5962,9 +6033,49 @@ fn SpaceContextBar(
     full_ready: bool,
 ) -> Element {
     let _ = (&scope_label, scope_count);
+    let relation = state_store
+        .read()
+        .load()
+        .space_projections
+        .get(&space_id)
+        .and_then(space_mirror_relation);
+    let source_chip = relation.as_ref().and_then(|relation| {
+        relation.source_space_id.as_ref().map(|id| {
+            (
+                id.clone(),
+                relation.source_label.clone().unwrap_or_else(|| id.clone()),
+            )
+        })
+    });
+    let mirror_chip = relation.as_ref().and_then(|relation| {
+        relation.mirror_space_id.as_ref().map(|id| {
+            (
+                id.clone(),
+                relation.mirror_label.clone().unwrap_or_else(|| id.clone()),
+            )
+        })
+    });
     rsx! {
         div { class: "event", "data-testid": "space-context-bar",
             div { class: "actions",
+                if let Some((source_space_id, source_label)) = source_chip {
+                    Link {
+                        class: "secondary",
+                        "data-testid": "space-source-chip",
+                        to: Route::Space { space_id: source_space_id },
+                        UiIcon { name: "arrow-left" }
+                        "Source: {source_label}"
+                    }
+                }
+                if let Some((mirror_space_id, mirror_label)) = mirror_chip {
+                    Link {
+                        class: "secondary",
+                        "data-testid": "space-mirror-chip",
+                        to: Route::Space { space_id: mirror_space_id },
+                        UiIcon { name: "arrow-right" }
+                        "Mirror: {mirror_label}"
+                    }
+                }
                 for surface in SpaceSurface::all() {
                     if surface.is_available(minimal_ready, kanban_ready, chat_ready, full_ready) {
                         Link {
@@ -6298,8 +6409,12 @@ fn resolve_space_surface(
             account_key,
             space_id,
         )),
-        Route::Timeline | Route::TimelineSpace { .. } => Some(SpaceSurface::Timeline),
-        Route::Kanban | Route::KanbanSpace { .. } => Some(SpaceSurface::Board),
+        Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+            Some(SpaceSurface::Timeline)
+        }
+        Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
+            Some(SpaceSurface::Board)
+        }
         Route::Chat | Route::ChatSpace { .. } => Some(SpaceSurface::Discussion),
         Route::Document | Route::DocumentSpace { .. } => Some(SpaceSurface::Document),
         Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => None,
@@ -6313,8 +6428,10 @@ fn route_uses_space_context(route: &Route) -> bool {
         Route::Space { .. }
             | Route::Timeline
             | Route::TimelineSpace { .. }
+            | Route::TimelineMessage { .. }
             | Route::Kanban
             | Route::KanbanSpace { .. }
+            | Route::KanbanTask { .. }
             | Route::Chat
             | Route::ChatSpace { .. }
             | Route::Document
@@ -6329,7 +6446,9 @@ fn route_label(route: &Route) -> &'static str {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
         Route::Space { .. } => "Space",
-        Route::Timeline | Route::TimelineSpace { .. } => "Timeline View",
+        Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+            "Timeline View"
+        }
         Route::Directory => "Search",
         Route::Setup => "Workspace Setup",
         Route::SetupSection { section } => match section.as_str() {
@@ -6349,7 +6468,7 @@ fn route_label(route: &Route) -> &'static str {
             _ => "Space Admin",
         },
         Route::Audit => "Audit",
-        Route::Kanban | Route::KanbanSpace { .. } => "Board View",
+        Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => "Board View",
         Route::Chat | Route::ChatSpace { .. } => "Discussion View",
         Route::Notifications => "Notifications",
         Route::Document | Route::DocumentSpace { .. } => "Document View",
@@ -6499,6 +6618,13 @@ struct ConnectContext {
     selected_space: Signal<String>,
     spaces: Signal<Vec<SpacePreview>>,
     timeline: Signal<Vec<TimelineEvent>>,
+    agent_workspace_pending: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    agent_workspace_in_flight: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    agent_workspace_recent: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    agent_workspace_agents: Signal<Vec<crate::views::agent_workspace::OwnedAgentSummary>>,
+    agent_workspace_details:
+        Signal<BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>>,
+    owned_agents_context: crate::views::agent_workspace::OwnedAgentsContext,
     device_queue: Signal<usize>,
     frontier_state: Signal<String>,
     crypto_state: Signal<String>,
@@ -6529,6 +6655,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut selected_space = ctx.selected_space;
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
+        let mut agent_workspace_pending = ctx.agent_workspace_pending;
+        let mut agent_workspace_in_flight = ctx.agent_workspace_in_flight;
+        let mut agent_workspace_recent = ctx.agent_workspace_recent;
+        let mut agent_workspace_agents = ctx.agent_workspace_agents;
+        let mut agent_workspace_details = ctx.agent_workspace_details;
+        let mut owned_agents_context = ctx.owned_agents_context;
         let mut device_queue = ctx.device_queue;
         let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
@@ -6726,11 +6858,19 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                                 "avatar_blob_ref",
                                                 avatar_blob_ref,
                                             );
+                                        } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(content) {
+                                            store.save_private_data(
+                                                &account_did(),
+                                                "avatar_blob_ref",
+                                                "",
+                                            );
                                         }
                                     }
                                     continue;
                                 }
-                                if data_type == "client.blocklist" {
+                                if data_type == "cx.account.blocklist"
+                                    || data_type == "client.blocklist"
+                                {
                                     let Some(content) = entry.get("content") else {
                                         continue;
                                     };
@@ -6742,7 +6882,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                         }
                                         Err(error) => {
                                             tracing::warn!(
-                                                "ignoring malformed client.blocklist account_data: {error}"
+                                                "ignoring malformed cx.account.blocklist account_data: {error}"
                                             );
                                         }
                                     }
@@ -6803,6 +6943,15 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             selected_space.set(first_space.unwrap_or_default());
                         }
                         timeline.set(synced_timeline);
+                        let workspace_projection = agent_workspace_projection_from_sync_spaces(
+                            &state_store.read().load().space_projections,
+                        );
+                        agent_workspace_pending.set(workspace_projection.pending);
+                        agent_workspace_in_flight.set(workspace_projection.in_flight);
+                        agent_workspace_recent.set(workspace_projection.recent);
+                        agent_workspace_agents.set(workspace_projection.agents.clone());
+                        owned_agents_context.set(workspace_projection.agents);
+                        agent_workspace_details.set(workspace_projection.details);
                         device_queue.set(sync.to_device.len());
                         sync_cursor.set(sync.next_batch);
                     }
@@ -7052,6 +7201,385 @@ fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Tim
         }
     }
     events
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct AgentWorkspaceProjection {
+    pending: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    in_flight: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    recent: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    agents: Vec<crate::views::agent_workspace::OwnedAgentSummary>,
+    details: BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct SpaceMirrorRelation {
+    source_space_id: Option<String>,
+    source_label: Option<String>,
+    mirror_space_id: Option<String>,
+    mirror_label: Option<String>,
+}
+
+fn agent_workspace_projection_from_sync_spaces(
+    spaces: &BTreeMap<String, Value>,
+) -> AgentWorkspaceProjection {
+    use crate::views::agent_workspace::{AgentTaskDetail, OwnedAgentSummary};
+
+    let labels = space_label_map(spaces);
+    let mut all_tasks = Vec::new();
+    let mut details = BTreeMap::new();
+    let mut agents_by_did: BTreeMap<String, OwnedAgentSummary> = BTreeMap::new();
+
+    for (space_id, body) in spaces {
+        for event in projection_events(body) {
+            let kind = string_field(event, &["kind", "type"]).unwrap_or_default();
+            let payload = event_payload(event);
+            if kind == "cx.agent.endpoint" || string_field(payload, &["agent_did"]).is_some() {
+                if let Some(agent_did) = string_field(payload, &["agent_did", "did", "actor_id"]) {
+                    let label = string_field(
+                        payload,
+                        &["display_name", "agent_label", "name", "handle", "label"],
+                    )
+                    .unwrap_or_else(|| agent_did.clone());
+                    let source_label = labels
+                        .get(space_id)
+                        .cloned()
+                        .unwrap_or_else(|| space_id.clone());
+                    let entry = agents_by_did.entry(agent_did.clone()).or_insert_with(|| {
+                        OwnedAgentSummary {
+                            agent_did,
+                            display_name: label,
+                            active_in_sources: Vec::new(),
+                            in_mirror_space: false,
+                        }
+                    });
+                    if !entry.active_in_sources.iter().any(|s| s == &source_label) {
+                        entry.active_in_sources.push(source_label);
+                    }
+                }
+            }
+        }
+
+        let relation = space_mirror_relation(body);
+        if let Some(agent_did) = string_field(
+            body,
+            &[
+                "agent_did",
+                "target_agent_id",
+                "target_agent_did",
+                "controller_agent_did",
+            ],
+        ) {
+            let entry =
+                agents_by_did
+                    .entry(agent_did.clone())
+                    .or_insert_with(|| OwnedAgentSummary {
+                        agent_did: agent_did.clone(),
+                        display_name: agent_did.clone(),
+                        active_in_sources: Vec::new(),
+                        in_mirror_space: true,
+                    });
+            if let Some(label) = relation.as_ref().and_then(|r| r.source_label.clone()) {
+                if !entry.active_in_sources.iter().any(|s| s == &label) {
+                    entry.active_in_sources.push(label);
+                }
+            }
+            entry.in_mirror_space = relation
+                .as_ref()
+                .and_then(|r| r.source_space_id.as_ref())
+                .is_some();
+        }
+
+        for task_value in projection_agent_tasks(body) {
+            if let Some(summary) = agent_task_summary_from_value(space_id, task_value, &labels) {
+                let detail = AgentTaskDetail {
+                    source_anchor: string_field(
+                        task_value,
+                        &[
+                            "source_anchor",
+                            "context_anchor",
+                            "anchor",
+                            "source_event_id",
+                        ],
+                    ),
+                    instruction_full: string_field(
+                        task_value,
+                        &["instruction", "instruction_full", "body", "prompt"],
+                    )
+                    .unwrap_or_else(|| summary.instruction_preview.clone()),
+                    agent_draft: string_field(
+                        task_value,
+                        &["agent_draft", "draft", "draft_preview", "result", "output"],
+                    ),
+                    conversation: projection_conversation_lines(task_value),
+                    audit_trail: string_array_field(
+                        task_value,
+                        &["audit_trail", "audit", "events", "source_events"],
+                    ),
+                    summary: summary.clone(),
+                };
+                details.insert(summary.agent_task_id.clone(), detail);
+                all_tasks.push(summary);
+            }
+        }
+    }
+
+    let mut pending = Vec::new();
+    let mut in_flight = Vec::new();
+    let mut recent = Vec::new();
+    for task in all_tasks {
+        if task.needs_attention() {
+            pending.push(task);
+        } else if task.is_in_flight() {
+            in_flight.push(task);
+        } else {
+            recent.push(task);
+        }
+    }
+    recent.truncate(10);
+    AgentWorkspaceProjection {
+        pending,
+        in_flight,
+        recent,
+        agents: agents_by_did.into_values().collect(),
+        details,
+    }
+}
+
+fn space_label_map(spaces: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    spaces
+        .iter()
+        .map(|(space_id, body)| {
+            let label = body
+                .get("summary")
+                .and_then(|summary| string_field(summary, &["title", "name", "summary"]))
+                .or_else(|| string_field(body, &["title", "name", "label"]))
+                .unwrap_or_else(|| space_id.clone());
+            (space_id.clone(), label)
+        })
+        .collect()
+}
+
+fn projection_events(body: &Value) -> Vec<&Value> {
+    let mut events = Vec::new();
+    for container in [
+        body.get("timeline")
+            .and_then(|timeline| timeline.get("events"))
+            .unwrap_or(&Value::Null),
+        body.get("events").unwrap_or(&Value::Null),
+        body.get("operations").unwrap_or(&Value::Null),
+    ] {
+        if let Some(items) = container.as_array() {
+            events.extend(items.iter());
+        }
+    }
+    events
+}
+
+fn event_payload(event: &Value) -> &Value {
+    event
+        .get("payload")
+        .or_else(|| event.get("body"))
+        .or_else(|| event.get("content"))
+        .unwrap_or(event)
+}
+
+fn projection_agent_tasks(body: &Value) -> Vec<&Value> {
+    let mut tasks = Vec::new();
+    for container in [
+        body.get("agent_tasks").unwrap_or(&Value::Null),
+        body.get("tasks").unwrap_or(&Value::Null),
+        body.get("agent_workspace")
+            .and_then(|workspace| workspace.get("tasks"))
+            .unwrap_or(&Value::Null),
+        body.get("summary")
+            .and_then(|summary| summary.get("agent_tasks"))
+            .unwrap_or(&Value::Null),
+    ] {
+        if let Some(items) = container.as_array() {
+            tasks.extend(items.iter());
+        }
+    }
+    for event in projection_events(body) {
+        let kind = string_field(event, &["kind", "type"]).unwrap_or_default();
+        if kind.contains("agent_task") {
+            tasks.push(event_payload(event));
+        }
+    }
+    tasks
+}
+
+fn agent_task_summary_from_value(
+    mirror_space_id: &str,
+    value: &Value,
+    labels: &BTreeMap<String, String>,
+) -> Option<crate::views::agent_workspace::AgentTaskSummary> {
+    use crate::views::agent_workspace::AgentTaskSummary;
+
+    let task_id = string_field(
+        value,
+        &["agent_task_id", "task_id", "id", "object_id", "target_ref"],
+    )?;
+    let source_space_id = string_field(value, &["source_space_id", "source_space", "source_id"]);
+    let source_space_label =
+        string_field(value, &["source_space_label", "source_label"]).or_else(|| {
+            source_space_id
+                .as_ref()
+                .and_then(|id| labels.get(id).cloned())
+        });
+    let instruction = string_field(
+        value,
+        &[
+            "instruction_preview",
+            "instruction",
+            "prompt",
+            "body",
+            "summary",
+        ],
+    )
+    .unwrap_or_else(|| task_id.clone());
+
+    Some(AgentTaskSummary {
+        agent_task_id: task_id,
+        mirror_flow_id: string_field(value, &["mirror_flow_id", "mirror_space_id", "flow_id"])
+            .unwrap_or_else(|| mirror_space_id.to_owned()),
+        source_space_label,
+        source_flow_label: string_field(value, &["source_flow_label", "source_flow_id", "flow"]),
+        agent_label: string_field(
+            value,
+            &[
+                "agent_label",
+                "agent_display_name",
+                "agent_did",
+                "target_agent_id",
+            ],
+        )
+        .unwrap_or_else(|| "agent".to_owned()),
+        instruction_preview: clamp_preview(&instruction, 120),
+        execution: parse_execution_state(
+            string_field(value, &["execution_state", "execution", "state"])
+                .as_deref()
+                .unwrap_or("active"),
+        ),
+        transparency: parse_transparency_state(
+            string_field(value, &["transparency_state", "transparency"])
+                .as_deref()
+                .unwrap_or("ok"),
+        ),
+        source_authority: parse_source_authority_state(
+            string_field(
+                value,
+                &["source_authority_state", "source_authority", "authority"],
+            )
+            .as_deref()
+            .unwrap_or("ok"),
+        ),
+        last_updated: string_field(value, &["updated_at", "last_updated", "created_at", "hlc"])
+            .unwrap_or_else(|| "synced".to_owned()),
+    })
+}
+
+fn projection_conversation_lines(
+    value: &Value,
+) -> Vec<crate::views::agent_workspace::TaskConversationLine> {
+    value
+        .get("conversation")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|line| {
+            let text = string_field(line, &["text", "body", "content"])?;
+            Some(crate::views::agent_workspace::TaskConversationLine {
+                speaker_label: string_field(line, &["speaker_label", "speaker", "actor"])
+                    .unwrap_or_else(|| "agent".to_owned()),
+                text,
+                timestamp: string_field(line, &["timestamp", "created_at", "hlc"])
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+fn parse_execution_state(value: &str) -> crate::views::agent_workspace::ExecutionState {
+    use crate::views::agent_workspace::ExecutionState;
+    match value {
+        "pending_source_stub" | "pending" | "waiting_for_source" => {
+            ExecutionState::PendingSourceStub
+        }
+        "completed" | "done" => ExecutionState::Completed,
+        "cancelled_stub_rejected" | "stub_rejected" => ExecutionState::CancelledStubRejected,
+        "cancelled_orphan" | "orphaned" => ExecutionState::CancelledOrphan,
+        "cancelled_by_controller" | "cancelled" => ExecutionState::CancelledByController,
+        _ => ExecutionState::Active,
+    }
+}
+
+fn parse_transparency_state(value: &str) -> crate::views::agent_workspace::TransparencyState {
+    use crate::views::agent_workspace::TransparencyState;
+    match value {
+        "lost" | "transparency_lost" => TransparencyState::Lost,
+        "reconfirmed_after_loss" | "reconfirmed" => TransparencyState::ReconfirmedAfterLoss,
+        _ => TransparencyState::Ok,
+    }
+}
+
+fn parse_source_authority_state(
+    value: &str,
+) -> crate::views::agent_workspace::SourceAuthorityState {
+    use crate::views::agent_workspace::SourceAuthorityState;
+    match value {
+        "revoked" | "source_authority_revoked" => SourceAuthorityState::Revoked,
+        "reconfirmed_after_revoke" | "reconfirmed" => SourceAuthorityState::ReconfirmedAfterRevoke,
+        _ => SourceAuthorityState::Ok,
+    }
+}
+
+fn clamp_preview(value: &str, max_chars: usize) -> String {
+    let mut out: String = value.chars().take(max_chars).collect();
+    if value.chars().count() > max_chars {
+        out.push_str("...");
+    }
+    out
+}
+
+fn space_mirror_relation(body: &Value) -> Option<SpaceMirrorRelation> {
+    let source_space_id = string_field(
+        body,
+        &["source_space_id", "source_space", "public_source_space_id"],
+    )
+    .or_else(|| {
+        body.get("agent_workspace")
+            .and_then(|workspace| string_field(workspace, &["source_space_id", "source_space"]))
+    });
+    let mirror_space_id = string_field(
+        body,
+        &[
+            "mirror_space_id",
+            "private_mirror_space_id",
+            "agent_mirror_space_id",
+        ],
+    )
+    .or_else(|| {
+        body.get("agent_workspace")
+            .and_then(|workspace| string_field(workspace, &["mirror_space_id", "mirror_space"]))
+    });
+    if source_space_id.is_none() && mirror_space_id.is_none() {
+        return None;
+    }
+    Some(SpaceMirrorRelation {
+        source_label: string_field(body, &["source_space_label", "source_label"]).or_else(|| {
+            body.get("agent_workspace").and_then(|workspace| {
+                string_field(workspace, &["source_space_label", "source_label"])
+            })
+        }),
+        mirror_label: string_field(body, &["mirror_space_label", "mirror_label"]).or_else(|| {
+            body.get("agent_workspace").and_then(|workspace| {
+                string_field(workspace, &["mirror_space_label", "mirror_label"])
+            })
+        }),
+        source_space_id,
+        mirror_space_id,
+    })
 }
 
 fn frontier_label(frontier: &serde_json::Value) -> Option<String> {

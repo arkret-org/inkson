@@ -327,8 +327,7 @@ pub fn TimelinePanel(
     // can mount [`PrivateComposeBanner`] + apply the
     // `private-compose-mode` class when the active draft mentions one
     // of the controller's agents.
-    let owned_agents_ctx =
-        use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
+    let owned_agents_ctx = use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
 
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
@@ -476,15 +475,16 @@ pub fn TimelinePanel(
     // background flip to the private routing palette, and mount the
     // [`PrivateComposeBanner`] underneath.
     let private_compose_owned_agents = owned_agents_ctx.read().clone();
-    let private_compose_mentions =
-        crate::views::helpers::parse_structured_mentions(&draft());
+    let private_compose_mentions = crate::views::helpers::parse_structured_mentions(&draft());
     let private_compose_target_did = private_compose_mentions
         .iter()
         .map(|m| m.target.clone())
-        .find(|target| crate::views::agent_workspace::is_controller_owned_agent(
-            target,
-            &private_compose_owned_agents,
-        ));
+        .find(|target| {
+            crate::views::agent_workspace::is_controller_owned_agent(
+                target,
+                &private_compose_owned_agents,
+            )
+        });
     let private_compose_active = private_compose_target_did.is_some();
     let composer_class = if private_compose_active {
         "composer private-compose-mode"
@@ -521,7 +521,9 @@ pub fn TimelinePanel(
                 {
                     div {
                         class: "event",
+                        id: "{event.id}",
                         "data-testid": "timeline-event",
+                        "data-event-id": "{event.id}",
                         role: "article",
                         "aria-label": "Timeline event from {event.sender_display}",
                         key: "{event.id}",

@@ -6,6 +6,8 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, html as md_html};
 
+use crate::{api::ContrixApi, config::LocalConfigStore};
+
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
 /// Produced by `views::chat::ondrop` and `views::timeline::ondrop` when
@@ -49,10 +51,7 @@ pub enum ContentBlock {
     /// Currently only emitted by tests that fabricate the variant —
     /// the parser folds fenced code into the surrounding `Markdown`
     /// block because pulldown-cmark already renders `<pre><code>`.
-    CodeBlock {
-        lang: Option<String>,
-        code: String,
-    },
+    CodeBlock { lang: Option<String>, code: String },
     /// Placeholder for an external link preview. The real OG-fetch
     /// pipeline is a follow-up; for now we render the URL itself with a
     /// clickable anchor so it's at least navigable.
@@ -89,15 +88,14 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
     // into a single Markdown/Text block.
     let mut text_buf: Vec<String> = Vec::new();
 
-    let flush_text =
-        |buf: &mut Vec<String>, out: &mut Vec<ContentBlock>| {
-            if buf.is_empty() {
-                return;
-            }
-            let chunk = buf.join("\n");
-            buf.clear();
-            push_text_chunk(&chunk, out);
-        };
+    let flush_text = |buf: &mut Vec<String>, out: &mut Vec<ContentBlock>| {
+        if buf.is_empty() {
+            return;
+        }
+        let chunk = buf.join("\n");
+        buf.clear();
+        push_text_chunk(&chunk, out);
+    };
 
     for line in trimmed.split('\n') {
         if let Some(block) = parse_attachment_line(line) {
@@ -249,6 +247,31 @@ fn strip_trailing_punct(s: &str) -> &str {
     s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ';' | ':'))
 }
 
+fn blob_ref_media_type_hint(blob_ref: &str) -> Option<String> {
+    let lower = blob_ref.to_ascii_lowercase();
+    if let Some(hash_idx) = lower.rfind('#') {
+        let hint = &lower[hash_idx + 1..];
+        if hint.contains('/') {
+            return Some(hint.to_owned());
+        }
+    }
+    let ext = lower.rsplit('.').next().unwrap_or("");
+    match ext {
+        "png" => Some("image/png".to_owned()),
+        "jpg" | "jpeg" => Some("image/jpeg".to_owned()),
+        "gif" => Some("image/gif".to_owned()),
+        "webp" => Some("image/webp".to_owned()),
+        "bmp" => Some("image/bmp".to_owned()),
+        "svg" => Some("image/svg+xml".to_owned()),
+        "mp4" => Some("video/mp4".to_owned()),
+        "webm" => Some("video/webm".to_owned()),
+        "mp3" => Some("audio/mpeg".to_owned()),
+        "wav" => Some("audio/wav".to_owned()),
+        "ogg" => Some("audio/ogg".to_owned()),
+        _ => None,
+    }
+}
+
 /// Cheap heuristic — does this prose chunk look like markdown? We
 /// fall back to plain text when none of the common markers appear so
 /// that simple "hi there" messages don't get wrapped in `<p>` markup
@@ -304,21 +327,23 @@ fn markdown_to_safe_html(src: &str) -> String {
     out
 }
 
-
-/// Build a browser-reachable URL for `blob_ref`.
-///
-/// Round 18 of soland's privacy work rejects bearer-token-in-querystring
-/// for blob GETs (the privacy guard treats query-string auth as a
-/// leakage vector). Until the renderer can plumb a service-worker /
-/// fetch+blob-URL pipeline through the wasm target, we emit a
-/// `data:text/plain` placeholder so the structure is right and the
-/// alt-text / download fallback still surfaces.
-fn blob_preview_url(_blob_ref: &str) -> String {
-    // TODO(round 28 follow-up): wire authenticated blob fetch via a
-    // service worker (web) / signed cookie (native) and replace this
-    // placeholder. See `_claude_todos.md` A3 follow-ups.
-    "data:text/plain,Image%20preview%20disabled%20%E2%80%94%20blob%20token%20plumbing%20pending"
-        .to_owned()
+async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow::Result<String> {
+    let config = LocalConfigStore::default().load();
+    let token = config.session_token.trim().to_owned();
+    if token.is_empty() {
+        anyhow::bail!("no authenticated session for blob download");
+    }
+    let bytes = ContrixApi::new(&config.server_url)?
+        .with_bearer(token)
+        .get_blob_bytes(blob_ref)
+        .await?;
+    let mime = if media_type.trim().is_empty() {
+        "application/octet-stream"
+    } else {
+        media_type.trim()
+    };
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
 }
 
 /// RSX renderer for a slice of [`ContentBlock`]s.
@@ -353,21 +378,12 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
             }
         },
         ContentBlock::Image { blob_ref, alt } => {
-            let src = blob_preview_url(&blob_ref);
             let alt_text = alt.unwrap_or_else(|| blob_ref.clone());
-            let broken_label = crate::i18n::tr("content.image.broken");
             rsx! {
-                div {
+                AuthenticatedBlobImage {
                     key: "{key}",
-                    class: "content-block-image",
-                    "data-testid": "content-block-image",
-                    img {
-                        loading: "lazy",
-                        src: "{src}",
-                        alt: "{alt_text}",
-                        title: "{blob_ref}",
-                    }
-                    div { class: "muted", "{broken_label}: {blob_ref}" }
+                    blob_ref,
+                    alt_text,
                 }
             }
         }
@@ -375,20 +391,11 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
             blob_ref,
             media_type,
         } => {
-            let src = blob_preview_url(&blob_ref);
-            let unsupported = crate::i18n::tr("content.video.unsupported");
             rsx! {
-                div {
+                AuthenticatedBlobVideo {
                     key: "{key}",
-                    class: "content-block-video",
-                    "data-testid": "content-block-video",
-                    video {
-                        controls: true,
-                        preload: "metadata",
-                        source { src: "{src}", r#type: "{media_type}" }
-                        "{unsupported}"
-                    }
-                    div { class: "muted", "{blob_ref}" }
+                    blob_ref,
+                    media_type,
                 }
             }
         }
@@ -396,20 +403,11 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
             blob_ref,
             media_type,
         } => {
-            let src = blob_preview_url(&blob_ref);
-            let unsupported = crate::i18n::tr("content.audio.unsupported");
             rsx! {
-                div {
+                AuthenticatedBlobAudio {
                     key: "{key}",
-                    class: "content-block-audio",
-                    "data-testid": "content-block-audio",
-                    audio {
-                        controls: true,
-                        preload: "metadata",
-                        source { src: "{src}", r#type: "{media_type}" }
-                        "{unsupported}"
-                    }
-                    div { class: "muted", "{blob_ref}" }
+                    blob_ref,
+                    media_type,
                 }
             }
         }
@@ -466,24 +464,12 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
             blob_ref,
             media_type,
         } => {
-            let download_label = crate::i18n::tr("content.attachment.download");
             let mime = media_type.unwrap_or_else(|| "application/octet-stream".to_owned());
             rsx! {
-                div {
+                AuthenticatedBlobDownload {
                     key: "{key}",
-                    class: "content-block-attachment",
-                    "data-testid": "content-block-attachment",
-                    span { class: "muted", "{mime}" }
-                    span { " " }
-                    span { "{blob_ref}" }
-                    span { " " }
-                    button {
-                        r#type: "button",
-                        class: "secondary",
-                        "data-testid": "content-block-attachment-download",
-                        title: "{download_label}",
-                        "{download_label}"
-                    }
+                    blob_ref,
+                    media_type: mime,
                 }
             }
         }
@@ -495,6 +481,181 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
                 "{raw}"
             }
         },
+    }
+}
+
+#[component]
+pub fn AuthenticatedBlobImage(blob_ref: String, alt_text: String) -> Element {
+    let mut src = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let blob_for_effect = blob_ref.clone();
+    use_effect(move || {
+        let blob = blob_for_effect.clone();
+        let media_type = blob_ref_media_type_hint(&blob).unwrap_or_else(|| "image/png".to_owned());
+        spawn(async move {
+            match authenticated_blob_data_url(&blob, &media_type).await {
+                Ok(url) => {
+                    src.set(url);
+                    status.set(String::new());
+                }
+                Err(err) => status.set(err.to_string()),
+            }
+        });
+    });
+    let broken_label = crate::i18n::tr("content.image.broken");
+    rsx! {
+        div {
+            class: "content-block-image",
+            "data-testid": "content-block-image",
+            if !src().is_empty() {
+                img {
+                    loading: "lazy",
+                    src: "{src}",
+                    alt: "{alt_text}",
+                    title: "{blob_ref}",
+                }
+            } else {
+                div { class: "muted", "data-testid": "content-block-blob-loading", "{blob_ref}" }
+            }
+            if !status().is_empty() {
+                div { class: "muted", "data-testid": "content-block-blob-error", "{broken_label}: {status}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn AuthenticatedBlobVideo(blob_ref: String, media_type: String) -> Element {
+    let mut src = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let blob_for_effect = blob_ref.clone();
+    let media_for_effect = media_type.clone();
+    use_effect(move || {
+        let blob = blob_for_effect.clone();
+        let mime = media_for_effect.clone();
+        spawn(async move {
+            match authenticated_blob_data_url(&blob, &mime).await {
+                Ok(url) => {
+                    src.set(url);
+                    status.set(String::new());
+                }
+                Err(err) => status.set(err.to_string()),
+            }
+        });
+    });
+    let unsupported = crate::i18n::tr("content.video.unsupported");
+    rsx! {
+        div {
+            class: "content-block-video",
+            "data-testid": "content-block-video",
+            if !src().is_empty() {
+                video {
+                    controls: true,
+                    preload: "metadata",
+                    source { src: "{src}", r#type: "{media_type}" }
+                    "{unsupported}"
+                }
+            }
+            div { class: "muted", "{blob_ref}" }
+            if !status().is_empty() {
+                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn AuthenticatedBlobAudio(blob_ref: String, media_type: String) -> Element {
+    let mut src = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let blob_for_effect = blob_ref.clone();
+    let media_for_effect = media_type.clone();
+    use_effect(move || {
+        let blob = blob_for_effect.clone();
+        let mime = media_for_effect.clone();
+        spawn(async move {
+            match authenticated_blob_data_url(&blob, &mime).await {
+                Ok(url) => {
+                    src.set(url);
+                    status.set(String::new());
+                }
+                Err(err) => status.set(err.to_string()),
+            }
+        });
+    });
+    let unsupported = crate::i18n::tr("content.audio.unsupported");
+    rsx! {
+        div {
+            class: "content-block-audio",
+            "data-testid": "content-block-audio",
+            if !src().is_empty() {
+                audio {
+                    controls: true,
+                    preload: "metadata",
+                    source { src: "{src}", r#type: "{media_type}" }
+                    "{unsupported}"
+                }
+            }
+            div { class: "muted", "{blob_ref}" }
+            if !status().is_empty() {
+                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn AuthenticatedBlobDownload(blob_ref: String, media_type: String) -> Element {
+    let mut href = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let download_label = crate::i18n::tr("content.attachment.download");
+    rsx! {
+        div {
+            class: "content-block-attachment",
+            "data-testid": "content-block-attachment",
+            span { class: "muted", "{media_type}" }
+            span { " " }
+            span { "{blob_ref}" }
+            span { " " }
+            if href().is_empty() {
+                button {
+                    r#type: "button",
+                    class: "secondary",
+                    "data-testid": "content-block-attachment-download",
+                    title: "{download_label}",
+                    onclick: {
+                        let blob = blob_ref.clone();
+                        let mime = media_type.clone();
+                        move |_| {
+                            status.set("Downloading...".to_owned());
+                            let blob = blob.clone();
+                            let mime = mime.clone();
+                            spawn(async move {
+                                match authenticated_blob_data_url(&blob, &mime).await {
+                                    Ok(url) => {
+                                        href.set(url);
+                                        status.set(String::new());
+                                    }
+                                    Err(err) => status.set(err.to_string()),
+                                }
+                            });
+                        }
+                    },
+                    "{download_label}"
+                }
+            } else {
+                a {
+                    class: "secondary",
+                    "data-testid": "content-block-attachment-download-link",
+                    href: "{href}",
+                    download: "{blob_ref}",
+                    "{download_label}"
+                }
+            }
+            if !status().is_empty() {
+                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
+            }
+        }
     }
 }
 
@@ -645,9 +806,9 @@ mod tests {
         let has_markdown = blocks
             .iter()
             .any(|b| matches!(b, ContentBlock::Markdown(_)));
-        let has_link = blocks.iter().any(|b| {
-            matches!(b, ContentBlock::LinkPreview { url, .. } if url.starts_with("https://"))
-        });
+        let has_link = blocks.iter().any(
+            |b| matches!(b, ContentBlock::LinkPreview { url, .. } if url.starts_with("https://")),
+        );
         let has_image = blocks
             .iter()
             .any(|b| matches!(b, ContentBlock::Image { .. }));

@@ -1649,8 +1649,7 @@ pub fn ChatPanel(
     // [`PrivateComposeBanner`] + apply the `private-compose-mode` class
     // once the active draft mentions an owned agent. Default empty
     // until the SDK projection hydrates it.
-    let owned_agents_ctx =
-        use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
+    let owned_agents_ctx = use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
     let mut mls_passphrase_draft = use_signal(String::new);
     // Multi-device Welcome flow controls. The
     // `Invite to MLS group` button fetches the target (actor, device)
@@ -1755,8 +1754,10 @@ pub fn ChatPanel(
     // Source of truth is the local store's `cx.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
     {
-        let agent_dids =
-            agent_dids_from_raw_operations(&state_store.read().load().raw_operations, &selected_space);
+        let agent_dids = agent_dids_from_raw_operations(
+            &state_store.read().load().raw_operations,
+            &selected_space,
+        );
         annotate_agent_participants(&mut participants, &agent_dids);
     }
     let participants_for_messages = participants.clone();
@@ -1961,15 +1962,16 @@ pub fn ChatPanel(
     // flip to the private routing palette, and mount the
     // [`PrivateComposeBanner`] underneath.
     let private_compose_owned_agents = owned_agents_ctx.read().clone();
-    let private_compose_mentions =
-        crate::views::helpers::parse_structured_mentions(&chat_draft());
+    let private_compose_mentions = crate::views::helpers::parse_structured_mentions(&chat_draft());
     let private_compose_target_did = private_compose_mentions
         .iter()
         .map(|m| m.target.clone())
-        .find(|target| crate::views::agent_workspace::is_controller_owned_agent(
-            target,
-            &private_compose_owned_agents,
-        ));
+        .find(|target| {
+            crate::views::agent_workspace::is_controller_owned_agent(
+                target,
+                &private_compose_owned_agents,
+            )
+        });
     let private_compose_active = private_compose_target_did.is_some();
     let composer_class = if private_compose_active {
         "discussion-composer private-compose-mode"
@@ -4347,7 +4349,10 @@ mod tests {
         ];
 
         let agent_dids = agent_dids_from_raw_operations(&records, "cx:space:demo");
-        assert_eq!(agent_dids, vec!["did:web:researcher-agent.example".to_owned()]);
+        assert_eq!(
+            agent_dids,
+            vec!["did:web:researcher-agent.example".to_owned()]
+        );
     }
 
     #[test]

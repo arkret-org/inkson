@@ -196,21 +196,20 @@ use crate::models::{
     FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse,
     IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
     IdentityResolveResponse, IndexSearchResponse, InvitesResponse, KeysClaimResponse,
-    KeysQueryResponse,
-    KeysUploadResponse, LogoutResponse, MimiConsentResponse, MimiGroupInfoResponse,
-    MimiIdentifierQueryResponse, MimiKeyMaterialResponse, MimiNotifyResponse,
-    MimiProviderDirectoryResponse, MimiProxyDownloadResponse, MimiReportAbuseResponse,
-    MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse, MlsRotateResponse,
-    ModerationReportResponse, ModerationReportsResponse, ModerationResolveResponse,
-    OidcAuthorizeResponse, OidcCallbackResponse, OkResponse, PasskeyChallengeResponse,
-    PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse, PushRegisterResponse,
-    ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
-    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription,
-    SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
-    SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResponse,
-    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse, ThirdPartyLocationsResponse,
-    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateProfileResponse,
-    UpdateSpaceResponse, VerifyDeviceResponse,
+    KeysQueryResponse, KeysUploadResponse, LogoutResponse, MimiConsentResponse,
+    MimiGroupInfoResponse, MimiIdentifierQueryResponse, MimiKeyMaterialResponse,
+    MimiNotifyResponse, MimiProviderDirectoryResponse, MimiProxyDownloadResponse,
+    MimiReportAbuseResponse, MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse,
+    MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
+    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
+    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
+    PushRegisterResponse, ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse,
+    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
+    ServerDescription, SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse,
+    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse,
+    SubmitDidOperationResponse, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
+    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
+    UpdateProfileResponse, UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::{OperationEnvelope, uuid_v7};
 
@@ -1529,7 +1528,9 @@ impl ContrixApi {
         object_kinds: Option<&[&str]>,
         limit: u32,
     ) -> anyhow::Result<IndexSearchResponse> {
-        let kinds: Vec<&str> = object_kinds.map(|k| k.to_vec()).unwrap_or_else(|| vec!["message"]);
+        let kinds: Vec<&str> = object_kinds
+            .map(|k| k.to_vec())
+            .unwrap_or_else(|| vec!["message"]);
         let body = json!({
             "query": query,
             "limit": limit,

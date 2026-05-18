@@ -1719,37 +1719,14 @@ pub fn SpaceAdminPanel(
                                                 block_confirm_did.set(None);
                                                 if changed {
                                                     status_msg.set(format!("Blocked {m}"));
-                                                    // Best-effort push to soland.
                                                     let entries = state_store
                                                         .read()
                                                         .client_blocklist();
-                                                    let body =
-                                                        crate::account_data::build_blocklist_account_data_body(
-                                                            &entries,
-                                                        );
-                                                    let base = base.clone();
-                                                    let api_token = token();
-                                                    spawn(async move {
-                                                        if let Err(err) =
-                                                            crate::views::helpers::with_authed_api(
-                                                                &base,
-                                                                api_token,
-                                                                |api| async move {
-                                                                    api.set_account_data(
-                                                                        "client.blocklist",
-                                                                        body,
-                                                                    )
-                                                                    .await
-                                                                },
-                                                            )
-                                                            .await
-                                                        {
-                                                            tracing::debug!(
-                                                                "account_data PUT for client.blocklist failed: {}",
-                                                                err.display()
-                                                            );
-                                                        }
-                                                    });
+                                                    crate::views::settings::push_blocklist_account_data(
+                                                        base.clone(),
+                                                        token(),
+                                                        entries,
+                                                    );
                                                 } else {
                                                     status_msg.set(format!("{m} is already blocked"));
                                                 }

@@ -66,17 +66,92 @@ pub fn result_snippet(result: &Value) -> String {
     "<no body>".to_owned()
 }
 
-/// Format a result row's destination as a `Route::Space { space_id }`
-/// link when the row carries a space_id, or `None` when it doesn't
-/// (older soland responses or non-Space rows). Callers render the
-/// destination as a Link or a plain text fallback.
-pub fn result_space_route(result: &Value) -> Option<Route> {
-    result
-        .get("space_id")
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchDestination {
+    pub route: Route,
+    pub anchor: Option<String>,
+    pub label: String,
+}
+
+/// Resolve a search result to the most specific local target we can
+/// express. Newer soland rows may carry `message_id`, `event_id`,
+/// `surface`, `task_id`, or `agent_task_id`; older rows still degrade
+/// to the Space overview.
+pub fn result_destination(result: &Value) -> Option<SearchDestination> {
+    let space_id = result.get("space_id").and_then(Value::as_str)?;
+    if let Some(task_id) = string_field(result, &["agent_task_id", "task_id"]) {
+        if task_id.starts_with("cx:agent_task:") {
+            return Some(SearchDestination {
+                route: Route::AgentTask {
+                    task_id: task_id.clone(),
+                },
+                anchor: Some(task_id),
+                label: "Open task".to_owned(),
+            });
+        }
+        return Some(SearchDestination {
+            route: Route::KanbanTask {
+                space_id: space_id.to_owned(),
+                task_id: task_id.clone(),
+            },
+            anchor: Some(task_id),
+            label: "Open task".to_owned(),
+        });
+    }
+
+    if let Some(message_id) = string_field(result, &["message_id", "event_id", "object_id"]) {
+        return Some(SearchDestination {
+            route: Route::TimelineMessage {
+                space_id: space_id.to_owned(),
+                message_id: message_id.clone(),
+            },
+            anchor: Some(message_id),
+            label: "Open message".to_owned(),
+        });
+    }
+
+    let surface = result
+        .get("surface")
         .and_then(Value::as_str)
-        .map(|sid| Route::Space {
-            space_id: sid.to_owned(),
-        })
+        .unwrap_or_default();
+    let route = match surface {
+        "timeline" | "message" => Route::TimelineSpace {
+            space_id: space_id.to_owned(),
+        },
+        "kanban" | "board" => Route::KanbanSpace {
+            space_id: space_id.to_owned(),
+        },
+        "chat" | "discussion" => Route::ChatSpace {
+            space_id: space_id.to_owned(),
+        },
+        "document" => Route::DocumentSpace {
+            space_id: space_id.to_owned(),
+        },
+        _ => Route::Space {
+            space_id: space_id.to_owned(),
+        },
+    };
+    Some(SearchDestination {
+        route,
+        anchor: string_field(result, &["anchor", "anchor_id", "target_ref"]),
+        label: "Open".to_owned(),
+    })
+}
+
+/// Back-compat helper kept for tests and older call sites.
+pub fn result_space_route(result: &Value) -> Option<Route> {
+    result_destination(result).map(|destination| destination.route)
+}
+
+fn string_field(result: &Value, fields: &[&str]) -> Option<String> {
+    fields.iter().find_map(|field| {
+        result
+            .get(*field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 #[component]
@@ -186,7 +261,7 @@ pub fn GlobalSearchPanel(
                     for (idx, result) in results().into_iter().enumerate() {
                         {
                             let snippet = result_snippet(&result);
-                            let route = result_space_route(&result);
+                            let destination = result_destination(&result);
                             let space_id_text = result
                                 .get("space_id")
                                 .and_then(Value::as_str)
@@ -202,7 +277,7 @@ pub fn GlobalSearchPanel(
                                 .and_then(Value::as_str)
                                 .unwrap_or("message")
                                 .to_owned();
-                            let route_for_button = route.clone();
+                            let destination_for_button = destination.clone();
                             rsx! {
                                 div {
                                     key: "{idx}",
@@ -223,13 +298,21 @@ pub fn GlobalSearchPanel(
                                         "data-testid": "global-search-result-snippet",
                                         "{snippet}"
                                     }
-                                    if let Some(target) = route_for_button {
+                                    if let Some(target) = destination_for_button {
                                         div { class: "actions",
                                             Link {
                                                 class: "secondary",
                                                 "data-testid": "global-search-result-link",
-                                                to: target,
-                                                "Open Space"
+                                                to: target.route,
+                                                if let Some(anchor) = target.anchor {
+                                                    span {
+                                                        "data-testid": "global-search-result-anchor",
+                                                        "data-anchor": "{anchor}",
+                                                        "{target.label}: {anchor}"
+                                                    }
+                                                } else {
+                                                    "{target.label}"
+                                                }
                                             }
                                         }
                                     }
@@ -342,5 +425,26 @@ mod tests {
 
         let no_space = json!({"kind": "actor"});
         assert!(result_space_route(&no_space).is_none());
+    }
+
+    #[test]
+    fn result_destination_prefers_message_anchor() {
+        let row = json!({
+            "space_id": "cx:space:demo",
+            "event_id": "cx:event:message",
+            "content": {"body": "hit"}
+        });
+        let destination = result_destination(&row).expect("destination");
+        assert_eq!(destination.anchor.as_deref(), Some("cx:event:message"));
+        match destination.route {
+            Route::TimelineMessage {
+                space_id,
+                message_id,
+            } => {
+                assert_eq!(space_id, "cx:space:demo");
+                assert_eq!(message_id, "cx:event:message");
+            }
+            other => panic!("expected TimelineMessage, got {other:?}"),
+        }
     }
 }

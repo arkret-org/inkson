@@ -27,7 +27,7 @@ pub enum AccountDataKey {
     ClientReadReceipts,
     /// `client.presence` — per-space typing / online / last-seen toggles.
     ClientPresence,
-    /// `client.blocklist` — actor-private personal blocklist entries.
+    /// `cx.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
     /// `client.notifications` — per-space mute, sound, push routing.
     ClientNotifications,
@@ -43,7 +43,7 @@ impl AccountDataKey {
             Self::ClientUi => "client.ui",
             Self::ClientReadReceipts => "client.read_receipts",
             Self::ClientPresence => "client.presence",
-            Self::ClientBlocklist => "client.blocklist",
+            Self::ClientBlocklist => "cx.account.blocklist",
             Self::ClientNotifications => "client.notifications",
             Self::ClientLanguage => "client.language",
             Self::Custom(s) => s,
@@ -55,7 +55,7 @@ impl AccountDataKey {
             "client.ui" => Self::ClientUi,
             "client.read_receipts" => Self::ClientReadReceipts,
             "client.presence" => Self::ClientPresence,
-            "client.blocklist" => Self::ClientBlocklist,
+            "cx.account.blocklist" | "client.blocklist" => Self::ClientBlocklist,
             "client.notifications" => Self::ClientNotifications,
             "client.language" => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
@@ -175,12 +175,10 @@ pub fn build_client_ui_body(
     }
     if let Some(value) = avatar_blob_ref {
         let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            map.insert(
-                "avatar_blob_ref".to_owned(),
-                Value::String(trimmed.to_owned()),
-            );
-        }
+        map.insert(
+            "avatar_blob_ref".to_owned(),
+            Value::String(trimmed.to_owned()),
+        );
     }
     Value::Object(map)
 }
@@ -195,6 +193,17 @@ pub fn avatar_blob_ref_from_client_ui(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned)
+}
+
+/// True when a remote `client.ui` payload explicitly tombstones the avatar
+/// cache with `avatar_blob_ref: ""`. Missing/non-string fields mean "no
+/// opinion" so older clients do not clear a newer local value by accident.
+pub fn avatar_blob_ref_tombstoned_from_client_ui(value: &Value) -> bool {
+    value
+        .get("avatar_blob_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some("")
 }
 
 /// Theme preference recovered from a `client.ui` account-data payload.
@@ -222,7 +231,11 @@ pub fn theme_from_client_ui(value: &Value) -> Option<String> {
 /// `None` when no change is required.
 pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<String> {
     let remote = theme_from_client_ui(remote_value)?;
-    if remote == local_theme { None } else { Some(remote) }
+    if remote == local_theme {
+        None
+    } else {
+        Some(remote)
+    }
 }
 
 /// Wire-key for an actor-private Space remark per
@@ -337,7 +350,7 @@ impl SpaceRemark {
 }
 
 /// A single entry in the actor-private personal blocklist
-/// (`client.blocklist` per `discovery/client-preferences.md`).
+/// (`cx.account.blocklist` per `discovery/client-preferences.md`).
 ///
 /// The wire shape is intentionally permissive — older clients SHOULD
 /// tolerate unknown fields — but every entry MUST carry `did`. `reason`
@@ -368,7 +381,11 @@ impl BlocklistEntry {
         let did = did.into().trim().to_owned();
         let reason = reason.and_then(|r| {
             let trimmed = r.trim().to_owned();
-            if trimmed.is_empty() { None } else { Some(trimmed) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
         });
         Self {
             did,
@@ -423,7 +440,7 @@ pub fn unblock_user_in(list: &mut Vec<BlocklistEntry>, did: &str) -> bool {
     list.len() != before
 }
 
-/// Canonical wire body for the `client.blocklist` account-data entry.
+/// Canonical wire body for the `cx.account.blocklist` account-data entry.
 /// The settings UI calls this just before POSTing via
 /// [`crate::api::ContrixApi::set_account_data`]; keep the shape stable
 /// so other clients agree on the layout.
@@ -433,16 +450,16 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     })
 }
 
-/// Parse the `client.blocklist` account-data content body. Malformed
+/// Parse the `cx.account.blocklist` account-data content body. Malformed
 /// entries are rejected as a batch rather than partially applied so a
 /// corrupt remote write cannot silently drop part of the user's local
 /// privacy policy.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value
         .get("entries")
-        .ok_or_else(|| "client.blocklist.entries missing".to_owned())?;
+        .ok_or_else(|| "cx.account.blocklist.entries missing".to_owned())?;
     let parsed = serde_json::from_value::<Vec<BlocklistEntry>>(entries.clone())
-        .map_err(|e| format!("client.blocklist.entries invalid: {e}"))?;
+        .map_err(|e| format!("cx.account.blocklist.entries invalid: {e}"))?;
     Ok(parsed
         .into_iter()
         .filter(|entry| !entry.did.trim().is_empty())
@@ -476,12 +493,16 @@ mod tests {
             "client.ui",
             "client.read_receipts",
             "client.presence",
-            "client.blocklist",
+            "cx.account.blocklist",
             "client.notifications",
             "client.language",
         ] {
             assert_eq!(AccountDataKey::from_wire(s).as_wire(), s);
         }
+        assert_eq!(
+            AccountDataKey::from_wire("client.blocklist").as_wire(),
+            "cx.account.blocklist"
+        );
         assert_eq!(AccountDataKey::from_wire("custom.x").as_wire(), "custom.x");
     }
 
@@ -691,10 +712,12 @@ mod tests {
             Some(blob_ref.to_owned())
         );
 
-        // Empty / whitespace-only references are dropped (tombstone shape).
+        // Empty / whitespace-only references are preserved as an explicit
+        // tombstone so another device can clear its local avatar cache.
         let tombstoned = build_client_ui_body(None, None, &BTreeMap::new(), Some("   "));
-        assert!(tombstoned.get("avatar_blob_ref").is_none());
+        assert_eq!(tombstoned["avatar_blob_ref"], "");
         assert_eq!(avatar_blob_ref_from_client_ui(&tombstoned), None);
+        assert!(avatar_blob_ref_tombstoned_from_client_ui(&tombstoned));
 
         // Older client wrote `client.ui` without the field — parse returns None.
         let legacy = json!({"theme": "light"});

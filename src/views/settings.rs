@@ -27,6 +27,10 @@ pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "cx.read_receipt.preferen
 /// `discovery/client-preferences.md` §2.
 pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
+/// `cx.account_data` key used by the actor-private personal blocklist.
+/// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
+pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "cx.account.blocklist";
+
 /// A4a — push the current `client.ui` payload (theme + sidebar
 /// collapsed) to soland's `cx.account_data.set` endpoint so other
 /// devices pick up the same preference. Same graceful-degradation
@@ -84,10 +88,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
                 );
             }
             Err(err) => {
-                tracing::warn!(
-                    "account_data PUT for client.ui failed: {}",
-                    err.display()
-                );
+                tracing::warn!("account_data PUT for client.ui failed: {}", err.display());
             }
         }
     });
@@ -140,6 +141,42 @@ fn push_read_receipt_account_data(
             Err(err) => {
                 tracing::warn!(
                     "account_data PUT for read-receipt prefs failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
+/// Push the actor-private personal blocklist to soland. Local state is
+/// authoritative; network errors are logged only so privacy controls keep
+/// working offline and against older soland builds.
+pub(crate) fn push_blocklist_account_data(
+    base_url: String,
+    api_token: String,
+    entries: Vec<crate::account_data::BlocklistEntry>,
+) {
+    if api_token.trim().is_empty() {
+        return;
+    }
+    let body = crate::account_data::build_blocklist_account_data_body(&entries);
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, body)
+                .await
+        })
+        .await
+        {
+            Ok(AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT for cx.account.blocklist returned {status}; \
+                     local blocklist remains authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::debug!(
+                    "account_data PUT for cx.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -419,6 +456,11 @@ pub fn SettingsPanel(
         .unwrap_or_default();
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
+    let mut avatar_cache_status = use_signal(String::new);
+    let mut blocklist_snapshot = use_signal(|| state_store.read().client_blocklist());
+    let mut blocklist_did_input = use_signal(String::new);
+    let mut blocklist_reason_input = use_signal(String::new);
+    let mut blocklist_status = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id =
@@ -444,6 +486,23 @@ pub fn SettingsPanel(
     } else {
         "No authenticated device session".to_owned()
     };
+    {
+        let account_key = account_did();
+        use_effect(move || {
+            let hydrated = state_store
+                .read()
+                .load_private_data(&account_key, "avatar_blob_ref")
+                .unwrap_or_default();
+            if hydrated != profile_avatar_blob_ref() {
+                profile_avatar_blob_ref.set(hydrated.clone());
+                avatar_cache_status.set(if hydrated.trim().is_empty() {
+                    "Avatar cleared from synced preferences".to_owned()
+                } else {
+                    "Avatar restored from synced preferences".to_owned()
+                });
+            }
+        });
+    }
     rsx! {
         div { class: "settings", "data-testid": "settings-panel",
             div { class: "settings-shell",
@@ -581,21 +640,15 @@ pub fn SettingsPanel(
                                 div { class: "actions", style: "align-items: center; gap: 16px;",
                                     {
                                         let blob_ref = profile_avatar_blob_ref();
-                                        let preview_src = if blob_ref.trim().is_empty() {
-                                            String::new()
-                                        } else {
-                                            crate::api::blob_download_url_for(
-                                                &base_url(),
-                                                blob_ref.trim(),
-                                            )
-                                        };
                                         rsx! {
-                                            if !preview_src.is_empty() {
-                                                img {
+                                            if !blob_ref.trim().is_empty() {
+                                                div {
                                                     "data-testid": "settings-avatar-preview",
-                                                    src: "{preview_src}",
-                                                    alt: "Avatar",
-                                                    style: "width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border-default, #333);",
+                                                    style: "width: 64px; height: 64px; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333);",
+                                                    crate::content::renderer::AuthenticatedBlobImage {
+                                                        blob_ref: blob_ref.trim().to_owned(),
+                                                        alt_text: "Avatar".to_owned(),
+                                                    }
                                                 }
                                             } else {
                                                 div {
@@ -734,6 +787,9 @@ pub fn SettingsPanel(
                                                             "",
                                                         );
                                                         avatar_upload_status.set(String::new());
+                                                        avatar_cache_status.set(
+                                                            "Avatar removed locally; syncing clear to other devices.".to_owned(),
+                                                        );
                                                         // Tombstone the actor-private mirror so
                                                         // other devices clear too.
                                                         push_client_ui_account_data_with_avatar(
@@ -747,9 +803,12 @@ pub fn SettingsPanel(
                                                             if let Ok(api) =
                                                                 crate::views::helpers::authed_api(&base, api_token)
                                                             {
-                                                                let _ = api
+                                                                if let Err(err) = api
                                                                     .update_profile(None, None, Some(""))
-                                                                    .await;
+                                                                    .await
+                                                                {
+                                                                    tracing::warn!("avatar profile clear failed: {err}");
+                                                                }
                                                             }
                                                         });
                                                     }
@@ -762,6 +821,13 @@ pub fn SettingsPanel(
                                                 class: "muted",
                                                 "data-testid": "settings-avatar-upload-progress",
                                                 "{avatar_upload_status}"
+                                            }
+                                        }
+                                        if !avatar_cache_status().is_empty() {
+                                            div {
+                                                class: "muted",
+                                                "data-testid": "settings-avatar-cache-status",
+                                                "{avatar_cache_status}"
                                             }
                                         }
                                     }
@@ -1888,12 +1954,134 @@ pub fn SettingsPanel(
                 // Blocks are actor-private filters; they do not affect other actors' clients.
                             div { class: "event", "data-testid": "personal-blocklist",
                     div { class: "event-head",
-                        span { "Personal blocklist" }
+                        span { {crate::i18n::tr("settings.privacy.blocked_users.title")} }
+                        span { class: "badge", "{blocklist_snapshot.read().len()}" }
                         HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use cx.account.blocklist." }
                     }
-                    div { class: "actions",
-                        button { class: "secondary", "data-testid": "blocklist-edit", "Edit blocklist" }
-                        span { class: "badge", "2 actors blocked" }
+                    div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
+                        input {
+                            "data-testid": "blocklist-did-input",
+                            placeholder: crate::i18n::tr("settings.privacy.blocked_users.did_placeholder"),
+                            value: "{blocklist_did_input}",
+                            oninput: move |event| blocklist_did_input.set(event.value()),
+                        }
+                        input {
+                            "data-testid": "blocklist-reason-input",
+                            placeholder: crate::i18n::tr("settings.privacy.blocked_users.reason_placeholder"),
+                            value: "{blocklist_reason_input}",
+                            oninput: move |event| blocklist_reason_input.set(event.value()),
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "blocklist-add",
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let did = blocklist_did_input().trim().to_owned();
+                                    if did.is_empty() {
+                                        blocklist_status.set(crate::i18n::tr(
+                                            "settings.privacy.blocked_users.did_required",
+                                        ));
+                                        return;
+                                    }
+                                    let reason = blocklist_reason_input().trim().to_owned();
+                                    let reason = if reason.is_empty() {
+                                        None
+                                    } else {
+                                        Some(reason)
+                                    };
+                                    let changed = state_store.write().block_user(&did, reason);
+                                    let entries = state_store.read().client_blocklist();
+                                    blocklist_snapshot.set(entries.clone());
+                                    if changed {
+                                        blocklist_did_input.set(String::new());
+                                        blocklist_reason_input.set(String::new());
+                                        blocklist_status.set(format!(
+                                            "{} {did}",
+                                            crate::i18n::tr(
+                                                "settings.privacy.blocked_users.added"
+                                            )
+                                        ));
+                                        status.set(format!(
+                                            "{} {did}",
+                                            crate::i18n::tr(
+                                                "settings.privacy.blocked_users.added"
+                                            )
+                                        ));
+                                        push_blocklist_account_data(base(), token(), entries);
+                                    } else {
+                                        blocklist_status.set(format!(
+                                            "{} {did}",
+                                            crate::i18n::tr(
+                                                "settings.privacy.blocked_users.duplicate"
+                                            )
+                                        ));
+                                    }
+                                }
+                            },
+                            {crate::i18n::tr("settings.privacy.blocked_users.add")}
+                        }
+                    }
+                    if !blocklist_status().is_empty() {
+                        div { class: "muted", "data-testid": "blocklist-status", "{blocklist_status}" }
+                    }
+                    if blocklist_snapshot.read().is_empty() {
+                        div {
+                            class: "muted",
+                            "data-testid": "blocklist-empty",
+                            {crate::i18n::tr("settings.privacy.blocked_users.empty")}
+                        }
+                    } else {
+                        ul { class: "settings-list", "data-testid": "blocklist-entries",
+                            for entry in blocklist_snapshot.read().iter() {
+                                li { class: "settings-list-row", "data-testid": "blocklist-entry",
+                                    div {
+                                        strong { "{entry.did}" }
+                                        if let Some(reason) = &entry.reason {
+                                            div { class: "muted", "{reason}" }
+                                        }
+                                        if let Some(blocked_at) = &entry.blocked_at {
+                                            div { class: "muted", "{blocked_at}" }
+                                        }
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "blocklist-unblock",
+                                        onclick: {
+                                            let did = entry.did.clone();
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let changed = state_store
+                                                    .write()
+                                                    .unblock_user(&did);
+                                                let entries = state_store.read().client_blocklist();
+                                                blocklist_snapshot.set(entries.clone());
+                                                if changed {
+                                                    blocklist_status.set(format!(
+                                                        "{} {did}",
+                                                        crate::i18n::tr(
+                                                            "settings.privacy.blocked_users.removed"
+                                                        )
+                                                    ));
+                                                    status.set(format!(
+                                                        "{} {did}",
+                                                        crate::i18n::tr(
+                                                            "settings.privacy.blocked_users.removed"
+                                                        )
+                                                    ));
+                                                    push_blocklist_account_data(
+                                                        base(),
+                                                        token(),
+                                                        entries,
+                                                    );
+                                                }
+                                            }
+                                        },
+                                        {crate::i18n::tr("settings.privacy.unblock")}
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2099,5 +2287,10 @@ mod tests {
     #[test]
     fn read_receipt_account_data_key_matches_spec() {
         assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "cx.read_receipt.preferences");
+    }
+
+    #[test]
+    fn blocklist_account_data_key_matches_spec() {
+        assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "cx.account.blocklist");
     }
 }

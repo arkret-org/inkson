@@ -161,10 +161,8 @@ mod tests {
         // Must surface ?, Esc, and the command-palette chord at minimum.
         assert!(bindings.iter().any(|e| e.keys == ["?"]));
         assert!(bindings.iter().any(|e| e.keys == ["Esc"]));
-        assert!(
-            bindings
-                .iter()
-                .any(|e| e.keys.contains(&"K") && (e.keys.contains(&"Ctrl") || e.keys.contains(&"Cmd")))
-        );
+        assert!(bindings.iter().any(
+            |e| e.keys.contains(&"K") && (e.keys.contains(&"Ctrl") || e.keys.contains(&"Cmd"))
+        ));
     }
 }

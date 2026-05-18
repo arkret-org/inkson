@@ -667,10 +667,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.help", "Show this shortcut help");
     dict.set("shortcuts.list.dismiss", "Close any open dialog");
     dict.set("shortcuts.list.palette", "Open command palette");
-    dict.set(
-        "shortcuts.list.palette_mac",
-        "Open command palette (macOS)",
-    );
+    dict.set("shortcuts.list.palette_mac", "Open command palette (macOS)");
     dict.set("shortcuts.list.send", "Send the current message");
     // A2 — mirror Space banner + compose banner + nav tooltip text.
     dict.set(
@@ -689,18 +686,12 @@ pub fn english_translations() -> TranslationDict {
         "agent_workspace.compose.private_to_agent_banner",
         "Composing privately to {agent}: only the agent receives this message; source Flow members see only the generic summary.",
     );
-    dict.set(
-        "agent_workspace.nav.info_title",
-        "What is My Agents?",
-    );
+    dict.set("agent_workspace.nav.info_title", "What is My Agents?");
     dict.set(
         "agent_workspace.nav.info_body",
         "Your private Agent Workspace mirrors source Spaces where your agents act. Drafts stay private; only redacted summaries cross back to the source Space.",
     );
-    dict.set(
-        "agent_workspace.nav.info_button",
-        "About My Agents",
-    );
+    dict.set("agent_workspace.nav.info_button", "About My Agents");
 
     // Publish modal (AW-3.7 + AW-3.20)
     dict.set("agent_workspace.publish.signer_legend", "Signing identity");
@@ -769,7 +760,7 @@ pub fn english_translations() -> TranslationDict {
         "(unknown source)",
     );
 
-    // Personal blocklist (A5) — actor-private `client.blocklist`
+    // Personal blocklist (A5) — actor-private `cx.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the
     // member-row context action, and the timeline/chat "blocked user"
     // placeholder row.
@@ -778,6 +769,25 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "settings.privacy.blocked_users.empty",
         "No users blocked. Block someone from a member list or message row to manage entries here.",
+    );
+    dict.set(
+        "settings.privacy.blocked_users.did_placeholder",
+        "DID to block",
+    );
+    dict.set(
+        "settings.privacy.blocked_users.reason_placeholder",
+        "Reason (optional)",
+    );
+    dict.set("settings.privacy.blocked_users.add", "Block");
+    dict.set("settings.privacy.blocked_users.added", "Blocked");
+    dict.set("settings.privacy.blocked_users.removed", "Unblocked");
+    dict.set(
+        "settings.privacy.blocked_users.duplicate",
+        "Already blocked",
+    );
+    dict.set(
+        "settings.privacy.blocked_users.did_required",
+        "Enter a DID first.",
     );
     dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
@@ -789,7 +799,10 @@ pub fn english_translations() -> TranslationDict {
     // A6.1 — global cross-space message search.
     dict.set("search.title", "Search messages");
     dict.set("search.placeholder", "Search across all your spaces…");
-    dict.set("search.results.empty", "Type a query to search across your spaces.");
+    dict.set(
+        "search.results.empty",
+        "Type a query to search across your spaces.",
+    );
     dict.set("search.results.loading", "Searching…");
     dict.set("search.results.error", "Search failed");
     dict.set("search.no_results", "No matches found.");
@@ -810,8 +823,14 @@ pub fn english_translations() -> TranslationDict {
     // audio / code / generic attachment).
     dict.set("content.code.copy", "Copy");
     dict.set("content.image.broken", "Image unavailable");
-    dict.set("content.video.unsupported", "Your browser does not support inline video.");
-    dict.set("content.audio.unsupported", "Your browser does not support inline audio.");
+    dict.set(
+        "content.video.unsupported",
+        "Your browser does not support inline video.",
+    );
+    dict.set(
+        "content.audio.unsupported",
+        "Your browser does not support inline audio.",
+    );
     dict.set("content.attachment.download", "Download");
 
     dict
@@ -1058,7 +1077,10 @@ pub fn chinese_translations() -> TranslationDict {
     // 成员视觉标识 (member.badge.*)
     dict.set("member.badge.agent", "智能体");
     // 撰写区拖拽附件 (A6.2)
-    dict.set("compose.drop_zone.hint", "将文件拖放到此处以附加,或点击「附加」");
+    dict.set(
+        "compose.drop_zone.hint",
+        "将文件拖放到此处以附加,或点击「附加」",
+    );
     dict.set("compose.upload_progress", "上传中…");
     dict.set("compose.upload_error", "上传失败");
     // 消息钉选 (A6.3)
@@ -1304,6 +1326,22 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set(
         "settings.privacy.blocked_users.empty",
         "尚未屏蔽任何用户。在成员列表或消息行中屏蔽用户后，可在此管理。",
+    );
+    dict.set(
+        "settings.privacy.blocked_users.did_placeholder",
+        "要屏蔽的 DID",
+    );
+    dict.set(
+        "settings.privacy.blocked_users.reason_placeholder",
+        "原因（可选）",
+    );
+    dict.set("settings.privacy.blocked_users.add", "屏蔽");
+    dict.set("settings.privacy.blocked_users.added", "已屏蔽");
+    dict.set("settings.privacy.blocked_users.removed", "已取消屏蔽");
+    dict.set("settings.privacy.blocked_users.duplicate", "已在屏蔽列表中");
+    dict.set(
+        "settings.privacy.blocked_users.did_required",
+        "请先输入 DID。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
     // A4b — 头像上传相关。

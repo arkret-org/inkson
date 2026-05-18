@@ -25,6 +25,12 @@ pub enum Route {
     #[route("/timeline/:space_id", TimelineSpacePage)]
     TimelineSpace { space_id: String },
 
+    #[route("/timeline/:space_id/message/:message_id", TimelineMessagePage)]
+    TimelineMessage {
+        space_id: String,
+        message_id: String,
+    },
+
     #[route("/directory", crate::app::RouterView)]
     Directory,
 
@@ -57,6 +63,9 @@ pub enum Route {
 
     #[route("/kanban/:space_id", KanbanSpacePage)]
     KanbanSpace { space_id: String },
+
+    #[route("/kanban/:space_id/task/:task_id", KanbanTaskPage)]
+    KanbanTask { space_id: String, task_id: String },
 
     #[route("/chat", crate::app::RouterView)]
     Chat,
@@ -125,6 +134,12 @@ fn TimelineSpacePage(space_id: String) -> Element {
 }
 
 #[component]
+fn TimelineMessagePage(space_id: String, message_id: String) -> Element {
+    let _ = (space_id, message_id);
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn SpacePage(space_id: String) -> Element {
     let _ = space_id;
     rsx! { crate::app::RouterView {} }
@@ -161,6 +176,12 @@ fn KanbanSpacePage(space_id: String) -> Element {
 }
 
 #[component]
+fn KanbanTaskPage(space_id: String, task_id: String) -> Element {
+    let _ = (space_id, task_id);
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn ChatSpacePage(space_id: String) -> Element {
     let _ = space_id;
     rsx! { crate::app::RouterView {} }
@@ -179,7 +200,9 @@ impl Route {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
             Route::Space { .. } => View::Timeline,
-            Route::Timeline | Route::TimelineSpace { .. } => View::Timeline,
+            Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+                View::Timeline
+            }
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
@@ -192,7 +215,7 @@ impl Route {
             // and nothing in the UI dispatches on them. Map to Dashboard so
             // `view` signal stays consistent for sidebar / palette state.
             Route::Audit | Route::Call | Route::Applets => View::Dashboard,
-            Route::Kanban | Route::KanbanSpace { .. } => View::Kanban,
+            Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => View::Kanban,
             Route::Chat | Route::ChatSpace { .. } => View::Chat,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentSpace { .. } => View::Document,
@@ -212,7 +235,9 @@ impl Route {
         match self {
             Route::Space { space_id }
             | Route::TimelineSpace { space_id }
+            | Route::TimelineMessage { space_id, .. }
             | Route::KanbanSpace { space_id }
+            | Route::KanbanTask { space_id, .. }
             | Route::ChatSpace { space_id }
             | Route::DocumentSpace { space_id }
             | Route::SpaceAdmin { space_id }
