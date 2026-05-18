@@ -324,6 +324,46 @@ pub mod cx_ops {
             })))
     }
 
+    /// Build a `cx.flow.watch.set` operation. Spec:
+    /// `contrix-spec/spec/v1/zh/models/flow-and-message.md §8.3` —
+    /// writes the cas-register cell `cx.component.flow.watch.v1` keyed by
+    /// `(flow_id, actor_did)`.
+    ///
+    /// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
+    /// or `None` to clear the cell (equivalent to `mentions_only` default).
+    /// `level_public` is the opt-in flag from §8.5 — when `true`, projection
+    /// to non-self viewers does not strip the level value (but `muted` still
+    /// stays invisible). Caller MUST omit `level_public` when `level` is None.
+    ///
+    /// Default reducer invariant: `target_actor` MUST equal `sender_actor`
+    /// unless the sender holds `cx.flow.watch.manage_others`. Callers
+    /// helping someone else subscribe (e.g. Flow creator seeding
+    /// watchers on create) need that capability.
+    pub fn flow_watch_set(
+        space_id: &str,
+        sender_actor: &str,
+        target_actor_did: &str,
+        flow_id: &str,
+        level: Option<&str>,
+        level_public: Option<bool>,
+    ) -> OperationBuilder {
+        let mut payload = json!({
+            "flow_id": flow_id,
+            "actor_did": target_actor_did,
+            "level": level,
+        });
+        // Schema-level allOf in flow_watch_set_payload forbids
+        // level_public when level is null; only emit it on non-null level.
+        if level.is_some() {
+            if let Some(public) = level_public {
+                payload["level_public"] = json!(public);
+            }
+        }
+        OperationBuilder::new(space_id, sender_actor, "cx.flow.watch.set")
+            .target_ref(flow_id)
+            .body(payload)
+    }
+
     /// Build a `cx.flow.create` for a document Flow.
     ///
     /// Document content travels on the Flow's synthesis track in

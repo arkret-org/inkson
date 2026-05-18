@@ -492,7 +492,13 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
-    dict.set("chat.label.users", "Users");
+    dict.set("chat.label.watchers", "Add watchers");
+    dict.set(
+        "chat.watchers.hint",
+        "Watchers get notified on every message. \
+         This does not restrict access — anyone in the Space can still see this discussion. \
+         You can change your own watch level anytime.",
+    );
     dict.set("chat.button.create", "Create");
     dict.set("chat.button.reply", "Reply");
     dict.set("chat.button.react", "React");
@@ -775,6 +781,22 @@ pub fn english_translations() -> TranslationDict {
         "No users blocked. Block someone from a member list or message row to manage entries here.",
     );
     dict.set("settings.privacy.unblock", "Unblock");
+    // A4b — avatar upload UI keys.
+    dict.set("settings.avatar.title", "Profile picture");
+    dict.set("settings.avatar.upload", "Upload new avatar");
+    dict.set("settings.avatar.clear", "Remove avatar");
+    dict.set("settings.avatar.uploading", "Uploading avatar…");
+    dict.set("settings.avatar.error", "Avatar upload failed");
+    // A6.1 — global cross-space message search.
+    dict.set("search.title", "Search messages");
+    dict.set("search.placeholder", "Search across all your spaces…");
+    dict.set("search.results.empty", "Type a query to search across your spaces.");
+    dict.set("search.results.loading", "Searching…");
+    dict.set("search.results.error", "Search failed");
+    dict.set("search.no_results", "No matches found.");
+    dict.set("search.result.snippet", "Snippet");
+    dict.set("topbar.search_button", "Open search");
+    dict.set("shortcuts.list.search", "Open global message search");
     dict.set("member.block", "Block this user");
     dict.set("member.block_confirm.title", "Block this user?");
     dict.set(
@@ -784,6 +806,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("member.block_confirm.confirm", "Block");
     dict.set("timeline.blocked_user", "[Blocked user]");
     dict.set("timeline.show_anyway", "Show anyway");
+
+    // A3 (round 28): rich content renderer (markdown / image / video /
+    // audio / code / generic attachment).
+    dict.set("content.code.copy", "Copy");
+    dict.set("content.image.broken", "Image unavailable");
+    dict.set("content.video.unsupported", "Your browser does not support inline video.");
+    dict.set("content.audio.unsupported", "Your browser does not support inline audio.");
+    dict.set("content.attachment.download", "Download");
 
     dict
 }
@@ -1016,7 +1046,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.hide_list", "隐藏讨论列表");
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
-    dict.set("chat.label.users", "用户");
+    dict.set("chat.label.watchers", "添加关注者");
+    dict.set(
+        "chat.watchers.hint",
+        "关注者会收到每条新消息的通知。这**不**限制访问权限——空间内的其他成员仍能看到该讨论。\
+         每个关注者可以随时调整自己的关注级别。",
+    );
     dict.set("chat.button.create", "创建");
     dict.set("chat.button.reply", "回复");
     dict.set("chat.button.react", "回应");
@@ -1273,6 +1308,22 @@ pub fn chinese_translations() -> TranslationDict {
         "尚未屏蔽任何用户。在成员列表或消息行中屏蔽用户后，可在此管理。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
+    // A4b — 头像上传相关。
+    dict.set("settings.avatar.title", "头像");
+    dict.set("settings.avatar.upload", "上传新头像");
+    dict.set("settings.avatar.clear", "清除头像");
+    dict.set("settings.avatar.uploading", "上传中…");
+    dict.set("settings.avatar.error", "头像上传失败");
+    // A6.1 — 全局跨空间消息搜索。
+    dict.set("search.title", "搜索消息");
+    dict.set("search.placeholder", "在所有空间中搜索消息…");
+    dict.set("search.results.empty", "输入查询以在所有空间中搜索。");
+    dict.set("search.results.loading", "搜索中…");
+    dict.set("search.results.error", "搜索失败");
+    dict.set("search.no_results", "未找到匹配项。");
+    dict.set("search.result.snippet", "摘要");
+    dict.set("topbar.search_button", "打开搜索");
+    dict.set("shortcuts.list.search", "打开全局消息搜索");
     dict.set("member.block", "屏蔽此用户");
     dict.set("member.block_confirm.title", "屏蔽此用户？");
     dict.set(
@@ -1282,6 +1333,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("member.block_confirm.confirm", "屏蔽");
     dict.set("timeline.blocked_user", "[已屏蔽用户]");
     dict.set("timeline.show_anyway", "仍要查看");
+
+    // A3 (round 28): 富内容渲染器字符串。
+    dict.set("content.code.copy", "复制");
+    dict.set("content.image.broken", "图片不可用");
+    dict.set("content.video.unsupported", "您的浏览器不支持内嵌视频。");
+    dict.set("content.audio.unsupported", "您的浏览器不支持内嵌音频。");
+    dict.set("content.attachment.download", "下载");
 
     dict
 }

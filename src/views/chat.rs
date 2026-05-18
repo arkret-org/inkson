@@ -1016,19 +1016,6 @@ fn parse_discussion_principals(input: &str) -> Vec<String> {
     principals
 }
 
-fn discussion_participants(actor: &str, input: &str) -> Vec<String> {
-    let mut participants = Vec::new();
-    if !actor.trim().is_empty() {
-        participants.push(actor.trim().to_owned());
-    }
-    for principal in parse_discussion_principals(input) {
-        if !participants.iter().any(|existing| existing == &principal) {
-            participants.push(principal);
-        }
-    }
-    participants
-}
-
 fn current_mention_query(text: &str) -> Option<(usize, String)> {
     for (idx, ch) in text.char_indices().rev() {
         if ch == '@' {
@@ -2106,13 +2093,16 @@ pub fn ChatPanel(
                                 placeholder: "Short purpose or context",
                                 oninput: move |evt| new_channel_topic.set(evt.value()),
                             }
-                            label { {crate::i18n::tr("chat.label.users")} }
+                            label { {crate::i18n::tr("chat.label.watchers")} }
                             textarea {
                                 "data-testid": "new-channel-members",
                                 value: "{new_channel_members}",
                                 rows: "3",
                                 placeholder: "did:web:bob.example  (type @ to search)",
                                 oninput: move |evt| new_channel_members.set(evt.value()),
+                            }
+                            p { class: "form-hint muted",
+                                {crate::i18n::tr("chat.watchers.hint")}
                             }
                             {
                                 let members_text = new_channel_members();
@@ -2219,9 +2209,20 @@ pub fn ChatPanel(
                                         }
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
-                                        let member_text = new_channel_members();
+                                        let watcher_text = new_channel_members();
                                         let create_card = new_channel_create_card();
-                                        let participants = discussion_participants(&actor, &member_text);
+                                        // Per contrix-spec/spec/v1/zh/models/flow-and-message.md §8,
+                                        // initial watchers are no longer stored as
+                                        // `Flow.fields.participants` — that field acted like ACL
+                                        // metadata but had no access semantics. The seed list now
+                                        // produces one `cx.flow.watch.set` event per DID. The Flow
+                                        // creator is excluded from the seed because the spec §8.4
+                                        // creator-implicit-subscribe path covers them.
+                                        let initial_watchers: Vec<String> =
+                                            parse_discussion_principals(&watcher_text)
+                                                .into_iter()
+                                                .filter(|did| did != actor.trim())
+                                                .collect();
                                         let flow_id = format!("cx:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match cx_ops::discussion_flow_create(
@@ -2233,13 +2234,11 @@ pub fn ChatPanel(
                                             Ok(builder) => {
                                                 let mut op = builder.build("yougen");
                                                 op.body["category"] = json!(category.clone());
-                                                op.body["participants"] = json!(participants.clone());
                                                 op.body["create_card"] = json!(create_card);
                                                 if !op.body.get("fields").is_some_and(|fields| fields.is_object()) {
                                                     op.body["fields"] = json!({});
                                                 }
                                                 op.body["fields"]["category"] = json!(category.clone());
-                                                op.body["fields"]["participants"] = json!(participants.clone());
                                                 op.body["fields"]["has_synthesis"] = json!(create_card);
                                                 if !op.body["object"]
                                                     .get("fields")
@@ -2249,8 +2248,6 @@ pub fn ChatPanel(
                                                 }
                                                 op.body["object"]["fields"]["category"] =
                                                     json!(category.clone());
-                                                op.body["object"]["fields"]["participants"] =
-                                                    json!(participants.clone());
                                                 op.body["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
                                                 op.body["rank"] = json!(rank.clone());
@@ -2277,9 +2274,23 @@ pub fn ChatPanel(
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let space = space.clone();
+                                        let watch_ops: Vec<crate::operation::OperationEnvelope> = initial_watchers
+                                            .iter()
+                                            .map(|target_did| {
+                                                cx_ops::flow_watch_set(
+                                                    &space,
+                                                    &actor,
+                                                    target_did,
+                                                    &flow_id,
+                                                    Some("participating"),
+                                                    None,
+                                                )
+                                                .build("yougen")
+                                            })
+                                            .collect();
                                         status_msg.set("Creating discussion".to_owned());
                                         spawn(async move {
-                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                            match authed_api_with_sync(&base, api_token.clone(), wait_for) {
                                                 Ok(api) => match api
                                                         .submit_operation_event(&op)
                                                         .await
@@ -2314,7 +2325,34 @@ pub fn ChatPanel(
                                                                     }),
                                                                 );
                                                             }
-                                                            status_msg.set("Discussion created".to_owned());
+                                                            // Fan out seed watcher subscriptions.
+                                                            // Best-effort: failures are surfaced
+                                                            // in status, but the discussion is
+                                                            // already created. Default UX places
+                                                            // every seed at `participating`; users
+                                                            // can change their own level later.
+                                                            let mut watch_failures = 0usize;
+                                                            if !watch_ops.is_empty() {
+                                                                let watch_wait = active_sync_token(&sync_cursor());
+                                                                if let Ok(watch_api) = authed_api_with_sync(&base, api_token, watch_wait) {
+                                                                    for watch_op in &watch_ops {
+                                                                        if watch_api
+                                                                            .submit_operation_event(watch_op)
+                                                                            .await
+                                                                            .is_err()
+                                                                        {
+                                                                            watch_failures += 1;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            if watch_failures > 0 {
+                                                                status_msg.set(format!(
+                                                                    "Discussion created; {watch_failures} watcher invite(s) failed"
+                                                                ));
+                                                            } else {
+                                                                status_msg.set("Discussion created".to_owned());
+                                                            }
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
                                                             new_channel_members.set(String::new());
@@ -2604,7 +2642,11 @@ pub fn ChatPanel(
                                         {crate::i18n::tr("timeline.show_anyway")}
                                     }
                                 } else {
-                                    div { class: "msg-content", "{msg.body}" }
+                                    div { class: "msg-content",
+                                        {crate::content::render_blocks(
+                                            &crate::content::parse_message_body(&msg.body),
+                                        )}
+                                    }
                                 }
                                 if !msg.mentions.is_empty() {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-mentions",
