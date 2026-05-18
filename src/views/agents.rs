@@ -13,7 +13,7 @@
 //!
 //! Incoming `cx.agent.protocol_session.result` events fetched from
 //! soland are decoded + verified via
-//! `contrix_sdk::agent_binding::verify_ed25519_audit_binding`. The
+//! `contrix_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
 //! whether the signature matches.
 
@@ -70,78 +70,25 @@ impl AuditVerifyStatus {
 }
 
 /// Verify a soland `cx.agent.protocol_session.result` payload's
-/// `audit_binding` block. The payload is the projection event's
-/// `payload` field as returned by `/api/v1/events`.
-///
-/// Reads the binding plus the four canonical-subject inputs
-/// (`session_id`, `result.agent_did`, `result.echo`, `audit_binding.actor`)
-/// out of the event payload itself and dispatches by `binding_kind`:
-///   * `ed25519_v1` -> verify via SDK Ed25519 helper using the
-///     `public_key_b64` carried in the envelope.
-///   * anything else -> `Unsupported`. Deployments wanting an
-///     alternative scheme ship their own `binding_kind` and extend
-///     this dispatcher.
+/// `audit_binding` block. Yougen delegates the `binding_kind` switch
+/// to the SDK so future schemes land in one place instead of being
+/// re-implemented by every client surface.
 fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
-    let Some(binding) = payload.get("audit_binding") else {
-        return AuditVerifyStatus::Absent;
-    };
-    let kind = binding
-        .get("binding_kind")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if kind != "ed25519_v1" {
-        return AuditVerifyStatus::Unsupported;
-    }
-    let session_id = match payload.get("session_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => return AuditVerifyStatus::Malformed,
-    };
-    let agent_did = payload
-        .get("result")
-        .and_then(|r| r.get("agent_did"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let echo = payload
-        .get("result")
-        .and_then(|r| r.get("echo"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let actor = binding.get("actor").and_then(Value::as_str).unwrap_or("");
-    let canonical_subject = binding
-        .get("canonical_subject")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let signature = binding
-        .get("signature")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let public_key_b64 = match binding.get("public_key_b64").and_then(Value::as_str) {
-        Some(s) => s,
-        None => return AuditVerifyStatus::Malformed,
-    };
-    let outcome = contrix_sdk::agent_binding::verify_ed25519_audit_binding(
-        public_key_b64,
-        session_id,
-        agent_did,
-        &echo,
-        actor,
-        signature,
-        canonical_subject,
-    );
-    match outcome {
-        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::Valid => {
-            AuditVerifyStatus::Valid
-        }
-        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SubjectMismatch => {
+    match contrix_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
             AuditVerifyStatus::SubjectMismatch
         }
-        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::SignatureMismatch => {
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
             AuditVerifyStatus::SignatureMismatch
         }
-        contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedSignature
-        | contrix_sdk::agent_binding::Ed25519AuditBindingVerifyOutcome::MalformedPublicKey => {
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
             AuditVerifyStatus::Malformed
         }
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
+            AuditVerifyStatus::Unsupported
+        }
+        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
     }
 }
 

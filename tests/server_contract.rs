@@ -375,11 +375,11 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 #[test]
 fn yougen_parses_submit_move_pending_response() {
     let body = json!({
-        "move_id": "cx:move:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "move_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "state": "pending"
     });
     let parsed: yougen::models::SubmitMoveResponse = serde_json::from_value(body).unwrap();
-    assert!(parsed.move_id.starts_with("cx:move:sha256:"));
+    assert!(parsed.move_id.starts_with("sha256:"));
     assert_eq!(parsed.state, "pending");
     assert!(parsed.reason.is_none());
 }
@@ -387,7 +387,7 @@ fn yougen_parses_submit_move_pending_response() {
 #[test]
 fn yougen_parses_submit_move_rejected_response() {
     let body = json!({
-        "move_id": "cx:move:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "move_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "state": "rejected",
         "reason": "replay_window: HLC signed at 2024-... is too old"
     });
@@ -402,7 +402,7 @@ fn yougen_parses_sign_anchor_published_response() {
         "published": true,
         "anchor_id": "cx:anchor:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "accepted_move_ids": [
-            "cx:move:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ],
         "rejected_moves": [],
         "post_state_root": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -437,11 +437,11 @@ fn yougen_parses_submit_anchor_response_with_rejected_moves() {
     let body = json!({
         "anchor_id": "cx:anchor:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "accepted_move_ids": [
-            "cx:move:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ],
         "rejected_moves": [
             {
-                "move_id": "cx:move:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "move_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "reason": "FSM invalid transition: from=invited, to=ban"
             }
         ],

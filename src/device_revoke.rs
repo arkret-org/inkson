@@ -305,7 +305,7 @@ pub struct MlsRevokeMoveChain {
     /// MLS group id the chain operates on — one chain per affected
     /// group.
     pub group_id: String,
-    /// MLS commit Move id (`cx:move:sha256:...`); `None` until the
+    /// MLS commit Move id (`sha256:...`); `None` until the
     /// builder runs.
     pub commit_move_id: Option<String>,
     /// Epoch-advance Move id; `None` until the builder runs.
@@ -448,8 +448,8 @@ mod chain_tests {
     fn chain_is_complete_only_when_both_moves_effective() {
         let mut chain = MlsRevokeMoveChain {
             group_id: "cx:space:01acme".to_owned(),
-            commit_move_id: Some("cx:move:sha256:aa".to_owned()),
-            epoch_advance_move_id: Some("cx:move:sha256:bb".to_owned()),
+            commit_move_id: Some("sha256:aa".to_owned()),
+            epoch_advance_move_id: Some("sha256:bb".to_owned()),
             commit_state: ChainMoveState::Effective,
             epoch_advance_state: ChainMoveState::Pending,
             pre_revoke_epoch: Some(12),

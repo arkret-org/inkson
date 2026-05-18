@@ -40,6 +40,25 @@ pub(crate) fn push_client_ui_account_data(
     api_token: String,
     local_theme: String,
 ) {
+    push_client_ui_account_data_with_avatar(base_url, api_token, local_theme, None);
+}
+
+/// A4b — variant of [`push_client_ui_account_data`] that also carries
+/// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
+/// also published via `cx.account.update_profile` so other actors see
+/// it through the directory; mirroring the ref into `client.ui` keeps a
+/// second device that signs in primed before the profile lookup
+/// completes.
+///
+/// Pass `None` to skip the avatar mirror (theme-only sync). Pass
+/// `Some("")` to tombstone the cached ref so other devices fall back to
+/// the public profile when the avatar is cleared.
+pub(crate) fn push_client_ui_account_data_with_avatar(
+    base_url: String,
+    api_token: String,
+    local_theme: String,
+    avatar_blob_ref: Option<String>,
+) {
     if api_token.trim().is_empty() {
         // No active session — nothing to sync; the next login will pick
         // up the local value once the user signs in.
@@ -49,6 +68,7 @@ pub(crate) fn push_client_ui_account_data(
         Some(local_theme.as_str()),
         None,
         &std::collections::BTreeMap::new(),
+        avatar_blob_ref.as_deref(),
     );
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
@@ -386,6 +406,19 @@ pub fn SettingsPanel(
     });
     let mut new_space_remark_id = use_signal(String::new);
     let mut new_space_remark_name = use_signal(String::new);
+    // A4b — profile (display_name / bio / avatar) state.
+    // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
+    // `cx.account_data.set("client.ui", { avatar_blob_ref })` and is
+    // *also* published publicly to soland's
+    // `POST /api/v1/account/profile { avatar_url }` so the directory
+    // can index it. `avatar_upload_status` carries the inline
+    // progress / error message.
+    let initial_avatar_blob_ref = state_store
+        .read()
+        .load_private_data(&account_did(), "avatar_blob_ref")
+        .unwrap_or_default();
+    let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
+    let mut avatar_upload_status = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id =
@@ -530,6 +563,211 @@ pub fn SettingsPanel(
                                 div { class: "actions",
                                     span { class: "badge green", "HTTP/JSON" }
                                     span { class: "badge blue", "v1 core" }
+                                }
+                            }
+
+                            // A4b — Profile / avatar card. Renders the
+                            // current avatar (resolved via the blob URL
+                            // helper when a blob_ref is present), an
+                            // upload control, and a clear button. The
+                            // avatar is also published to soland's
+                            // `cx.account.update_profile` so the
+                            // directory + member lists pick it up.
+                            div { class: "event settings-card-span-2", "data-testid": "settings-avatar-card",
+                                div { class: "event-head",
+                                    span { {crate::i18n::tr("settings.avatar.title")} }
+                                    span { "cx.account.update_profile" }
+                                }
+                                div { class: "actions", style: "align-items: center; gap: 16px;",
+                                    {
+                                        let blob_ref = profile_avatar_blob_ref();
+                                        let preview_src = if blob_ref.trim().is_empty() {
+                                            String::new()
+                                        } else {
+                                            crate::api::blob_download_url_for(
+                                                &base_url(),
+                                                blob_ref.trim(),
+                                            )
+                                        };
+                                        rsx! {
+                                            if !preview_src.is_empty() {
+                                                img {
+                                                    "data-testid": "settings-avatar-preview",
+                                                    src: "{preview_src}",
+                                                    alt: "Avatar",
+                                                    style: "width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border-default, #333);",
+                                                }
+                                            } else {
+                                                div {
+                                                    "data-testid": "settings-avatar-preview",
+                                                    style: "width: 64px; height: 64px; border-radius: 50%; background: var(--bg-elevated, #1a1d22); border: 1px dashed var(--border-default, #333); display: flex; align-items: center; justify-content: center; color: var(--muted, #888);",
+                                                    "—"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    div { style: "display: flex; flex-direction: column; gap: 8px;",
+                                        label {
+                                            class: "secondary",
+                                            "data-testid": "settings-avatar-upload-label",
+                                            r#for: "settings-avatar-input",
+                                            {crate::i18n::tr("settings.avatar.upload")}
+                                        }
+                                        input {
+                                            id: "settings-avatar-input",
+                                            "data-testid": "settings-avatar-input",
+                                            r#type: "file",
+                                            accept: "image/*",
+                                            // A4b — Dioxus 0.7 `HasFileData::files()`
+                                            // surfaces the dropped / picked file
+                                            // list. Read bytes async then upload
+                                            // via the blob endpoint + publish the
+                                            // resulting blob URL to the profile.
+                                            onchange: {
+                                                let base = base_url();
+                                                let api_token = token();
+                                                move |evt: Event<FormData>| {
+                                                    let files = evt.files();
+                                                    if files.is_empty() {
+                                                        avatar_upload_status.set(
+                                                            crate::i18n::tr("settings.avatar.error"),
+                                                        );
+                                                        return;
+                                                    }
+                                                    let file = files.into_iter().next().expect("non-empty");
+                                                    let content_type = file
+                                                        .content_type()
+                                                        .unwrap_or_else(|| "application/octet-stream".to_owned());
+                                                    let base = base.clone();
+                                                    let api_token = api_token.clone();
+                                                    avatar_upload_status.set(
+                                                        crate::i18n::tr("settings.avatar.uploading"),
+                                                    );
+                                                    spawn(async move {
+                                                        let bytes = match file.read_bytes().await {
+                                                            Ok(b) => b.to_vec(),
+                                                            Err(err) => {
+                                                                avatar_upload_status.set(format!(
+                                                                    "{}: {err}",
+                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                ));
+                                                                return;
+                                                            }
+                                                        };
+                                                        let api = match crate::views::helpers::authed_api(&base, api_token.clone()) {
+                                                            Ok(api) => api,
+                                                            Err(err) => {
+                                                                avatar_upload_status.set(format!(
+                                                                    "{}: {err}",
+                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                ));
+                                                                return;
+                                                            }
+                                                        };
+                                                        match api.upload_blob_bytes(bytes, &content_type).await {
+                                                            Ok(resp) => {
+                                                                let blob_ref = resp.blob_ref.clone();
+                                                                let avatar_url = api.blob_download_url(&blob_ref);
+                                                                // 1) Mirror locally + push actor-private
+                                                                //    `client.ui.avatar_blob_ref` so other
+                                                                //    devices pick up the same upload.
+                                                                profile_avatar_blob_ref.set(blob_ref.clone());
+                                                                state_store.write().save_private_data(
+                                                                    &account_did(),
+                                                                    "avatar_blob_ref",
+                                                                    blob_ref.clone(),
+                                                                );
+                                                                push_client_ui_account_data_with_avatar(
+                                                                    base.clone(),
+                                                                    api_token.clone(),
+                                                                    theme(),
+                                                                    Some(blob_ref.clone()),
+                                                                );
+                                                                // 2) Publish publicly via
+                                                                //    `cx.account.update_profile`.
+                                                                //    Best-effort: log on failure but
+                                                                //    keep the local cache intact.
+                                                                match api
+                                                                    .update_profile(None, None, Some(&avatar_url))
+                                                                    .await
+                                                                {
+                                                                    Ok(_) => {
+                                                                        avatar_upload_status.set(String::new());
+                                                                        status.set(format!(
+                                                                            "Avatar updated ({blob_ref})"
+                                                                        ));
+                                                                    }
+                                                                    Err(err) => {
+                                                                        avatar_upload_status.set(format!(
+                                                                            "{}: {}",
+                                                                            crate::i18n::tr("settings.avatar.error"),
+                                                                            err,
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(err) => {
+                                                                avatar_upload_status.set(format!(
+                                                                    "{}: {err}",
+                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                ));
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                        }
+                                        if !profile_avatar_blob_ref().trim().is_empty() {
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "settings-avatar-clear",
+                                                onclick: {
+                                                    let base = base_url();
+                                                    let api_token = token();
+                                                    move |_| {
+                                                        let base = base.clone();
+                                                        let api_token = api_token.clone();
+                                                        profile_avatar_blob_ref.set(String::new());
+                                                        state_store.write().save_private_data(
+                                                            &account_did(),
+                                                            "avatar_blob_ref",
+                                                            "",
+                                                        );
+                                                        avatar_upload_status.set(String::new());
+                                                        // Tombstone the actor-private mirror so
+                                                        // other devices clear too.
+                                                        push_client_ui_account_data_with_avatar(
+                                                            base.clone(),
+                                                            api_token.clone(),
+                                                            theme(),
+                                                            Some(String::new()),
+                                                        );
+                                                        // Tombstone the public profile entry.
+                                                        spawn(async move {
+                                                            if let Ok(api) =
+                                                                crate::views::helpers::authed_api(&base, api_token)
+                                                            {
+                                                                let _ = api
+                                                                    .update_profile(None, None, Some(""))
+                                                                    .await;
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                {crate::i18n::tr("settings.avatar.clear")}
+                                            }
+                                        }
+                                        if !avatar_upload_status().is_empty() {
+                                            div {
+                                                class: "muted",
+                                                "data-testid": "settings-avatar-upload-progress",
+                                                "{avatar_upload_status}"
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "muted",
+                                    "Published via cx.account.update_profile; mirrored to other devices via client.ui.avatar_blob_ref."
                                 }
                             }
 

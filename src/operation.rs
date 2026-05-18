@@ -364,6 +364,77 @@ pub mod cx_ops {
             .body(payload)
     }
 
+    /// Build a `cx.flow.tracks.update` operation. Spec:
+    /// `contrix-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
+    ///
+    /// This is the single unified track-mutation event that replaces the
+    /// legacy quartet `cx.flow.track.{enable,disable,update,set_primary}`.
+    /// `patch` is a `cx.patch.v1` JSON Patch object against the `Flow.tracks`
+    /// map (keys are track names like `synthesis` / `discussion`). For
+    /// example, enabling the `discussion` track is:
+    ///
+    /// ```json
+    /// { "tracks.discussion.enabled": { "$op": "set", "value": true } }
+    /// ```
+    ///
+    /// Disabling, renaming, or marking a track primary all flow through the
+    /// same patch shape. Callers that only know a track name should compose
+    /// the patch via the helpers below (`flow_tracks_update_enable`,
+    /// `flow_tracks_update_disable`, `flow_tracks_update_set_primary`).
+    pub fn flow_tracks_update(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.tracks.update")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
+    /// `cx.flow.tracks.update` event with a `cx.patch.v1` set-op against
+    /// `tracks.<name>.enabled`.
+    pub fn flow_tracks_update_enable(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        track: &str,
+    ) -> OperationBuilder {
+        let key = format!("tracks.{track}.enabled");
+        let patch = json!({ key: { "$op": "set", "value": true } });
+        flow_tracks_update(space_id, actor, flow_id, patch)
+    }
+
+    /// Convenience wrapper: disable `track` on `flow_id`.
+    pub fn flow_tracks_update_disable(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        track: &str,
+    ) -> OperationBuilder {
+        let key = format!("tracks.{track}.enabled");
+        let patch = json!({ key: { "$op": "set", "value": false } });
+        flow_tracks_update(space_id, actor, flow_id, patch)
+    }
+
+    /// Convenience wrapper: mark `track` as the Flow's primary track.
+    /// Carries a single set-op against `tracks.<name>.primary`. The reducer
+    /// is responsible for clearing the previous primary cell.
+    pub fn flow_tracks_update_set_primary(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        track: &str,
+    ) -> OperationBuilder {
+        let key = format!("tracks.{track}.primary");
+        let patch = json!({ key: { "$op": "set", "value": true } });
+        flow_tracks_update(space_id, actor, flow_id, patch)
+    }
+
     /// Build a `cx.flow.create` for a document Flow.
     ///
     /// Document content travels on the Flow's synthesis track in

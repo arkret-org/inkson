@@ -239,6 +239,10 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.applet.protocol_session.start",
         "cx.applet.protocol_session.status",
         "cx.applet.registration",
+        // Range-completeness attestation (sync/operations-sync §4.2 + new in C45).
+        // Non-reducer; used by audit layer to assert no silent omission within a
+        // declared (from_frontier, to_frontier) interval.
+        "cx.attestation.range_completeness",
         // Audited E2EE (crypto-media/audited-e2ee.md)
         "cx.audit.accessed",
         "cx.audit.ryw_receipt",
@@ -258,8 +262,12 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.device.authorized",
         "cx.device.list_update",
         "cx.device.revoked",
-        // Identity (DID proof + progressive disclosure §16)
+        // Identity (DID proof + progressive disclosure §16 + C45 accountability grant)
         "cx.did.proof",
+        // Round C45: issuer-signed endorsement that a subject DID is
+        // accountable_to the issuer; required to verify
+        // `Actor Profile.accountable_to[]`. See zh/models/actor.md §3.3.1.
+        "cx.identity.accountability_grant",
         "cx.identity.disclosure_policy",
         "cx.identity.disclosure_receipt",
         "cx.identity.presentation_request",
@@ -270,10 +278,11 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.flow.move",
         "cx.flow.reorder",
         "cx.flow.restore",
-        "cx.flow.track.disable",
-        "cx.flow.track.enable",
-        "cx.flow.track.set_primary",
-        "cx.flow.track.update",
+        // Per contrix-spec dc01ad7 the four legacy
+        // `cx.flow.track.{enable,disable,update,set_primary}`
+        // events were unified into a single `cx.flow.tracks.update`
+        // carrying a `cx.patch.v1` JSON Patch against `Flow.tracks`.
+        "cx.flow.tracks.update",
         "cx.flow.update",
         // Invite (sync/third-party-invites + identity/invites)
         "cx.invite.accept",
@@ -309,10 +318,13 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Moderation (governance/content-moderation)
         "cx.moderation.frank",
         "cx.moderation.report",
-        // Morph
+        // Morph (C45 — schema_migrate is the first-class schema_refs[]
+        // evolution event with explicit compatibility_class; replaces ad-hoc
+        // schema_refs[] writes via cx.morph.update).
         "cx.morph.archive",
         "cx.morph.create",
         "cx.morph.restore",
+        "cx.morph.schema_migrate",
         "cx.morph.update",
         // Organization (identity-did §6 + content-moderation)
         "cx.organization.discovery",
@@ -861,19 +873,31 @@ mod tests {
         // (4 kinds; spec dropped member/history_visibility/policy_components
         // because tracks no longer carry independent membership/visibility/
         // policy — see Flow.discussion_space_ref). Net -3 from prior 110.
+        // Follow-on wire-break (spec dc01ad7, 2026-05-18): the four track
+        // events above unified into a single `cx.flow.tracks.update` carrying
+        // a `cx.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
+        // Round C45 (spec 5ed365c, 2026-05-18 main): +3 new event kinds
+        // (cx.attestation.range_completeness / cx.identity.accountability_grant /
+        // cx.morph.schema_migrate). The two `.v1`-suffixed audit kinds were
+        // renamed in-place (cx.audit.epoch_key_destruction[.v1] and
+        // cx.space.audit_policy_downgrade[.v1] — yougen does not yet surface
+        // those typed kinds, so the rename doesn't shift the count).
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
-        // surface remains a subset (107 here). Bump this number when yougen
-        // adds typed support for more kinds.
+        // surface remains a subset (107 here).
         assert_eq!(known_event_kinds().len(), 107);
     }
 
     #[test]
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
-        // current-model §3 — track lifecycle events
-        assert!(kinds.contains(&"cx.flow.track.enable"));
-        assert!(kinds.contains(&"cx.flow.track.set_primary"));
+        // current-model §3 — unified track update (spec dc01ad7)
+        assert!(kinds.contains(&"cx.flow.tracks.update"));
+        // Legacy split events removed in the dc01ad7 unification.
+        assert!(!kinds.contains(&"cx.flow.track.enable"));
+        assert!(!kinds.contains(&"cx.flow.track.disable"));
+        assert!(!kinds.contains(&"cx.flow.track.update"));
+        assert!(!kinds.contains(&"cx.flow.track.set_primary"));
         // current-model §4 — board / list workflow container
         assert!(kinds.contains(&"cx.flow.move"));
         assert!(kinds.contains(&"cx.flow.reorder"));
@@ -919,15 +943,18 @@ mod tests {
     /// C18 wire-break (spec 2026-05-08) deliberately retired
     /// `cx.flow.branch.{member,history_visibility,policy_components}` — three
     /// events that had no track-namespace successor — so the prior floor of
-    /// 110 is no longer meaningful. We pin to 107 to track the post-rename
-    /// post-prune count. The spec itself declares 134 active kinds at HEAD;
-    /// yougen surfaces the typed subset relevant to its UI flows.
+    /// 110 is no longer meaningful. Spec dc01ad7 (2026-05-18) then unified
+    /// the four `cx.flow.track.{enable,disable,update,set_primary}` events
+    /// into a single `cx.flow.tracks.update`, dropping three more entries.
+    /// We pin to 104 to track the post-unification count. The spec itself
+    /// declares 131 active kinds at HEAD; yougen surfaces the typed subset
+    /// relevant to its UI flows.
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
         assert!(
-            kinds.len() >= 107,
-            "yougen surfaces {} event kinds; floor 107 set after C18 retired the three branch-only events that had no track equivalent.",
+            kinds.len() >= 104,
+            "yougen surfaces {} event kinds; floor 104 set after the dc01ad7 track-unification reduced the prior 107 floor by three (4 legacy track events → 1 unified `cx.flow.tracks.update`).",
             kinds.len()
         );
     }

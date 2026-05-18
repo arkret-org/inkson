@@ -144,10 +144,18 @@ impl AccountDataStore {
 ///
 /// Empty / `None` fields are skipped so we don't ship stale defaults.
 /// `theme` MUST be one of `"light" | "night" | "system"`.
+///
+/// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
+/// of the most-recently uploaded avatar reference. The blob_ref itself
+/// (`cx:blob:sha256:<hex>`) is public — the avatar is also published via
+/// `cx.account.update_profile` so other actors see it through the
+/// directory. We mirror it here so a second device that signs in picks
+/// up the same blob without needing to re-fetch `/account/me`.
 pub fn build_client_ui_body(
     theme: Option<&str>,
     sidebar_collapsed: Option<bool>,
     per_space_view: &BTreeMap<String, String>,
+    avatar_blob_ref: Option<&str>,
 ) -> Value {
     let mut map = serde_json::Map::new();
     if let Some(value) = theme {
@@ -165,7 +173,28 @@ pub fn build_client_ui_body(
         }
         map.insert("per_space_view".to_owned(), Value::Object(obj));
     }
+    if let Some(value) = avatar_blob_ref {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            map.insert(
+                "avatar_blob_ref".to_owned(),
+                Value::String(trimmed.to_owned()),
+            );
+        }
+    }
     Value::Object(map)
+}
+
+/// Extract `avatar_blob_ref` from a `client.ui` payload. Returns `None`
+/// when the field is missing, empty, or not a string (older clients
+/// wrote `client.ui` without this field; treat that as "no override").
+pub fn avatar_blob_ref_from_client_ui(value: &Value) -> Option<String> {
+    value
+        .get("avatar_blob_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// Theme preference recovered from a `client.ui` account-data payload.
@@ -404,6 +433,22 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     })
 }
 
+/// Parse the `client.blocklist` account-data content body. Malformed
+/// entries are rejected as a batch rather than partially applied so a
+/// corrupt remote write cannot silently drop part of the user's local
+/// privacy policy.
+pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
+    let entries = value
+        .get("entries")
+        .ok_or_else(|| "client.blocklist.entries missing".to_owned())?;
+    let parsed = serde_json::from_value::<Vec<BlocklistEntry>>(entries.clone())
+        .map_err(|e| format!("client.blocklist.entries invalid: {e}"))?;
+    Ok(parsed
+        .into_iter()
+        .filter(|entry| !entry.did.trim().is_empty())
+        .collect())
+}
+
 /// Build a `cx.account_data.set` operation envelope for `key` -> `value`.
 ///
 /// `cx.account_data.set` is classified `actor_private_event` in
@@ -600,25 +645,64 @@ mod tests {
         assert!(body["entries"][0].get("blocked_at").is_none());
     }
 
+    #[test]
+    fn blocklist_entries_parse_from_account_data_body() {
+        let body = json!({
+            "entries": [
+                {"did": "did:web:mallory.example", "reason": "spam"},
+                {"did": "   "}
+            ]
+        });
+        let entries = blocklist_entries_from_account_data(&body).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].did, "did:web:mallory.example");
+    }
+
     // ── A4a — client.ui shape + merge logic ────────────────────────────
     #[test]
     fn build_client_ui_body_only_emits_present_fields() {
-        let body = build_client_ui_body(Some("light"), None, &BTreeMap::new());
+        let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), None);
         assert_eq!(body["theme"], "light");
         assert!(body.get("sidebar_collapsed").is_none());
         assert!(body.get("per_space_view").is_none());
+        assert!(body.get("avatar_blob_ref").is_none());
 
         let mut per_space = BTreeMap::new();
         per_space.insert("cx:space:abc".to_owned(), "kanban".to_owned());
-        let body = build_client_ui_body(Some("night"), Some(true), &per_space);
+        let body = build_client_ui_body(Some("night"), Some(true), &per_space, None);
         assert_eq!(body["theme"], "night");
         assert_eq!(body["sidebar_collapsed"], true);
         assert_eq!(body["per_space_view"]["cx:space:abc"], "kanban");
 
         // Empty theme string is dropped (treated as unset).
-        let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new());
+        let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);
         assert!(body.get("theme").is_none());
         assert_eq!(body["sidebar_collapsed"], false);
+    }
+
+    // ── A4b — avatar_blob_ref round-trip through client.ui ─────────────
+    #[test]
+    fn avatar_blob_ref_round_trips_through_client_ui() {
+        let blob_ref = "cx:blob:sha256:0123456789abcdef";
+        let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), Some(blob_ref));
+        assert_eq!(body["avatar_blob_ref"], blob_ref);
+        assert_eq!(
+            avatar_blob_ref_from_client_ui(&body),
+            Some(blob_ref.to_owned())
+        );
+
+        // Empty / whitespace-only references are dropped (tombstone shape).
+        let tombstoned = build_client_ui_body(None, None, &BTreeMap::new(), Some("   "));
+        assert!(tombstoned.get("avatar_blob_ref").is_none());
+        assert_eq!(avatar_blob_ref_from_client_ui(&tombstoned), None);
+
+        // Older client wrote `client.ui` without the field — parse returns None.
+        let legacy = json!({"theme": "light"});
+        assert_eq!(avatar_blob_ref_from_client_ui(&legacy), None);
+
+        // Non-string values are rejected.
+        let weird = json!({"avatar_blob_ref": 42});
+        assert_eq!(avatar_blob_ref_from_client_ui(&weird), None);
     }
 
     #[test]

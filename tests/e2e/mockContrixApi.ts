@@ -248,7 +248,7 @@ export async function mockContrixApi(page: Page) {
       const body = await route.request().postDataJSON();
       submitCounter += 1;
       return json(route, {
-        move_id: body.id ?? `cx:move:sha256:e2e-${submitCounter}`,
+        move_id: body.id ?? `sha256:e2e-${submitCounter}`,
         state: "pending",
         reason: null,
       });

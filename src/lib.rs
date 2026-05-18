@@ -9,6 +9,7 @@ pub mod capability;
 pub mod coauth;
 pub mod components;
 pub mod config;
+pub mod content;
 pub mod conflict;
 pub mod conformance;
 pub mod cross_signing;

@@ -392,34 +392,34 @@ mod tests {
     #[test]
     fn format_submit_response_renders_state_and_optional_reason() {
         let pending = SubmitMoveResponse {
-            move_id: "cx:move:sha256:abc".to_owned(),
+            move_id: "sha256:abc".to_owned(),
             state: "pending".to_owned(),
             reason: None,
         };
         assert_eq!(
             format_submit_response(&pending),
-            "Move cx:move:sha256:abc: state=pending"
+            "Move sha256:abc: state=pending"
         );
         let rejected = SubmitMoveResponse {
-            move_id: "cx:move:sha256:def".to_owned(),
+            move_id: "sha256:def".to_owned(),
             state: "rejected".to_owned(),
             reason: Some("anchor_ref unknown".to_owned()),
         };
         assert_eq!(
             format_submit_response(&rejected),
-            "Move cx:move:sha256:def: state=rejected reason=anchor_ref unknown"
+            "Move sha256:def: state=rejected reason=anchor_ref unknown"
         );
         // Empty-string reason should be treated as None — soland's DTO
         // skips serializing None but a defensive client must still cope
         // if a deployment emits "" for "no reason".
         let rejected_blank = SubmitMoveResponse {
-            move_id: "cx:move:sha256:ghi".to_owned(),
+            move_id: "sha256:ghi".to_owned(),
             state: "rejected".to_owned(),
             reason: Some(String::new()),
         };
         assert_eq!(
             format_submit_response(&rejected_blank),
-            "Move cx:move:sha256:ghi: state=rejected"
+            "Move sha256:ghi: state=rejected"
         );
     }
 
@@ -494,7 +494,7 @@ mod tests {
     }
 
     /// Move id is content-addressed: building twice with the same form
-    /// values + anchor_ref + hlc yields the same `cx:move:sha256:...`
+    /// values + anchor_ref + hlc yields the same `sha256:...`
     /// id. This is the property soland's idempotency relies on.
     #[test]
     fn build_signed_consent_grant_is_content_addressed_by_canonical_bytes() {
@@ -519,7 +519,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(one.id.as_str(), two.id.as_str());
-        assert!(one.id.as_str().starts_with("cx:move:sha256:"));
+        assert!(one.id.as_str().starts_with("sha256:"));
     }
 
     /// Two freshly-generated identities sign the same form values and the

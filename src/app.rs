@@ -4681,8 +4681,21 @@ pub fn RouterView() -> Element {
             // shortcut-help overlay unless the event originated from a
             // text input / textarea / contenteditable surface. `Esc`
             // dismisses it.
+            // A6.1 — `Cmd+F` (Ctrl+F on non-Mac) opens the global
+            // cross-Space message search panel; we intercept the
+            // browser's native find-in-page because the in-app panel
+            // covers all spaces the user has access to.
             onkeydown: move |event| {
                 let key = event.key().to_string();
+                let modifiers = event.modifiers();
+                let ctrl = modifiers.ctrl();
+                let meta = modifiers.meta();
+                if crate::views::global_search::key_event_is_search_trigger(&key, ctrl, meta) {
+                    event.prevent_default();
+                    event.stop_propagation();
+                    let _ = navigator.push(Route::Search);
+                    return;
+                }
                 if crate::components::shortcut_help::key_event_is_help_trigger(&key) {
                     // We can't reliably inspect event.target() in
                     // dioxus 0.7 (the target type is opaque); however
@@ -5283,6 +5296,17 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
+                        }
+                        // A6.1 — global cross-Space message search
+                        // entry. Mirrors the Cmd+F (Ctrl+F) chord so
+                        // mouse-first users discover the affordance.
+                        Link {
+                            class: "btn icon sm ghost topbar-search-link",
+                            "data-testid": "topbar-search-button",
+                            to: Route::Search,
+                            title: crate::i18n::tr("topbar.search_button"),
+                            "aria-label": crate::i18n::tr("topbar.search_button"),
+                            UiIcon { name: "search" }
                         }
                         Link {
                             class: "btn icon sm ghost topbar-notifications-link",
@@ -5904,6 +5928,14 @@ pub fn RouterView() -> Element {
                             default_profile: use_signal(crate::views::agent_workspace::AgentMemberProfile::default),
                         }
                     },
+                    // A6.1 — global cross-Space message search panel.
+                    Route::Search => rsx! {
+                        crate::views::global_search::GlobalSearchPanel {
+                            base_url,
+                            token,
+                            initial_query: String::new(),
+                        }
+                    },
                 }
             }
             }
@@ -6330,6 +6362,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::AgentWorkspace => "My Agents",
         Route::AgentTask { .. } => "Agent Task",
         Route::AgentWorkspaceSettings => "My Agents · Settings",
+        Route::Search => "Search",
     }
 }
 
@@ -6681,6 +6714,35 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                                 &account_did(),
                                                 "theme",
                                                 remote_theme,
+                                            );
+                                        }
+                                        if let Some(avatar_blob_ref) =
+                                            crate::account_data::avatar_blob_ref_from_client_ui(
+                                                content,
+                                            )
+                                        {
+                                            store.save_private_data(
+                                                &account_did(),
+                                                "avatar_blob_ref",
+                                                avatar_blob_ref,
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if data_type == "client.blocklist" {
+                                    let Some(content) = entry.get("content") else {
+                                        continue;
+                                    };
+                                    match crate::account_data::blocklist_entries_from_account_data(
+                                        content,
+                                    ) {
+                                        Ok(entries) => {
+                                            store.set_client_blocklist(entries);
+                                        }
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                "ignoring malformed client.blocklist account_data: {error}"
                                             );
                                         }
                                     }

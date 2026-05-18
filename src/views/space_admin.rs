@@ -1419,6 +1419,30 @@ pub fn SpaceAdminPanel(
                 for member in members() {
                     div { class: "event", "data-testid": "member-row",
                         div { class: "event-head",
+                            // A4b — member avatar slot. Avatars are
+                            // public via `cx.account.update_profile`
+                            // (mirrored on this row via the
+                            // `member-avatar` testid). v1 renders an
+                            // initials-only placeholder; a follow-up
+                            // task wires a directory lookup cache so
+                            // the slot can carry the actual `<img>`
+                            // for actors that have published one.
+                            {
+                                let initial = member
+                                    .trim_start_matches("did:web:")
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.to_ascii_uppercase().to_string())
+                                    .unwrap_or_else(|| "?".to_owned());
+                                rsx! {
+                                    div {
+                                        "data-testid": "member-avatar",
+                                        "aria-hidden": "true",
+                                        style: "display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--bg-elevated, #2a2d33); color: var(--text-strong, #fff); font-size: 0.8rem; margin-right: 8px;",
+                                        "{initial}"
+                                    }
+                                }
+                            }
                             span { "{member}" }
                             {
                                 // Mark agent-endpoint DIDs (registered via

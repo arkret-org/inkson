@@ -588,7 +588,11 @@ pub fn TimelinePanel(
                                 {crate::i18n::tr("timeline.show_anyway")}
                             }
                         } else {
-                            div { "data-testid": "event-body", "{event.body}" }
+                            div { "data-testid": "event-body",
+                                {crate::content::render_blocks(
+                                    &crate::content::parse_message_body(&event.body),
+                                )}
+                            }
                             if event.edited {
                                 span { class: "muted", " (edited)" }
                             }

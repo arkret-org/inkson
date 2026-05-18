@@ -728,8 +728,39 @@ pub fn DirectoryPanel(
                             span { "actor" }
                             span { "{actor.get(\"did\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
                         }
-                        div { class: "space-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
-                        div { class: "muted", "{actor.get(\"display_name\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
+                        div { class: "actions", style: "align-items: center; gap: 12px;",
+                            // A4b — directory actor avatar. soland's
+                            // `search-actors` projection echoes
+                            // `avatar_url` straight from the
+                            // `AccountRecord` so we can render it
+                            // without an extra round trip.
+                            {
+                                let avatar_url = actor
+                                    .get("avatar_url")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                rsx! {
+                                    if !avatar_url.trim().is_empty() {
+                                        img {
+                                            "data-testid": "directory-actor-avatar",
+                                            src: "{avatar_url}",
+                                            alt: "Avatar",
+                                            style: "width: 36px; height: 36px; border-radius: 50%; object-fit: cover;",
+                                        }
+                                    } else {
+                                        div {
+                                            "data-testid": "directory-actor-avatar",
+                                            style: "width: 36px; height: 36px; border-radius: 50%; background: var(--bg-elevated, #1a1d22); border: 1px dashed var(--border-default, #333);",
+                                            "aria-hidden": "true",
+                                        }
+                                    }
+                                }
+                            }
+                            div {
+                                div { class: "space-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
+                                div { class: "muted", "{actor.get(\"display_name\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
+                            }
+                        }
                     }
                 }
                 if actor_results().is_empty() {

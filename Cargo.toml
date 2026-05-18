@@ -41,6 +41,12 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # pin is used for the ciphertext digest's sha256 (already in `sha2`).
 argon2 = "0.5"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# A3 (round 28): markdown rendering for the timeline/chat content
+# renderer. pulldown-cmark is pure-Rust, no_std-friendly, and known to
+# build cleanly under wasm32-unknown-unknown. Raw-HTML pass-through is
+# left disabled (default) so untrusted message bodies cannot inject
+# arbitrary tags via `dangerous_inner_html`.
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Round 21: SDK bumped 0.4.0 → 0.5.0 by the parallel SDK agent. Pinned the

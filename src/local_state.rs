@@ -350,7 +350,7 @@ impl MoveSubmissionState {
 }
 
 /// Per-Move tracking record persisted in the local state store. `move_id`
-/// is content-addressed (`cx:move:sha256:...`); the reducer round-trips
+/// is content-addressed (`sha256:...`); the reducer round-trips
 /// `space_id` so client UIs can scope filtering. `kind` is a free-form
 /// classifier the UI uses for icons (e.g. `cx.consent.grant`,
 /// `cx.message.create`, `mls_commit`).
@@ -583,7 +583,7 @@ impl LocalAnchorView {
     /// {
     ///   "anchor_view": {
     ///     "frontier": ["cx:anchor:sha256:..."],
-    ///     "leaves":   ["cx:move:sha256:..."],
+    ///     "leaves":   ["sha256:..."],
     ///     "state_root": "cx:state:sha256:...",
     ///     "cells": {
     ///       "cx:cell:cx.component.member.state.v1:did:web:alice": {
@@ -1345,6 +1345,15 @@ impl LocalStateStore {
             let _ = self.flush();
         }
         changed
+    }
+
+    /// Replace the whole personal blocklist from `/sync account_data`.
+    /// User edits still go through [`block_user`] / [`unblock_user`];
+    /// this method is only for remote state hydration.
+    pub fn set_client_blocklist(&mut self, entries: Vec<crate::account_data::BlocklistEntry>) {
+        self.ensure_cached_loaded();
+        self.cached.client_blocklist = entries;
+        let _ = self.flush();
     }
 
     /// Best-effort name for `space_id`: trimmed `local_name` from the
@@ -2273,7 +2282,7 @@ mod tests {
         let path = temp_state_path("move-submission");
         let mut store = LocalStateStore::with_path(path.clone());
         let space = "cx:space:0196419b-0000-7000-8000-000000000001";
-        let mid = "cx:move:sha256:111";
+        let mid = "sha256:111";
         store.record_move_submission(
             mid,
             space,
@@ -2318,7 +2327,7 @@ mod tests {
         let mut store = LocalStateStore::with_path(path);
         let space = "cx:space:0196419b-0000-7000-8000-000000000002";
         store.record_move_submission(
-            "cx:move:sha256:222",
+            "sha256:222",
             space,
             "cx.message.create",
             MoveSubmissionState::PendingMlsBinding,
@@ -2766,7 +2775,7 @@ mod tests {
                         "cx:anchor:sha256:bbb".to_owned(),
                         "cx:anchor:sha256:aaa".to_owned(),
                     ],
-                    leaves: vec!["cx:move:sha256:lf1".to_owned()],
+                    leaves: vec!["sha256:lf1".to_owned()],
                     state_root: Some("cx:state:sha256:abc".to_owned()),
                     bottom_cells: BTreeMap::new(),
                     mls_epoch: None,
@@ -2926,7 +2935,7 @@ mod tests {
         let body = serde_json::json!({
             "anchor_view": {
                 "frontier": ["cx:anchor:sha256:aaa", "cx:anchor:sha256:bbb"],
-                "leaves":   ["cx:move:sha256:lf1"],
+                "leaves":   ["sha256:lf1"],
                 "state_root": "cx:state:sha256:abc",
                 "cells": {
                     "cx:cell:cx.component.member.state.v1:did:web:alice": {
@@ -2948,7 +2957,7 @@ mod tests {
         });
         let view = LocalAnchorView::from_sync_body(&body);
         assert_eq!(view.frontier.len(), 2);
-        assert_eq!(view.leaves, vec!["cx:move:sha256:lf1".to_owned()]);
+        assert_eq!(view.leaves, vec!["sha256:lf1".to_owned()]);
         assert_eq!(view.state_root.as_deref(), Some("cx:state:sha256:abc"));
         // Only `bottom=expose` cells are surfaced — `reject` cells stay
         // out of the conflict map.

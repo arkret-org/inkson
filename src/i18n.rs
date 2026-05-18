@@ -495,9 +495,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.label.watchers", "Add watchers");
     dict.set(
         "chat.watchers.hint",
-        "Watchers get notified on every message. \
-         This does not restrict access — anyone in the Space can still see this discussion. \
-         You can change your own watch level anytime.",
+        "不影响访问控制 — Watching only changes notifications, \
+         not who can see the Flow.",
     );
     dict.set("chat.button.create", "Create");
     dict.set("chat.button.reply", "Reply");
@@ -1049,8 +1048,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.label.watchers", "添加关注者");
     dict.set(
         "chat.watchers.hint",
-        "关注者会收到每条新消息的通知。这**不**限制访问权限——空间内的其他成员仍能看到该讨论。\
-         每个关注者可以随时调整自己的关注级别。",
+        "不影响访问控制 —— 关注只改变通知，不改变谁能看到该 Flow。",
     );
     dict.set("chat.button.create", "创建");
     dict.set("chat.button.reply", "回复");

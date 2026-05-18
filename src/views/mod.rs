@@ -11,7 +11,7 @@
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list)        |
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.track.{enable,disable,set_primary}, cx.message.*           |
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.tracks.update (unified), cx.message.*                      |
 // | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
@@ -49,6 +49,11 @@ pub mod consent_demo;
 pub mod dashboard;
 pub mod directory;
 pub mod document;
+/// A6.1 — global cross-Space message search panel. Backed by soland's
+/// `POST /api/v1/index/search` (substring scan over the in-memory
+/// projection); cross-space coverage will improve once the durable
+/// projection lands.
+pub mod global_search;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
@@ -107,6 +112,10 @@ pub enum View {
     /// Shows pending / in-flight / completed agent_task objects, with
     /// transparency / source_authority FSM cell state visible.
     AgentWorkspace,
+    /// A6.1 — global cross-Space message search panel. Triggered by
+    /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by
+    /// direct navigation to `Route::Search`.
+    Search,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

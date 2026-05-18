@@ -300,13 +300,13 @@ test("kanban queues Move submissions and replays through move API", async ({ pag
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
   await page.getByTestId("save-card-button").click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("cx:move:sha256:");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
 
   const moveSubmit = page.waitForRequest("**/api/v1/moves");
   await page.getByTestId("replay-board-queue").click();
   const moveBody = await moveSubmit.then((request) => request.postDataJSON());
-  expect(moveBody.id).toContain("cx:move:sha256:");
+  expect(moveBody.id).toContain("sha256:");
   expect(moveBody.body?.cell?.family).toBe("cx.component.flow.position.v1");
   await expect(page.getByTestId("board-status")).toContainText("state=pending");
 });

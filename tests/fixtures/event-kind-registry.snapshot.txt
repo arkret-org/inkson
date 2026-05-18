@@ -18,6 +18,7 @@ cx.applet.bridge_error
 cx.applet.protocol_session.start
 cx.applet.protocol_session.status
 cx.applet.registration
+cx.attestation.range_completeness
 cx.audit.accessed
 cx.audit.ryw_receipt
 cx.call.recording.start
@@ -38,11 +39,9 @@ cx.flow.create
 cx.flow.move
 cx.flow.reorder
 cx.flow.restore
-cx.flow.track.disable
-cx.flow.track.enable
-cx.flow.track.set_primary
-cx.flow.track.update
+cx.flow.tracks.update
 cx.flow.update
+cx.identity.accountability_grant
 cx.identity.disclosure_policy
 cx.identity.disclosure_receipt
 cx.identity.presentation_request
@@ -77,6 +76,7 @@ cx.moderation.report
 cx.morph.archive
 cx.morph.create
 cx.morph.restore
+cx.morph.schema_migrate
 cx.morph.update
 cx.organization.discovery
 cx.organization.moderation_policy

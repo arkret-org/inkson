@@ -668,7 +668,7 @@ pub fn build_conflict_repair_move(
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let move_id = MoveId::new(format!("cx:move:sha256:{id_hex}"))
+    let move_id = MoveId::new(format!("sha256:{id_hex}"))
         .map_err(|e| anyhow::anyhow!("derive move id: {e}"))?;
     // Build typed `refs` from conflict_heads — the SDK's `Move.refs`
     // is `Vec<MoveRef>` (or similar). For now we leave the typed list
@@ -769,7 +769,7 @@ fn build_move_inner_with_preconditions_and_refs(
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let move_id = MoveId::new(format!("cx:move:sha256:{id_hex}"))
+    let move_id = MoveId::new(format!("sha256:{id_hex}"))
         .map_err(|e| anyhow::anyhow!("derive move id: {e}"))?;
     // Build typed Move with placeholder signature; the canonical_bytes
     // remain stable because `id` and `sig` are NOT part of the canonical
@@ -1232,7 +1232,7 @@ mod tests {
             .collect();
         assert_eq!(
             unsigned.move_obj.id.as_str(),
-            format!("cx:move:sha256:{recomputed}")
+            format!("sha256:{recomputed}")
         );
     }
 

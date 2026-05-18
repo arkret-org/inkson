@@ -195,7 +195,8 @@ use crate::models::{
     EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
     FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse,
     IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
-    IdentityResolveResponse, InvitesResponse, KeysClaimResponse, KeysQueryResponse,
+    IdentityResolveResponse, IndexSearchResponse, InvitesResponse, KeysClaimResponse,
+    KeysQueryResponse,
     KeysUploadResponse, LogoutResponse, MimiConsentResponse, MimiGroupInfoResponse,
     MimiIdentifierQueryResponse, MimiKeyMaterialResponse, MimiNotifyResponse,
     MimiProviderDirectoryResponse, MimiProxyDownloadResponse, MimiReportAbuseResponse,
@@ -208,8 +209,8 @@ use crate::models::{
     SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
     SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResponse,
     SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse, ThirdPartyLocationsResponse,
-    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateSpaceResponse,
-    VerifyDeviceResponse,
+    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateProfileResponse,
+    UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::{OperationEnvelope, uuid_v7};
 
@@ -666,6 +667,44 @@ impl ContrixApi {
 
     pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
         self.get_json("api/v1/account/me").await
+    }
+
+    /// A4b — update the authenticated principal's public profile
+    /// (display_name / bio / avatar_url). Mirrors soland's
+    /// `cx.account.update_profile` wire shape: each field is
+    /// `Option<String>`; `None` leaves the field untouched server-side,
+    /// `Some("")` explicitly clears it. The server normalises empty
+    /// strings to `None` on write.
+    ///
+    /// `avatar_url` MUST be either an `http://` / `https://` URL or
+    /// empty — soland rejects other shapes with `invalid_avatar_url`.
+    /// To publish a yougen-uploaded blob, the caller constructs the
+    /// download URL via [`Self::blob_download_url`] before passing it
+    /// here.
+    pub async fn update_profile(
+        &self,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> anyhow::Result<UpdateProfileResponse> {
+        self.post_json(
+            "api/v1/account/profile",
+            json!({
+                "display_name": display_name,
+                "bio": bio,
+                "avatar_url": avatar_url,
+            }),
+        )
+        .await
+    }
+
+    /// A4b — resolve a `cx:blob:sha256:<hex>` reference to its
+    /// authenticated download URL on this Principal Server. Returns the
+    /// `<base>/api/v1/blob/get?blob_ref=<…>` shape that soland's
+    /// `/blob/get` handler answers — callers can plug this directly
+    /// into `<img src=…>` or `cx.account.update_profile { avatar_url }`.
+    pub fn blob_download_url(&self, blob_ref: &str) -> String {
+        blob_download_url_for(self.base_url.as_str(), blob_ref)
     }
 
     pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
@@ -1473,6 +1512,33 @@ impl ContrixApi {
         self.post_json("api/v1/directory/search-actors", body).await
     }
 
+    /// A6.1 — global cross-space message search backed by soland's
+    /// `POST /api/v1/index/search`. The server accepts `space_ids` to
+    /// scope the search; pass an empty slice for "search everywhere I
+    /// have access to". `object_kinds` defaults to `["message"]` when
+    /// `None`, mirroring the panel's primary affordance.
+    ///
+    /// Note: soland's current index is best-effort substring search
+    /// over the in-memory projection; encrypted messages are skipped
+    /// server-side. Cross-space coverage will improve as the durable
+    /// projection lands (see `_claude_todos.md` D-lane).
+    pub async fn index_search(
+        &self,
+        query: &str,
+        space_ids: &[String],
+        object_kinds: Option<&[&str]>,
+        limit: u32,
+    ) -> anyhow::Result<IndexSearchResponse> {
+        let kinds: Vec<&str> = object_kinds.map(|k| k.to_vec()).unwrap_or_else(|| vec!["message"]);
+        let body = json!({
+            "query": query,
+            "limit": limit,
+            "object_kinds": kinds,
+            "space_ids": space_ids,
+        });
+        self.post_json("api/v1/index/search", body).await
+    }
+
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
         self.post_json("api/v1/identity/resolve-handle", json!({"handle": handle}))
             .await
@@ -2202,6 +2268,16 @@ impl ContrixApi {
             .header("x-contrix-request-id", request_id)
             .header("idempotency-key", request_id)
     }
+}
+
+/// A4b — module-level helper for composing a blob download URL when an
+/// [`ContrixApi`] handle isn't available (e.g. read-only views that
+/// already have the Principal Server `base_url` as a string). Keeps
+/// the URL shape canonical so callers can't accidentally desync from
+/// [`ContrixApi::blob_download_url`].
+pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    format!("{base}/api/v1/blob/get?blob_ref={blob_ref}")
 }
 
 fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Value> {

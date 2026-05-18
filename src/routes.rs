@@ -103,6 +103,13 @@ pub enum Route {
     /// Agent Workspace per-agent settings + workspace teardown.
     #[route("/agent-workspace/settings", crate::app::RouterView)]
     AgentWorkspaceSettings,
+
+    /// A6.1 — global cross-Space message search. Triggered by Cmd+F
+    /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
+    /// directly navigating to `/search`. Backed by soland's
+    /// `POST /api/v1/index/search` substring scan.
+    #[route("/search", crate::app::RouterView)]
+    Search,
 }
 
 #[component]
@@ -196,6 +203,7 @@ impl Route {
             Route::AgentWorkspace | Route::AgentTask { .. } | Route::AgentWorkspaceSettings => {
                 View::AgentWorkspace
             }
+            Route::Search => View::Search,
         }
     }
 
@@ -261,6 +269,7 @@ impl From<View> for Route {
             View::Quarantine => Route::Quarantine,
             View::Agents => Route::Agents,
             View::AgentWorkspace => Route::AgentWorkspace,
+            View::Search => Route::Search,
         }
     }
 }

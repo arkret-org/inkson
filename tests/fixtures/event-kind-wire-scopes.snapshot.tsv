@@ -24,6 +24,7 @@ cx.applet.bridge_error	durable_event
 cx.applet.protocol_session.start	durable_event
 cx.applet.protocol_session.status	durable_event
 cx.applet.registration	durable_event
+cx.attestation.range_completeness	durable_event
 cx.audit.accessed	durable_event
 cx.audit.ryw_receipt	durable_event
 cx.call.recording.start	durable_event
@@ -44,11 +45,9 @@ cx.flow.create	durable_event
 cx.flow.move	durable_event
 cx.flow.reorder	durable_event
 cx.flow.restore	durable_event
-cx.flow.track.disable	durable_event
-cx.flow.track.enable	durable_event
-cx.flow.track.set_primary	durable_event
-cx.flow.track.update	durable_event
+cx.flow.tracks.update	durable_event
 cx.flow.update	durable_event
+cx.identity.accountability_grant	durable_event
 cx.identity.disclosure_policy	durable_event
 cx.identity.disclosure_receipt	durable_event
 cx.identity.presentation_request	durable_event
@@ -83,6 +82,7 @@ cx.moderation.report	durable_event
 cx.morph.archive	durable_event
 cx.morph.create	durable_event
 cx.morph.restore	durable_event
+cx.morph.schema_migrate	durable_event
 cx.morph.update	durable_event
 cx.organization.discovery	durable_event
 cx.organization.moderation_policy	durable_event

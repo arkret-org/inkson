@@ -184,7 +184,7 @@ impl CardState {
 
 /// Board write records track a Move pipeline submission. The Move's
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
-/// `move_id` is the content-addressed `cx:move:sha256:...` id. `kind`
+/// `move_id` is the content-addressed `sha256:...` id. `kind`
 /// mirrors the MoveSubmissionState classifier (`cx.list.create` /
 /// `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.

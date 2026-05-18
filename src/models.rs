@@ -34,6 +34,37 @@ pub struct AccountResponse {
     pub created_at: String,
 }
 
+/// A4b — response shape for `POST /api/v1/account/profile`. Mirrors
+/// soland's `UpdateProfileResponse` wire shape so the settings UI can
+/// reconcile its local cache with whatever the server actually stored
+/// (the server normalises empty strings to `None`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpdateProfileResponse {
+    pub did: String,
+    pub handle: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+/// A6.1 — response shape for `POST /api/v1/index/search`. Mirrors
+/// soland's index search payload: each result row carries a `kind`
+/// (`message` | `space`), an `object_id`, and surface-specific extras
+/// (sender / thread_id / content for messages, title / summary for
+/// spaces). The body is intentionally permissive — older clients
+/// SHOULD tolerate unknown fields.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IndexSearchResponse {
+    pub query: String,
+    #[serde(default)]
+    pub results: Vec<Value>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContactResponse {
     pub requester: String,

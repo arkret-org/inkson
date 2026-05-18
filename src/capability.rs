@@ -44,10 +44,12 @@ impl ActionGroup {
             Self::PlaceFlow => &[
                 "flow.move",
                 "flow.reorder",
-                "flow.track.enable",
-                "flow.track.disable",
-                "flow.track.update",
-                "flow.track.set_primary",
+                // Per contrix-spec dc01ad7 the four legacy
+                // `flow.track.{enable,disable,update,set_primary}`
+                // verbs were unified into a single `flow.tracks.update`
+                // capability covering all track mutations via a
+                // `cx.patch.v1` JSON Patch against `Flow.tracks`.
+                "flow.tracks.update",
             ],
             Self::Conversation => &[
                 "message.create",
