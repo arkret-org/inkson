@@ -89,11 +89,11 @@ use sha2::{Digest, Sha256};
 use contrix_sdk::MlsGroupStateRecord;
 
 /// Number of SHA-256 rounds applied during passphrase stretching. The
-/// trade-off is cost-on-restore vs cost-of-brute-force; 100k matches
-/// the key-backup encryption invariant (`KEY_BACKUP_PBKDF2_ITER_FLOOR`).
+/// trade-off is cost-on-restore vs cost-of-brute-force; 600k matches
+/// the `cx.profile.key_backup.memory_hard.v1` PBKDF2 floor.
 /// Tests use the exact same constant — we don't ship a "test mode"
 /// reduction because the test surface is fast enough already.
-pub const KDF_ITERATIONS: u32 = 100_000;
+pub const KDF_ITERATIONS: u32 = 600_000;
 
 /// Magic-bytes prefix burned into every envelope so a future format
 /// migration can refuse pre-v1 blobs cleanly.
@@ -288,7 +288,8 @@ impl MlsSnapshotEnvelope {
                     "params": {
                         "iterations": KDF_ITERATIONS,
                         "hash": "sha256"
-                    }
+                    },
+                    "degraded_profile_reason": "yougen wasm MLS snapshot fallback uses sha256 stretching until native Argon2id is wired"
                 },
                 "aead": {
                     "name": "xchacha20_poly1305",

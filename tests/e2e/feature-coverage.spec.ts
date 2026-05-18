@@ -251,6 +251,9 @@ test.describe("feature coverage placeholders", () => {
     // Poly1305 and carry a ciphertext + digest. Without these the
     // recovery layer is not in spec.
     expect(body.encryption?.kdf?.name).toBe("argon2id");
+    expect(body.encryption?.kdf?.params?.memory_kib).toBeGreaterThanOrEqual(65_536);
+    expect(body.encryption?.kdf?.params?.iterations).toBeGreaterThanOrEqual(3);
+    expect(body.encryption?.kdf?.params?.parallelism).toBeGreaterThanOrEqual(1);
     expect(body.encryption?.aead?.name).toBe("xchacha20_poly1305");
     expect(typeof body.ciphertext).toBe("string");
     expect(body.ciphertext.length).toBeGreaterThan(0);

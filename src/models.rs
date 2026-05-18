@@ -768,16 +768,35 @@ pub struct IdentityReceiptsResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceConfigResponse {
+    pub space_id: String,
+    pub call_id: String,
+    pub actor_id: String,
+    pub device_id: String,
     #[serde(default)]
     pub ice_servers: Vec<IceServer>,
     pub ttl_seconds: u64,
+    pub refresh_lead_seconds: u64,
+    pub issued_at: String,
+    pub signature: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceServer {
     pub urls: Vec<String>,
+    #[serde(default)]
     pub username: Option<String>,
+    #[serde(default)]
     pub credential: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IceConfigRequest {
+    pub space_id: String,
+    pub call_id: String,
+    pub actor_id: String,
+    pub device_id: String,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub context: Value,
 }
 
 // ── MIMI Provider Facade ─────────────────────────────────────────

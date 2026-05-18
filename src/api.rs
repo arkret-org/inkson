@@ -193,7 +193,7 @@ use crate::models::{
     ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
     DeviceTrustResponse, DirectoryDescribeResponse, EffectiveGrantsResponse,
     EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
-    FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse,
+    FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse, IceConfigRequest,
     IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
     IdentityResolveResponse, IndexSearchResponse, InvitesResponse, KeysClaimResponse,
     KeysQueryResponse, KeysUploadResponse, LogoutResponse, MimiConsentResponse,
@@ -2078,8 +2078,12 @@ impl ContrixApi {
 
     // ── Media ───────────────────────────────────────────────────────
 
-    pub async fn ice_config(&self) -> anyhow::Result<IceConfigResponse> {
-        self.get_json("api/v1/media/ice-config").await
+    pub async fn ice_config(
+        &self,
+        request: &IceConfigRequest,
+    ) -> anyhow::Result<IceConfigResponse> {
+        self.post_json("contrix/v1/ice-config", serde_json::to_value(request)?)
+            .await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {

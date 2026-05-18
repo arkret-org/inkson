@@ -814,8 +814,13 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/media/ice-config") {
+    if (url.pathname === "/contrix/v1/ice-config") {
+      const body = await route.request().postDataJSON();
       return json(route, {
+        space_id: body.space_id ?? "cx:space:0196419b-0000-7000-8000-000000000000",
+        call_id: body.call_id ?? "cx:call:01964137-0000-7000-8000-000000000001",
+        actor_id: body.actor_id ?? "did:web:alice.example",
+        device_id: body.device_id ?? "cx:device:01904100-0000-7000-8000-a11ce0000001",
         ice_servers: [
           { urls: ["stun:stun.server.local:3478"] },
           {
@@ -825,6 +830,13 @@ export async function mockContrixApi(page: Page) {
           },
         ],
         ttl_seconds: 600,
+        refresh_lead_seconds: 150,
+        issued_at: "2026-05-19T00:00:00Z",
+        signature: {
+          alg: "EdDSA",
+          kid: "did:web:server.local#media-ice",
+          sig: "placeholder",
+        },
       });
     }
 

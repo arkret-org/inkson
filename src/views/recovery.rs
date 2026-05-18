@@ -139,7 +139,7 @@ mod restore_parse_tests {
     fn parse_backup_summary_extracts_kdf_and_aead_fields() {
         let row = parse_backup_summary(&json!({
             "backup_id": "cx:backup:01964137-0000-7000-8000-000000000000",
-            "backup_class": "recovery_vault",
+            "backup_class": "secret_storage",
             "backup_version": "kb_1",
             "created_at": "2026-05-15T00:00:00Z",
             "ciphertext_digest": "sha256:abc",
@@ -155,7 +155,7 @@ mod restore_parse_tests {
             row.backup_id,
             "cx:backup:01964137-0000-7000-8000-000000000000"
         );
-        assert_eq!(row.backup_class, "recovery_vault");
+        assert_eq!(row.backup_class, "secret_storage");
         assert_eq!(row.backup_version, "kb_1");
         assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
         assert_eq!(row.salt_b64, "U0FMVA");

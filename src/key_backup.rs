@@ -29,7 +29,12 @@ pub fn build_key_backup_put_body(
             "recipient_key_ref": device_id,
             "kdf": {
                 "name": "argon2id",
-                "salt": "yougen_demo_salt"
+                "salt": "yougen_demo_salt",
+                "params": {
+                    "memory_kib": 65_536,
+                    "iterations": 3,
+                    "parallelism": 1
+                }
             },
             "aead": {
                 "name": "xchacha20_poly1305",
@@ -53,10 +58,8 @@ pub fn build_key_backup_put_body(
 
 /// Build the PUT body for a real Encrypted Cloud Vault upload, with the
 /// actual Argon2id salt and XChaCha20-Poly1305 nonce that were used to
-/// produce `ciphertext`. The contents block reflects what's inside the
-/// vault (recovery_credentials by default), and `backup_class` is
-/// `recovery_vault` so soland can route the blob to the recovery store
-/// instead of the MLS history store.
+/// produce `ciphertext`. Recovery-vault material is carried as a
+/// `secret_storage` backup containing a `recovery_secret` item.
 pub fn build_recovery_vault_backup_body(
     backup_id: &str,
     actor_did: &str,
@@ -72,7 +75,7 @@ pub fn build_recovery_vault_backup_body(
     let mut body = json!({
         "backup_id": backup_id,
         "actor_id": actor_did,
-        "backup_class": "recovery_vault",
+        "backup_class": "secret_storage",
         "backup_version": "kb_1",
         "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         "encryption": {
@@ -81,9 +84,11 @@ pub fn build_recovery_vault_backup_body(
             "kdf": {
                 "name": "argon2id",
                 "salt": salt_b64,
-                "m_kib": argon2_m_kib,
-                "t": argon2_t,
-                "p": argon2_p,
+                "params": {
+                    "memory_kib": argon2_m_kib,
+                    "iterations": argon2_t,
+                    "parallelism": argon2_p
+                }
             },
             "aead": {
                 "name": "xchacha20_poly1305",
@@ -91,7 +96,7 @@ pub fn build_recovery_vault_backup_body(
             }
         },
         "contents": [{
-            "item_type": "recovery_credentials",
+            "item_type": "recovery_secret",
             "secret_id": "yougen_recovery_vault_payload",
         }],
         "ciphertext": ciphertext_b64,
@@ -167,19 +172,19 @@ mod tests {
             3,
             4,
         );
-        assert_eq!(body["backup_class"], "recovery_vault");
+        assert_eq!(body["backup_class"], "secret_storage");
         assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
         assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");
         assert_eq!(body["encryption"]["kdf"]["salt"], "U0FMVF9CNjQ");
-        assert_eq!(body["encryption"]["kdf"]["m_kib"], 65_536);
-        assert_eq!(body["encryption"]["kdf"]["t"], 3);
-        assert_eq!(body["encryption"]["kdf"]["p"], 4);
+        assert_eq!(body["encryption"]["kdf"]["params"]["memory_kib"], 65_536);
+        assert_eq!(body["encryption"]["kdf"]["params"]["iterations"], 3);
+        assert_eq!(body["encryption"]["kdf"]["params"]["parallelism"], 4);
         assert_eq!(body["encryption"]["aead"]["name"], "xchacha20_poly1305");
         assert_eq!(
             body["encryption"]["aead"]["nonce"],
             "Tk9OQ0VfQjY0XzI0Ynl0ZXM"
         );
-        assert_eq!(body["contents"][0]["item_type"], "recovery_credentials");
+        assert_eq!(body["contents"][0]["item_type"], "recovery_secret");
         assert_eq!(body["ciphertext"], "AAAA_CIPHERTEXT_B64");
         assert_eq!(
             body["device_id"],
