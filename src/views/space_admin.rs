@@ -1685,7 +1685,7 @@ pub fn SpaceAdminPanel(
                             }
                             // A5 — personal blocklist entry-point. Block is
                             // a purely actor-private action (writes
-                            // `cx.account_data.set("client.blocklist", …)`)
+                            // `cx.account_data.set("cx.account.blocklist", …)`)
                             // and does NOT touch the Space's member-state
                             // FSM. Confirm modal renders below the row.
                             button {
