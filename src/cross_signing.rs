@@ -19,6 +19,8 @@
 //! The UI renders [`CrossSigningSetupPlan`] and shows the canonical event kind
 //! for each step, mirroring the device-revoke design.
 
+use std::collections::BTreeSet;
+
 use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
@@ -162,9 +164,40 @@ impl CrossSigningSetupPlan {
         }
     }
 
+    /// F-CXSIGN-RESET-1: policy-gated wrapper around [`build_reset`].
+    ///
+    /// Per spec `crypto-media/device-lifecycle.md §14`, the principal
+    /// MUST be enrolled in the active reset audit policy before any
+    /// `cx.cross_signing.reset` event is issued. Yougen mirrors the
+    /// policy in [`ResetAuditPolicy`] (populated from incoming
+    /// `cx.policy.set` events whose `policy_kind` is
+    /// `cx.policy.cross_signing.reset`) and gates plan construction
+    /// here so the UI never even surfaces the reset path when the
+    /// caller would be rejected at submit time.
+    pub fn try_build_reset(
+        principal_id: &str,
+        device_id: &str,
+        previous_generation: u64,
+        policy: &ResetAuditPolicy,
+    ) -> Result<Self, ResetBlockedReason> {
+        if !policy.permits_reset(principal_id) {
+            return Err(ResetBlockedReason {
+                principal_did: principal_id.to_owned(),
+                hint: policy.enrollment_hint.clone(),
+            });
+        }
+        Ok(Self::build_reset(principal_id, device_id, previous_generation))
+    }
+
     /// Build a reset plan; carries an extra `cx.cross_signing.reset`
     /// prelude event but does not regenerate the PSK (PSK comes from the DID
     /// control chain and is out of scope for a cross-signing reset).
+    ///
+    /// F-CXSIGN-RESET-1: prefer [`try_build_reset`] in code paths that
+    /// have the current [`ResetAuditPolicy`] — this raw constructor is
+    /// kept so callers in pure-test contexts (and the existing
+    /// fixture-based test in this module) can build a reset plan
+    /// without threading the policy through.
     pub fn build_reset(principal_id: &str, device_id: &str, previous_generation: u64) -> Self {
         // The reset write is represented by the prelude; the main setup
         // flow follows immediately after.
@@ -210,6 +243,109 @@ impl CrossSigningSetupPlan {
         seen
     }
 }
+
+/// F-CXSIGN-RESET-1: snapshot of the deployment's cross-signing reset
+/// audit policy, learned from a `cx.policy.set` event whose
+/// `policy_kind == "cx.policy.cross_signing.reset"`.
+///
+/// Spec `crypto-media/device-lifecycle.md §14` requires the principal
+/// to be enrolled in the reset audit policy *before* a reset event
+/// can be issued — otherwise an attacker who compromises one device
+/// could issue an unaudited reset that retires every other device's
+/// trust without any audit row. Yougen mirrors the active policy
+/// here and gates [`CrossSigningSetupPlan::try_build_reset`] on it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResetAuditPolicy {
+    /// Whether the deployment requires reset enrollment at all. When
+    /// `false`, every reset attempt is allowed (matches spec
+    /// "PersonalNode" defaults).
+    pub enrollment_required: bool,
+    /// Principal DIDs that have currently completed enrollment. When
+    /// `enrollment_required == true`, the principal MUST appear here.
+    #[serde(default)]
+    pub enrolled_principals: BTreeSet<String>,
+    /// Optional human-readable hint surfaced in the UI when a reset is
+    /// blocked — lets the operator explain how to enrol (e.g. "request
+    /// access via /security/reset-policy").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enrollment_hint: Option<String>,
+}
+
+impl ResetAuditPolicy {
+    /// Build a policy snapshot from a `cx.policy.set` event payload.
+    /// Returns `None` when the payload isn't a reset-policy snapshot.
+    ///
+    /// Expected payload shape:
+    /// ```json
+    /// {
+    ///   "policy_kind": "cx.policy.cross_signing.reset",
+    ///   "enrollment_required": true,
+    ///   "enrolled_principals": ["did:web:alice", "did:web:bob"],
+    ///   "enrollment_hint": "Apply via /security/reset"
+    /// }
+    /// ```
+    pub fn from_policy_set_payload(payload: &serde_json::Value) -> Option<Self> {
+        let kind = payload.get("policy_kind")?.as_str()?;
+        if kind != "cx.policy.cross_signing.reset" {
+            return None;
+        }
+        let enrollment_required = payload
+            .get("enrollment_required")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let enrolled_principals: BTreeSet<String> = payload
+            .get("enrolled_principals")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let enrollment_hint = payload
+            .get("enrollment_hint")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        Some(Self {
+            enrollment_required,
+            enrolled_principals,
+            enrollment_hint,
+        })
+    }
+
+    /// Whether `principal_did` is permitted to issue a reset now.
+    pub fn permits_reset(&self, principal_did: &str) -> bool {
+        !self.enrollment_required || self.enrolled_principals.contains(principal_did)
+    }
+}
+
+/// F-CXSIGN-RESET-1: why a reset attempt was blocked. Surfaces both
+/// the failed principal and the policy's enrolment hint so the UI
+/// can render an actionable message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResetBlockedReason {
+    pub principal_did: String,
+    pub hint: Option<String>,
+}
+
+impl std::fmt::Display for ResetBlockedReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.hint {
+            Some(h) => write!(
+                f,
+                "{} is not enrolled in the cross-signing reset audit policy: {h}",
+                self.principal_did
+            ),
+            None => write!(
+                f,
+                "{} is not enrolled in the cross-signing reset audit policy",
+                self.principal_did
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResetBlockedReason {}
 
 /// Trust-chain status the UI should surface per device. Mirrors the SDK
 /// [`contrix::DeviceTrustChainOutcome`] but with a string discriminator that
@@ -609,6 +745,85 @@ mod tests {
         assert_eq!(plan.previous_generation, Some(2));
         assert_eq!(plan.new_generation, 3);
         assert_eq!(plan.event_kinds()[0], "cx.cross_signing.reset");
+    }
+
+    // ── F-CXSIGN-RESET-1 ────────────────────────────────────────────
+
+    #[test]
+    fn reset_policy_parses_canonical_cx_policy_set_payload() {
+        let payload = serde_json::json!({
+            "policy_kind": "cx.policy.cross_signing.reset",
+            "enrollment_required": true,
+            "enrolled_principals": ["did:web:alice", "did:web:bob"],
+            "enrollment_hint": "Apply via /security/reset"
+        });
+        let policy = ResetAuditPolicy::from_policy_set_payload(&payload)
+            .expect("recognised policy kind");
+        assert!(policy.enrollment_required);
+        assert!(policy.enrolled_principals.contains("did:web:alice"));
+        assert!(policy.enrolled_principals.contains("did:web:bob"));
+        assert_eq!(policy.enrollment_hint.as_deref(), Some("Apply via /security/reset"));
+    }
+
+    #[test]
+    fn reset_policy_ignores_unrelated_policy_kinds() {
+        let payload = serde_json::json!({
+            "policy_kind": "cx.policy.space.moderation",
+            "enrollment_required": true
+        });
+        assert!(ResetAuditPolicy::from_policy_set_payload(&payload).is_none());
+    }
+
+    #[test]
+    fn try_build_reset_blocks_unenrolled_principal_when_enrollment_required() {
+        let policy = ResetAuditPolicy {
+            enrollment_required: true,
+            enrolled_principals: ["did:web:bob".to_owned()].into_iter().collect(),
+            enrollment_hint: Some("Apply via /security/reset".to_owned()),
+        };
+        let err = CrossSigningSetupPlan::try_build_reset(
+            "did:web:alice",
+            "cx:device:01a",
+            2,
+            &policy,
+        )
+        .expect_err("alice is not enrolled");
+        assert_eq!(err.principal_did, "did:web:alice");
+        assert_eq!(err.hint.as_deref(), Some("Apply via /security/reset"));
+        assert!(format!("{err}").contains("not enrolled"));
+    }
+
+    #[test]
+    fn try_build_reset_passes_when_principal_is_enrolled() {
+        let policy = ResetAuditPolicy {
+            enrollment_required: true,
+            enrolled_principals: ["did:web:alice".to_owned()].into_iter().collect(),
+            enrollment_hint: None,
+        };
+        let plan = CrossSigningSetupPlan::try_build_reset(
+            "did:web:alice",
+            "cx:device:01a",
+            2,
+            &policy,
+        )
+        .expect("alice is enrolled");
+        assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
+        assert_eq!(plan.new_generation, 3);
+    }
+
+    #[test]
+    fn try_build_reset_allows_everyone_when_enrollment_not_required() {
+        // PersonalNode-style deployment: the policy exists but doesn't
+        // gate reset. Every caller is admitted.
+        let policy = ResetAuditPolicy::default(); // enrollment_required = false
+        let plan = CrossSigningSetupPlan::try_build_reset(
+            "did:web:alice",
+            "cx:device:01a",
+            5,
+            &policy,
+        )
+        .expect("permissive policy admits everyone");
+        assert_eq!(plan.previous_generation, Some(5));
     }
 
     #[test]

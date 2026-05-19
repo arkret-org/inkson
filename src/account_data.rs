@@ -83,9 +83,25 @@ pub struct AccountDataRecord {
 
 /// In-memory actor-private account_data store. Persistence is the caller's
 /// responsibility (e.g. `local_state` hydrate / save).
+///
+/// F-ACCT-SNAP-1: tracks the server-declared snapshot head this store was
+/// last reconciled to (per `sync/account-data-sync.md`). A new device can
+/// hydrate from `snapshot_head` instead of replaying every historic
+/// `cx.account_data.set` event; once the snapshot endpoint surfaces a
+/// fingerprint matching this value, the client knows it's caught up and
+/// can resume incremental sync from the live event stream.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountDataStore {
     entries: BTreeMap<String, AccountDataRecord>,
+    /// Latest snapshot head this store was reconciled to (e.g.
+    /// `sha256:<hex>` per the spec's account-data snapshot fingerprint).
+    /// `None` until the first snapshot catch-up completes; subsequent
+    /// snapshot fetches refresh the value. Persisted alongside `entries`
+    /// so a restart can resume incremental sync from this point. Kept
+    /// `#[serde(default)]` for backward compatibility with pre-snapshot
+    /// on-disk state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_head: Option<String>,
 }
 
 impl AccountDataStore {
@@ -131,6 +147,25 @@ impl AccountDataStore {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// F-ACCT-SNAP-1: most recent snapshot head this store has caught
+    /// up to, or `None` before the first snapshot reconcile.
+    pub fn snapshot_head(&self) -> Option<&str> {
+        self.snapshot_head.as_deref()
+    }
+
+    /// F-ACCT-SNAP-1: record the snapshot head the store was just
+    /// reconciled to (called after applying a snapshot batch from the
+    /// server). Subsequent live events apply on top of this point.
+    pub fn set_snapshot_head(&mut self, head: impl Into<String>) {
+        self.snapshot_head = Some(head.into());
+    }
+
+    /// F-ACCT-SNAP-1: drop the snapshot head (e.g. on logout or when a
+    /// trust-bundle change invalidates prior reconciliation).
+    pub fn clear_snapshot_head(&mut self) {
+        self.snapshot_head = None;
     }
 }
 
@@ -552,6 +587,84 @@ pub fn build_account_data_set(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── F-ACCT-SNAP-1 ────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_head_default_is_none_and_round_trips() {
+        let mut store = AccountDataStore::new();
+        assert_eq!(store.snapshot_head(), None);
+
+        store.set_snapshot_head("sha256:abc123");
+        assert_eq!(store.snapshot_head(), Some("sha256:abc123"));
+
+        // Subsequent reconcile overwrites without affecting entries.
+        store
+            .set(
+                AccountDataKey::ClientUi,
+                json!({"theme": "night"}),
+                "01970e589d21-0001-a13f9c2e".to_owned(),
+            )
+            .unwrap();
+        store.set_snapshot_head("sha256:def456");
+        assert_eq!(store.snapshot_head(), Some("sha256:def456"));
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_head_clears_independently_of_entries() {
+        let mut store = AccountDataStore::new();
+        store
+            .set(
+                AccountDataKey::ClientUi,
+                json!({"theme": "light"}),
+                "01970e589d21-0001-a13f9c2e".to_owned(),
+            )
+            .unwrap();
+        store.set_snapshot_head("sha256:abc123");
+        store.clear_snapshot_head();
+        assert_eq!(store.snapshot_head(), None);
+        // Entries survive the snapshot reset — a trust-bundle change
+        // forces re-reconciliation but doesn't wipe live data.
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_head_persists_through_serde_round_trip() {
+        let mut store = AccountDataStore::new();
+        store
+            .set(
+                AccountDataKey::ClientUi,
+                json!({"theme": "night"}),
+                "01970e589d21-0001-a13f9c2e".to_owned(),
+            )
+            .unwrap();
+        store.set_snapshot_head("sha256:abc123");
+
+        let bytes = serde_json::to_string(&store).unwrap();
+        let restored: AccountDataStore = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(restored.snapshot_head(), Some("sha256:abc123"));
+        assert_eq!(restored.len(), 1);
+    }
+
+    /// Pre-snapshot persisted state has no `snapshot_head` field; loading
+    /// it should default to `None` rather than fail to deserialize.
+    #[test]
+    fn snapshot_head_absent_from_legacy_state_defaults_to_none() {
+        let legacy = json!({
+            "entries": {
+                "client.ui": {
+                    "key": "client.ui",
+                    "value": {"theme": "light"},
+                    "digest": "sha256:00",
+                    "hlc": ""
+                }
+            }
+        });
+        let store: AccountDataStore = serde_json::from_value(legacy).unwrap();
+        assert_eq!(store.snapshot_head(), None);
+        assert_eq!(store.len(), 1);
+    }
 
     #[test]
     fn key_round_trip() {
