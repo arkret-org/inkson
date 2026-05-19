@@ -772,12 +772,12 @@ pub fn RecoveryPanel(
                         placeholder: "e.g. Mei / Backup HSM",
                         oninput: move |evt| new_guardian_label.set(evt.value()),
                     }
-                    label { r#for: "guardian-did", "DID or handle" }
+                    label { r#for: "guardian-did", "Handle or email" }
                     input {
                         id: "guardian-did",
                         "data-testid": "guardian-did",
                         value: "{new_guardian_did}",
-                        placeholder: "did:web:..., did:plc:..., or @handle",
+                        placeholder: "alice@example.com or @alice",
                         oninput: move |evt| new_guardian_did.set(evt.value()),
                     }
                     label { r#for: "guardian-note", "Note (optional)" }

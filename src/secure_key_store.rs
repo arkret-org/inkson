@@ -1761,9 +1761,157 @@ fn indexeddb_and_subtle_available() -> bool {
     idb_present && subtle_present
 }
 
+// ── T5.2: signing-seed convenience layer ─────────────────────────────
+//
+// The `SecureKeyStore` trait above is a generic string → string KV
+// (used by OIDC refresh tokens, push grants, etc.). T5.2 piggybacks on
+// the same backend for the per-device Ed25519 signing seed so the seed
+// lands in the OS keychain alongside the rest of the secrets instead of
+// in `state.json` plaintext.
+
+/// Canonical key name for the active-device Ed25519 signing seed in the
+/// secure-key store. Scoped by `service_name` (`"yougen"` in production)
+/// so dev and prod builds never collide.
+pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
+
+/// Decoded signing seed (32 bytes) plus the `did:key` the seed encodes.
+/// Returned by [`load_signing_seed`] / [`ensure_signing_seed`] so callers
+/// can stand up an `Ed25519DetachedJwsSigner` without re-deriving the DID.
+#[derive(Clone)]
+pub struct SigningSeedMaterial {
+    pub seed: [u8; 32],
+    pub device_did: String,
+}
+
+impl std::fmt::Debug for SigningSeedMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningSeedMaterial")
+            .field("seed", &"<redacted>")
+            .field("device_did", &self.device_did)
+            .finish()
+    }
+}
+
+/// Read a previously-stashed signing seed from `store`. Returns `Ok(None)`
+/// when the entry is absent (vs `Err(...)` for backend failures).
+///
+/// The seed is encoded as base64-no-pad. Any decode failure (corrupt
+/// entry, length mismatch) is reported as `SecureKeyStoreError::Backend`
+/// so the boot path can surface a clear "rotate device identity" warning
+/// instead of silently regenerating.
+pub fn load_signing_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+    let Some(raw) = store.get_secret(SIGNING_SEED_KEY)? else {
+        return Ok(None);
+    };
+    let bytes = STANDARD_NO_PAD.decode(raw.as_bytes()).map_err(|err| {
+        SecureKeyStoreError::Backend(format!("signing seed base64 decode: {err}"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(SecureKeyStoreError::Backend(format!(
+            "signing seed length {}, expected 32",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    let did = ed25519_seed_to_did_key(&seed);
+    Ok(Some(SigningSeedMaterial { seed, device_did: did }))
+}
+
+/// Persist `seed` into the secure-key store under [`SIGNING_SEED_KEY`].
+/// Overwrites silently. The DID is recomputed from the seed by the
+/// loader, so it is not stored separately.
+pub fn store_signing_seed(
+    store: &dyn SecureKeyStore,
+    seed: &[u8; 32],
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    let encoded = STANDARD_NO_PAD.encode(seed);
+    store.store_secret(SIGNING_SEED_KEY, &encoded)?;
+    Ok(SigningSeedMaterial {
+        seed: *seed,
+        device_did: ed25519_seed_to_did_key(seed),
+    })
+}
+
+/// Load the existing signing seed, or generate + persist a fresh one if
+/// none exists. The generated seed is a 32-byte `getrandom` draw.
+pub fn ensure_signing_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    if let Some(material) = load_signing_seed(store)? {
+        return Ok(material);
+    }
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom signing seed: {err}")))?;
+    store_signing_seed(store, &seed)
+}
+
+/// Encode an Ed25519 seed into a `did:key:z…` (multibase `0xed01 ||
+/// pubkey32`). Kept in this module so callers don't have to depend on
+/// `crate::local_state::encode_did_key` for the seed-only path.
+fn ed25519_seed_to_did_key(seed: &[u8; 32]) -> String {
+    let signing = ed25519_dalek::SigningKey::from_bytes(seed);
+    let verifying = signing.verifying_key();
+    let mut prefixed = Vec::with_capacity(34);
+    prefixed.push(0xed);
+    prefixed.push(0x01);
+    prefixed.extend_from_slice(&verifying.to_bytes());
+    format!("did:key:z{}", bs58::encode(prefixed).into_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T5.2 — store / load signing seed round-trips through a
+    /// MemorySecureKeyStore. `load_signing_seed` returns None on a
+    /// fresh store; `store_signing_seed` followed by
+    /// `load_signing_seed` returns the same 32-byte material plus the
+    /// derived did:key.
+    #[test]
+    fn signing_seed_round_trips_through_memory_store() {
+        let store = MemorySecureKeyStore::new();
+        assert!(load_signing_seed(&store).unwrap().is_none());
+
+        let seed = [11u8; 32];
+        let saved = store_signing_seed(&store, &seed).expect("store");
+        assert_eq!(saved.seed, seed);
+        assert!(saved.device_did.starts_with("did:key:z"));
+
+        let loaded = load_signing_seed(&store)
+            .expect("load")
+            .expect("seed present");
+        assert_eq!(loaded.seed, seed);
+        assert_eq!(loaded.device_did, saved.device_did);
+    }
+
+    /// `ensure_signing_seed` generates a fresh seed when none exists
+    /// and is idempotent on subsequent calls.
+    #[test]
+    fn ensure_signing_seed_generates_and_is_idempotent() {
+        let store = MemorySecureKeyStore::new();
+        let first = ensure_signing_seed(&store).expect("first");
+        // Seed must be non-trivial.
+        assert!(first.seed.iter().any(|b| *b != 0));
+        let second = ensure_signing_seed(&store).expect("second");
+        assert_eq!(first.seed, second.seed);
+        assert_eq!(first.device_did, second.device_did);
+    }
+
+    /// Corrupt entry → backend error so the boot path surfaces a
+    /// "rotate identity" warning instead of silently regenerating.
+    #[test]
+    fn load_signing_seed_rejects_short_entries() {
+        let store = MemorySecureKeyStore::new();
+        store
+            .store_secret(SIGNING_SEED_KEY, &STANDARD_NO_PAD.encode([1u8; 16]))
+            .unwrap();
+        let err = load_signing_seed(&store).unwrap_err();
+        assert!(matches!(err, SecureKeyStoreError::Backend(_)));
+    }
 
     /// The AEAD wrap helper MUST be a real ChaCha20-Poly1305 wrap —
     /// round-trip recovers the

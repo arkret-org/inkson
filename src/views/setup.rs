@@ -544,10 +544,10 @@ pub fn SetupPanel(
                                             "data-testid": "seed-members-input",
                                             value: "{seed_members_value}",
                                             rows: "4",
-                                            placeholder: "did:web:alice.example\ndid:web:bob.example",
+                                            placeholder: "alice@example.com\nbob@example.com",
                                             oninput: move |event| seed_members.set(event.value())
                                         }
-                                        div { class: "muted", "One DID per line or comma-separated." }
+                                        div { class: "muted", "One handle or email per line, or comma-separated." }
                                     }
                                     div { class: "setup-field setup-field-span-2",
                                         label { "Seed preview" }

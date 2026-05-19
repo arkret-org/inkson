@@ -23,6 +23,7 @@ pub mod device_revoke;
 pub mod did_resolver;
 pub mod discovery;
 pub mod dpop;
+pub mod event_signer;
 pub mod presence_rx;
 pub mod federation;
 pub mod hlc;

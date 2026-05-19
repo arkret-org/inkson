@@ -107,10 +107,8 @@ cx.session.grant	durable_event
 cx.sovereign.did_policy	durable_event
 cx.space.child	durable_event
 cx.space.create	durable_event
-cx.space.lifecycle.set	durable_event
 cx.space.organization	durable_event
 cx.space.parent	durable_event
-cx.space.policy.set	durable_event
 cx.space.update	durable_event
 cx.space.upgrade	durable_event
 cx.space_key.share	durable_event

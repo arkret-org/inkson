@@ -660,6 +660,61 @@ mod tests {
     }
 
     #[test]
+    fn participating_filters_non_participants() {
+        // T4.4 — v1 core: participating requires the receiver to have
+        // operated in some cell of the flow (mentions, assigned-to,
+        // reply-to-self, or a participating thread update).
+        let mut ctx = message_context();
+        ctx.watch_level = Some(WatchLevel::Participating);
+        // Not directed, not a participant — must be suppressed.
+        ctx.mentions_actor = Some(false);
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(!decision.should_notify);
+        assert!(decision.watch_suppressed);
+
+        // Participating in the thread → delivers.
+        ctx.participating_thread_update = true;
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(decision.should_notify);
+
+        // Reply-to-self also counts as participation.
+        let mut ctx = message_context();
+        ctx.watch_level = Some(WatchLevel::Participating);
+        ctx.reply_to_self = true;
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(decision.should_notify);
+    }
+
+    #[test]
+    fn all_passes_all_v1_core() {
+        // T4.4 — v1 core: `all` delivers every event without the rule
+        // engine having to match anything. (The richer rules engine
+        // can still fire underrides on top, but watch=all must not
+        // pre-suppress anything.)
+        let mut ctx = message_context();
+        ctx.watch_level = Some(WatchLevel::All);
+        ctx.mentions_actor = Some(false);
+        ctx.participating_thread_update = false;
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(decision.should_notify);
+        assert!(!decision.watch_suppressed);
+        assert!(!decision.muted_short_circuit);
+    }
+
+    #[test]
+    fn muted_short_circuit_v1_core() {
+        // T4.4 — v1 core: muted is the pre-engine deny rule even when
+        // the receiver is directly mentioned.
+        let mut ctx = message_context();
+        ctx.watch_level = Some(WatchLevel::Muted);
+        ctx.mentions_actor = Some(true);
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(!decision.should_notify);
+        assert!(decision.muted_short_circuit);
+        assert!(decision.watch_suppressed);
+    }
+
+    #[test]
     fn mentions_only_suppresses_non_directed_flow_events() {
         let mut ctx = message_context();
         ctx.watch_level = Some(WatchLevel::MentionsOnly);

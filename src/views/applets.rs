@@ -121,13 +121,13 @@ pub fn AppletsPanel(
             div { class: "event", "data-testid": "applet-register-form",
                 div { class: "event-head",
                     span { "Register applet" }
-                    span { class: "badge", "cx.applet.registration" }
+                    span { class: "badge", title: "cx.applet.registration", "Applet" }
                 }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "applet-register-service-did",
                         value: "{service_did}",
-                        placeholder: "service DID (did:web:applet.example)",
+                        placeholder: "applet handle (e.g. applet@example.com)",
                         oninput: move |evt| service_did.set(evt.value()),
                     }
                     input {

@@ -1478,7 +1478,7 @@ pub fn SpaceAdminPanel(
                                         span {
                                             class: "badge member-badge member-badge-agent",
                                             "data-testid": "member-badge-agent",
-                                            title: "Registered agent endpoint (cx.agent.endpoint)",
+                                            title: "Automated member (bot)",
                                             "\u{1f916} "
                                             {crate::i18n::tr("member.badge.agent")}
                                         }
@@ -1770,12 +1770,12 @@ pub fn SpaceAdminPanel(
                     "Invites do not grant capabilities directly — the recipient must accept first. MUST carry expires_at; default 7 days, 24 hours for high-security Spaces."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", "cx.invite.create" }
-                    span { class: "badge blue", "cx.invite.third_party" }
-                    span { class: "badge", "cx.invite.claim" }
-                    span { class: "badge green", "cx.invite.accept" }
-                    span { class: "badge amber", "cx.invite.cancel" }
-                    span { class: "badge red", "cx.invite.revoke" }
+                    span { class: "badge blue", title: "cx.invite.create", "Create" }
+                    span { class: "badge blue", title: "cx.invite.third_party", "Third-party" }
+                    span { class: "badge", title: "cx.invite.claim", "Claim" }
+                    span { class: "badge green", title: "cx.invite.accept", "Accept" }
+                    span { class: "badge amber", title: "cx.invite.cancel", "Cancel" }
+                    span { class: "badge red", title: "cx.invite.revoke", "Revoke" }
                 }
             }
 
@@ -1989,9 +1989,9 @@ pub fn SpaceAdminPanel(
                 }
                 div { class: "actions",
                     span { class: "muted", "Audit-bound key share events:" }
-                    span { class: "badge blue", "cx.space_key.share" }
-                    span { class: "badge", "cx.space_key.share_audit" }
-                    span { class: "badge red", "cx.space_key.withheld" }
+                    span { class: "badge blue", title: "cx.space_key.share", "Key share" }
+                    span { class: "badge", title: "cx.space_key.share_audit", "Audit entry" }
+                    span { class: "badge red", title: "cx.space_key.withheld", "Withheld" }
                 }
                 div { class: "actions",
                     button { class: "secondary", "data-testid": "audited-e2ee-set-none", "No audit profile" }
@@ -2092,7 +2092,7 @@ pub fn SpaceAdminPanel(
             //   temporal (subtype: edit_window / redact_window / session_lifetime / ...)
             //   field_access (subtype: field_write_allow / field_write_deny)
             //   type_restriction (subtype: object_type / morph_type / facet)
-            //   scope_limitation (subtype: container_move / view_kind / branch / ...)
+            //   scope_limitation (subtype: container_move / view_kind / track / ...)
             //   delegation_control (subtype: max_depth / subset_only)
             //   quota (subtype: rate / resource)
             //   claim_based (subtype: approval / accountability / ...)
@@ -2423,23 +2423,23 @@ pub fn SpaceAdminPanel(
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Owning organizations" }
-                        span { "cx.space.organization" }
+                        span { title: "cx.space.organization", "Organization link" }
                         div { class: "muted", "Declares the organization(s) this Space belongs to" }
                     }
                     div { class: "metric",
                         strong { "Org directory listing" }
-                        span { "cx.organization.discovery" }
+                        span { title: "cx.organization.discovery", "Directory listing" }
                         div { class: "muted", "Organization-level discoverability, independent of any Space" }
                     }
                     div { class: "metric",
                         strong { "Org moderation policy" }
-                        span { "cx.organization.moderation_policy" }
+                        span { title: "cx.organization.moderation_policy", "Moderation policy" }
                         div { class: "muted", "Organization-level moderation; Spaces can inherit or override" }
                     }
                     div { class: "metric",
                         strong { "Sovereign DID policy" }
-                        span { "cx.sovereign.did_policy" }
-                        div { class: "muted", "High-security deployments: restrict acceptable DID methods / resolver trust" }
+                        span { title: "cx.sovereign.did_policy", "Identity policy" }
+                        div { class: "muted", "High-security deployments: restrict acceptable identity methods / resolver trust" }
                     }
                 }
             }
@@ -2458,11 +2458,10 @@ pub fn SpaceAdminPanel(
                     "Policy is the input the reducer and service node use to decide whether a request is acceptable. A policy is published as a set composed of rules + actions; one policy_version is written atomically."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", "cx.policy.rule" }
-                    span { class: "badge", "cx.policy.action" }
-                    span { class: "badge green", "cx.policy.set" }
+                    span { class: "badge blue", title: "cx.policy.rule", "Rule" }
+                    span { class: "badge", title: "cx.policy.action", "Action" }
+                    span { class: "badge green", title: "cx.policy.set", "Published set" }
                     span { class: "muted", "— three events combine to publish one policy version" }
-                    span { class: "muted", "policy_version_ref is chosen by cx.space.policy.set" }
                 }
             }
 
@@ -2480,9 +2479,9 @@ pub fn SpaceAdminPanel(
                     "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as cx.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", "cx.moderation.report" }
-                    span { class: "badge accent", "cx.moderation.frank" }
-                    span { class: "muted", "→ reducer emits cx.policy.action (deny / quarantine / require_review)" }
+                    span { class: "badge blue", title: "cx.moderation.report", "Report" }
+                    span { class: "badge accent", title: "cx.moderation.frank", "Franking proof" }
+                    span { class: "muted", "→ reducer decides deny / quarantine / require_review" }
                 }
             }
             }

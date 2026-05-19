@@ -9,8 +9,8 @@ use crate::{
     components::UiIcon,
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     conformance::{
-        PROFILE_CHAT_ONLY_CLIENT, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT,
-        PROFILE_KANBAN_ONLY_CLIENT, PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
+        PROFILE_CHAT_MVP, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP,
+        PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
     },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
@@ -1353,6 +1353,224 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   box-shadow: none;
   appearance: auto;
   accent-color: var(--accent, #1f6b4f);
+}
+
+/* T7.2: watcher picker pills */
+.watcher-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.watcher-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #cbd5df);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  min-height: 38px;
+  align-items: center;
+}
+.watcher-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  max-width: 100%;
+  word-break: break-all;
+}
+.watcher-pill-valid {
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 14%, transparent);
+  color: var(--accent-strong, #1f5a41);
+  border-color: color-mix(in srgb, var(--accent, #1f6b4f) 28%, transparent);
+}
+.watcher-pill-warning {
+  background: rgba(165, 107, 19, 0.14);
+  color: #8a5a10;
+  border-color: rgba(165, 107, 19, 0.32);
+}
+.watcher-pill-invalid {
+  background: rgba(198, 73, 64, 0.12);
+  color: #a23a32;
+  border-color: rgba(198, 73, 64, 0.34);
+}
+.watcher-pill-remove {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+}
+.watcher-pill-input {
+  flex: 1;
+  min-width: 140px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: inherit;
+}
+.watcher-pill-summary {
+  font-size: 12px;
+}
+
+/* T7.2: watch level dropdown */
+.watch-level-picker {
+  position: relative;
+}
+.watch-level-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.watch-level-toggle-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.watch-level-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 200px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #cbd5df);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08));
+  padding: 4px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.watch-level-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text, #142018);
+  cursor: pointer;
+  font-size: 13px;
+}
+.watch-level-option:hover,
+.watch-level-option:focus-visible {
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 12%, transparent);
+  outline: none;
+}
+.watch-level-option.active {
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 18%, transparent);
+  font-weight: 600;
+}
+
+/* T7.3: handle reassigned badge + binding context */
+.handle-reassigned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(198, 73, 64, 0.14);
+  color: #a23a32;
+  border: 1px solid rgba(198, 73, 64, 0.32);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: help;
+}
+.binding-context {
+  font-size: 12px;
+  color: var(--muted, #627065);
+}
+.binding-context-host {
+  opacity: 0.85;
+}
+
+/* T7.4: E2EE message status row */
+.crypto-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.crypto-status-icon {
+  font-size: 14px;
+}
+.crypto-status-decrypting {
+  color: var(--muted, #627065);
+  font-style: italic;
+}
+.crypto-status-failed {
+  color: #a23a32;
+}
+.crypto-status-key-missing {
+  color: #8a5a10;
+}
+.crypto-status-needs-verification {
+  color: #8a5a10;
+}
+.discussion-message.is-crypto-pending .msg-content {
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+.crypto-status-action {
+  background: transparent;
+  border: 0;
+  color: var(--accent, #1f6b4f);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+/* T7.5: tabbed right panel + mobile drawer */
+.discussion-right-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border, #cbd5df);
+  margin: 0 -14px 12px;
+  padding: 0 14px;
+}
+.discussion-right-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #627065);
+  cursor: pointer;
+}
+.discussion-right-tab.active {
+  color: var(--text, #142018);
+  border-bottom-color: var(--accent, #1f6b4f);
+}
+
+@media (max-width: 768px) {
+  .watcher-pill-input { min-width: 100px; }
+  .watch-level-menu { left: 0; right: auto; }
+  .discussion-details-panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    max-height: 70vh;
+    border-radius: 14px 14px 0 0;
+    z-index: 40;
+    box-shadow: 0 -8px 24px rgba(0,0,0,0.18);
+    overflow-y: auto;
+  }
 }
 
 .discussion-chat-feed {
@@ -4579,11 +4797,8 @@ pub fn RouterView() -> Element {
     let account_session_label = account_session_state();
     let queue_label = device_queue().to_string();
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
-    let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_ONLY_CLIENT);
-    let kanban_ready = profile_ready(
-        active_server_description.as_ref(),
-        PROFILE_KANBAN_ONLY_CLIENT,
-    );
+    let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_MVP);
+    let kanban_ready = profile_ready(active_server_description.as_ref(), PROFILE_KANBAN_MVP);
     let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
     let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
     let push_ready = profile_ready(active_server_description.as_ref(), PROFILE_PUSH_GATEWAY);
@@ -5758,7 +5973,7 @@ pub fn RouterView() -> Element {
                                         }
                                     }
                                 } else {
-                                    rsx! { ProfileGateNotice { profile: "kanban_only_client" } }
+                                    rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
                                 }
                             }
                             SpaceSurface::Discussion => {
@@ -5777,7 +5992,7 @@ pub fn RouterView() -> Element {
                                         }
                                     }
                                 } else {
-                                    rsx! { ProfileGateNotice { profile: "chat_only_client" } }
+                                    rsx! { ProfileGateNotice { profile: "chat_mvp" } }
                                 }
                             }
                             SpaceSurface::Document => {
@@ -5913,6 +6128,9 @@ pub fn RouterView() -> Element {
                     Route::Audit => rsx! {
                         crate::views::audit::AuditPanel { state_store }
                     },
+                    Route::Developer => rsx! {
+                        crate::views::developer::DeveloperToolsPanel { state_store }
+                    },
                     Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
                         if let Some(sid) = route.space_id() {
                             if selected_space() != sid {
@@ -5934,7 +6152,7 @@ pub fn RouterView() -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "kanban_only_client" } }
+                            rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
                         }
                     },
                     Route::Chat | Route::ChatSpace { .. } => {
@@ -5958,7 +6176,7 @@ pub fn RouterView() -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "chat_only_client" } }
+                            rsx! { ProfileGateNotice { profile: "chat_mvp" } }
                         }
                     },
                     Route::Notifications => rsx! {
@@ -6323,17 +6541,60 @@ fn CommandPalette(
     }
 }
 
+/// Translate a protocol-level profile id into the friendly product name
+/// that end users see. The raw id remains available in the developer
+/// details panel.
+fn friendly_profile_label(profile: &str) -> String {
+    let key = match profile {
+        "minimal_client" => "profile_gate.friendly.minimal_client",
+        "kanban_mvp" => "profile_gate.friendly.kanban_mvp",
+        "chat_mvp" => "profile_gate.friendly.chat_mvp",
+        "full_client" => "profile_gate.friendly.full_client",
+        "e2ee_client" => "profile_gate.friendly.e2ee_client",
+        _ => "profile_gate.friendly.unknown",
+    };
+    crate::i18n::tr(key)
+}
+
 #[component]
 fn ProfileGateNotice(profile: &'static str) -> Element {
+    let show_details = use_signal(|| false);
+    let title = crate::i18n::tr("profile_gate.title");
+    let body = crate::i18n::tr("profile_gate.body");
+    let toggle_label = if *show_details.read() {
+        crate::i18n::tr("friendly.identifier.hide_technical")
+    } else {
+        crate::i18n::tr("friendly.identifier.show_technical")
+    };
+    let friendly = friendly_profile_label(profile);
+    let dev_label = crate::i18n::tr("developer.profile.required");
+    let mut show_details = show_details;
     rsx! {
         div { class: "timeline", "data-testid": "profile-gate-notice",
             div { class: "event error-banner",
                 div { class: "event-head",
-                    span { "Profile gated" }
-                    span { "{profile}" }
+                    span { "{title}" }
+                    span { "{friendly}" }
                 }
-                div { class: "space-title", "This server has not declared the required capability set." }
-                div { class: "muted", "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements." }
+                div { class: "space-title", "{body}" }
+                div { class: "profile-gate-details",
+                    button {
+                        r#type: "button",
+                        class: "link-button",
+                        "data-testid": "profile-gate-toggle-technical",
+                        onclick: move |_| {
+                            let current = *show_details.read();
+                            show_details.set(!current);
+                        },
+                        "{toggle_label}"
+                    }
+                    if *show_details.read() {
+                        div { class: "muted profile-gate-technical", "data-testid": "profile-gate-technical",
+                            div { strong { "{dev_label}: " } code { "{profile}" } }
+                            div { "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements." }
+                        }
+                    }
+                }
             }
         }
     }
@@ -6536,6 +6797,7 @@ fn route_label(route: &Route) -> &'static str {
             _ => "Space Admin",
         },
         Route::Audit => "Audit",
+        Route::Developer => "Developer Tools",
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => "Board View",
         Route::Chat | Route::ChatSpace { .. } => "Discussion View",
         Route::Notifications => "Notifications",

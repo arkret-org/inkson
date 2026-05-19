@@ -16,7 +16,7 @@
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.space.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
-// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.space.policy.set, cx.capability.{grant,revoke,delegate}  |
+// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.policy.{rule,action,set}, cx.capability.{grant,revoke,delegate}  |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
@@ -47,6 +47,11 @@ pub mod chat;
 /// pipeline.
 pub mod consent_demo;
 pub mod dashboard;
+/// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
+/// protocol-level details (raw event log, audit rows, profile / schema
+/// ids, conformance status) that used to leak into the main flow. End
+/// users do not need to read this surface.
+pub mod developer;
 pub mod directory;
 pub mod document;
 /// A6.1 — global cross-Space message search panel. Backed by soland's

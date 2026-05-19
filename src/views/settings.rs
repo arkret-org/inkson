@@ -719,10 +719,82 @@ pub fn SettingsPanel(
                                         span { "None selected" }
                                         div { class: "muted", "Organizations are principals, not servers" }
                                     }
+                                    // T1.3 — show the active proof mode so
+                                    // the user can spot at a glance that
+                                    // they are about to send dev placeholder
+                                    // events against a production soland.
+                                    div { class: "metric", "data-testid": "settings-proof-mode",
+                                        strong { {crate::i18n::tr("settings.proof_mode.label")} }
+                                        span { {crate::operation::current_proof_mode().label_en()} }
+                                        div { class: "muted", {crate::i18n::tr("settings.proof_mode.hint")} }
+                                    }
+                                    // T5.2 — show the active signer DID, key
+                                    // id, algorithm, and proof freshness so
+                                    // the user can confirm the device is
+                                    // signing with the expected identity and
+                                    // when the last event was signed.
+                                    {
+                                        let status = crate::event_signer::signer_status();
+                                        let (signer_did, key_id, alg, mode_tag, freshness) = match &status {
+                                            Some(s) => (
+                                                s.signer_did.clone(),
+                                                s.verification_method.clone(),
+                                                s.algorithm.clone(),
+                                                s.mode_tag,
+                                                s.last_signed_at
+                                                    .clone()
+                                                    .unwrap_or_else(|| crate::i18n::tr("settings.signer.freshness.never")),
+                                            ),
+                                            None => (
+                                                "—".to_owned(),
+                                                "—".to_owned(),
+                                                "—".to_owned(),
+                                                "none",
+                                                crate::i18n::tr("settings.signer.freshness.never"),
+                                            ),
+                                        };
+                                        rsx! {
+                                            div {
+                                                class: "metric",
+                                                "data-testid": "settings-signer-info",
+                                                strong { {crate::i18n::tr("settings.signer.label")} }
+                                                span {
+                                                    "data-testid": "settings-signer-did",
+                                                    {signer_did}
+                                                }
+                                                div {
+                                                    class: "muted",
+                                                    "data-testid": "settings-signer-key-id",
+                                                    {format!("{} ({mode_tag} / {alg})", key_id)}
+                                                }
+                                                div {
+                                                    class: "muted",
+                                                    "data-testid": "settings-signer-freshness",
+                                                    {format!("{}: {}", crate::i18n::tr("settings.signer.freshness.label"), freshness)}
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 div { class: "actions",
                                     span { class: "badge green", "HTTP/JSON" }
                                     span { class: "badge blue", "v1 core" }
+                                    {
+                                        let mode = crate::operation::current_proof_mode();
+                                        let badge_class = match mode {
+                                            crate::operation::ProofMode::PlaceholderDev => "badge amber",
+                                            crate::operation::ProofMode::RealEd25519
+                                            | crate::operation::ProofMode::ExternalSigner => "badge green",
+                                            crate::operation::ProofMode::Production => "badge red",
+                                        };
+                                        rsx! {
+                                            span {
+                                                class: "{badge_class}",
+                                                "data-testid": "settings-proof-mode-badge",
+                                                {mode.label_en()}
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -736,7 +808,7 @@ pub fn SettingsPanel(
                             div { class: "event settings-card-span-2", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
                                     span { {crate::i18n::tr("settings.avatar.title")} }
-                                    span { "cx.account.update_profile" }
+                                    span { title: "cx.account.update_profile", "Profile" }
                                 }
                                 div { class: "actions", style: "align-items: center; gap: 16px;",
                                     {
@@ -1599,11 +1671,11 @@ pub fn SettingsPanel(
                             checked: presence_visible(),
                             onchange: move |evt| presence_visible.set(evt.value() == "true"),
                         }
-                        " Show presence to others (cx.presence)"
+                        " Show presence to others"
                     }
                     div { class: "event-head",
                         span { "Read receipts" }
-                        span { "cx.read_receipt.preferences" }
+                        span { title: "cx.read_receipt.preferences", "Preferences" }
                     }
                     label {
                         input {
@@ -2125,7 +2197,7 @@ pub fn SettingsPanel(
                         input {
                             r#type: "text",
                             "data-testid": "contact-remark-add-did",
-                            placeholder: "did:web:...",
+                            placeholder: "alice@example.com or @alice",
                             value: "{new_contact_remark_did()}",
                             oninput: move |evt| new_contact_remark_did.set(evt.value()),
                         }
@@ -2202,22 +2274,22 @@ pub fn SettingsPanel(
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Disclosure policy" }
-                            span { "cx.identity.disclosure_policy" }
+                            span { title: "cx.identity.disclosure_policy", "Policy" }
                             div { class: "muted", "Declares which fields are visible to which audience" }
                         }
                         div { class: "metric",
                             strong { "Presentation request" }
-                            span { "cx.identity.presentation_request" }
+                            span { title: "cx.identity.presentation_request", "Request" }
                             div { class: "muted", "Counterparty-initiated claim request (carries purpose + minimum field set)" }
                         }
                         div { class: "metric",
                             strong { "Presentation response" }
-                            span { "cx.identity.presentation_response" }
+                            span { title: "cx.identity.presentation_response", "Response" }
                             div { class: "muted", "Your verifiable presentation; only authorized fields are revealed" }
                         }
                         div { class: "metric",
                             strong { "Disclosure receipt" }
-                            span { "cx.identity.disclosure_receipt" }
+                            span { title: "cx.identity.disclosure_receipt", "Receipt" }
                             div { class: "muted", "Audit trail; redactable but the hash chain is preserved" }
                         }
                     }
@@ -2434,9 +2506,9 @@ pub fn SettingsPanel(
                         // broadcast to the Space.
                         div { class: "event", "data-testid": "account-data-prefs",
                     div { class: "event-head",
-                        span { "Account Data (actor-private)" }
-                        span { "cx.account_data.set" }
-                        HelpTip { text: "The preferences below write to your account's actor-private channel and never sync to other Space members. To change a shared View's settings, use that View's Edit button (which writes cx.view.update)." }
+                        span { "Personal preferences" }
+                        span { title: "cx.account_data.set", "Actor-private" }
+                        HelpTip { text: "The preferences below write to your account's actor-private channel and never sync to other Space members. To change a shared View's settings, use that View's Edit button." }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -2456,7 +2528,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "Profile space override" }
-                            span { "cx.profile.space_override" }
+                            span { title: "cx.profile.space_override", "Per-space profile" }
                             div { class: "muted", "Show a different profile or handle inside a specific Space" }
                         }
                     }
@@ -2573,6 +2645,32 @@ pub fn SettingsPanel(
                                 div { class: "actions",
                                     span { class: "badge amber", "{blocked_count} blockers" }
                                     span { class: "badge blue", "advanced diagnostics" }
+                                }
+                            }
+                            // T7.1 — entry point into the Developer Tools /
+                            // Diagnostics panel that hosts the protocol-level
+                            // surfaces (raw event log, audit rows, schema /
+                            // profile / event-kind references) which used to
+                            // leak into the main flow.
+                            div { class: "event", "data-testid": "developer-tools-entry",
+                                div { class: "event-head",
+                                    span { {crate::i18n::tr("developer.title")} }
+                                    span { class: "badge blue", {crate::i18n::tr("developer.subtitle")} }
+                                }
+                                div { class: "muted", {crate::i18n::tr("developer.hint")} }
+                                div { class: "actions",
+                                    a {
+                                        class: "secondary",
+                                        href: "/developer",
+                                        "data-testid": "open-developer-tools",
+                                        {crate::i18n::tr("developer.title")}
+                                    }
+                                    a {
+                                        class: "secondary",
+                                        href: "/audit",
+                                        "data-testid": "open-audit-from-settings",
+                                        "Audit log"
+                                    }
                                 }
                             }
                         }

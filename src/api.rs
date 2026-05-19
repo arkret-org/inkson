@@ -212,7 +212,47 @@ use crate::models::{
     TokenRefreshResponse, TypingResponse, UpdateProfileResponse, UpdateSpaceResponse,
     VerifyDeviceResponse,
 };
-use crate::operation::{EventEnvelope, OperationEnvelope, uuid_v7};
+use crate::operation::{
+    EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode,
+    uuid_v7,
+};
+
+/// T1.3 — pre-submit guard. Returns an error when the active
+/// [`ProofMode`] enforces a real signer (Production / RealEd25519 /
+/// ExternalSigner) but the envelope still carries the placeholder
+/// `jws == "a..b"` (or no proof at all). Mirrors the soland-side
+/// `dev_proof_in_production` rejection so the UI can surface a clear
+/// local error before the round-trip.
+fn guard_event_proof_against_production(event: &EventEnvelope) -> anyhow::Result<()> {
+    let mode = current_proof_mode();
+    if !mode.enforces_real_signer() {
+        return Ok(());
+    }
+    let Some(proof) = event.proofs.first() else {
+        return Err(anyhow::anyhow!(
+            "Cannot send: no signer configured for this server (proof mode = {})",
+            mode.label_en()
+        ));
+    };
+    if proof.jws == PLACEHOLDER_PROOF_JWS || proof.jws.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Cannot send: dev-mode placeholder proof rejected by production guard (proof mode = {})",
+            mode.label_en()
+        ));
+    }
+    // Production / real-signer modes require a fully signed proof. The
+    // wire shape "a..b" is the placeholder used by `attach_placeholder_proof`;
+    // a real Ed25519 JWS has three `.`-separated segments and a non-empty
+    // signature tail (`<header>..<sig>` with sig length > 0).
+    if !proof.jws.contains("..") || proof.jws.split("..").nth(1).is_none_or(str::is_empty) {
+        return Err(anyhow::anyhow!(
+            "Cannot send: proof jws is missing a real signature (proof mode = {})",
+            mode.label_en()
+        ));
+    }
+    let _ = ProofMode::PlaceholderDev; // keep the variant exposed in api.rs for downstream consumers.
+    Ok(())
+}
 
 /// Generic wrapper for soland's
 /// `/api/v1/projection/{places|flows}` lifecycle endpoints. Keeps the
@@ -2154,8 +2194,38 @@ impl ContrixApi {
         &self,
         event: &EventEnvelope,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let event = serde_json::to_value(event)?;
-        self.submit_event(&event).await
+        // T1.3 — production proof guard. When the runtime
+        // [`current_proof_mode`] is anything other than
+        // [`ProofMode::PlaceholderDev`], we must not ship envelopes
+        // whose proof is the dev placeholder. Soland production rejects
+        // them with `dev_proof_in_production` / `invalid_proof`, but
+        // failing closed here gives the UI a clear local error instead
+        // of a network round-trip that exposes the dev origin.
+        //
+        // T5.2 — when the active proof mode demands a real signer and
+        // the envelope was built unsigned (the
+        // `RealEd25519`/`ExternalSigner` branches in
+        // `OperationBuilder::build` deliberately skip the placeholder
+        // attach), reach into the process-wide `event_signer` registry
+        // and sign in place before the guard runs. Callers that prefer
+        // explicit signing can call `event_signer::sign_with_active`
+        // directly before submit; this path is just the lazy fallback
+        // so the dozens of UI call sites that currently
+        // `submit_event_envelope(&op)` without an inline sign call keep
+        // working.
+        let mut signed = event.clone();
+        if crate::event_signer::should_auto_sign()
+            && signed
+                .proofs
+                .first()
+                .is_none_or(|proof| proof.jws == PLACEHOLDER_PROOF_JWS || proof.jws.is_empty())
+        {
+            crate::event_signer::sign_with_active(&mut signed)
+                .map_err(|err| anyhow::anyhow!("active signer rejected envelope: {err}"))?;
+        }
+        guard_event_proof_against_production(&signed)?;
+        let value = serde_json::to_value(&signed)?;
+        self.submit_event(&value).await
     }
 
     #[deprecated(note = "legacy adapter only; active writes must use submit_event_envelope")]

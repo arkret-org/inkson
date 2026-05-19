@@ -234,7 +234,7 @@ pub fn AgentsPanel(
                 }
                 if endpoints.is_empty() {
                     div { class: "muted", "data-testid": "agent-endpoint-empty",
-                        "No agent endpoints registered. Use the form below to write a cx.agent.endpoint event."
+                        "No automated members registered. Use the form below to add one."
                     }
                 } else {
                     for e in endpoints {
@@ -265,14 +265,14 @@ pub fn AgentsPanel(
             }
             div { class: "event", "data-testid": "agent-register-form",
                 div { class: "event-head",
-                    span { "Register agent endpoint" }
-                    span { class: "badge", "cx.agent.endpoint" }
+                    span { "Register an automated member" }
+                    span { class: "badge", title: "cx.agent.endpoint", "Bot endpoint" }
                 }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-register-did",
                         value: "{agent_did}",
-                        placeholder: "agent DID (did:web:agent.example)",
+                        placeholder: "bot handle (e.g. assistant@example.com)",
                         oninput: move |evt| agent_did.set(evt.value()),
                     }
                     input {

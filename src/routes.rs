@@ -58,6 +58,12 @@ pub enum Route {
     #[route("/audit", crate::app::RouterView)]
     Audit,
 
+    /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
+    /// protocol-level details (schema ids, event kinds, raw event log,
+    /// profile id, conformance) that used to leak into the main flow.
+    #[route("/developer", crate::app::RouterView)]
+    Developer,
+
     #[route("/kanban", crate::app::RouterView)]
     Kanban,
 
@@ -214,7 +220,7 @@ impl Route {
             // the variants were unreferenced anywhere except this mapping,
             // and nothing in the UI dispatches on them. Map to Dashboard so
             // `view` signal stays consistent for sidebar / palette state.
-            Route::Audit | Route::Call | Route::Applets => View::Dashboard,
+            Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
             Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => View::Kanban,
             Route::Chat | Route::ChatSpace { .. } => View::Chat,
             Route::Notifications => View::Notifications,

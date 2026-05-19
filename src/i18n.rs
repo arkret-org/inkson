@@ -274,6 +274,32 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.dark", "Dark");
     dict.set("settings.system", "System");
 
+    // T1.3 — proof mode (event signing) status. Exposed in the settings
+    // panel and the top status bar so the user can confirm at a glance
+    // whether outgoing events are placeholder-dev, real-Ed25519, or
+    // backed by an external signer (and refused on production targets
+    // when no signer is configured).
+    dict.set("settings.proof_mode.label", "Event signing");
+    dict.set(
+        "settings.proof_mode.hint",
+        "Determines what proof is attached when this device submits events.",
+    );
+    dict.set("settings.proof_mode.placeholder_dev", "Development placeholder");
+    dict.set("settings.proof_mode.real_ed25519", "real Ed25519");
+    dict.set("settings.proof_mode.external_signer", "external signer");
+    dict.set(
+        "settings.proof_mode.production",
+        "no signer (production)",
+    );
+
+    // T5.2 — signer DID / key id / freshness panel under the proof
+    // mode indicator. Exposed in the settings panel so the user can
+    // confirm at a glance that the device is signing with the expected
+    // identity and how recently a proof has been produced.
+    dict.set("settings.signer.label", "Active signer");
+    dict.set("settings.signer.freshness.label", "Last signed");
+    dict.set("settings.signer.freshness.never", "never");
+
     // Common
     dict.set("common.loading", "Loading...");
     dict.set("common.error", "Error");
@@ -400,17 +426,17 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.board_title", "Board");
     dict.set(
         "kanban.board_hint",
-        "Drag cards across lists to queue cx.flow.move; projection refresh promotes seed data when the server view endpoint is available.",
+        "Drag cards across lists to move them; the board syncs automatically when the server is available.",
     );
     dict.set(
         "chat.mls_passphrase_placeholder",
-        "MLS passphrase (this Space)",
+        "Encryption passphrase (this Space)",
     );
     dict.set("chat.mls_passphrase_save", "Save passphrase");
     dict.set("chat.mls_publish_key_package", "Publish key package");
-    dict.set("chat.mls_invite_actor_placeholder", "Invite actor DID");
-    dict.set("chat.mls_invite_device_placeholder", "Invite device id");
-    dict.set("chat.mls_invite_member", "Invite to MLS group");
+    dict.set("chat.mls_invite_actor_placeholder", "alice@example.com or @alice");
+    dict.set("chat.mls_invite_device_placeholder", "Device id");
+    dict.set("chat.mls_invite_member", "Invite to encrypted group");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
     dict.set(
@@ -511,7 +537,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("space_admin.mls_remove_button", "Build & submit MLS Remove");
     dict.set(
         "space_admin.mls_remove_target_placeholder",
-        "Target device DID (did:web:…)",
+        "Target device (handle or full identifier)",
     );
     dict.set(
         "space_admin.mls_remove_passphrase_placeholder",
@@ -533,6 +559,56 @@ pub fn english_translations() -> TranslationDict {
         "不影响访问控制 — Watching only changes notifications, \
          not who can see the Flow.",
     );
+    // T7.2 watcher pill picker.
+    dict.set(
+        "chat.watchers.placeholder",
+        "alice@example.com or did:web:… (comma to add)",
+    );
+    dict.set("chat.watchers.valid", "valid");
+    dict.set("chat.watchers.invalid", "invalid");
+    dict.set("chat.watchers.dupe", "Already added");
+    dict.set("chat.watchers.unknown_handle", "Handle not found locally");
+    dict.set("chat.watchers.invalid_did", "Malformed DID");
+    dict.set(
+        "chat.watchers.unresolved",
+        "Type a DID, a handle (alice@example.com), or pick from suggestions.",
+    );
+    dict.set("common.remove", "Remove");
+    // T7.2 watch level fast switcher.
+    dict.set("chat.watch_level.prefix", "Watching");
+    dict.set("chat.watch_level.tooltip", "Choose how often this Flow notifies you.");
+    dict.set("chat.watch_level.mentions_only", "Mentions only");
+    dict.set("chat.watch_level.participating", "Participating");
+    dict.set("chat.watch_level.all", "All");
+    dict.set("chat.watch_level.muted", "Muted");
+    dict.set("chat.watch_level.pending", "Updating watch level…");
+    dict.set("chat.watch_level.saved", "Watch level updated.");
+    dict.set("chat.watch_level.failed", "Watch level update failed (rolled back).");
+    // T7.3 handle reassigned context.
+    dict.set("chat.handle_reassigned.badge", "handle reassigned");
+    dict.set(
+        "chat.handle_reassigned.tooltip",
+        "This handle was captured at compose time but currently resolves to a different DID. Compare the captured label against the current sender.",
+    );
+    dict.set("chat.binding_context.separator", " @ ");
+    dict.set("chat.binding_context.details", "Show service binding");
+    // T7.4 E2EE status indicators.
+    dict.set("chat.crypto.decrypting", "Decrypting…");
+    dict.set("chat.crypto.decrypt_failed", "Failed to decrypt");
+    dict.set("chat.crypto.decrypt_failed_action", "Open recovery");
+    dict.set("chat.crypto.key_missing", "Key not yet received");
+    dict.set(
+        "chat.crypto.key_missing_hint",
+        "Waiting for a Welcome message from the Space admin or another device.",
+    );
+    dict.set("chat.crypto.needs_verification", "Sender needs verification");
+    dict.set("chat.mls.epoch", "MLS epoch");
+    dict.set("chat.mls.key_package", "Key package");
+    dict.set("chat.mls.welcome", "Welcome");
+    // T7.5 layout polish.
+    dict.set("chat.tabs.settings", "Settings");
+    dict.set("chat.tabs.members", "Members");
+    dict.set("chat.tabs.notifications", "Notifications");
     dict.set("chat.button.create", "Create");
     dict.set("chat.button.reply", "Reply");
     dict.set("chat.button.react", "React");
@@ -874,6 +950,64 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("content.attachment.download", "Download");
 
+    // T7.1 — friendly product-language terms surfaced in the main flow.
+    // Raw protocol identifiers (did:web:, cx.*, schema ids, profile ids)
+    // are only shown inside Developer Tools / Diagnostics surfaces.
+    dict.set("friendly.identifier.placeholder", "john@example.com or @john");
+    dict.set("friendly.identifier.placeholder_multiline", "alice@example.com\nbob@example.com");
+    dict.set("friendly.identifier.label", "Member identifier");
+    dict.set(
+        "friendly.identifier.hint",
+        "Enter an email-style handle, @name, or paste a full identifier.",
+    );
+    dict.set("friendly.identifier.handle_or_email", "Handle or email");
+    dict.set("friendly.member.automated", "Automated member");
+    dict.set("friendly.member.bot", "Bot");
+    dict.set("friendly.member.human", "Person");
+    dict.set("friendly.member.agent_badge", "Bot");
+    dict.set("friendly.identifier.technical", "Protocol identifier");
+    dict.set("friendly.identifier.show_technical", "Show technical details");
+    dict.set("friendly.identifier.hide_technical", "Hide technical details");
+    dict.set("friendly.security.encrypted", "Encrypted");
+    dict.set("friendly.security.encrypted_short", "Encrypted");
+    dict.set("friendly.draft.label", "Draft");
+    dict.set("friendly.sync.state", "Sync state");
+    dict.set("friendly.sync.synced", "Up to date");
+    dict.set("friendly.sync.pending", "Syncing…");
+    dict.set("friendly.sync.frontier", "Sync state");
+
+    // Profile gate (friendly version of ProfileGateNotice).
+    dict.set("profile_gate.title", "Feature not available on this server");
+    dict.set(
+        "profile_gate.body",
+        "This server does not yet support the capabilities needed for this view. Try a different workspace or contact your administrator.",
+    );
+    dict.set("profile_gate.friendly.minimal_client", "Basic workspace");
+    dict.set("profile_gate.friendly.kanban_mvp", "Boards");
+    dict.set("profile_gate.friendly.chat_mvp", "Discussions");
+    dict.set("profile_gate.friendly.full_client", "Full workspace");
+    dict.set("profile_gate.friendly.e2ee_client", "Encrypted messaging");
+    dict.set("profile_gate.friendly.unknown", "Workspace feature");
+
+    // Developer Tools / Diagnostics entry points used to expose the
+    // protocol-level details that used to leak into the main flow.
+    dict.set("nav.developer", "Developer Tools");
+    dict.set("developer.title", "Developer Tools");
+    dict.set("developer.subtitle", "Protocol diagnostics and audit");
+    dict.set("developer.section.schemas", "Schemas & event kinds");
+    dict.set("developer.section.profiles", "Server profiles");
+    dict.set("developer.section.events", "Raw event log");
+    dict.set("developer.section.conformance", "Protocol conformance");
+    dict.set("developer.section.protocol_version", "Protocol version");
+    dict.set(
+        "developer.hint",
+        "These details are intended for developers and operators. End users do not need to read them.",
+    );
+    dict.set("developer.profile.required", "Required profile id");
+    dict.set("developer.profile.advertised", "Server advertised");
+    dict.set("developer.event.kind", "Event kind");
+    dict.set("developer.schema.id", "Schema id");
+
     dict
 }
 
@@ -1034,14 +1168,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.board_title", "看板");
     dict.set(
         "kanban.board_hint",
-        "拖动卡片到不同列以排队 cx.flow.move 写入；服务端 view 接口可用时刷新会替换种子数据。",
+        "拖动卡片到不同列即可移动；服务器可用时看板将自动同步。",
     );
-    dict.set("chat.mls_passphrase_placeholder", "MLS 口令（本 Space）");
+    dict.set("chat.mls_passphrase_placeholder", "加密口令（本 Space）");
     dict.set("chat.mls_passphrase_save", "保存口令");
     dict.set("chat.mls_publish_key_package", "发布 Key Package");
-    dict.set("chat.mls_invite_actor_placeholder", "邀请目标 actor DID");
-    dict.set("chat.mls_invite_device_placeholder", "邀请目标设备 id");
-    dict.set("chat.mls_invite_member", "邀请加入 MLS 群");
+    dict.set("chat.mls_invite_actor_placeholder", "alice@example.com 或 @alice");
+    dict.set("chat.mls_invite_device_placeholder", "设备 id");
+    dict.set("chat.mls_invite_member", "邀请加入加密群组");
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
@@ -1090,6 +1224,21 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.store_backup", "存储备份");
     dict.set("settings.register_push", "注册推送");
     dict.set("settings.unregister_push", "注销推送");
+    // T1.3 — 事件签名 / proof mode 状态显示。
+    dict.set("settings.proof_mode.label", "事件签名");
+    dict.set(
+        "settings.proof_mode.hint",
+        "决定本设备提交事件时附加的 proof 类型。",
+    );
+    dict.set("settings.proof_mode.placeholder_dev", "开发占位");
+    dict.set("settings.proof_mode.real_ed25519", "真实 Ed25519");
+    dict.set("settings.proof_mode.external_signer", "外部 signer");
+    dict.set("settings.proof_mode.production", "未配置 signer（生产模式）");
+
+    // T5.2 — signer DID / key id / freshness panel
+    dict.set("settings.signer.label", "活跃签名者");
+    dict.set("settings.signer.freshness.label", "上次签名时间");
+    dict.set("settings.signer.freshness.never", "尚未签名");
     dict.set("kanban.archive_action", "归档");
     dict.set("kanban.restore_action", "恢复");
     dict.set("kanban.archived_lists_header", "已归档列表");
@@ -1124,7 +1273,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
     dict.set(
         "space_admin.mls_remove_target_placeholder",
-        "目标设备 DID（did:web:…）",
+        "目标设备（句柄或完整标识符）",
     );
     dict.set("space_admin.mls_remove_passphrase_placeholder", "快照口令");
 
@@ -1141,6 +1290,56 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.watchers.hint",
         "不影响访问控制 —— 关注只改变通知，不改变谁能看到该 Flow。",
     );
+    // T7.2 关注者多选 pill
+    dict.set(
+        "chat.watchers.placeholder",
+        "alice@example.com 或 did:web:…（用逗号添加）",
+    );
+    dict.set("chat.watchers.valid", "有效");
+    dict.set("chat.watchers.invalid", "无效");
+    dict.set("chat.watchers.dupe", "已添加");
+    dict.set("chat.watchers.unknown_handle", "本地未识别该 handle");
+    dict.set("chat.watchers.invalid_did", "DID 格式无效");
+    dict.set(
+        "chat.watchers.unresolved",
+        "请输入 DID、handle（alice@example.com），或从建议列表中选择。",
+    );
+    dict.set("common.remove", "移除");
+    // T7.2 watch level 快捷切换
+    dict.set("chat.watch_level.prefix", "关注");
+    dict.set("chat.watch_level.tooltip", "选择此 Flow 的通知频率。");
+    dict.set("chat.watch_level.mentions_only", "仅 @ 我");
+    dict.set("chat.watch_level.participating", "参与中");
+    dict.set("chat.watch_level.all", "全部");
+    dict.set("chat.watch_level.muted", "静音");
+    dict.set("chat.watch_level.pending", "正在更新 watch level…");
+    dict.set("chat.watch_level.saved", "watch level 已更新。");
+    dict.set("chat.watch_level.failed", "watch level 更新失败（已回滚）。");
+    // T7.3 handle 重新分配上下文
+    dict.set("chat.handle_reassigned.badge", "handle 已被重新分配");
+    dict.set(
+        "chat.handle_reassigned.tooltip",
+        "撰写时记录的 handle 当前指向不同的 DID。请比对捕获的标签与当前发送者。",
+    );
+    dict.set("chat.binding_context.separator", " @ ");
+    dict.set("chat.binding_context.details", "显示服务绑定");
+    // T7.4 E2EE 状态
+    dict.set("chat.crypto.decrypting", "解密中…");
+    dict.set("chat.crypto.decrypt_failed", "解密失败");
+    dict.set("chat.crypto.decrypt_failed_action", "前往恢复");
+    dict.set("chat.crypto.key_missing", "尚未收到密钥");
+    dict.set(
+        "chat.crypto.key_missing_hint",
+        "等待 Space 管理员或其他设备发送的 Welcome 消息。",
+    );
+    dict.set("chat.crypto.needs_verification", "发送方需要验证");
+    dict.set("chat.mls.epoch", "MLS epoch");
+    dict.set("chat.mls.key_package", "Key package");
+    dict.set("chat.mls.welcome", "Welcome");
+    // T7.5 布局调整
+    dict.set("chat.tabs.settings", "设置");
+    dict.set("chat.tabs.members", "成员");
+    dict.set("chat.tabs.notifications", "通知");
     dict.set("chat.button.create", "创建");
     dict.set("chat.button.reply", "回复");
     dict.set("chat.button.react", "回应");
@@ -1453,6 +1652,59 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("content.video.unsupported", "您的浏览器不支持内嵌视频。");
     dict.set("content.audio.unsupported", "您的浏览器不支持内嵌音频。");
     dict.set("content.attachment.download", "下载");
+
+    // T7.1 — 友好产品语言术语（中文）。
+    dict.set("friendly.identifier.placeholder", "john@example.com 或 @john");
+    dict.set("friendly.identifier.placeholder_multiline", "alice@example.com\nbob@example.com");
+    dict.set("friendly.identifier.label", "成员标识");
+    dict.set(
+        "friendly.identifier.hint",
+        "输入邮箱样式的句柄、@名称，或粘贴完整标识符。",
+    );
+    dict.set("friendly.identifier.handle_or_email", "句柄或邮箱");
+    dict.set("friendly.member.automated", "自动化成员");
+    dict.set("friendly.member.bot", "机器人");
+    dict.set("friendly.member.human", "成员");
+    dict.set("friendly.member.agent_badge", "机器人");
+    dict.set("friendly.identifier.technical", "协议标识符");
+    dict.set("friendly.identifier.show_technical", "显示技术详情");
+    dict.set("friendly.identifier.hide_technical", "隐藏技术详情");
+    dict.set("friendly.security.encrypted", "已加密");
+    dict.set("friendly.security.encrypted_short", "加密");
+    dict.set("friendly.draft.label", "草稿");
+    dict.set("friendly.sync.state", "同步状态");
+    dict.set("friendly.sync.synced", "已同步");
+    dict.set("friendly.sync.pending", "同步中…");
+    dict.set("friendly.sync.frontier", "同步状态");
+
+    dict.set("profile_gate.title", "此服务器暂不支持该功能");
+    dict.set(
+        "profile_gate.body",
+        "当前服务器尚未提供该视图所需的能力。请尝试其他工作区或联系管理员。",
+    );
+    dict.set("profile_gate.friendly.minimal_client", "基础工作区");
+    dict.set("profile_gate.friendly.kanban_mvp", "看板");
+    dict.set("profile_gate.friendly.chat_mvp", "讨论");
+    dict.set("profile_gate.friendly.full_client", "完整工作区");
+    dict.set("profile_gate.friendly.e2ee_client", "加密通讯");
+    dict.set("profile_gate.friendly.unknown", "工作区功能");
+
+    dict.set("nav.developer", "开发者工具");
+    dict.set("developer.title", "开发者工具");
+    dict.set("developer.subtitle", "协议诊断与审计");
+    dict.set("developer.section.schemas", "Schemas 与事件类型");
+    dict.set("developer.section.profiles", "服务器 Profile");
+    dict.set("developer.section.events", "原始事件日志");
+    dict.set("developer.section.conformance", "协议合规");
+    dict.set("developer.section.protocol_version", "协议版本");
+    dict.set(
+        "developer.hint",
+        "以下信息面向开发者和运维人员。终端用户无需阅读。",
+    );
+    dict.set("developer.profile.required", "所需 Profile id");
+    dict.set("developer.profile.advertised", "服务器声明");
+    dict.set("developer.event.kind", "事件类型");
+    dict.set("developer.schema.id", "Schema id");
 
     dict
 }

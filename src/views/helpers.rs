@@ -11,6 +11,20 @@ pub struct StructuredMention {
     pub kind: String,
     pub target: String,
     pub token: String,
+    /// T7.3: compose-time label captured alongside the mention. Spec
+    /// `flow-and-message.md §9.4`. Defaults to the empty string for
+    /// mentions parsed from typed draft text where we don't yet have
+    /// a resolved snapshot.
+    #[serde(default)]
+    pub display_snapshot: String,
+    /// T7.3: original handle URI as typed by the author (e.g.
+    /// `handle://alice@example.com`). Empty when only a DID was supplied.
+    #[serde(default)]
+    pub handle_uri: String,
+    /// T7.3: ISO-8601 timestamp the mention was resolved at compose
+    /// time. Empty when the resolver didn't supply it.
+    #[serde(default)]
+    pub resolved_at: String,
 }
 
 /// Create an authenticated API client from a base URL and optional access token.
@@ -206,6 +220,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 kind: "actor".to_owned(),
                 target: format!("did:{actor}"),
                 token: normalized.to_owned(),
+                display_snapshot: String::new(),
+                handle_uri: String::new(),
+                resolved_at: String::new(),
             });
             continue;
         }
@@ -215,6 +232,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                     kind: "actor".to_owned(),
                     target: format!("did:web:{handle}"),
                     token: normalized.to_owned(),
+                    display_snapshot: handle.to_owned(),
+                    handle_uri: format!("handle://{handle}"),
+                    resolved_at: String::new(),
                 });
             }
             continue;
@@ -224,6 +244,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 kind: "entity".to_owned(),
                 target: format!("cx:{entity}"),
                 token: normalized.to_owned(),
+                display_snapshot: String::new(),
+                handle_uri: String::new(),
+                resolved_at: String::new(),
             });
             continue;
         }
@@ -233,6 +256,9 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                     kind: "entity".to_owned(),
                     target: entity.to_owned(),
                     token: normalized.to_owned(),
+                    display_snapshot: String::new(),
+                    handle_uri: String::new(),
+                    resolved_at: String::new(),
                 });
             }
         }

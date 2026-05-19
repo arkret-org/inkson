@@ -101,10 +101,8 @@ cx.session.grant
 cx.sovereign.did_policy
 cx.space.child
 cx.space.create
-cx.space.lifecycle.set
 cx.space.organization
 cx.space.parent
-cx.space.policy.set
 cx.space.update
 cx.space.upgrade
 cx.space_key.share

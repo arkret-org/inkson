@@ -7,11 +7,21 @@ use serde_json::Value;
 use crate::models::ServerDescription;
 
 pub const PROFILE_MINIMAL_CLIENT: &str = "cx.profile.minimal_client.v1";
-pub const PROFILE_CHAT_ONLY_CLIENT: &str = "cx.profile.chat_only_client.v1";
-pub const PROFILE_KANBAN_ONLY_CLIENT: &str = "cx.profile.kanban_only_client.v1";
+// T2.3: chat_only_client / kanban_only_client profile ids were removed from
+// the spec (artifacts/registry/deprecated-profile-ids.json, since 0a5ab85).
+// Replacement profile ids are cx.profile.chat_mvp.v1 / cx.profile.kanban_mvp.v1;
+// modality is otherwise expressed via Space schema, not via single-modality
+// profile gating.
+pub const PROFILE_CHAT_MVP: &str = "cx.profile.chat_mvp.v1";
+pub const PROFILE_KANBAN_MVP: &str = "cx.profile.kanban_mvp.v1";
 pub const PROFILE_FULL_CLIENT: &str = "cx.profile.full_client.v1";
 pub const PROFILE_E2EE_CLIENT: &str = "cx.profile.e2ee_client.v1";
 pub const PROFILE_FEDERATION_MINIMAL: &str = "cx.profile.federation_minimal.v1";
+// T0.3: push_gateway is a gateway role profile (not a client role). yougen
+// is a client and MUST NOT declare itself as supporting the push_gateway
+// profile (no entry in client_profile_declarations()). The constant is kept
+// only so the settings panel can read whether the *server* advertises a
+// push gateway endpoint.
 pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
@@ -102,17 +112,17 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
-            profile_id: PROFILE_CHAT_ONLY_CLIENT,
-            label: "chat_only_client",
-            description: "Chat-only client: channels, timeline, message send/edit/redaction, reactions, and read markers.",
+            profile_id: PROFILE_CHAT_MVP,
+            label: "chat_mvp",
+            description: "Chat MVP client: channels, timeline, message send/edit/redaction, reactions, and read markers.",
             local_supported: true,
             degradation_path: "Timeline can remain visible, but chat write controls stay gated.",
             tier: ConformanceTier::V1Core,
         },
         ClientProfileDeclaration {
-            profile_id: PROFILE_KANBAN_ONLY_CLIENT,
-            label: "kanban_only_client",
-            description: "Kanban-only client: board/list/card projection and canonical write-plane mutations.",
+            profile_id: PROFILE_KANBAN_MVP,
+            label: "kanban_mvp",
+            description: "Kanban MVP client: board/list/card projection and canonical write-plane mutations.",
             local_supported: true,
             degradation_path: "Directory/index projections remain available without board mutation controls.",
             tier: ConformanceTier::V1Core,
@@ -141,14 +151,12 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             degradation_path: "Hide federation actions and show local-domain resources only.",
             tier: ConformanceTier::V1Core,
         },
-        ClientProfileDeclaration {
-            profile_id: PROFILE_PUSH_GATEWAY,
-            label: "push_gateway",
-            description: "Push gateway client: chime registration, unregister, local push state, and notification projection.",
-            local_supported: true,
-            degradation_path: "Keep in-app notification projection and skip push registration controls.",
-            tier: ConformanceTier::V1Core,
-        },
+        // T0.3: push_gateway profile is a gateway role, not a client role.
+        // yougen is the client; it MUST NOT declare local_supported for the
+        // push_gateway profile. The notification *projection* surface lives
+        // in [`crate::push_registration`], but the client only registers
+        // with the gateway and consumes its describe — it does not implement
+        // the gateway role itself.
         ClientProfileDeclaration {
             profile_id: PROFILE_MLS_GOVERNANCE_BINDING_FULL,
             label: "mls_governance_binding_full",
@@ -357,12 +365,15 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Sovereign deployment (sync/sovereign-deployment)
         "cx.sovereign.did_policy",
         // Space / boundary
+        // T2.3: cx.space.lifecycle.set and cx.space.policy.set were removed
+        // by spec 0a5ab85 (artifacts/registry/removed-event-kinds.json,
+        // hard_reject). Lifecycle was decomposed into create / update /
+        // upgrade / archive; policy was decomposed into per-component policy
+        // cells (join-policy, history-visibility, delivery-binding-policy).
         "cx.space.child",
         "cx.space.create",
-        "cx.space.lifecycle.set",
         "cx.space.organization",
         "cx.space.parent",
-        "cx.space.policy.set",
         "cx.space.update",
         "cx.space.upgrade",
         // MLS Space-key share (audited E2EE)
@@ -547,11 +558,11 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
                 &mut missing,
             );
         }
-        PROFILE_CHAT_ONLY_CLIENT => {
+        PROFILE_CHAT_MVP => {
             require_feature_or_operation(server, "sync.account", "cx.sync.account", &mut missing);
             require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
         }
-        PROFILE_KANBAN_ONLY_CLIENT => {
+        PROFILE_KANBAN_MVP => {
             require_feature_or_operation(server, "index.query", "cx.index.query", &mut missing);
             require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
         }
@@ -585,14 +596,6 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
                 &mut missing,
             );
         }
-        PROFILE_PUSH_GATEWAY => {
-            require_feature_or_operation(
-                server,
-                "push.register_device",
-                "cx.push.register_device",
-                &mut missing,
-            );
-        }
         PROFILE_MLS_GOVERNANCE_BINDING_FULL => {
             // Hardening profile on top of e2ee_client. Server MUST advertise
             // the MLS commit submission path AND accept covered_frontier
@@ -600,6 +603,19 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
             // the wire route is fronted by events.submit.
             require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
             require_feature_or_operation(server, "keys.upload", "cx.keys.upload", &mut missing);
+        }
+        // T0.3: yougen does not claim to *implement* the push_gateway role,
+        // but it MUST still check whether the server advertises a push
+        // registration endpoint before exposing the registration UI. This
+        // arm exists to support that capability check; it intentionally
+        // has no client_profile_declarations() entry.
+        PROFILE_PUSH_GATEWAY => {
+            require_feature_or_operation(
+                server,
+                "push.register_device",
+                "cx.push.register_device",
+                &mut missing,
+            );
         }
         _ => missing.push(format!("unknown profile {profile_id}")),
     }
@@ -794,12 +810,27 @@ mod tests {
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "cx.profile.chat_only_client.v1" && p.supported)
+                .any(|p| p.profile_id == "cx.profile.chat_mvp.v1" && p.supported)
         );
+        // T0.3: yougen is a client, push_gateway is a gateway role — it
+        // MUST NOT appear in the client's supported profile set.
         assert!(
-            profiles
+            !profiles
                 .iter()
                 .any(|p| p.profile_id == "cx.profile.push_gateway.v1")
+        );
+        // T2.3: the legacy single-modality profile ids are hard_reject per
+        // artifacts/registry/deprecated-profile-ids.json; they MUST NOT
+        // appear in yougen's declared profile set.
+        assert!(
+            !profiles
+                .iter()
+                .any(|p| p.profile_id == "cx.profile.chat_only_client.v1")
+        );
+        assert!(
+            !profiles
+                .iter()
+                .any(|p| p.profile_id == "cx.profile.kanban_only_client.v1")
         );
     }
 
@@ -825,7 +856,7 @@ mod tests {
 
         let chat = readiness
             .iter()
-            .find(|profile| profile.profile_id == PROFILE_CHAT_ONLY_CLIENT)
+            .find(|profile| profile.profile_id == PROFILE_CHAT_MVP)
             .unwrap();
         assert!(!chat.ready);
         assert!(
@@ -837,7 +868,7 @@ mod tests {
 
     #[test]
     fn profile_ready_is_permissive_until_describe_finishes() {
-        assert!(profile_ready(None, PROFILE_CHAT_ONLY_CLIENT));
+        assert!(profile_ready(None, PROFILE_CHAT_MVP));
     }
 
     #[test]
@@ -962,8 +993,11 @@ mod tests {
         // those typed kinds, so the rename doesn't shift the count).
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
-        // surface remains a subset (107 here).
-        assert_eq!(known_event_kinds().len(), 107);
+        // surface remains a subset (105 here).
+        // T2.3 wire-break: cx.space.lifecycle.set and cx.space.policy.set
+        // were removed (artifacts/registry/removed-event-kinds.json,
+        // hard_reject); net -2 from prior 107.
+        assert_eq!(known_event_kinds().len(), 105);
     }
 
     #[test]
@@ -997,6 +1031,10 @@ mod tests {
         // Removed by spec
         assert!(!kinds.contains(&"cx.flow.convert"));
         assert!(!kinds.contains(&"cx.mls.epoch"));
+        // T2.3 (spec 0a5ab85): single 'set' kinds were decomposed into
+        // per-component cells / typed lifecycle events.
+        assert!(!kinds.contains(&"cx.space.lifecycle.set"));
+        assert!(!kinds.contains(&"cx.space.policy.set"));
         // Renamed: cx.actor.profile.update -> cx.profile.update
         assert!(kinds.contains(&"cx.profile.update"));
         assert!(!kinds.contains(&"cx.actor.profile.update"));
@@ -1024,15 +1062,16 @@ mod tests {
     /// 110 is no longer meaningful. Spec dc01ad7 (2026-05-18) then unified
     /// the four `cx.flow.track.{enable,disable,update,set_primary}` events
     /// into a single `cx.flow.tracks.update`, dropping three more entries.
-    /// We pin to 104 to track the post-unification count. The spec itself
+    /// We pin to 102 to track the post-T2.3 count. The spec itself
     /// declares 131 active kinds at HEAD; yougen surfaces the typed subset
-    /// relevant to its UI flows.
+    /// relevant to its UI flows. T2.3 dropped cx.space.lifecycle.set and
+    /// cx.space.policy.set (-2 from the prior 104 floor).
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
         assert!(
-            kinds.len() >= 104,
-            "yougen surfaces {} event kinds; floor 104 set after the dc01ad7 track-unification reduced the prior 107 floor by three (4 track events -> 1 unified `cx.flow.tracks.update`).",
+            kinds.len() >= 102,
+            "yougen surfaces {} event kinds; floor 102 set after T2.3 removed cx.space.lifecycle.set and cx.space.policy.set (-2 from the prior 104 floor).",
             kinds.len()
         );
     }

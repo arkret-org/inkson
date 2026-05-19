@@ -1,14 +1,149 @@
 //! Minimal event-envelope helpers for yougen's active write paths.
 //!
 //! Active writes use the current operation/event surfaces directly.
+//!
+//! # Proof mode (T1.3)
+//!
+//! [`OperationBuilder::build`] historically attached a placeholder proof
+//! (`jws == "a..b"`) so dev fixtures and dev-mode soland round-trip
+//! cleanly. That is unsafe against a production soland (`SOLAND_DEVELOPMENT_MODE=false`)
+//! because the placeholder *looks* like a valid envelope until soland
+//! rejects it on the wire — and worse, lets a developer build that does
+//! not actually have a real signer ship envelopes that *appear* signed.
+//!
+//! The runtime [`ProofMode`] now gates the placeholder attach behavior:
+//!
+//! - [`ProofMode::PlaceholderDev`] — default; `build()` attaches the
+//!   placeholder so existing dev flows work. Equivalent to the
+//!   historical behavior.
+//! - [`ProofMode::RealEd25519`] / [`ProofMode::ExternalSigner`] — the
+//!   builder still produces an envelope, but the placeholder is left
+//!   off so the signing path can fill in the real `jws`.
+//! - [`ProofMode::Production`] — no signer is configured. `build()`
+//!   leaves `proofs` empty; the submit guard in
+//!   [`crate::api::ContrixApi::submit_event_envelope`] refuses to send.
+//!
+//! The dev feature flag `dev_proof` enables `PlaceholderDev` as the
+//! compile-time default. Builds without the feature start in
+//! `Production`, forcing callers to opt into a real signer.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::canonical::{canonical_json_bytes, canonical_sha256};
 use crate::hlc::{Hlc, next_seq};
+
+/// Active client-side proof attachment mode. See module docs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProofMode {
+    /// `attach_placeholder_proof` is invoked by [`OperationBuilder::build`].
+    /// Compatible with `SOLAND_DEVELOPMENT_MODE=true` soland instances and
+    /// the existing test suite. **Never safe to use against a
+    /// production soland** — the placeholder `jws == "a..b"` fails the
+    /// strict-JWS check and reveals the dev origin in the audit log.
+    PlaceholderDev,
+    /// A real Ed25519 signing key is wired into the build pipeline.
+    /// `build()` produces an unsigned envelope; the signer fills in
+    /// `proofs[0].jws` before submit.
+    RealEd25519,
+    /// An external signer (OS keychain, WebAuthn, HSM) is wired in.
+    /// `build()` produces an unsigned envelope; the signer round-trip
+    /// happens out of process before submit.
+    ExternalSigner,
+    /// No signer is configured. `build()` returns an envelope with no
+    /// proofs, and the submit guard refuses to ship it. This is the
+    /// fail-closed default when the `dev_proof` feature is disabled.
+    Production,
+}
+
+impl ProofMode {
+    /// i18n key suffix (lowercased) for status-bar/settings display.
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            ProofMode::PlaceholderDev => "settings.proof_mode.placeholder_dev",
+            ProofMode::RealEd25519 => "settings.proof_mode.real_ed25519",
+            ProofMode::ExternalSigner => "settings.proof_mode.external_signer",
+            ProofMode::Production => "settings.proof_mode.production",
+        }
+    }
+
+    /// Human-readable English label (fallback when i18n is not wired up).
+    pub fn label_en(self) -> &'static str {
+        match self {
+            ProofMode::PlaceholderDev => "placeholder dev",
+            ProofMode::RealEd25519 => "real Ed25519",
+            ProofMode::ExternalSigner => "external signer",
+            ProofMode::Production => "no signer (production)",
+        }
+    }
+
+    /// True when [`OperationBuilder::build`] should call
+    /// [`EventEnvelope::attach_placeholder_proof`].
+    pub fn attaches_placeholder(self) -> bool {
+        matches!(self, ProofMode::PlaceholderDev)
+    }
+
+    /// True when the submit guard should refuse to ship envelopes that
+    /// were never signed by a real (Ed25519 / external) signer.
+    pub fn enforces_real_signer(self) -> bool {
+        matches!(
+            self,
+            ProofMode::Production | ProofMode::RealEd25519 | ProofMode::ExternalSigner
+        )
+    }
+
+    fn as_u8(self) -> u8 {
+        match self {
+            ProofMode::PlaceholderDev => 0,
+            ProofMode::RealEd25519 => 1,
+            ProofMode::ExternalSigner => 2,
+            ProofMode::Production => 3,
+        }
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => ProofMode::PlaceholderDev,
+            1 => ProofMode::RealEd25519,
+            2 => ProofMode::ExternalSigner,
+            _ => ProofMode::Production,
+        }
+    }
+}
+
+#[cfg(feature = "dev_proof")]
+const DEFAULT_PROOF_MODE: ProofMode = ProofMode::PlaceholderDev;
+#[cfg(not(feature = "dev_proof"))]
+const DEFAULT_PROOF_MODE: ProofMode = ProofMode::Production;
+
+static PROOF_MODE: AtomicU8 = AtomicU8::new(0xFF);
+
+/// Returns the active [`ProofMode`]. Defaults to [`ProofMode::PlaceholderDev`]
+/// when the `dev_proof` cargo feature is enabled (so the existing dev
+/// fixtures keep working), otherwise [`ProofMode::Production`].
+pub fn current_proof_mode() -> ProofMode {
+    let raw = PROOF_MODE.load(Ordering::Relaxed);
+    if raw == 0xFF {
+        DEFAULT_PROOF_MODE
+    } else {
+        ProofMode::from_u8(raw)
+    }
+}
+
+/// Set the active [`ProofMode`]. Called by the key-store / signer
+/// bootstrap when a real signing identity becomes available, and by
+/// settings UI / startup code to opt into the dev placeholder when
+/// connecting to a known dev soland.
+pub fn set_proof_mode(mode: ProofMode) {
+    PROOF_MODE.store(mode.as_u8(), Ordering::Relaxed);
+}
+
+/// `jws` value the placeholder proof uses. Exposed so the submit guard
+/// and tests can detect the unsafe shape.
+pub const PLACEHOLDER_PROOF_JWS: &str = "a..b";
 
 /// Current v1 Event Envelope used by active write paths.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -189,7 +324,13 @@ impl OperationBuilder {
             unsigned,
             proofs: Vec::new(),
         };
-        event.attach_placeholder_proof();
+        // Only the explicit dev mode attaches the placeholder. Real-signer
+        // and production modes leave `proofs` empty so the downstream
+        // signer (Ed25519, external) fills in a real `jws`, and the
+        // submit guard fails closed when nothing does.
+        if current_proof_mode().attaches_placeholder() {
+            event.attach_placeholder_proof();
+        }
         event
     }
 }
@@ -248,7 +389,9 @@ impl EventEnvelope {
             unsigned,
             proofs: Vec::new(),
         };
-        event.attach_placeholder_proof();
+        if current_proof_mode().attaches_placeholder() {
+            event.attach_placeholder_proof();
+        }
         Ok(event)
     }
 
@@ -306,34 +449,32 @@ impl EventEnvelope {
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> anyhow::Result<()> {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-        use ed25519_dalek::Signer;
-
-        let mut canonical = serde_json::to_value(&*self)?;
-        if let Value::Object(object) = &mut canonical {
-            object.remove("proofs");
-            object.remove("unsigned");
-        }
-        let canonical = canonical_json_bytes(&canonical)?;
-        let payload_hash = crate::canonical::sha256_digest(&canonical);
-
-        let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
-        let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
-        let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
-        let signing_input = format!("{header_b64}.{payload_b64}");
-        let signature = signing_key.sign(signing_input.as_bytes());
-        let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
-        let jws = format!("{header_b64}..{sig_b64}");
+        // T5.2 — delegate to the SDK pipeline via
+        // [`crate::event_signer::YougenEventSigner::sign_envelope`] so a
+        // bug fix in the canonical-bytes / detached-JWS path lands in
+        // one place (the SDK) instead of being mirrored across coauth,
+        // soland, and yougen. The signer is built per-call here because
+        // the legacy entry point hands in a SigningKey directly; the
+        // active-signer registry handles the runtime auto-sign path.
+        use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+        use std::sync::Arc;
 
         let signer_did = signer_did.into();
-        self.proofs = vec![EventProof {
-            kind: "detached_jws".to_owned(),
-            alg: "EdDSA".to_owned(),
-            verification_method: key_id.into(),
-            payload_hash,
-            jws,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        }];
+        let key_id = key_id.into();
+        let sdk_signer = Ed25519DetachedJwsSigner::new(signing_key.clone(), key_id.clone());
+        let signer = crate::event_signer::YougenEventSigner::from_dyn_signer(
+            Arc::new(sdk_signer),
+            signer_did.clone(),
+        );
+        signer
+            .sign_envelope(self)
+            .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
+        // Preserve the historical contract: callers passed an explicit
+        // `key_id`, so even after `from_dyn_signer` derives the default
+        // `<did>#device` shape we restore the provided value.
+        if let Some(proof) = self.proofs.first_mut() {
+            proof.verification_method = key_id;
+        }
         if self.actor_id.is_empty() {
             self.actor_id = signer_did;
         }
@@ -1057,6 +1198,63 @@ mod tests {
             .iter()
             .map(|value| value.as_str().unwrap().to_owned())
             .collect()
+    }
+
+    /// Guards mutations of the global [`PROOF_MODE`] so the proof-mode
+    /// tests cannot race the rest of the suite (which relies on the
+    /// default `PlaceholderDev` mode).
+    static PROOF_MODE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// T1.3 — switching the runtime proof mode to anything other than
+    /// `PlaceholderDev` MUST cause `OperationBuilder::build` to skip the
+    /// placeholder attach so the production submit guard fires.
+    #[test]
+    fn build_skips_placeholder_in_production_mode() {
+        let _guard = PROOF_MODE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = current_proof_mode();
+        set_proof_mode(ProofMode::Production);
+        let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
+            .body(json!({"body": "hi"}))
+            .build("test_node");
+        set_proof_mode(prior);
+
+        assert!(
+            event.proofs.is_empty(),
+            "Production proof mode must not attach the placeholder: {:?}",
+            event.proofs
+        );
+    }
+
+    #[test]
+    fn build_attaches_placeholder_in_dev_mode() {
+        let _guard = PROOF_MODE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = current_proof_mode();
+        set_proof_mode(ProofMode::PlaceholderDev);
+        let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
+            .body(json!({"body": "hi"}))
+            .build("test_node");
+        set_proof_mode(prior);
+
+        let proof = event.proofs.first().expect("dev proof attached");
+        assert_eq!(proof.jws, PLACEHOLDER_PROOF_JWS);
+    }
+
+    #[test]
+    fn proof_mode_labels_are_distinct() {
+        let modes = [
+            ProofMode::PlaceholderDev,
+            ProofMode::RealEd25519,
+            ProofMode::ExternalSigner,
+            ProofMode::Production,
+        ];
+        let labels: Vec<_> = modes.iter().map(|m| m.label_en()).collect();
+        let i18n_keys: Vec<_> = modes.iter().map(|m| m.i18n_key()).collect();
+        for label in &labels {
+            assert_eq!(labels.iter().filter(|l| **l == *label).count(), 1);
+        }
+        for key in &i18n_keys {
+            assert_eq!(i18n_keys.iter().filter(|k| **k == *key).count(), 1);
+        }
     }
 
     #[test]

@@ -572,7 +572,7 @@ test("chat creates discussion entities and sends structured mention payloads", a
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("cx.message.create");
   expect(chatBody.payload.flow_id).toContain("cx:flow:");
-  expect(chatBody.payload.branch).toBe("discussion");
+  expect(chatBody.payload.track).toBe("discussion");
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");

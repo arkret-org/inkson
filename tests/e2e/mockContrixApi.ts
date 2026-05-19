@@ -73,8 +73,8 @@ export async function mockContrixApi(page: Page) {
         protocol_version: "1.0",
         supported_profiles: [
           "cx.profile.minimal_client.v1",
-          "cx.profile.chat_only_client.v1",
-          "cx.profile.kanban_only_client.v1",
+          "cx.profile.chat_mvp.v1",
+          "cx.profile.kanban_mvp.v1",
           "cx.profile.full_client.v1",
           "cx.profile.e2ee_client.v1",
           "cx.profile.push_gateway.v1",

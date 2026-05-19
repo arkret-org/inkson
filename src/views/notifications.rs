@@ -2,6 +2,11 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::Value;
 
+use chime::{
+    PushRuleEventContext, ShouldNotify, WatchLevel as ChimeWatchLevel, evaluate_watch_level,
+    push_rule_reason_code,
+};
+
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
@@ -32,6 +37,11 @@ struct Notification {
     archived: bool,
     timestamp: String,
     action_label: Option<String>,
+    /// T4.4 — User-facing hint surfaced when the watch level
+    /// suppressed delivery (e.g. "You're not getting notifications
+    /// for this discussion — change watch level"). `None` for
+    /// notifications that pass the watch-level filter normally.
+    watch_hint: Option<String>,
 }
 
 #[component]
@@ -215,6 +225,13 @@ pub fn NotificationsPanel(
                     div {
                         class: if notification.read { "muted" } else { "space-title" },
                         "{notification.body}"
+                    }
+                    if let Some(ref hint) = notification.watch_hint {
+                        div {
+                            class: "muted",
+                            "data-testid": "notification-watch-hint",
+                            "{hint}"
+                        }
                     }
                     if !notification.space_id.is_empty() {
                         div { class: "muted", "Space: {notification.space_id}" }
@@ -448,7 +465,18 @@ fn notification_from_value(
 ) -> Option<Notification> {
     let eval_ctx = notification_eval_context(&value);
     let decision = evaluate_notification(push_rules, dnd, &eval_ctx);
-    if !decision.should_notify {
+
+    // T4.4 — When the watch level (not DND, not muted-short-circuit)
+    // is the reason we'd drop this entry, keep it in the list with a
+    // small inline hint so the user can change watch level. Muted
+    // flows still drop (they signal explicit user intent) and DND
+    // continues to suppress quietly during the configured window.
+    let watch_hint = if decision.watch_suppressed && !decision.muted_short_circuit {
+        Some(watch_hint_for_event(&eval_ctx))
+    } else {
+        None
+    };
+    if !decision.should_notify && watch_hint.is_none() {
         return None;
     }
 
@@ -479,7 +507,55 @@ fn notification_from_value(
         archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
         timestamp,
         action_label: Some(default_notification_action(&kind).to_owned()),
+        watch_hint,
     })
+}
+
+/// T4.4 — Resolve the wire-safe reason code for a watch-suppressed
+/// notification through the shared `chime::evaluate_watch_level`
+/// helper, then map that to a localised UI string.
+///
+/// Routing the decision through the shared client helper (instead of
+/// reading the reason from yougen's richer evaluator directly) keeps
+/// the UI surface aligned with what the Sync Service would have
+/// returned, so the same `(watch_level, event)` pair never produces
+/// different copy across surfaces.
+fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
+    // Default to `MentionsOnly` to match the yougen evaluator's
+    // default; cosmetic only since the caller already established
+    // `watch_suppressed=true`.
+    let level = ctx.watch_level.unwrap_or_default();
+    let chime_level = match level {
+        WatchLevel::Muted => ChimeWatchLevel::Muted,
+        WatchLevel::MentionsOnly => ChimeWatchLevel::MentionsOnly,
+        WatchLevel::Participating => ChimeWatchLevel::Participating,
+        WatchLevel::All => ChimeWatchLevel::All,
+    };
+    let chime_ctx = PushRuleEventContext {
+        mentions_actor: ctx.mentions_actor.unwrap_or(false),
+        assigned_to_actor: ctx.assigned_to_actor,
+        reply_to_self: ctx.reply_to_self,
+        participating_thread_update: ctx.participating_thread_update,
+        is_e2ee: ctx.is_e2ee,
+        local_decrypted: ctx.local_decrypted,
+    };
+    let (decision, reason) = evaluate_watch_level(chime_level, &chime_ctx);
+
+    // Even if chime says "Notify" (the inputs disagree with the
+    // yougen evaluator's richer rules), still surface a generic
+    // change-watch-level hint so the UI stays consistent with what
+    // the user observed.
+    match (decision, reason) {
+        (ShouldNotify::DontNotify, push_rule_reason_code::NOT_MENTIONED) => {
+            "You're not getting notifications for this discussion — change watch level"
+                .to_owned()
+        }
+        (ShouldNotify::DontNotify, push_rule_reason_code::NOT_PARTICIPATING) => {
+            "You're only being notified about threads you've joined — change watch level"
+                .to_owned()
+        }
+        _ => "Notifications for this discussion are limited by your watch level".to_owned(),
+    }
 }
 
 fn default_notification_title(kind: &str) -> String {

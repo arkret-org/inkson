@@ -37,6 +37,41 @@ struct ChannelEntity {
     unread: usize,
 }
 
+/// T7.4: end-to-end encryption decryption state for a message.
+///
+/// Derived from the presence of `content.encrypted_payload` on the
+/// envelope plus what the local MLS group can currently do with it.
+/// `Plaintext` is the default; encrypted messages cycle
+/// `Decrypting → (Plaintext | DecryptFailed | KeyMissing | NeedsVerification)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MessageCryptoState {
+    /// Body is already plaintext (no `encrypted_payload`).
+    Plaintext,
+    /// We see an `encrypted_payload` and the MLS group exists, but a
+    /// decrypt round-trip hasn't completed for this event yet.
+    Decrypting,
+    /// We have the group and tried to decrypt, but it returned an error
+    /// (e.g. wrong epoch, tamper). Body falls back to a placeholder.
+    #[allow(dead_code)]
+    DecryptFailed,
+    /// `encrypted_payload` present but no local MLS group / no
+    /// passphrase / no key package received yet — Welcome is pending.
+    KeyMissing,
+    /// Sender device hasn't been verified (cross-signing missing or
+    /// fingerprint mismatch). The body still decrypted, but we flag it.
+    #[allow(dead_code)]
+    NeedsVerification,
+}
+
+impl MessageCryptoState {
+    fn is_pending(&self) -> bool {
+        matches!(
+            self,
+            Self::Decrypting | Self::DecryptFailed | Self::KeyMissing
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct ChatMessage {
     space_id: String,
@@ -54,6 +89,10 @@ struct ChatMessage {
     failed: bool,
     error: Option<String>,
     mentions: Vec<StructuredMention>,
+    /// T7.4: E2EE decrypt status for this message. Defaults to
+    /// `Plaintext`; messages with `content.encrypted_payload` start at
+    /// `Decrypting` until the audit-emitter future resolves them.
+    crypto_state: MessageCryptoState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -992,6 +1031,163 @@ fn parse_discussion_principals(input: &str) -> Vec<String> {
     principals
 }
 
+/// T7.2: validate a single watcher entry token. Accepts:
+///   * DIDs (`did:web:foo.example` / `did:key:...`)
+///   * Handles (`alice@example.com` or `@alice@example.com`)
+///   * Bare display-name lookups are resolved against the participant list
+///     (returns the matching DID when unique).
+///
+/// Returns `Ok(canonical_did)` when the token unambiguously resolves to a
+/// principal, otherwise `Err(error_kind)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WatcherEntryKind {
+    /// Resolved to a canonical DID we can submit.
+    Valid(String),
+    /// Looks like a handle but no participant matches it locally.
+    UnknownHandle,
+    /// Looks like a DID but it's malformed.
+    InvalidDid,
+    /// The token didn't match anything (e.g. partial display name).
+    UnresolvedName,
+    /// Same DID appears more than once (already added).
+    Duplicate(String),
+}
+
+fn classify_watcher_entry(
+    raw: &str,
+    participants: &[SpaceParticipant],
+    already_added: &[String],
+) -> WatcherEntryKind {
+    let trimmed = raw.trim();
+    let stripped = trimmed.trim_start_matches('@');
+    if stripped.is_empty() {
+        return WatcherEntryKind::UnresolvedName;
+    }
+    let canonical = if stripped.starts_with("did:") {
+        // Minimal sanity check: `did:method:specific-id`.
+        let parts: Vec<&str> = stripped.splitn(3, ':').collect();
+        if parts.len() < 3 || parts[1].is_empty() || parts[2].is_empty() {
+            return WatcherEntryKind::InvalidDid;
+        }
+        stripped.to_owned()
+    } else if stripped.contains('@') {
+        // alice@example.com -> did:web:example.com:alice
+        let mut parts = stripped.splitn(2, '@');
+        let local = parts.next().unwrap_or_default();
+        let host = parts.next().unwrap_or_default();
+        if local.is_empty() || host.is_empty() {
+            return WatcherEntryKind::UnknownHandle;
+        }
+        let candidate = format!("did:web:{host}:{local}");
+        // If candidate matches a known participant, prefer that exact DID.
+        let known = participants.iter().find(|p| {
+            p.did.eq_ignore_ascii_case(&candidate)
+                || p.did.ends_with(&format!(":{local}"))
+                    && p.did.contains(host)
+        });
+        match known {
+            Some(p) => p.did.clone(),
+            None => candidate,
+        }
+    } else {
+        // Bare token: resolve against participant display names / DIDs.
+        let lower = stripped.to_ascii_lowercase();
+        let direct = participants.iter().find(|p| p.did.eq_ignore_ascii_case(stripped));
+        if let Some(p) = direct {
+            p.did.clone()
+        } else {
+            let display_matches: Vec<&SpaceParticipant> = participants
+                .iter()
+                .filter(|p| {
+                    p.display_name
+                        .as_deref()
+                        .map(|n| n.to_ascii_lowercase() == lower)
+                        .unwrap_or(false)
+                })
+                .collect();
+            if display_matches.len() == 1 {
+                display_matches[0].did.clone()
+            } else {
+                return WatcherEntryKind::UnresolvedName;
+            }
+        }
+    };
+
+    if already_added.iter().any(|d| d.eq_ignore_ascii_case(&canonical)) {
+        return WatcherEntryKind::Duplicate(canonical);
+    }
+    WatcherEntryKind::Valid(canonical)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WatcherPill {
+    raw: String,
+    state: WatcherEntryKind,
+}
+
+fn parse_watcher_pills(input: &str, participants: &[SpaceParticipant]) -> Vec<WatcherPill> {
+    let mut out: Vec<WatcherPill> = Vec::new();
+    let mut canonical: Vec<String> = Vec::new();
+    for candidate in input.split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';')) {
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let state = classify_watcher_entry(trimmed, participants, &canonical);
+        if let WatcherEntryKind::Valid(did) = &state {
+            canonical.push(did.clone());
+        }
+        out.push(WatcherPill {
+            raw: trimmed.to_owned(),
+            state,
+        });
+    }
+    out
+}
+
+/// T7.2: discussion watch level fast switcher. Mirrors the spec's
+/// `cx.flow.watch.set` level enumeration. `Muted` maps to `none` on the
+/// wire — the term used in the dropdown is the user-friendly label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WatchLevel {
+    MentionsOnly,
+    Participating,
+    All,
+    Muted,
+}
+
+impl WatchLevel {
+    fn wire_value(self) -> &'static str {
+        match self {
+            Self::MentionsOnly => "mentions_only",
+            Self::Participating => "participating",
+            Self::All => "all",
+            Self::Muted => "none",
+        }
+    }
+
+    fn label_key(self) -> &'static str {
+        match self {
+            Self::MentionsOnly => "chat.watch_level.mentions_only",
+            Self::Participating => "chat.watch_level.participating",
+            Self::All => "chat.watch_level.all",
+            Self::Muted => "chat.watch_level.muted",
+        }
+    }
+
+    #[allow(dead_code)]
+    fn from_wire(value: &str) -> Self {
+        match value {
+            "mentions_only" => Self::MentionsOnly,
+            "participating" => Self::Participating,
+            "all" => Self::All,
+            "none" | "muted" => Self::Muted,
+            _ => Self::All,
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn current_mention_query(text: &str) -> Option<(usize, String)> {
     for (idx, ch) in text.char_indices().rev() {
         if ch == '@' {
@@ -1012,6 +1208,7 @@ fn current_mention_query(text: &str) -> Option<(usize, String)> {
     None
 }
 
+#[allow(dead_code)]
 fn apply_mention_completion(current: &str, replacement: &str) -> String {
     if let Some((idx, _)) = current_mention_query(current) {
         let mut out = current[..idx].to_owned();
@@ -1046,7 +1243,11 @@ fn chat_message_create_operation(
         .target_ref(flow_id)
         .body(json!({
             "body": body,
-            "branch": "discussion",
+            // T2.3: the legacy `branch` top-level field is forbidden on the
+            // wire (artifacts/registry/forbidden-wire-fields.json,
+            // hard_reject). v1 uses `track` — a display-only timeline
+            // segment identifier — instead.
+            "track": "discussion",
             "content": {
                 "blocks": [{"kind": "text", "text": body}],
                 "body": body,
@@ -1192,7 +1393,13 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
             items
                 .iter()
                 .filter_map(|item| {
-                    let target = item.get("target").and_then(Value::as_str)?;
+                    // Subject can come from `subject` (spec) or `target`
+                    // (yougen legacy). Either works for actor/entity
+                    // resolution.
+                    let target = item
+                        .get("subject")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("target").and_then(Value::as_str))?;
                     Some(StructuredMention {
                         kind: item
                             .get("kind")
@@ -1204,6 +1411,24 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .get("token")
                             .and_then(Value::as_str)
                             .unwrap_or(target)
+                            .to_owned(),
+                        // T7.3: pull the compose-time snapshot fields
+                        // through from the event payload so the renderer
+                        // can flag handle reassignments.
+                        display_snapshot: item
+                            .get("display_snapshot")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        handle_uri: item
+                            .get("handle_uri")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        resolved_at: item
+                            .get("resolved_at")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
                             .to_owned(),
                     })
                 })
@@ -1271,6 +1496,23 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
         .filter(|value| value.starts_with("cx:flow:"))
         .unwrap_or("cx:flow:general")
         .to_owned();
+    // T7.4: detect end-to-end encrypted payload. Body decoding above
+    // already prefers plaintext when both forms are present; if the
+    // candidates carry an `encrypted_payload` block at all, we surface
+    // the decryption state to the renderer even when the timeline
+    // projection happened to expose a body.
+    let has_encrypted_payload = candidates.iter().any(|candidate| {
+        candidate.get("encrypted_payload").is_some()
+            || candidate
+                .get("content")
+                .and_then(|content| content.get("encrypted_payload"))
+                .is_some()
+    });
+    let crypto_state = if has_encrypted_payload {
+        MessageCryptoState::Decrypting
+    } else {
+        MessageCryptoState::Plaintext
+    };
     Some(ChatMessage {
         space_id: first_string_in_candidates(&candidates, &["space_id"])
             .unwrap_or(space_id)
@@ -1298,6 +1540,7 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
         failed: false,
         error: None,
         mentions: mentions_from_candidates(&candidates),
+        crypto_state,
     })
 }
 
@@ -1407,7 +1650,11 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
     }
     if !flow_create_has_discussion_track(&candidates)
         && !candidates.iter().any(|candidate| {
-            value_string_at(candidate, &["branch"]) == Some("discussion")
+            // T2.3: the v1 wire uses `track`; legacy `branch` is a
+            // hard_reject field per forbidden-wire-fields.json, so writers
+            // MUST NOT emit it. Readers fall back to `category` only for
+            // payloads that pre-date the track concept entirely.
+            value_string_at(candidate, &["track"]) == Some("discussion")
                 || value_string_at(candidate, &["category"]) == Some("discussion")
         })
     {
@@ -1642,8 +1889,18 @@ pub fn ChatPanel(
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_topic = use_signal(String::new);
     let mut new_channel_members = use_signal(String::new);
+    // T7.2: typing buffer for the inline pill picker. The committed
+    // entries live in `new_channel_members` (comma-separated, preserves
+    // the existing submit pipeline); `new_channel_member_input` only
+    // holds the current draft handle being typed.
+    let mut new_channel_member_input = use_signal(String::new);
     let mut new_channel_create_card = use_signal(|| false);
     let mut create_dialog_open = use_signal(|| false);
+    // T7.2: per-Flow watch level signal for the topbar fast switcher.
+    // Optimistically updates on user click; a failed submit rolls back to
+    // the prior value.
+    let mut flow_watch_level = use_signal(|| WatchLevel::All);
+    let mut watch_level_menu_open = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
     let mut reply_to_message = use_signal(|| Option::<String>::None);
     let mut editing_message = use_signal(|| Option::<String>::None);
@@ -1927,6 +2184,35 @@ pub fn ChatPanel(
         });
     }
 
+    // T7.4: refresh per-message crypto state when the MLS passphrase /
+    // local group state changes. Messages flagged `Decrypting` transition
+    // to `KeyMissing` when no passphrase is saved for the Space so the
+    // user sees a clear "waiting for Welcome" indicator instead of a
+    // spinner forever.
+    {
+        let space_for_crypto = selected_space.clone();
+        let mut messages_sig = messages;
+        let passphrase_store_crypto = mls_passphrase_store;
+        use_effect(move || {
+            let passphrase = passphrase_store_crypto
+                .read()
+                .get(&space_for_crypto)
+                .map(str::to_owned)
+                .unwrap_or_default();
+            // Only mutate when we'd actually move someone from Decrypting
+            // into KeyMissing — Decrypting → Plaintext requires a real
+            // decrypt attempt that this view doesn't yet run.
+            if passphrase.is_empty() {
+                let mut current = messages_sig.write();
+                for msg in current.iter_mut() {
+                    if matches!(msg.crypto_state, MessageCryptoState::Decrypting) {
+                        msg.crypto_state = MessageCryptoState::KeyMissing;
+                    }
+                }
+            }
+        });
+    }
+
     // A2 / AW-3.10: precompute private-compose state outside the rsx
     // block so the let bindings live in Rust scope (rsx parses `if {}`
     // bodies as nodes, not statements). When the active chat draft
@@ -2069,26 +2355,38 @@ pub fn ChatPanel(
                                 oninput: move |evt| new_channel_topic.set(evt.value()),
                             }
                             label { {crate::i18n::tr("chat.label.watchers")} }
-                            textarea {
-                                "data-testid": "new-channel-members",
-                                value: "{new_channel_members}",
-                                rows: "3",
-                                placeholder: "did:web:bob.example  (type @ to search)",
-                                oninput: move |evt| new_channel_members.set(evt.value()),
-                            }
-                            p { class: "form-hint muted",
-                                {crate::i18n::tr("chat.watchers.hint")}
-                            }
                             {
-                                let members_text = new_channel_members();
-                                let mention = current_mention_query(&members_text);
-                                let suggestions: Vec<SpaceParticipant> = if let Some((_, ref query)) = mention {
-                                    let query_lower = query.to_ascii_lowercase();
-                                    let already: Vec<String> = parse_discussion_principals(&members_text);
+                                // T7.2: multi-select pill UI. The
+                                // existing submit pipeline still consumes
+                                // `new_channel_members` (comma-separated),
+                                // so commit each accepted token by
+                                // appending it there. The pill rendering
+                                // re-parses on every keystroke so paste-
+                                // bombing `did:web:foo, alice@bar.com,
+                                // bob@baz.com` resolves all entries at
+                                // once.
+                                let committed = new_channel_members();
+                                let pills = parse_watcher_pills(&committed, &participants);
+                                let canonical_already: Vec<String> = pills
+                                    .iter()
+                                    .filter_map(|p| match &p.state {
+                                        WatcherEntryKind::Valid(did) => Some(did.clone()),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                let valid_count = pills
+                                    .iter()
+                                    .filter(|p| matches!(p.state, WatcherEntryKind::Valid(_)))
+                                    .count();
+                                let invalid_count = pills.len() - valid_count;
+                                let current_input = new_channel_member_input();
+                                let query_lower = current_input.trim().trim_start_matches('@').to_ascii_lowercase();
+                                let show_suggestions = !current_input.trim().is_empty();
+                                let suggestions: Vec<SpaceParticipant> = if show_suggestions {
                                     participants
                                         .iter()
                                         .filter(|p| !p.is_self)
-                                        .filter(|p| !already.iter().any(|d| d == &p.did))
+                                        .filter(|p| !canonical_already.iter().any(|d| d == &p.did))
                                         .filter(|p| {
                                             if query_lower.is_empty() {
                                                 return true;
@@ -2108,7 +2406,112 @@ pub fn ChatPanel(
                                     Vec::new()
                                 };
                                 rsx! {
-                                    if mention.is_some() && !suggestions.is_empty() {
+                                    div {
+                                        class: "watcher-picker",
+                                        "data-testid": "watcher-picker",
+                                        // Existing pills.
+                                        div { class: "watcher-pill-row",
+                                            for (idx, pill) in pills.iter().enumerate() {
+                                                {
+                                                    let raw_for_label = pill.raw.clone();
+                                                    let raw_for_remove = pill.raw.clone();
+                                                    let pill_class = match &pill.state {
+                                                        WatcherEntryKind::Valid(_) => "watcher-pill watcher-pill-valid",
+                                                        WatcherEntryKind::Duplicate(_) => "watcher-pill watcher-pill-warning",
+                                                        WatcherEntryKind::UnknownHandle => "watcher-pill watcher-pill-invalid",
+                                                        WatcherEntryKind::InvalidDid => "watcher-pill watcher-pill-invalid",
+                                                        WatcherEntryKind::UnresolvedName => "watcher-pill watcher-pill-invalid",
+                                                    };
+                                                    let tooltip = match &pill.state {
+                                                        WatcherEntryKind::Valid(did) => format!("{}", did),
+                                                        WatcherEntryKind::Duplicate(_) => crate::i18n::tr("chat.watchers.dupe"),
+                                                        WatcherEntryKind::UnknownHandle => crate::i18n::tr("chat.watchers.unknown_handle"),
+                                                        WatcherEntryKind::InvalidDid => crate::i18n::tr("chat.watchers.invalid_did"),
+                                                        WatcherEntryKind::UnresolvedName => crate::i18n::tr("chat.watchers.unresolved"),
+                                                    };
+                                                    rsx! {
+                                                        span {
+                                                            key: "{idx}-{raw_for_label}",
+                                                            class: "{pill_class}",
+                                                            "data-testid": "watcher-pill",
+                                                            title: "{tooltip}",
+                                                            "{raw_for_label}"
+                                                            button {
+                                                                r#type: "button",
+                                                                class: "watcher-pill-remove",
+                                                                "aria-label": crate::i18n::tr("common.remove"),
+                                                                "data-testid": "watcher-pill-remove",
+                                                                onclick: move |_| {
+                                                                    let current = new_channel_members();
+                                                                    let kept: Vec<String> = current
+                                                                        .split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';'))
+                                                                        .map(|s| s.trim())
+                                                                        .filter(|s| !s.is_empty() && *s != raw_for_remove.as_str())
+                                                                        .map(|s| s.to_owned())
+                                                                        .collect();
+                                                                    new_channel_members.set(kept.join(", "));
+                                                                },
+                                                                "\u{d7}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            input {
+                                                r#type: "text",
+                                                class: "watcher-pill-input",
+                                                "data-testid": "new-channel-members",
+                                                value: "{current_input}",
+                                                placeholder: crate::i18n::tr("chat.watchers.placeholder"),
+                                                oninput: move |evt| new_channel_member_input.set(evt.value()),
+                                                onkeydown: move |evt| {
+                                                    let key = evt.key().to_string();
+                                                    let raw_now = new_channel_member_input();
+                                                    if key == "Enter" || key == "," || key == "Tab" {
+                                                        let typed = raw_now.trim().trim_end_matches(',').to_owned();
+                                                        if !typed.is_empty() {
+                                                            evt.prevent_default();
+                                                            let mut existing = new_channel_members();
+                                                            if !existing.is_empty() && !existing.trim_end().ends_with(',') {
+                                                                existing.push_str(", ");
+                                                            } else if !existing.is_empty() {
+                                                                existing.push(' ');
+                                                            }
+                                                            existing.push_str(&typed);
+                                                            new_channel_members.set(existing);
+                                                            new_channel_member_input.set(String::new());
+                                                        }
+                                                    } else if key == "Backspace" && raw_now.is_empty() {
+                                                        // Pop the last committed pill.
+                                                        let current = new_channel_members();
+                                                        let mut tokens: Vec<String> = current
+                                                            .split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';'))
+                                                            .map(|s| s.trim().to_owned())
+                                                            .filter(|s| !s.is_empty())
+                                                            .collect();
+                                                        if !tokens.is_empty() {
+                                                            tokens.pop();
+                                                            new_channel_members.set(tokens.join(", "));
+                                                        }
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        div { class: "watcher-pill-summary muted",
+                                            "data-testid": "watcher-pill-summary",
+                                            {format!(
+                                                "{} {} \u{00b7} {} {}",
+                                                valid_count,
+                                                crate::i18n::tr("chat.watchers.valid"),
+                                                invalid_count,
+                                                crate::i18n::tr("chat.watchers.invalid"),
+                                            )}
+                                        }
+                                    }
+                                    p { class: "form-hint muted",
+                                        {crate::i18n::tr("chat.watchers.hint")}
+                                    }
+                                    if !suggestions.is_empty() {
                                         div {
                                             class: "mention-suggestions",
                                             "data-testid": "new-channel-members-suggestions",
@@ -2127,18 +2530,20 @@ pub fn ChatPanel(
                                                             class: "mention-suggestion-item",
                                                             "data-testid": "new-channel-members-suggestion",
                                                             onclick: move |_| {
-                                                                let next = apply_mention_completion(
-                                                                    &new_channel_members(),
-                                                                    &did_for_click,
-                                                                );
-                                                                new_channel_members.set(next);
+                                                                let mut existing = new_channel_members();
+                                                                if !existing.is_empty() && !existing.trim_end().ends_with(',') {
+                                                                    existing.push_str(", ");
+                                                                }
+                                                                existing.push_str(&did_for_click);
+                                                                new_channel_members.set(existing);
+                                                                new_channel_member_input.set(String::new());
                                                             },
                                                             span { class: "mention-suggestion-name", "{display}" }
                                                             if is_agent {
                                                                 span {
                                                                     class: "badge member-badge member-badge-agent",
                                                                     "data-testid": "member-badge-agent",
-                                                                    title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                                    title: "Automated member (bot)",
                                                                     "\u{1f916} "
                                                                     {crate::i18n::tr("member.badge.agent")}
                                                                 }
@@ -2337,6 +2742,7 @@ pub fn ChatPanel(
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
                                                             new_channel_members.set(String::new());
+                                                            new_channel_member_input.set(String::new());
                                                             new_channel_create_card.set(false);
                                                             create_dialog_open.set(false);
                                                         }
@@ -2362,6 +2768,105 @@ pub fn ChatPanel(
                         }
                     }
                     div { class: "discussion-head-actions",
+                        // T7.2: watch-level fast switcher. Issues a
+                        // `cx.flow.watch.set` event on selection. We
+                        // optimistically update the local signal first;
+                        // a network failure rolls back via status_msg.
+                        {
+                            let level_now = flow_watch_level();
+                            let menu_open = watch_level_menu_open();
+                            let level_label = crate::i18n::tr(level_now.label_key());
+                            let flow_id_for_watch = selected_channel_value.clone();
+                            let space_for_watch = selected_space.clone();
+                            let actor_for_watch = account_did.clone();
+                            let watch_disabled = flow_id_for_watch.trim().is_empty();
+                            rsx! {
+                                div { class: "watch-level-picker", "data-testid": "watch-level-picker",
+                                    button {
+                                        r#type: "button",
+                                        class: "secondary watch-level-toggle",
+                                        "data-testid": "watch-level-toggle",
+                                        disabled: watch_disabled,
+                                        title: crate::i18n::tr("chat.watch_level.tooltip"),
+                                        onclick: move |_| {
+                                            watch_level_menu_open.set(!watch_level_menu_open());
+                                        },
+                                        span { class: "watch-level-toggle-label",
+                                            "{crate::i18n::tr(\"chat.watch_level.prefix\")}: {level_label}"
+                                        }
+                                        span { class: "watch-level-toggle-caret", "\u{25be}" }
+                                    }
+                                    if menu_open && !watch_disabled {
+                                        div { class: "watch-level-menu", "data-testid": "watch-level-menu",
+                                            {
+                                                let options = [
+                                                    WatchLevel::MentionsOnly,
+                                                    WatchLevel::Participating,
+                                                    WatchLevel::All,
+                                                    WatchLevel::Muted,
+                                                ];
+                                                rsx! {
+                                                    for option in options.iter().copied() {
+                                                        {
+                                                            let option_label = crate::i18n::tr(option.label_key());
+                                                            let flow_id_for_click = flow_id_for_watch.clone();
+                                                            let space_for_click = space_for_watch.clone();
+                                                            let actor_for_click = actor_for_watch.clone();
+                                                            let base_for_click = base_url.clone();
+                                                            let is_active = level_now == option;
+                                                            rsx! {
+                                                                button {
+                                                                    r#type: "button",
+                                                                    class: if is_active { "watch-level-option active" } else { "watch-level-option" },
+                                                                    "data-testid": "watch-level-option",
+                                                                    onclick: move |_| {
+                                                                        let prev = flow_watch_level();
+                                                                        flow_watch_level.set(option);
+                                                                        watch_level_menu_open.set(false);
+                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
+                                                                        let api_token = token();
+                                                                        let wait_for = active_sync_token(&sync_cursor());
+                                                                        let watch_op = cx_ops::flow_watch_set(
+                                                                            &space_for_click,
+                                                                            &actor_for_click,
+                                                                            &actor_for_click,
+                                                                            &flow_id_for_click,
+                                                                            Some(option.wire_value()),
+                                                                            None,
+                                                                        )
+                                                                        .build("yougen");
+                                                                        let base = base_for_click.clone();
+                                                                        spawn(async move {
+                                                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                                                Ok(api) => match api.submit_event_envelope(&watch_op).await {
+                                                                                    Ok(_) => {
+                                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.saved"));
+                                                                                    }
+                                                                                    Err(_) => {
+                                                                                        // Rollback on failure.
+                                                                                        flow_watch_level.set(prev);
+                                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
+                                                                                    }
+                                                                                },
+                                                                                Err(_) => {
+                                                                                    flow_watch_level.set(prev);
+                                                                                    status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    },
+                                                                    "{option_label}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         button {
                             class: if active_right_panel == Some(DiscussionSidePanel::Settings) { "secondary icon-button active" } else { "secondary icon-button" },
                             "aria-label": "Settings",
@@ -2467,14 +2972,30 @@ pub fn ChatPanel(
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
                     for msg in visible_messages {
                         div {
-                            class: if is_own_message_sender(&msg.sender, &account_did) {
-                                if msg.failed { "discussion-message is-own is-failed" } else { "discussion-message is-own" }
-                            } else if msg.failed {
-                                "discussion-message is-failed"
-                            } else {
-                                "discussion-message"
+                            class: {
+                                let mut base = if is_own_message_sender(&msg.sender, &account_did) {
+                                    if msg.failed { "discussion-message is-own is-failed".to_owned() } else { "discussion-message is-own".to_owned() }
+                                } else if msg.failed {
+                                    "discussion-message is-failed".to_owned()
+                                } else {
+                                    "discussion-message".to_owned()
+                                };
+                                // T7.4: grey out and italicise messages
+                                // that are still waiting on key material
+                                // or whose decrypt failed.
+                                if msg.crypto_state.is_pending() {
+                                    base.push_str(" is-crypto-pending");
+                                }
+                                base
                             },
                             "data-testid": "chat-message",
+                            "data-crypto-state": match msg.crypto_state {
+                                MessageCryptoState::Plaintext => "plaintext",
+                                MessageCryptoState::Decrypting => "decrypting",
+                                MessageCryptoState::DecryptFailed => "decrypt_failed",
+                                MessageCryptoState::KeyMissing => "key_missing",
+                                MessageCryptoState::NeedsVerification => "needs_verification",
+                            },
                             // A6.3: right-click toggles a tiny context
                             // menu offering Pin/Unpin for this message.
                             // prevent_default suppresses the browser's
@@ -2562,7 +3083,7 @@ pub fn ChatPanel(
                                                 span {
                                                     class: "badge member-badge member-badge-agent",
                                                     "data-testid": "member-badge-agent",
-                                                    title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                    title: "Automated member (bot)",
                                                     "\u{1f916} "
                                                     {crate::i18n::tr("member.badge.agent")}
                                                 }
@@ -2579,6 +3100,56 @@ pub fn ChatPanel(
                                         span { class: "badge", "pending" }
                                     }
                                     if msg.edited { span { class: "badge", "edited" } }
+                                }
+                                // T7.4: per-message crypto status row.
+                                // Sits directly under the head so the
+                                // icon + label appear before the body
+                                // when it's awaiting decrypt.
+                                {
+                                    match msg.crypto_state {
+                                        MessageCryptoState::Plaintext => rsx! { },
+                                        MessageCryptoState::Decrypting => rsx! {
+                                            div {
+                                                class: "crypto-status-row crypto-status-decrypting",
+                                                "data-testid": "crypto-status-decrypting",
+                                                span { class: "crypto-status-icon", "\u{23f3}" }
+                                                span { {crate::i18n::tr("chat.crypto.decrypting")} }
+                                            }
+                                        },
+                                        MessageCryptoState::DecryptFailed => rsx! {
+                                            div {
+                                                class: "crypto-status-row crypto-status-failed",
+                                                "data-testid": "crypto-status-failed",
+                                                span { class: "crypto-status-icon", "\u{274c}" }
+                                                span { {crate::i18n::tr("chat.crypto.decrypt_failed")} }
+                                                button {
+                                                    class: "crypto-status-action",
+                                                    "data-testid": "crypto-status-action-recovery",
+                                                    onclick: move |_| {
+                                                        navigator.push(Route::Recovery);
+                                                    },
+                                                    {crate::i18n::tr("chat.crypto.decrypt_failed_action")}
+                                                }
+                                            }
+                                        },
+                                        MessageCryptoState::KeyMissing => rsx! {
+                                            div {
+                                                class: "crypto-status-row crypto-status-key-missing",
+                                                "data-testid": "crypto-status-key-missing",
+                                                span { class: "crypto-status-icon", "\u{1f511}" }
+                                                span { {crate::i18n::tr("chat.crypto.key_missing")} }
+                                                span { class: "muted", {crate::i18n::tr("chat.crypto.key_missing_hint")} }
+                                            }
+                                        },
+                                        MessageCryptoState::NeedsVerification => rsx! {
+                                            div {
+                                                class: "crypto-status-row crypto-status-needs-verification",
+                                                "data-testid": "crypto-status-needs-verification",
+                                                span { class: "crypto-status-icon", "\u{26a0}" }
+                                                span { {crate::i18n::tr("chat.crypto.needs_verification")} }
+                                            }
+                                        },
+                                    }
                                 }
                                 if let Some(reply_id) = msg.reply_to.as_ref() {
                                     if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
@@ -2632,7 +3203,61 @@ pub fn ChatPanel(
                                 if !msg.mentions.is_empty() {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-mentions",
                                         for mention in &msg.mentions {
-                                            span { class: "badge", "{mention.target}" }
+                                            {
+                                                // T7.3: prefer the
+                                                // compose-time
+                                                // `display_snapshot` label;
+                                                // when the snapshot's
+                                                // handle still resolves to
+                                                // a different DID than the
+                                                // event's subject, flag a
+                                                // "handle reassigned"
+                                                // badge with a tooltip.
+                                                let snapshot = mention.display_snapshot.clone();
+                                                let label = if !snapshot.is_empty() {
+                                                    snapshot.clone()
+                                                } else {
+                                                    mention.target.clone()
+                                                };
+                                                // Reassignment heuristic:
+                                                // we have a captured
+                                                // snapshot/handle URI but
+                                                // the local participant
+                                                // list now shows a
+                                                // different DID for that
+                                                // display name.
+                                                let reassigned = if !snapshot.is_empty() {
+                                                    let snap_lower = snapshot.to_ascii_lowercase();
+                                                    let current_match = participants_for_messages.iter().find(|p| {
+                                                        p.display_name
+                                                            .as_deref()
+                                                            .map(|n| n.to_ascii_lowercase() == snap_lower)
+                                                            .unwrap_or(false)
+                                                    });
+                                                    match current_match {
+                                                        Some(p) => p.did != mention.target,
+                                                        None => false,
+                                                    }
+                                                } else {
+                                                    false
+                                                };
+                                                rsx! {
+                                                    span {
+                                                        class: "badge",
+                                                        title: "{mention.target}",
+                                                        "{label}"
+                                                    }
+                                                    if reassigned {
+                                                        span {
+                                                            class: "handle-reassigned-badge",
+                                                            "data-testid": "handle-reassigned-badge",
+                                                            title: crate::i18n::tr("chat.handle_reassigned.tooltip"),
+                                                            "\u{26a0} "
+                                                            {crate::i18n::tr("chat.handle_reassigned.badge")}
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3046,6 +3671,27 @@ pub fn ChatPanel(
                             h2 { {crate::i18n::tr("chat.users_header")} }
                         }
                     }
+                    // T7.5: lightweight tab bar so members and settings
+                    // share a single right panel rather than competing
+                    // for the same slot. Each tab maps to one
+                    // `DiscussionSidePanel` value the existing buttons
+                    // already toggle.
+                    div { class: "discussion-right-tabs",
+                        button {
+                            r#type: "button",
+                            class: "discussion-right-tab active",
+                            "data-testid": "discussion-right-tab-members",
+                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
+                            {crate::i18n::tr("chat.tabs.members")}
+                        }
+                        button {
+                            r#type: "button",
+                            class: "discussion-right-tab",
+                            "data-testid": "discussion-right-tab-settings",
+                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
+                            {crate::i18n::tr("chat.tabs.settings")}
+                        }
+                    }
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Space users" } }
                         for participant in participants {
@@ -3061,6 +3707,18 @@ pub fn ChatPanel(
                                     &participant.did,
                                 );
                                 let participant_did_attr = participant.did.clone();
+                                // T7.3: derive binding context host
+                                // (e.g. `acme.example`) from the DID
+                                // method/host so the row reads as
+                                // `Alice @ acme.example` rather than
+                                // dropping the raw service DID into the
+                                // visible list. The full DID is still
+                                // available in the title attribute and
+                                // an expandable details row.
+                                let binding_host = participant
+                                    .did
+                                    .strip_prefix("did:web:")
+                                    .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
                                 rsx! {
                             div {
                                 class: if participant.is_self { "contact-row participant-row self" } else { "contact-row participant-row" },
@@ -3071,6 +3729,13 @@ pub fn ChatPanel(
                                         class: "mono participant-did",
                                         title: "{participant_did_attr}",
                                         "{participant_display}"
+                                        if let Some(host) = binding_host.as_ref() {
+                                            span { class: "binding-context",
+                                                "data-testid": "binding-context",
+                                                {crate::i18n::tr("chat.binding_context.separator")}
+                                                span { class: "binding-context-host", "{host}" }
+                                            }
+                                        }
                                     }
                                     div { class: "participant-badges",
                                         if participant.is_self {
@@ -3080,7 +3745,7 @@ pub fn ChatPanel(
                                             span {
                                                 class: "badge member-badge member-badge-agent",
                                                 "data-testid": "member-badge-agent",
-                                                title: "Registered agent endpoint (cx.agent.endpoint)",
+                                                title: "Automated member (bot)",
                                                 "\u{1f916} "
                                                 {crate::i18n::tr("member.badge.agent")}
                                             }
@@ -3092,6 +3757,12 @@ pub fn ChatPanel(
                                                 SpaceParticipantRole::Member => "badge participant-badge member",
                                             },
                                             "{participant.role.label()}"
+                                        }
+                                    }
+                                    details { class: "binding-context-details",
+                                        summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
+                                        div { class: "mono muted",
+                                            "{participant_did_attr}"
                                         }
                                     }
                                 }
@@ -3128,6 +3799,25 @@ pub fn ChatPanel(
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
                             h2 { {crate::i18n::tr("chat.settings_header")} }
+                        }
+                    }
+                    // T7.5: same tab bar as the users panel so the user
+                    // can switch tabs in-place without re-clicking the
+                    // topbar icons.
+                    div { class: "discussion-right-tabs",
+                        button {
+                            r#type: "button",
+                            class: "discussion-right-tab",
+                            "data-testid": "discussion-right-tab-members",
+                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
+                            {crate::i18n::tr("chat.tabs.members")}
+                        }
+                        button {
+                            r#type: "button",
+                            class: "discussion-right-tab active",
+                            "data-testid": "discussion-right-tab-settings",
+                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
+                            {crate::i18n::tr("chat.tabs.settings")}
                         }
                     }
                     div { class: "discussion-detail-section",
@@ -3329,7 +4019,7 @@ pub fn ChatPanel(
                     textarea {
                         "data-testid": "chat-input",
                         value: "{chat_draft}",
-                        placeholder: "Message this discussion. Use @did:web:alice.example or #cx:task:123.",
+                        placeholder: "Message this discussion. Use @alice to mention a member or #task-123 to link a card.",
                         oninput: move |evt| chat_draft.set(evt.value()),
                     }
                     if compose_dragover() {
@@ -3387,6 +4077,11 @@ pub fn ChatPanel(
                                     failed: false,
                                     error: None,
                                     mentions: mentions.clone(),
+                                    // Local-only sends start plaintext;
+                                    // the Send Secure flow may upgrade
+                                    // them via a separate `messages.write()`
+                                    // patch after `encrypt_payload`.
+                                    crypto_state: MessageCryptoState::Plaintext,
                                 });
 
                                 let base = base.clone();
@@ -4009,11 +4704,29 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
     mentions
         .iter()
         .map(|mention| {
-            json!({
-                "kind": mention.kind,
-                "target": mention.target,
-                "token": mention.token,
-            })
+            // T7.3: emit the spec's `subject` field alongside our legacy
+            // `target` so projections that already read `subject`
+            // receive it. `display_snapshot`/`handle_uri`/`resolved_at`
+            // round-trip through the persisted local op record so the
+            // renderer can detect handle reassignments.
+            let mut obj = serde_json::Map::new();
+            obj.insert("kind".to_owned(), json!(mention.kind));
+            obj.insert("subject".to_owned(), json!(mention.target));
+            obj.insert("target".to_owned(), json!(mention.target));
+            obj.insert("token".to_owned(), json!(mention.token));
+            if !mention.display_snapshot.is_empty() {
+                obj.insert(
+                    "display_snapshot".to_owned(),
+                    json!(mention.display_snapshot),
+                );
+            }
+            if !mention.handle_uri.is_empty() {
+                obj.insert("handle_uri".to_owned(), json!(mention.handle_uri));
+            }
+            if !mention.resolved_at.is_empty() {
+                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
+            }
+            Value::Object(obj)
         })
         .collect()
 }
@@ -4372,5 +5085,120 @@ mod tests {
         });
 
         assert!(channel_from_flow_event("cx:space:demo", &event).is_none());
+    }
+
+    // ── T7.2 watcher pill helpers ────────────────────────────────
+
+    fn dummy_participant(did: &str, name: Option<&str>) -> SpaceParticipant {
+        SpaceParticipant {
+            did: did.to_owned(),
+            display_name: name.map(str::to_owned),
+            display_name_rank: 0,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: false,
+        }
+    }
+
+    #[test]
+    fn watcher_entry_accepts_canonical_did() {
+        let participants: Vec<SpaceParticipant> = Vec::new();
+        let already: Vec<String> = Vec::new();
+        let kind = classify_watcher_entry("did:web:alice.example", &participants, &already);
+        assert!(matches!(
+            kind,
+            WatcherEntryKind::Valid(ref did) if did == "did:web:alice.example"
+        ));
+    }
+
+    #[test]
+    fn watcher_entry_handle_resolves_to_did_web() {
+        let participants: Vec<SpaceParticipant> = Vec::new();
+        let already: Vec<String> = Vec::new();
+        let kind = classify_watcher_entry("alice@example.com", &participants, &already);
+        match kind {
+            WatcherEntryKind::Valid(did) => {
+                assert!(did.starts_with("did:web:"));
+                assert!(did.contains("example.com"));
+                assert!(did.contains("alice"));
+            }
+            other => panic!("expected Valid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn watcher_entry_rejects_malformed_did() {
+        let participants: Vec<SpaceParticipant> = Vec::new();
+        let already: Vec<String> = Vec::new();
+        let kind = classify_watcher_entry("did:web:", &participants, &already);
+        assert_eq!(kind, WatcherEntryKind::InvalidDid);
+    }
+
+    #[test]
+    fn watcher_entry_unresolved_bare_name() {
+        let participants: Vec<SpaceParticipant> = Vec::new();
+        let already: Vec<String> = Vec::new();
+        let kind = classify_watcher_entry("alice", &participants, &already);
+        assert_eq!(kind, WatcherEntryKind::UnresolvedName);
+    }
+
+    #[test]
+    fn watcher_entry_dedupes_on_canonical_did() {
+        let participants: Vec<SpaceParticipant> =
+            vec![dummy_participant("did:web:alice.example", Some("Alice"))];
+        let already: Vec<String> = vec!["did:web:alice.example".to_owned()];
+        let kind = classify_watcher_entry("did:web:alice.example", &participants, &already);
+        assert!(matches!(kind, WatcherEntryKind::Duplicate(_)));
+    }
+
+    #[test]
+    fn watch_level_wire_round_trip() {
+        for level in [
+            WatchLevel::MentionsOnly,
+            WatchLevel::Participating,
+            WatchLevel::All,
+            WatchLevel::Muted,
+        ] {
+            assert_eq!(WatchLevel::from_wire(level.wire_value()), level);
+        }
+    }
+
+    #[test]
+    fn parse_watcher_pills_marks_duplicates_after_first() {
+        let participants: Vec<SpaceParticipant> = Vec::new();
+        let pills = parse_watcher_pills(
+            "did:web:alice.example, did:web:alice.example, alice@example.com",
+            &participants,
+        );
+        assert_eq!(pills.len(), 3);
+        assert!(matches!(pills[0].state, WatcherEntryKind::Valid(_)));
+        assert!(matches!(pills[1].state, WatcherEntryKind::Duplicate(_)));
+        assert!(matches!(pills[2].state, WatcherEntryKind::Valid(_)));
+    }
+
+    // ── T7.4 crypto state helpers ────────────────────────────────
+
+    #[test]
+    fn message_crypto_state_pending_detects_grey_states() {
+        assert!(!MessageCryptoState::Plaintext.is_pending());
+        assert!(MessageCryptoState::Decrypting.is_pending());
+        assert!(MessageCryptoState::DecryptFailed.is_pending());
+        assert!(MessageCryptoState::KeyMissing.is_pending());
+        assert!(!MessageCryptoState::NeedsVerification.is_pending());
+    }
+
+    #[test]
+    fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
+        let event = json!({
+            "event_id": "evt:1",
+            "content": {
+                "type": "cx.message.create",
+                "body": "[encrypted]",
+                "flow_id": "cx:flow:1",
+                "encrypted_payload": {"ciphertext": "blob"},
+            }
+        });
+        let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
+        assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 }

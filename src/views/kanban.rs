@@ -425,7 +425,12 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
             let hist = if d.lazy_link {
                 "lazy_link (cross-Space)".to_owned()
             } else if d.enabled {
-                "branch-scoped".to_owned()
+                // T2.3: tracks no longer carry independent access; a child
+                // Discussion Space owns its own access policy. The history
+                // visibility here reflects "the discussion is a child Space
+                // with its own access" — render as such, not as a
+                // branch-scoped grant.
+                "child Space access".to_owned()
             } else {
                 "synthesis-only".to_owned()
             };
@@ -975,8 +980,8 @@ pub fn KanbanPanel(
                     div { class: "metric", strong { "Board" } span { "{selected_board_place_id}" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "Collection projection source" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                    div { class: "metric", strong { "Frontier" } span { "{frontier_state}" } div { class: "muted", "CAS moves rebase from latest projection" } }
-                    div { class: "metric", strong { "Write plane" } span { if event_write_ready { "cx.events.submit" } else { "queued local" } } div { class: "muted", "active writes use operation/event surfaces directly" } }
+                    div { class: "metric", strong { "Sync state" } span { "{frontier_state}" } div { class: "muted", "Moves rebase from latest projection" } }
+                    div { class: "metric", strong { "Write plane" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "Active writes use the server when online" } }
                 }
                 div { class: "workflow-form",
                     div { class: "actions",
@@ -1718,7 +1723,7 @@ pub fn KanbanPanel(
                                         class: "input",
                                         "data-testid": "card-detail-assignee-input",
                                         value: "{card_edit_assignee}",
-                                        placeholder: "did:web:alice.example",
+                                        placeholder: "alice@example.com or @alice",
                                         oninput: move |evt| card_edit_assignee.set(evt.value()),
                                     }
                                 }
@@ -1880,12 +1885,17 @@ pub fn KanbanPanel(
                             }
                         }
                     }
-                    // Branch tabs — current-model.md §3 (synthesis / discussion dual branch)
-                    div { class: "actions", "data-testid": "card-branch-tabs", role: "tablist", "aria-label": "Flow branches",
-                        span { class: "muted", "Branch:" }
+                    // Flow tracks — current-model.md §3 (synthesis / discussion track pair)
+                    // T2.3: "branch" was a legacy label; the v1 spec calls these
+                    // tracks (display-only timeline segments). Tracks do not
+                    // carry independent access — the discussion track surfaces
+                    // a child Discussion Space whose access policy is what
+                    // decides read/write, not a branch-scoped grant.
+                    div { class: "actions", "data-testid": "card-flow-tracks", role: "tablist", "aria-label": "Flow tracks",
+                        span { class: "muted", "Track:" }
                         span { class: "badge blue", role: "tab", "aria-selected": "true", "synthesis · primary" }
                         span { class: "badge", role: "tab", "discussion" }
-                        span { class: "muted", "Branches inherit Flow / Space access by default; only an explicit override makes them independent." }
+                        span { class: "muted", "Tracks inherit Flow / Space access; the discussion track delegates to its child Discussion Space's access policy." }
                     }
                     // Fields grid — claude-design desktop/flow-detail.html
                     div { class: "metric-grid", "data-testid": "card-fields",
@@ -1907,33 +1917,38 @@ pub fn KanbanPanel(
                         div { class: "metric",
                             strong { "Capability" }
                             span { "read · write" }
-                            div { class: "muted", "Discussion writes require a branch-scoped grant" }
+                            div { class: "muted", "Discussion writes require access on the child Discussion Space" }
                         }
                     }
-                    // Card vs Room visibility — claude-design desktop/flow-detail.html
+                    // Card vs Discussion Space visibility — claude-design desktop/flow-detail.html
                     // overview/current-model.md §6 (permission and membership boundaries) —
+                    // T2.3: "Room" / "branch-scoped" were Matrix-era labels; the v1
+                    // model expresses the discussion as a *child Discussion Space*
+                    // and the synthesis as fields on the parent Flow. There are
                     // three independent decisions:
-                    //   1. Seeing the Flow synthesis ≠ being able to read the discussion
-                    //      (reading requires an effective access policy that inherits or
-                    //      explicitly grants discussion read).
-                    //   2. Reading the discussion ≠ being able to write Flow synthesis fields.
-                    //   3. Branch-scoped membership ≠ Space membership.
-                    div { class: "event", "data-testid": "card-vs-room-visibility",
+                    //   1. Seeing the Flow synthesis ≠ being able to read the
+                    //      child Discussion Space (the child Space has its own
+                    //      access policy; lazy_link references stay opaque).
+                    //   2. Reading the discussion ≠ being able to write Flow
+                    //      synthesis fields on the parent Flow.
+                    //   3. Membership of the child Discussion Space ≠ membership
+                    //      of the parent Flow's Space.
+                    div { class: "event", "data-testid": "card-vs-discussion-space-visibility",
                         div { class: "event-head",
-                            span { "Card / Room visibility (independent)" }
+                            span { "Card / Discussion Space visibility (independent)" }
                             span { "current-model §6" }
-                            HelpTip { text: "Card field visibility (Flow synthesis) and discussion Room visibility (Flow discussion branch) are evaluated independently — one does not imply the other. A locked Room only reveals that it exists; titles, members, and counts stay hidden." }
+                            HelpTip { text: "Card field visibility (Flow synthesis) and discussion visibility (child Discussion Space) are evaluated independently — one does not imply the other. A locked child Discussion Space only reveals that it exists; titles, members, and counts stay hidden." }
                         }
-                        div { class: "metric-grid", "data-testid": "card-vs-room-axes",
+                        div { class: "metric-grid", "data-testid": "card-vs-discussion-space-axes",
                             div { class: "metric",
                                 strong { "Card synthesis" }
                                 span { class: crate::components::write_state::WriteState::Accepted.class_name(), "readable + writable" }
                                 div { class: "muted", "Seeing Flow fields does not imply you can see the discussion" }
                             }
                             div { class: "metric",
-                                strong { "Primary Room" }
+                                strong { "Primary Discussion Space" }
                                 span { class: "badge blue", "{card.primary_flow}" }
-                                div { class: "muted", "branch-scoped membership" }
+                                div { class: "muted", "child Space access" }
                             }
                             div { class: "metric",
                                 strong { "External Visibility" }
