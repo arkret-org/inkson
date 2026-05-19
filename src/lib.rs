@@ -2,6 +2,7 @@ pub mod account_data;
 pub mod agent_workspace_watcher;
 pub mod anchor_witness;
 pub mod api;
+pub mod native_notify;
 pub mod app;
 pub mod audit;
 pub mod blob;

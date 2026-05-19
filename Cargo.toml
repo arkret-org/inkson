@@ -64,6 +64,12 @@ dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
 # wrapper without the classic `Entry` type). 3.6 stays the supported
 # library surface for direct programmatic access.
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
+# F-OS-NOTIFY-1 (2026-05-19): native desktop notifications. `notify-rust`
+# bridges to macOS Notification Center, Linux freedesktop notifications,
+# and Windows Toast notifications behind a single API. Skipped on the
+# wasm32 build because browsers expose their own notification API
+# directly through Dioxus / `web-sys`.
+notify-rust = "4.11"
 reqwest = { version = "0.12.24", features = ["json", "rustls-tls", "stream"], default-features = false }
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
