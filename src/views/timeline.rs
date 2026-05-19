@@ -10,7 +10,7 @@ use crate::{
     crypto::compose_local_encrypted_message,
     local_state::{LocalStateStore, ReadMarkerRecord},
     media::{hash_matches, media_type_preview_policy, sha256_hex},
-    operation::{OperationBuilder, OperationEnvelope, uuid_v7},
+    operation::{EventEnvelope, OperationBuilder, uuid_v7},
     views::helpers::{
         active_sync_token, authed_api_with_sync, with_authed_api, with_authed_api_with_sync,
     },
@@ -212,7 +212,7 @@ pub(crate) fn message_create_operation(
     actor: &str,
     thread_id: Option<&str>,
     body: &str,
-) -> OperationEnvelope {
+) -> EventEnvelope {
     let mut payload = json!({
         "body": body,
         "content": text_content(body),
@@ -231,7 +231,7 @@ fn message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> OperationEnvelope {
+) -> EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.message.revise")
         .target_ref(event_id)
         .body(json!({
@@ -247,7 +247,7 @@ fn message_redact_operation(
     actor: &str,
     event_id: &str,
     reason: Option<&str>,
-) -> OperationEnvelope {
+) -> EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.message.redact")
         .target_ref(event_id)
         .body(json!({
@@ -257,12 +257,7 @@ fn message_redact_operation(
         .build("yougen")
 }
 
-fn reaction_add_operation(
-    space_id: &str,
-    actor: &str,
-    event_id: &str,
-    key: &str,
-) -> OperationEnvelope {
+fn reaction_add_operation(space_id: &str, actor: &str, event_id: &str, key: &str) -> EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.reaction.add")
         .target_ref(event_id)
         .body(json!({
@@ -384,7 +379,7 @@ pub fn TimelinePanel(
                 if !events.is_empty() {
                     timeline.set(events);
                 }
-                sync_cursor.set(sync.next_batch);
+                sync_cursor.set(sync.cursor);
             }
         });
     }
@@ -458,7 +453,7 @@ pub fn TimelinePanel(
                                 &space, &actor, &event_id, &device,
                             )
                             .build("yougen");
-                            api.submit_operation_event(&op).await
+                            api.submit_event_envelope(&op).await
                         })
                         .await;
                     });
@@ -802,7 +797,7 @@ pub fn TimelinePanel(
                                                     spawn(async move {
                                                         if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                                             let op = reaction_add_operation(&space, &actor, &eid, &emoji);
-                                                            let _ = api.submit_operation_event(&op).await;
+                                                            let _ = api.submit_event_envelope(&op).await;
                                                         }
                                                     });
                                                     show_reaction_picker.set(None);
@@ -870,15 +865,16 @@ pub fn TimelinePanel(
                                                                     &eid,
                                                                     &content,
                                                                 );
-                                                                match api.submit_operation_event(&op).await {
+                                                                let op_id = op.local_operation_id().to_owned();
+                                                                match api.submit_event_envelope(&op).await {
                                                                 Ok(updated) => {
                                                                     if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
-                                                                        found.operation_id = Some(op.operation_id.clone());
+                                                                        found.operation_id = Some(op_id.clone());
                                                                         found.event_id = Some(updated.event_id.clone());
                                                                         found.pending = false;
                                                                     }
                                                                     state_store.write().append_raw_operation(
-                                                                        op.operation_id.clone(),
+                                                                        op_id.clone(),
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "event_id": updated.event_id,
@@ -887,7 +883,7 @@ pub fn TimelinePanel(
                                                                         }),
                                                                     );
                                                                     frontier_state.set(updated.event_id.clone());
-                                                                    write_status.set(format!("revised {}", op.operation_id));
+                                                                    write_status.set(format!("revised {op_id}"));
                                                                 }
                                                                 Err(error) => {
                                                                     // Rollback optimistic edit
@@ -967,13 +963,14 @@ pub fn TimelinePanel(
                                                                     &eid,
                                                                     reason.as_deref(),
                                                                 );
-                                                                match api.submit_operation_event(&op).await {
+                                                                let op_id = op.local_operation_id().to_owned();
+                                                                match api.submit_event_envelope(&op).await {
                                                                 Ok(redacted) => {
                                                                     if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
                                                                         found.apply_redaction(redacted.event_id.clone(), reason.clone());
                                                                     }
                                                                     state_store.write().append_raw_operation(
-                                                                        op.operation_id.clone(),
+                                                                        op_id.clone(),
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "event_id": redacted.event_id,
@@ -982,7 +979,7 @@ pub fn TimelinePanel(
                                                                             "status": redacted.status,
                                                                         }),
                                                                     );
-                                                                    write_status.set(format!("tombstoned {}", op.operation_id));
+                                                                    write_status.set(format!("tombstoned {op_id}"));
                                                                 }
                                                                 Err(error) => {
                                                                     // Rollback optimistic redaction
@@ -1351,10 +1348,11 @@ pub fn TimelinePanel(
                                         thread_id.as_deref(),
                                         &body,
                                     );
-                                    match api.submit_operation_event(&op).await {
+                                    let op_id = op.local_operation_id().to_owned();
+                                    match api.submit_event_envelope(&op).await {
                                         Ok(resp) => {
                                             if let Some(event) = timeline.write().iter_mut().find(|e| e.id == event_id) {
-                                                event.apply_send_ack(resp.event_id.clone(), op.operation_id.clone());
+                                                event.apply_send_ack(resp.event_id.clone(), op_id);
                                             }
                                         }
                                         Err(error) => {
@@ -1574,7 +1572,8 @@ pub fn TimelinePanel(
                                                 thread_id.as_deref(),
                                                 &body_clone,
                                             );
-                                            match api.submit_operation_event(&op).await {
+                                            let op_id = op.local_operation_id().to_owned();
+                                            match api.submit_event_envelope(&op).await {
                                             Ok(sent) => {
                                                 if let Some(found) = timeline
                                                     .write()
@@ -1583,7 +1582,7 @@ pub fn TimelinePanel(
                                                 {
                                                     found.apply_send_ack(
                                                         sent.event_id.clone(),
-                                                        op.operation_id.clone(),
+                                                        op_id.clone(),
                                                     );
                                                 }
                                                 sync_cursor.set(sent.sync_token.clone());
@@ -1592,7 +1591,7 @@ pub fn TimelinePanel(
                                                     let mut store = state_store.write();
                                                     store.save_sync_cursor(sent.sync_token.clone());
                                                     store.append_raw_operation(
-                                                        op.operation_id.clone(),
+                                                        op_id.clone(),
                                                         Some(space.clone()),
                                                         json!({
                                                             "event_id": sent.event_id,
@@ -1601,7 +1600,7 @@ pub fn TimelinePanel(
                                                         }),
                                                     );
                                                 }
-                                                write_status.set(format!("persisted {}", op.operation_id));
+                                                write_status.set(format!("persisted {op_id}"));
                                             }
                                             Err(error) => {
                                                 if let Some(found) = timeline

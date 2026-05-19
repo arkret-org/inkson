@@ -1,7 +1,7 @@
 //! Yougen-side wrappers for the Contrix object model objects.
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
-//! turn them into [`crate::operation::OperationEnvelope`] write actions. The
+//! turn them into [`crate::operation::EventEnvelope`] write actions. The
 //! goal is a single place for `views/*` to construct `cx.morph.*`,
 //! `cx.relation.*`, and `cx.container.*` operations without each call site
 //! re-discovering the SDK's struct layout.
@@ -118,9 +118,9 @@ mod tests {
             json!({"morph_type": "task"}),
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.morph.update");
-        assert_eq!(op.body["morph_id"], "cx:morph:abc");
-        assert_eq!(op.body["patch"]["morph_type"], "task");
+        assert_eq!(op.kind, "cx.morph.update");
+        assert_eq!(op.payload["morph_id"], "cx:morph:abc");
+        assert_eq!(op.payload["patch"]["morph_type"], "task");
     }
 
     #[test]
@@ -134,10 +134,10 @@ mod tests {
             "cx:flow:f2",
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.relation.create");
-        assert_eq!(op.body["kind"], "cx.relation.parent_of");
-        assert_eq!(op.body["source"], "cx:flow:f1");
-        assert_eq!(op.body["target"], "cx:flow:f2");
+        assert_eq!(op.kind, "cx.relation.create");
+        assert_eq!(op.payload["kind"], "cx.relation.parent_of");
+        assert_eq!(op.payload["source"], "cx:flow:f1");
+        assert_eq!(op.payload["target"], "cx:flow:f2");
     }
 
     #[test]
@@ -150,9 +150,9 @@ mod tests {
             "r0",
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.container.move_item");
-        assert_eq!(op.target_ref.as_deref(), Some("cx:place:list1"));
-        assert_eq!(op.body["rank"], "r0");
+        assert_eq!(op.kind, "cx.container.move_item");
+        assert_eq!(op.local_target_ref(), Some("cx:place:list1"));
+        assert_eq!(op.payload["rank"], "r0");
     }
 
     #[test]
@@ -167,8 +167,8 @@ mod tests {
             ],
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.container.rebalance");
-        assert_eq!(op.body["items"][0]["item_ref"], "cx:flow:f1");
-        assert_eq!(op.body["items"][1]["rank"], "r1");
+        assert_eq!(op.kind, "cx.container.rebalance");
+        assert_eq!(op.payload["items"][0]["item_ref"], "cx:flow:f1");
+        assert_eq!(op.payload["items"][1]["rank"], "r1");
     }
 }

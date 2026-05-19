@@ -273,6 +273,12 @@ impl MlsSnapshotEnvelope {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
         let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&envelope_bytes));
+        let nonce_material = format!(
+            "{backup_id}|{actor_did}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
+            self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true)
+        );
+        let nonce_digest = Sha256::digest(nonce_material.as_bytes());
+        let nonce = URL_SAFE_NO_PAD.encode(&nonce_digest[..24]);
         let mut body = json!({
             "backup_id": backup_id,
             "actor_id": actor_did,
@@ -293,7 +299,7 @@ impl MlsSnapshotEnvelope {
                 },
                 "aead": {
                     "name": "xchacha20_poly1305",
-                    "nonce": "mls_snapshot_nonce_placeholder"
+                    "nonce": nonce
                 }
             },
             "contents": [{
@@ -317,6 +323,11 @@ impl MlsSnapshotEnvelope {
         {
             object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
         }
+        crate::key_backup::attach_key_backup_domain_separation(
+            &mut body,
+            crate::key_backup::KeyBackupClass::MlsHistory,
+            "mls_snapshot",
+        );
         body
     }
 
@@ -587,6 +598,15 @@ mod tests {
         assert_eq!(body["backup_class"], "mls_history");
         assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
+        assert_eq!(
+            body["domain_separation"]["hkdf_info"],
+            "contrix-key-backup/mls_history/mls_snapshot/v1"
+        );
+        crate::key_backup::validate_key_backup_envelope(
+            &body,
+            Some(crate::key_backup::KeyBackupClass::MlsHistory),
+        )
+        .expect("MLS history backup envelope should validate");
         assert_eq!(body["envelope_meta"]["space_ref"], "cx:space:demo");
         assert_eq!(body["envelope_meta"]["epoch"], 42);
         // The ciphertext is a base64url-encoded JSON envelope — it

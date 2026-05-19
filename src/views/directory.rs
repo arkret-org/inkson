@@ -58,14 +58,6 @@ pub fn DirectoryPanel(
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
                 button {
-                    class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
-                    "data-testid": "tab-objects",
-                    role: "tab",
-                    "aria-selected": if active_tab() == DirectoryTab::ProtocolObjects { "true" } else { "false" },
-                    onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
-                    "Protocol Objects"
-                }
-                button {
                     class: if active_tab() == DirectoryTab::Spaces { "primary" } else { "secondary" },
                     "data-testid": "tab-spaces",
                     role: "tab",
@@ -162,11 +154,23 @@ pub fn DirectoryPanel(
                 div { class: "muted",
                     "Search stays focused on spaces, organizations, actors, handles, and protocol-level lookups. The old directory shortcut has been folded into the global search entrypoint."
                 }
-                div { class: "actions",
-                    button {
-                        class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
-                        onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
-                        "Developer Object Lookup"
+                details { class: "advanced-diagnostics", "data-testid": "directory-advanced-diagnostics",
+                    summary { "data-testid": "directory-advanced-diagnostics-toggle",
+                        span { "Advanced diagnostics" }
+                        span { class: "badge amber", "developer tools" }
+                    }
+                    div { class: "muted",
+                        "Protocol-object lookup is for renderer and visibility debugging. It stays collapsed by default so the end-user directory starts on normal entity search."
+                    }
+                    div { class: "actions",
+                        button {
+                            class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
+                            "data-testid": "tab-objects",
+                            role: "tab",
+                            "aria-selected": if active_tab() == DirectoryTab::ProtocolObjects { "true" } else { "false" },
+                            onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
+                            "Protocol Objects"
+                        }
                     }
                 }
             }

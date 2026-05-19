@@ -50,7 +50,7 @@ impl SyncBadgeState {
         }
     }
 
-    /// CSS class used by all three of the legacy hand-rolled enums; we
+    /// CSS class used by all three of the previous hand-rolled enums; we
     /// keep the same colour mapping here so existing stylesheets keep
     /// working without changes.
     pub fn class_name(self) -> &'static str {

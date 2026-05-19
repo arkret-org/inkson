@@ -31,7 +31,7 @@ use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
 use crate::move_builder::encode_ed25519_did_key_multibase;
-use crate::operation::{OperationBuilder, OperationEnvelope};
+use crate::operation::{EventEnvelope, OperationBuilder};
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 /// One step of a complete cross-signing setup. Each variant maps to a specific
@@ -354,7 +354,7 @@ impl CrossSigningSetupOutput {
         Ok(())
     }
 
-    /// Construct the [`OperationEnvelope`] yougen submits to write the
+    /// Construct the [`EventEnvelope`] yougen submits to write the
     /// `cx.cross_signing.publish.v1` event. The caller supplies the
     /// `space_id` of the principal's control space and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
@@ -364,7 +364,7 @@ impl CrossSigningSetupOutput {
         &self,
         space_id: &str,
         actor: &str,
-    ) -> anyhow::Result<OperationEnvelope> {
+    ) -> anyhow::Result<EventEnvelope> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
         Ok(
@@ -741,20 +741,20 @@ mod tests {
                 principal.as_str(),
             )
             .unwrap();
-        assert_eq!(envelope.op_type, "cx.cross_signing.publish.v1");
+        assert_eq!(envelope.kind, "cx.cross_signing.publish.v1");
         assert_eq!(
-            envelope.target_ref.as_deref(),
+            envelope.local_target_ref(),
             Some(principal.as_str()),
             "target_ref must point at the principal whose keys these are"
         );
         // The full publish content body must round-trip — losing any
         // field here is the same as publishing a malformed event, which
         // the SDK validator would reject on the receiver side.
-        let body_principal = envelope.body["principal_id"]
+        let body_principal = envelope.payload["principal_id"]
             .as_str()
             .expect("body.principal_id is a string");
         assert_eq!(body_principal, principal.as_str());
-        assert_eq!(envelope.body["generation"].as_u64(), Some(1));
+        assert_eq!(envelope.payload["generation"].as_u64(), Some(1));
     }
 
     #[test]

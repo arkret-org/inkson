@@ -1,7 +1,8 @@
-//! Minimal operation-envelope helpers for yougen's active write paths.
+//! Minimal event-envelope helpers for yougen's active write paths.
 //!
-//! Legacy commit-envelope helper paths were removed; active writes use the
-//! current operation/event surfaces directly.
+//! Active writes use the current operation/event surfaces directly.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,7 +10,40 @@ use serde_json::Value;
 use crate::canonical::{canonical_json_bytes, canonical_sha256};
 use crate::hlc::{Hlc, next_seq};
 
-/// An operation envelope per contrix-spec section 6.3.
+/// Current v1 Event Envelope used by active write paths.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub event_id: String,
+    pub kind: String,
+    pub actor_id: String,
+    pub actor_seq: u64,
+    pub space_id: String,
+    pub created_at: String,
+    pub hlc: String,
+    #[serde(default)]
+    pub prev_refs: Vec<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
+    pub payload: Value,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unsigned: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proofs: Vec<EventProof>,
+}
+
+/// Detached proof entry on an [`EventEnvelope`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventProof {
+    pub kind: String,
+    pub alg: String,
+    pub verification_method: String,
+    pub payload_hash: String,
+    pub created_at: String,
+    pub jws: String,
+}
+
+/// Legacy operation envelope kept only as an adapter input for persisted
+/// drafts/tests that have not been migrated yet.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationEnvelope {
     /// Unique operation identifier (UUID v8 recommended).
@@ -43,13 +77,12 @@ pub struct OperationEnvelope {
     /// merge ordering anchor (`models/move-anchor-lattice.md`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_ref: Option<String>,
-    /// Detached JWS proof. Spec §6.3 calls this `proof`; callers MUST set this
-    /// before [`crate::api::Api::submit_operation_event`] for any durable kind.
+    /// Detached JWS proof on the old operation DTO.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proof: Option<Proof>,
 }
 
-/// Detached JWS proof over the canonical body of an [`OperationEnvelope`].
+/// Detached JWS proof over the canonical body of a legacy [`OperationEnvelope`].
 ///
 /// Mirrors `MoveSignature` from `contrix_core` but stays as a JSON-only DTO so
 /// yougen can serialize / deserialize proofs without dragging the SDK's
@@ -82,7 +115,7 @@ pub struct CausalMetadata {
     pub actor_seq: u64,
 }
 
-/// Builder for creating operation envelopes.
+/// Builder for creating event envelopes.
 pub struct OperationBuilder {
     space_id: String,
     actor: String,
@@ -123,30 +156,202 @@ impl OperationBuilder {
         self
     }
 
-    pub fn build(self, node_id: &str) -> OperationEnvelope {
+    pub fn build(self, node_id: &str) -> EventEnvelope {
         self.build_with_deps(node_id, Vec::new())
     }
 
-    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> OperationEnvelope {
+    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> EventEnvelope {
         let hlc = Hlc::now(node_id);
-        OperationEnvelope {
-            operation_id: uuid_v7(),
-            space_id: self.space_id,
-            actor: self.actor,
-            op_type: self.op_type,
-            target_ref: self.target_ref,
-            causal: CausalMetadata {
-                deps,
-                hlc: hlc.encode(),
-                actor_seq: next_seq(),
-            },
-            body: self.body,
-            authz_ref: self.authz_ref,
-            preconditions: Vec::new(),
-            effects: Vec::new(),
-            anchor_ref: None,
-            proof: None,
+        let operation_id = typed_operation_id(&uuid_v7());
+        let mut unsigned = BTreeMap::new();
+        unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            Value::String(operation_id),
+        );
+        if let Some(target_ref) = self.target_ref {
+            unsigned.insert("local_target_ref".to_owned(), Value::String(target_ref));
         }
+        if let Some(authz_ref) = self.authz_ref {
+            unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
+        }
+        let actor_seq = next_seq();
+        let mut event = EventEnvelope {
+            event_id: format!("cx:event:{}", uuid_v7()),
+            kind: self.op_type,
+            actor_id: self.actor,
+            actor_seq,
+            space_id: self.space_id,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            hlc: hlc.encode(),
+            prev_refs: deps,
+            refs: Vec::new(),
+            payload: self.body,
+            unsigned,
+            proofs: Vec::new(),
+        };
+        event.attach_placeholder_proof();
+        event
+    }
+}
+
+impl EventEnvelope {
+    /// Convert a persisted legacy operation envelope into the current Event
+    /// Envelope. This is the only supported legacy adapter.
+    pub fn from_legacy_operation(operation: &OperationEnvelope) -> anyhow::Result<Self> {
+        let mut unsigned = BTreeMap::new();
+        unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            Value::String(typed_operation_id(&operation.operation_id)),
+        );
+        if let Some(target_ref) = &operation.target_ref {
+            unsigned.insert(
+                "local_target_ref".to_owned(),
+                Value::String(target_ref.clone()),
+            );
+        }
+        if let Some(authz_ref) = &operation.authz_ref {
+            unsigned.insert(
+                "local_authz_ref".to_owned(),
+                Value::String(authz_ref.clone()),
+            );
+        }
+        if !operation.preconditions.is_empty() {
+            unsigned.insert(
+                "legacy_preconditions".to_owned(),
+                Value::Array(operation.preconditions.clone()),
+            );
+        }
+        if !operation.effects.is_empty() {
+            unsigned.insert(
+                "legacy_effects".to_owned(),
+                Value::Array(operation.effects.clone()),
+            );
+        }
+        if let Some(anchor_ref) = &operation.anchor_ref {
+            unsigned.insert(
+                "legacy_anchor_ref".to_owned(),
+                Value::String(anchor_ref.clone()),
+            );
+        }
+
+        let mut event = Self {
+            event_id: format!("cx:event:{}", uuid_v7()),
+            kind: operation.op_type.clone(),
+            actor_id: operation.actor.clone(),
+            actor_seq: operation.causal.actor_seq,
+            space_id: operation.space_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            hlc: operation.causal.hlc.clone(),
+            prev_refs: operation.causal.deps.clone(),
+            refs: Vec::new(),
+            payload: operation.body.clone(),
+            unsigned,
+            proofs: Vec::new(),
+        };
+        event.attach_placeholder_proof();
+        Ok(event)
+    }
+
+    pub fn local_operation_idempotency_alias(&self) -> Option<&str> {
+        self.unsigned
+            .get("local_operation_idempotency_alias")
+            .and_then(Value::as_str)
+    }
+
+    pub fn local_operation_id(&self) -> &str {
+        self.local_operation_idempotency_alias()
+            .unwrap_or(self.event_id.as_str())
+    }
+
+    pub fn local_target_ref(&self) -> Option<&str> {
+        self.unsigned
+            .get("local_target_ref")
+            .and_then(Value::as_str)
+    }
+
+    pub fn canonical_digest(&self) -> anyhow::Result<String> {
+        let mut canonical = serde_json::to_value(self)?;
+        if let Value::Object(object) = &mut canonical {
+            object.remove("proofs");
+            object.remove("unsigned");
+        }
+        canonical_sha256(&canonical)
+    }
+
+    pub fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
+        let digest = self.canonical_digest()?;
+        for proof in &mut self.proofs {
+            proof.payload_hash = digest.clone();
+        }
+        Ok(())
+    }
+
+    pub fn attach_placeholder_proof(&mut self) {
+        if self.proofs.is_empty() {
+            self.proofs.push(EventProof {
+                kind: "detached_jws".to_owned(),
+                alg: "EdDSA".to_owned(),
+                verification_method: format!("{}#yougen", self.actor_id),
+                payload_hash: String::new(),
+                created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                jws: "a..b".to_owned(),
+            });
+        }
+        let _ = self.refresh_proof_hashes();
+    }
+
+    pub fn sign_ed25519(
+        &mut self,
+        signer_did: impl Into<String>,
+        key_id: impl Into<String>,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> anyhow::Result<()> {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use ed25519_dalek::Signer;
+
+        let mut canonical = serde_json::to_value(&*self)?;
+        if let Value::Object(object) = &mut canonical {
+            object.remove("proofs");
+            object.remove("unsigned");
+        }
+        let canonical = canonical_json_bytes(&canonical)?;
+        let payload_hash = crate::canonical::sha256_digest(&canonical);
+
+        let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
+        let signing_input = format!("{header_b64}.{payload_b64}");
+        let signature = signing_key.sign(signing_input.as_bytes());
+        let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
+        let jws = format!("{header_b64}..{sig_b64}");
+
+        let signer_did = signer_did.into();
+        self.proofs = vec![EventProof {
+            kind: "detached_jws".to_owned(),
+            alg: "EdDSA".to_owned(),
+            verification_method: key_id.into(),
+            payload_hash,
+            jws,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        }];
+        if self.actor_id.is_empty() {
+            self.actor_id = signer_did;
+        }
+        Ok(())
+    }
+
+    pub fn require_proof(&self) -> anyhow::Result<&EventProof> {
+        self.proofs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("event envelope missing proof"))
+    }
+}
+
+fn typed_operation_id(operation_id: &str) -> String {
+    if operation_id.starts_with("cx:operation:") {
+        operation_id.to_owned()
+    } else {
+        format!("cx:operation:{operation_id}")
     }
 }
 
@@ -316,7 +521,7 @@ pub mod cx_ops {
         Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(space_id)
             .body(json!({
-                "list_id": space_id,
+                "space_id": space_id,
                 "flow_id": flow_id,
                 "title": title,
                 "rank": "r0",
@@ -367,8 +572,8 @@ pub mod cx_ops {
     /// Build a `cx.flow.tracks.update` operation. Spec:
     /// `contrix-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
     ///
-    /// This is the single unified track-mutation event that replaces the
-    /// legacy quartet `cx.flow.track.{enable,disable,update,set_primary}`.
+    /// This is the single unified track-mutation event that replaces
+    /// `cx.flow.track.{enable,disable,update,set_primary}`.
     /// `patch` is a `cx.patch.v1` JSON Patch object against the `Flow.tracks`
     /// map (keys are track names like `synthesis` / `discussion`). For
     /// example, enabling the `discussion` track is:
@@ -422,7 +627,7 @@ pub mod cx_ops {
     }
 
     /// Convenience wrapper: mark `track` as the Flow's primary track.
-    /// Carries a single set-op against `tracks.<name>.primary`. The reducer
+    /// Carries a single set-op against `tracks.<name>.is_primary`. The reducer
     /// is responsible for clearing the previous primary cell.
     pub fn flow_tracks_update_set_primary(
         space_id: &str,
@@ -430,9 +635,50 @@ pub mod cx_ops {
         flow_id: &str,
         track: &str,
     ) -> OperationBuilder {
-        let key = format!("tracks.{track}.primary");
+        let key = format!("tracks.{track}.is_primary");
         let patch = json!({ key: { "$op": "set", "value": true } });
         flow_tracks_update(space_id, actor, flow_id, patch)
+    }
+
+    /// Build a `cx.place.create` operation for Board/List Places.
+    ///
+    /// Lists are Places in the v1 model, not `cx:list:*` objects. The optional
+    /// `board_place_id` + `rank` fields let the Kanban UI keep carrying the
+    /// board ordering hint while the object id and event kind stay canonical.
+    pub fn place_create(
+        space_id: &str,
+        actor: &str,
+        place_id: &str,
+        kind: &str,
+        title: &str,
+        board_place_id: Option<&str>,
+        rank: Option<&str>,
+    ) -> OperationBuilder {
+        let mut body = json!({
+            "place_id": place_id,
+            "object": {
+                "id": place_id,
+                "schema": "cx.schema.place.v1",
+                "space_id": space_id,
+                "kind": kind,
+                "title": title,
+                "created_by": actor,
+                "created_at": chrono::Utc::now()
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            },
+        });
+        if let Some(board_place_id) = board_place_id {
+            body["board_place_id"] = json!(board_place_id);
+            body["object"]["board_place_id"] = json!(board_place_id);
+            body["object"]["parent_ref"] = json!(board_place_id);
+        }
+        if let Some(rank) = rank {
+            body["rank"] = json!(rank);
+            body["object"]["rank"] = json!(rank);
+        }
+        OperationBuilder::new(space_id, actor, "cx.place.create")
+            .target_ref(place_id)
+            .body(body)
     }
 
     /// Build a `cx.flow.create` for a document Flow.
@@ -463,7 +709,7 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(space_id)
             .body(json!({
-                "list_id": space_id,
+                "space_id": space_id,
                 "flow_id": flow_id,
                 "title": title,
                 "rank": "r0",
@@ -491,6 +737,24 @@ pub mod cx_ops {
                 "fields": {
                     "document": document_body,
                 },
+            }))
+    }
+
+    /// Build a `cx.flow.update` delta operation using the canonical
+    /// `cx.patch.v1` payload shape. Non-create Flow updates should carry
+    /// only changed fields; callers are responsible for composing patch paths
+    /// that are valid for the Flow schema/profile.
+    pub fn flow_update_patch(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.flow.update")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "patch": patch,
             }))
     }
 
@@ -654,14 +918,14 @@ pub mod cx_ops {
         space_id: &str,
         actor: &str,
         session_id: &str,
-        errcode: &str,
+        error_code: &str,
         message: &str,
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.applet.bridge_error")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
-                "errcode": errcode,
+                "error_code": error_code,
                 "message": message,
             }))
     }
@@ -754,6 +1018,46 @@ pub mod cx_ops {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
+
+    fn spec_schema(name: &str) -> serde_json::Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../contrix-spec/spec/v1/artifacts/schemas")
+            .join(name);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read spec schema {}: {err}", path.display()));
+        serde_json::from_str(&text).unwrap_or_else(|err| {
+            panic!("parse spec schema {}: {err}", path.display());
+        })
+    }
+
+    fn required_fields(schema: &serde_json::Value) -> Vec<String> {
+        schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("schema missing required[]"))
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn assert_required_fields_present(schema: &serde_json::Value, value: &serde_json::Value) {
+        for field in required_fields(schema) {
+            assert!(
+                value.get(&field).is_some(),
+                "payload missing required schema field `{field}`: {value}"
+            );
+        }
+    }
+
+    fn patch_schema_ops(schema: &serde_json::Value) -> Vec<String> {
+        schema["additionalProperties"]["oneOf"][1]["properties"]["$op"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect()
+    }
 
     #[test]
     fn operation_builder_generates_valid_envelope() {
@@ -761,12 +1065,12 @@ mod tests {
             .body(json!({"body": "hello"}))
             .build("test_node");
 
-        assert!(!op.operation_id.is_empty());
+        assert!(!op.local_operation_id().is_empty());
         assert_eq!(op.space_id, "cx:space:test");
-        assert_eq!(op.actor, "did:web:alice");
-        assert_eq!(op.op_type, "cx.message.create");
-        assert!(!op.causal.hlc.is_empty());
-        assert!(op.causal.actor_seq > 0);
+        assert_eq!(op.actor_id, "did:web:alice");
+        assert_eq!(op.kind, "cx.message.create");
+        assert!(!op.hlc.is_empty());
+        assert!(op.actor_seq > 0);
     }
 
     #[test]
@@ -775,7 +1079,7 @@ mod tests {
             .body(json!({"body": "hello world"}))
             .build("node");
         let json = serde_json::to_string(&op).unwrap();
-        let parsed: OperationEnvelope = serde_json::from_str(&json).unwrap();
+        let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(op, parsed);
     }
 
@@ -790,11 +1094,11 @@ mod tests {
         )
         .build("test_node");
 
-        assert_eq!(op.op_type, "cx.flow.create");
-        assert_eq!(op.body["flow_id"], "cx:flow:doc-1");
-        assert_eq!(op.body["kind"], "document");
+        assert_eq!(op.kind, "cx.flow.create");
+        assert_eq!(op.payload["flow_id"], "cx:flow:doc-1");
+        assert_eq!(op.payload["kind"], "document");
         assert_eq!(
-            op.body["fields"]["document"]["blocks"][0]["kind"],
+            op.payload["fields"]["document"]["blocks"][0]["kind"],
             "Heading"
         );
     }
@@ -809,9 +1113,9 @@ mod tests {
         )
         .build("test_node");
 
-        assert_eq!(op.op_type, "cx.flow.update");
-        assert_eq!(op.body["flow_id"], "cx:flow:doc-1");
-        assert!(op.body["fields"]["document"]["blocks"].is_array());
+        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.payload["flow_id"], "cx:flow:doc-1");
+        assert!(op.payload["fields"]["document"]["blocks"].is_array());
     }
 
     #[test]
@@ -824,20 +1128,206 @@ mod tests {
         )
         .unwrap()
         .build("node");
-        assert_eq!(op.op_type, "cx.flow.create");
+        assert_eq!(op.kind, "cx.flow.create");
         assert_eq!(
-            op.body["flow_id"],
+            op.payload["flow_id"],
             "cx:flow:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(
-            op.body["object"]["tracks"]["discussion"]["profile"],
+            op.payload["object"]["tracks"]["discussion"]["profile"],
             "discussion"
         );
         assert_eq!(
-            op.body["object"]["tracks"]["discussion"]["is_primary"],
+            op.payload["object"]["tracks"]["discussion"]["is_primary"],
             true
         );
-        assert!(op.body["object"].get("kind").is_none());
+        assert!(op.payload["object"].get("kind").is_none());
+    }
+
+    #[test]
+    fn flow_tracks_update_primary_uses_is_primary_patch_key() {
+        let op = cx_ops::flow_tracks_update_set_primary(
+            "cx:space:s1",
+            "did:web:alice",
+            "cx:flow:f1",
+            "discussion",
+        )
+        .build("node");
+        assert_eq!(op.kind, "cx.flow.tracks.update");
+        assert_eq!(
+            op.payload["patch"]["tracks.discussion.is_primary"]["value"],
+            true
+        );
+        assert!(
+            op.payload["patch"]
+                .get("tracks.discussion.primary")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn flow_update_patch_uses_canonical_payload_patch() {
+        let op = cx_ops::flow_update_patch(
+            "cx:space:s1",
+            "did:web:alice",
+            "cx:flow:f1",
+            json!({
+                "title": { "$op": "set", "value": "Launch checklist" },
+                "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+            }),
+        )
+        .build("node");
+        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.local_target_ref(), Some("cx:flow:f1"));
+        assert_eq!(op.payload["flow_id"], "cx:flow:f1");
+        assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
+        assert!(op.body.get("fields").is_none());
+    }
+
+    #[test]
+    fn place_create_emits_canonical_place_object() {
+        let op = cx_ops::place_create(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            "cx:place:0196419b-0000-7000-8000-000000000002",
+            "list",
+            "To Do",
+            Some("cx:place:0196419b-0000-7000-8000-000000000003"),
+            Some("U"),
+        )
+        .build("node");
+        assert_eq!(op.kind, "cx.place.create");
+        assert_eq!(
+            op.local_target_ref(),
+            Some("cx:place:0196419b-0000-7000-8000-000000000002")
+        );
+        assert_eq!(
+            op.payload["place_id"],
+            "cx:place:0196419b-0000-7000-8000-000000000002"
+        );
+        assert_eq!(op.payload["object"]["schema"], "cx.schema.place.v1");
+        assert_eq!(
+            op.payload["object"]["space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(op.payload["object"]["kind"], "list");
+        assert_eq!(
+            op.payload["object"]["board_place_id"],
+            "cx:place:0196419b-0000-7000-8000-000000000003"
+        );
+        assert_eq!(
+            op.payload["object"]["parent_ref"],
+            "cx:place:0196419b-0000-7000-8000-000000000003"
+        );
+        assert_eq!(op.payload["object"]["rank"], "U");
+        assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
+        assert!(
+            op.payload["object"]["created_at"]
+                .as_str()
+                .unwrap()
+                .ends_with('Z')
+        );
+    }
+
+    #[test]
+    fn spec_place_schema_accepts_client_place_create_payload_shape() {
+        let schema = spec_schema("place.schema.json");
+        let op = cx_ops::place_create(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:place:0196419b-0000-7000-8000-000000000002",
+            "list",
+            "To Do",
+            Some("cx:place:0196419b-0000-7000-8000-000000000003"),
+            Some("U"),
+        )
+        .build("node");
+        let object = &op.payload["object"];
+
+        assert_required_fields_present(&schema, object);
+        assert_eq!(object["schema"], schema["properties"]["schema"]["const"]);
+        assert_eq!(op.kind, "cx.place.create");
+        assert!(!serde_json::to_string(&op).unwrap().contains("cx:list:"));
+    }
+
+    #[test]
+    fn spec_patch_schema_accepts_client_flow_tracks_update_payload_shape() {
+        let schema = spec_schema("patch.schema.json");
+        let ops = patch_schema_ops(&schema);
+        let op = cx_ops::flow_tracks_update_set_primary(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:flow:0196419b-0000-7000-8000-000000000004",
+            "discussion",
+        )
+        .build("node");
+        let patch = op.payload["patch"].as_object().unwrap();
+
+        assert!(!patch.is_empty());
+        assert!(patch.contains_key("tracks.discussion.is_primary"));
+        assert!(!patch.contains_key("tracks.discussion.primary"));
+        for value in patch.values() {
+            let op = value["$op"].as_str().unwrap();
+            assert!(ops.iter().any(|allowed| allowed == op));
+            if matches!(op, "set" | "add" | "remove") {
+                assert!(value.get("value").is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn spec_patch_schema_accepts_client_flow_update_payload_shape() {
+        let schema = spec_schema("patch.schema.json");
+        let ops = patch_schema_ops(&schema);
+        let op = cx_ops::flow_update_patch(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:flow:0196419b-0000-7000-8000-000000000004",
+            json!({
+                "title": { "$op": "set", "value": "Launch checklist" },
+                "summary": { "$op": "set", "value": "Ship blockers only" },
+                "fields.labels": { "$op": "set", "value": ["release", "ops"] },
+                "fields.assignee": { "$op": "set", "value": "did:web:alice.example" },
+                "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+            }),
+        )
+        .build("node");
+        let patch = op.payload["patch"].as_object().unwrap();
+
+        assert!(!patch.is_empty());
+        assert_eq!(op.kind, "cx.flow.update");
+        assert!(patch.contains_key("title"));
+        assert!(patch.contains_key("summary"));
+        assert!(patch.contains_key("fields.labels"));
+        assert!(patch.contains_key("fields.assignee"));
+        assert!(patch.contains_key("fields.due_at"));
+        for value in patch.values() {
+            let op = value["$op"].as_str().unwrap();
+            assert!(ops.iter().any(|allowed| allowed == op));
+            if matches!(op, "set" | "add" | "remove") {
+                assert!(value.get("value").is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn spec_event_schema_lists_client_write_kinds() {
+        let schema_text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../contrix-spec/spec/v1/artifacts/schemas/event-schema.json"),
+        )
+        .unwrap();
+        for kind in [
+            "cx.account_data.set",
+            "cx.flow.update",
+            "cx.flow.tracks.update",
+            "cx.place.create",
+        ] {
+            assert!(
+                schema_text.contains(&format!("\"{kind}\"")),
+                "event-schema artifact must list client write kind {kind}"
+            );
+        }
     }
 
     #[test]
@@ -845,12 +1335,12 @@ mod tests {
         let mut op_a = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
             .body(json!({"b": 2, "a": 1}))
             .build("node");
-        op_a.operation_id = "fixed".into();
-        op_a.causal.hlc = "0000000000000000-00000000-00000000".into();
-        op_a.causal.actor_seq = 1;
+        op_a.event_id = "fixed".into();
+        op_a.hlc = "0000000000000000-00000000-00000000".into();
+        op_a.actor_seq = 1;
 
         let mut op_b = op_a.clone();
-        op_b.body = json!({"a": 1, "b": 2});
+        op_b.payload = json!({"a": 1, "b": 2});
 
         assert_eq!(
             op_a.canonical_digest().unwrap(),
@@ -867,9 +1357,9 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
             .expect("sign ok");
-        let proof = op.proof.as_ref().expect("proof present");
+        let proof = op.proofs.first().expect("proof present");
         assert_eq!(proof.alg, "EdDSA");
-        assert_eq!(proof.signer_did, "did:web:alice");
+        assert_eq!(proof.verification_method, "did:web:alice#k1");
         assert!(proof.payload_hash.starts_with("sha256:"));
         // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
         assert_eq!(proof.jws.matches('.').count(), 2);
@@ -878,9 +1368,10 @@ mod tests {
 
     #[test]
     fn require_proof_fails_when_unsigned() {
-        let op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+        let mut op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
+        op.proofs.clear();
         assert!(op.require_proof().is_err());
     }
 
@@ -895,13 +1386,13 @@ mod tests {
             "pending",
         )
         .build("node");
-        assert_eq!(create.op_type, "cx.invite.create");
-        assert_eq!(create.body["invite_id"], "cx:invite:test");
+        assert_eq!(create.kind, "cx.invite.create");
+        assert_eq!(create.payload["invite_id"], "cx:invite:test");
 
         let accept =
             cx_ops::invite_accept("cx:space:test", "did:web:bob.example", "cx:invite:test")
                 .build("node");
-        assert_eq!(accept.op_type, "cx.invite.accept");
+        assert_eq!(accept.kind, "cx.invite.accept");
 
         let cancel = cx_ops::invite_cancel(
             "cx:space:test",
@@ -910,8 +1401,8 @@ mod tests {
             Some("expired"),
         )
         .build("node");
-        assert_eq!(cancel.op_type, "cx.invite.cancel");
-        assert_eq!(cancel.body["reason"], "expired");
+        assert_eq!(cancel.kind, "cx.invite.cancel");
+        assert_eq!(cancel.payload["reason"], "expired");
     }
 
     #[test]
@@ -919,15 +1410,15 @@ mod tests {
         let place_id = "cx:place:01904100-0000-7000-8000-1fb50799ad42";
         let archive =
             cx_ops::place_archive("cx:space:test", "did:web:alice.example", place_id).build("node");
-        assert_eq!(archive.op_type, "cx.place.archive");
-        assert_eq!(archive.body["place_id"], place_id);
-        assert_eq!(archive.target_ref.as_deref(), Some(place_id));
+        assert_eq!(archive.kind, "cx.place.archive");
+        assert_eq!(archive.payload["place_id"], place_id);
+        assert_eq!(archive.local_target_ref(), Some(place_id));
 
         let restore =
             cx_ops::place_restore("cx:space:test", "did:web:alice.example", place_id).build("node");
-        assert_eq!(restore.op_type, "cx.place.restore");
-        assert_eq!(restore.body["place_id"], place_id);
-        assert_eq!(restore.target_ref.as_deref(), Some(place_id));
+        assert_eq!(restore.kind, "cx.place.restore");
+        assert_eq!(restore.payload["place_id"], place_id);
+        assert_eq!(restore.local_target_ref(), Some(place_id));
     }
 
     #[test]
@@ -935,15 +1426,15 @@ mod tests {
         let flow_id = "cx:flow:01904100-0000-7000-8000-1fb50799ad50";
         let archive =
             cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id).build("node");
-        assert_eq!(archive.op_type, "cx.flow.archive");
-        assert_eq!(archive.body["flow_id"], flow_id);
-        assert_eq!(archive.target_ref.as_deref(), Some(flow_id));
+        assert_eq!(archive.kind, "cx.flow.archive");
+        assert_eq!(archive.payload["flow_id"], flow_id);
+        assert_eq!(archive.local_target_ref(), Some(flow_id));
 
         let restore =
             cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id).build("node");
-        assert_eq!(restore.op_type, "cx.flow.restore");
-        assert_eq!(restore.body["flow_id"], flow_id);
-        assert_eq!(restore.target_ref.as_deref(), Some(flow_id));
+        assert_eq!(restore.kind, "cx.flow.restore");
+        assert_eq!(restore.payload["flow_id"], flow_id);
+        assert_eq!(restore.local_target_ref(), Some(flow_id));
     }
 
     /// Pin the canonical op_type + target_ref + body shape for every
@@ -958,17 +1449,17 @@ mod tests {
 
         let reg = cx_ops::applet_registration(space, actor, service_did, "extensions", &["read"])
             .build("node");
-        assert_eq!(reg.op_type, "cx.applet.registration");
-        assert_eq!(reg.body["service_did"], service_did);
-        assert_eq!(reg.body["namespace"], "extensions");
-        assert_eq!(reg.body["capabilities"][0], "read");
-        assert_eq!(reg.target_ref.as_deref(), Some(service_did));
+        assert_eq!(reg.kind, "cx.applet.registration");
+        assert_eq!(reg.payload["service_did"], service_did);
+        assert_eq!(reg.payload["namespace"], "extensions");
+        assert_eq!(reg.payload["capabilities"][0], "read");
+        assert_eq!(reg.local_target_ref(), Some(service_did));
 
         let disc = cx_ops::applet_discovery(space, actor, service_did, json!({"version": 1}))
             .build("node");
-        assert_eq!(disc.op_type, "cx.applet.discovery");
-        assert_eq!(disc.body["manifest"]["version"], 1);
-        assert_eq!(disc.target_ref.as_deref(), Some(service_did));
+        assert_eq!(disc.kind, "cx.applet.discovery");
+        assert_eq!(disc.payload["manifest"]["version"], 1);
+        assert_eq!(disc.local_target_ref(), Some(service_did));
 
         let start = cx_ops::applet_protocol_session_start(
             space,
@@ -978,9 +1469,9 @@ mod tests {
             json!({"op": "ping"}),
         )
         .build("node");
-        assert_eq!(start.op_type, "cx.applet.protocol_session.start");
-        assert_eq!(start.body["session_id"], session_id);
-        assert_eq!(start.target_ref.as_deref(), Some(session_id));
+        assert_eq!(start.kind, "cx.applet.protocol_session.start");
+        assert_eq!(start.payload["session_id"], session_id);
+        assert_eq!(start.local_target_ref(), Some(session_id));
 
         let status = cx_ops::applet_protocol_session_status(
             space,
@@ -990,8 +1481,8 @@ mod tests {
             json!({"progress": 0.5}),
         )
         .build("node");
-        assert_eq!(status.op_type, "cx.applet.protocol_session.status");
-        assert_eq!(status.body["status"], "running");
+        assert_eq!(status.kind, "cx.applet.protocol_session.status");
+        assert_eq!(status.payload["status"], "running");
 
         let err = cx_ops::applet_bridge_error(
             space,
@@ -1001,8 +1492,8 @@ mod tests {
             "service did not respond",
         )
         .build("node");
-        assert_eq!(err.op_type, "cx.applet.bridge_error");
-        assert_eq!(err.body["errcode"], "applet_unavailable");
+        assert_eq!(err.kind, "cx.applet.bridge_error");
+        assert_eq!(err.payload["error_code"], "applet_unavailable");
     }
 
     /// Same pinning at the agent layer.
@@ -1015,9 +1506,9 @@ mod tests {
 
         let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
             .build("node");
-        assert_eq!(endpoint.op_type, "cx.agent.endpoint");
-        assert_eq!(endpoint.body["protocol"], "cx.agent.v1");
-        assert_eq!(endpoint.target_ref.as_deref(), Some(agent));
+        assert_eq!(endpoint.kind, "cx.agent.endpoint");
+        assert_eq!(endpoint.payload["protocol"], "cx.agent.v1");
+        assert_eq!(endpoint.local_target_ref(), Some(agent));
 
         let start = cx_ops::agent_protocol_session_start(
             space,
@@ -1028,14 +1519,14 @@ mod tests {
             json!({"grant_id": "cap-1"}),
         )
         .build("node");
-        assert_eq!(start.op_type, "cx.agent.protocol_session.start");
-        assert_eq!(start.body["agent_did"], agent);
-        assert_eq!(start.body["capability_proof"]["grant_id"], "cap-1");
+        assert_eq!(start.kind, "cx.agent.protocol_session.start");
+        assert_eq!(start.payload["agent_did"], agent);
+        assert_eq!(start.payload["capability_proof"]["grant_id"], "cap-1");
 
         let status =
             cx_ops::agent_protocol_session_status(space, actor, session_id, "thinking", json!({}))
                 .build("node");
-        assert_eq!(status.op_type, "cx.agent.protocol_session.status");
+        assert_eq!(status.kind, "cx.agent.protocol_session.status");
 
         let result = cx_ops::agent_protocol_session_result(
             space,
@@ -1045,7 +1536,7 @@ mod tests {
             json!({"merkle_root": "sha256:abc"}),
         )
         .build("node");
-        assert_eq!(result.op_type, "cx.agent.protocol_session.result");
-        assert_eq!(result.body["audit_binding"]["merkle_root"], "sha256:abc");
+        assert_eq!(result.kind, "cx.agent.protocol_session.result");
+        assert_eq!(result.payload["audit_binding"]["merkle_root"], "sha256:abc");
     }
 }

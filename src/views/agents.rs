@@ -28,8 +28,7 @@ use crate::views::helpers::with_authed_api;
 /// unit-testable without spawning a use_future.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuditVerifyStatus {
-    /// Signature recomputes against the carried key (Ed25519) or the
-    /// reference HMAC key (legacy bindings).
+    /// Signature recomputes against the carried Ed25519 key.
     Valid,
     /// `canonical_subject` field disagrees with the per-field
     /// (session_id, agent_did, echo, actor) tuple.
@@ -320,7 +319,7 @@ pub fn AgentsPanel(
                                         )
                                         .build("yougen");
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_operation_event(&op).await
+                                            api.submit_event_envelope(&op).await
                                         })
                                         .await
                                         {
@@ -500,9 +499,9 @@ mod tests {
             &["flow.read"],
         )
         .build("yougen");
-        assert_eq!(op.body["agent_did"], "did:web:agent.example");
-        assert_eq!(op.body["protocol"], "cx.agent.v1");
-        assert_eq!(op.body["capabilities"][0], "flow.read");
+        assert_eq!(op.payload["agent_did"], "did:web:agent.example");
+        assert_eq!(op.payload["protocol"], "cx.agent.v1");
+        assert_eq!(op.payload["capabilities"][0], "flow.read");
     }
 
     #[test]
@@ -515,7 +514,7 @@ mod tests {
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
         .build("yougen");
-        assert_eq!(op.body["audit_binding"]["merkle_root"], "sha256:abc");
+        assert_eq!(op.payload["audit_binding"]["merkle_root"], "sha256:abc");
     }
 
     // Pin the verify helper's outcomes for each canonical wire
@@ -621,9 +620,9 @@ mod tests {
     /// The verify helper treats `hmac_sha256_v1` (and any unknown
     /// `binding_kind`) as `Unsupported` - no special-case path.
     #[test]
-    fn verify_helper_returns_unsupported_for_legacy_hmac_binding() {
+    fn verify_helper_returns_unsupported_for_hmac_binding() {
         let payload = json!({
-            "session_id": "cx:session:legacy-hmac",
+            "session_id": "cx:session:hmac",
             "status": "completed",
             "result": {"echo": {"op": "ping"}, "agent_did": "did:web:agent.example"},
             "audit_binding": {

@@ -189,7 +189,7 @@ fn crypto_signature_fixture_canonical_binding_matches() {
 #[test]
 fn event_envelope_negative_fixture_loads() {
     // Smoke test: ensure the negative-fixture file is well-formed so future
-    // work can replay the rejection cases against the OperationEnvelope
+    // work can replay the rejection cases against the EventEnvelope
     // signing path. Full negative-case validation lands with the dedicated
     // submit-path hardening task.
     let fixture = load_fixture("event-envelope-negative-fixture.json");

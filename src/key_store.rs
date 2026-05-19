@@ -165,7 +165,7 @@ impl KeyStore for InMemoryKeyStore {
         _device_did: &str,
     ) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
         // The default in-memory backend stores at most one identity per
-        // device — `device_did` is logged for forward compatibility but
+        // device — `device_did` is logged for future use but
         // not used as a lookup key.
         let guard = self
             .inner

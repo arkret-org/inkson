@@ -1,16 +1,15 @@
 //! Background long-poll sync loop.
 //!
-//! Replaces the historical one-shot `auto_refresh_pending` block in
-//! `app.rs` with a streaming-style engine that keeps the local store +
-//! UI signals continuously aligned with `/api/v1/sync` instead of
-//! refreshing only on app boot, the Refresh button, or a server switch.
+//! Background engine that keeps the local store + UI signals continuously
+//! aligned with `/api/v1/sync` instead of refreshing only on app boot,
+//! the Refresh button, or a server switch.
 //!
 //! Design contract (matches the "正经做法" laid out in the design
 //! discussion):
 //!
 //! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine
 //!   reads it on every iteration and writes back the new
-//!   `next_batch` after each successful response. Reload of the tab
+//!   `cursor` after each successful response. Reload of the tab
 //!   resumes from the persisted cursor without losing position.
 //! * **First iteration is full sync** when no cursor is stored (or it's
 //!   the `"-"` sentinel). Subsequent iterations are long-poll
@@ -43,9 +42,7 @@ use contrix_sdk::EncryptedPayload;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::{
-    ContrixApi, is_auth_expired_error, is_invalid_cursor_error, sleep_for,
-};
+use crate::api::{ContrixApi, is_auth_expired_error, is_invalid_cursor_error, sleep_for};
 use crate::local_state::{LocalAnchorView, LocalStateStore};
 use crate::models::{ClientSyncResponse, SpacePreview};
 
@@ -55,9 +52,8 @@ use crate::models::{ClientSyncResponse, SpacePreview};
 const LONG_POLL_TIMEOUT_MS: u64 = 30_000;
 
 /// Sleep ceiling between failed iterations. 60s matches what other
-/// Matrix-style sync clients use — long enough that a wedged server
-/// doesn't get DoSed by retries, short enough that recovery is
-/// noticeable to the user.
+/// Long enough that a wedged server doesn't get DoSed by retries,
+/// short enough that recovery is noticeable to the user.
 const MAX_BACKOFF_SECS: u64 = 60;
 
 /// Floor for the first backoff sleep. Doubles up to `MAX_BACKOFF_SECS`.
@@ -81,14 +77,10 @@ pub struct SyncEngineContext {
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
     pub selected_space: Signal<String>,
-    pub agent_workspace_pending:
-        Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_in_flight:
-        Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_recent:
-        Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_agents:
-        Signal<Vec<crate::views::agent_workspace::OwnedAgentSummary>>,
+    pub agent_workspace_pending: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    pub agent_workspace_in_flight: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    pub agent_workspace_recent: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
+    pub agent_workspace_agents: Signal<Vec<crate::views::agent_workspace::OwnedAgentSummary>>,
     pub agent_workspace_details:
         Signal<std::collections::BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>>,
     pub owned_agents_context: crate::views::agent_workspace::OwnedAgentsContext,
@@ -197,7 +189,11 @@ async fn run_iteration(
         .clone()
         .filter(|c| !c.trim().is_empty() && c != "-");
     let is_full_sync = cursor.is_none();
-    let timeout_ms = if is_full_sync { 0 } else { LONG_POLL_TIMEOUT_MS };
+    let timeout_ms = if is_full_sync {
+        0
+    } else {
+        LONG_POLL_TIMEOUT_MS
+    };
 
     match api.sync_with_timeout(cursor.as_deref(), timeout_ms).await {
         Ok(response) => {
@@ -235,11 +231,7 @@ async fn run_iteration(
 /// the loop. `connect()` in `app.rs` shares the same code path — once
 /// the engine fully owns sync, `connect()` is just a "force one
 /// iteration now" entry that calls this.
-pub fn apply_response(
-    response: &ClientSyncResponse,
-    is_full_sync: bool,
-    ctx: &SyncEngineContext,
-) {
+pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &SyncEngineContext) {
     // Local mutable handles for the signals we touch — Signal<T> is
     // Copy so this is cheap.
     let mut state_store = ctx.state_store;
@@ -262,7 +254,7 @@ pub fn apply_response(
 
     {
         let mut store = state_store.write();
-        store.save_sync_cursor(response.next_batch.clone());
+        store.save_sync_cursor(response.cursor.clone());
 
         if is_full_sync {
             // Server-authoritative: drop projections the server didn't
@@ -306,9 +298,8 @@ pub fn apply_response(
     // still need a reconciled snapshot for status text + selected_space
     // bookkeeping.
     let _ = spaces; // suppress unused capture; consumed by the derive effect
-    let reconciled = crate::app::space_previews_from_sync_spaces(
-        &state_store.read().load().space_projections,
-    );
+    let reconciled =
+        crate::app::space_previews_from_sync_spaces(&state_store.read().load().space_projections);
     if reconciled.is_empty() {
         status.set(crate::views::ConnectionState::Empty.label().to_owned());
     } else {
@@ -323,15 +314,13 @@ pub fn apply_response(
     {
         let current = selected_space.read().clone();
         let trimmed = current.trim();
-        let needs_reset = trimmed.is_empty()
-            || !reconciled.iter().any(|s| s.space_id == trimmed);
+        let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|s| s.space_id == trimmed);
         if needs_reset {
             selected_space.set(first_space.unwrap_or_default());
         }
     }
 
-    let synced_timeline =
-        crate::app::timeline_events_from_sync_spaces(&response.spaces);
+    let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.spaces);
     timeline.set(synced_timeline);
 
     let workspace_projection = crate::app::agent_workspace_projection_from_sync_spaces(
@@ -345,7 +334,7 @@ pub fn apply_response(
     agent_workspace_details.set(workspace_projection.details);
 
     device_queue.set(response.to_device.len());
-    sync_cursor.set(response.next_batch.clone());
+    sync_cursor.set(response.cursor.clone());
 }
 
 fn apply_account_data(
@@ -381,7 +370,7 @@ fn apply_account_data(
             continue;
         }
         // cx.account.blocklist — personal block list.
-        if data_type == "cx.account.blocklist" || data_type == "client.blocklist" {
+        if data_type == "cx.account.blocklist" {
             let Some(content) = entry.get("content") else {
                 continue;
             };
@@ -395,10 +384,23 @@ fn apply_account_data(
             }
             continue;
         }
+        // cx.contacts.actor.<did> — actor-private contact remarks.
+        if let Some(actor_did) = crate::account_data::actor_did_from_contact_remark_key(data_type) {
+            let Some(content) = entry.get("content") else {
+                continue;
+            };
+            match serde_json::from_value::<crate::account_data::ContactRemark>(content.clone()) {
+                Ok(remark) => store.set_contact_remark(actor_did.to_owned(), remark),
+                Err(error) => {
+                    tracing::warn!(
+                        "sync engine: ignoring malformed Contact remark for {actor_did}: {error}",
+                    );
+                }
+            }
+            continue;
+        }
         // cx.contacts.space.<space_id> — actor-private Space remarks.
-        let Some(space_id) =
-            crate::account_data::space_id_from_space_remark_key(data_type)
-        else {
+        let Some(space_id) = crate::account_data::space_id_from_space_remark_key(data_type) else {
             continue;
         };
         let Some(content) = entry.get("content") else {
@@ -426,14 +428,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn empty_response(next_batch: &str) -> ClientSyncResponse {
+    fn empty_response(cursor: &str) -> ClientSyncResponse {
         ClientSyncResponse {
-            next_batch: next_batch.to_owned(),
+            cursor: cursor.to_owned(),
             spaces: Default::default(),
             left_spaces: Vec::new(),
             to_device: Vec::new(),
             account_data: Vec::new(),
             device_lists: json!({}),
+            notifications: json!({}),
+            presence: json!({}),
         }
     }
 

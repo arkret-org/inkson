@@ -1198,15 +1198,8 @@ pub fn draft_mentions_owned_agent(
 /// that the message will be privately routed.
 #[component]
 pub fn PrivateComposeBanner(agent_display_name: String) -> Element {
-    // A2 — render the full "{agent}" substituted banner alongside the
-    // shorter heading. Falls back to the legacy concise text if the
-    // template key has not been translated yet (back-compat for tests).
     let template = tr("agent_workspace.compose.private_to_agent_banner");
-    let body = if template.contains("{agent}") {
-        template.replace("{agent}", &agent_display_name)
-    } else {
-        format!("🤖 → {agent_display_name}")
-    };
+    let body = template.replace("{agent}", &agent_display_name);
     rsx! {
         div {
             class: "private-routing-banner",

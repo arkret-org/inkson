@@ -6776,6 +6776,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // manually retries.
                 let description = match api.describe().await {
                     Ok(description) => {
+                        let missing = description.missing_v1_principal_server_requirements();
+                        if !missing.is_empty() {
+                            let message =
+                                format!("server describe rejected: missing {}", missing.join(", "));
+                            status.set(format!("{}: {message}", ConnectionState::Error.label()));
+                            network_state.set("offline".to_owned());
+                            last_error.set(Some(message.clone()));
+                            server_probe_status.set(message);
+                            server_description.set(None);
+                            return;
+                        }
                         status.set(format!(
                             "{}: {} / {}",
                             ConnectionState::Online.label(),
@@ -6923,7 +6934,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     Ok(sync) => {
                         {
                             let mut store = state_store.write();
-                            store.save_sync_cursor(sync.next_batch.clone());
+                            store.save_sync_cursor(sync.cursor.clone());
                             // Server-authoritative reconcile: drop every
                             // cached projection whose space_id isn't in
                             // the response. Without this, a Space the
@@ -6943,8 +6954,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // Explicit `left_spaces` deltas — soland emits
                             // these on incremental syncs too; for full sync
                             // they're redundant with `retain_space_projections`
-                            // above but cheap to apply and forward-compatible
-                            // when soland evolves to send them on full sync.
+                            // above but cheap to apply when soland evolves
+                            // to send them on full sync.
                             for left_id in &sync.left_spaces {
                                 store.forget_space(left_id);
                             }
@@ -7015,9 +7026,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     }
                                     continue;
                                 }
-                                if data_type == "cx.account.blocklist"
-                                    || data_type == "client.blocklist"
-                                {
+                                if data_type == "cx.account.blocklist" {
                                     let Some(content) = entry.get("content") else {
                                         continue;
                                     };
@@ -7030,6 +7039,28 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                         Err(error) => {
                                             tracing::warn!(
                                                 "ignoring malformed cx.account.blocklist account_data: {error}"
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if let Some(actor_did) =
+                                    crate::account_data::actor_did_from_contact_remark_key(
+                                        data_type,
+                                    )
+                                {
+                                    let Some(content) = entry.get("content") else {
+                                        continue;
+                                    };
+                                    match serde_json::from_value::<crate::account_data::ContactRemark>(
+                                        content.clone(),
+                                    ) {
+                                        Ok(remark) => {
+                                            store.set_contact_remark(actor_did.to_owned(), remark);
+                                        }
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                "ignoring malformed Contact remark for {actor_did}: {error}"
                                             );
                                         }
                                     }
@@ -7088,8 +7119,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         let first_space = reconciled.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset = trimmed.is_empty()
-                            || !reconciled.iter().any(|s| s.space_id == trimmed);
+                        let needs_reset =
+                            trimmed.is_empty() || !reconciled.iter().any(|s| s.space_id == trimmed);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());
                         }
@@ -7104,7 +7135,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         owned_agents_context.set(workspace_projection.agents);
                         agent_workspace_details.set(workspace_projection.details);
                         device_queue.set(sync.to_device.len());
-                        sync_cursor.set(sync.next_batch);
+                        sync_cursor.set(sync.cursor);
                     }
                     Err(error) if is_auth_expired_error(&error) => {
                         token.set(String::new());
@@ -7150,8 +7181,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         let first_space = fallback.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset = trimmed.is_empty()
-                            || !fallback.iter().any(|s| s.space_id == trimmed);
+                        let needs_reset =
+                            trimmed.is_empty() || !fallback.iter().any(|s| s.space_id == trimmed);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());
                         }

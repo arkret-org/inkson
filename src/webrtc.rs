@@ -133,9 +133,9 @@ mod tests {
             json!({"sdp": "v=0\n..."}),
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.call.signal");
-        assert_eq!(op.body["kind"], "sdp_offer");
-        assert!(op.body["payload"]["sdp"].is_string());
+        assert_eq!(op.kind, "cx.call.signal");
+        assert_eq!(op.payload["kind"], "sdp_offer");
+        assert!(op.payload["payload"]["sdp"].is_string());
     }
 
     #[test]
@@ -157,8 +157,8 @@ mod tests {
             None,
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.call.state");
-        assert_eq!(op.body["state"], "connected");
+        assert_eq!(op.kind, "cx.call.state");
+        assert_eq!(op.payload["state"], "connected");
     }
 
     #[test]
@@ -171,7 +171,7 @@ mod tests {
             vec!["did:web:alice".into(), "did:web:bob".into()],
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.call.recording.start");
-        assert_eq!(op.body["consent_actors"][1], "did:web:bob");
+        assert_eq!(op.kind, "cx.call.recording.start");
+        assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
     }
 }

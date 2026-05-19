@@ -136,6 +136,11 @@ export async function mockContrixApi(page: Page) {
           auth_server_url: "https://auth.local.host",
         },
         limits: { storage: "memory" },
+        rate_limit_policy: { writes_per_minute: 120 },
+        plaintext_visibility: {
+          default: "e2ee",
+          allowed_services: ["did:web:server.local"],
+        },
       });
     }
 
@@ -186,7 +191,7 @@ export async function mockContrixApi(page: Page) {
         supported_event_types: [
           "cx.flow.create",
           "cx.flow.move",
-          "cx.flow.track.enable",
+          "cx.flow.tracks.update",
           "cx.message.create",
         ],
         frontier: ["cx:event:e2e"],
@@ -198,7 +203,7 @@ export async function mockContrixApi(page: Page) {
       if (!route.request().headers()["x-contrix-request-id"]) {
         return json(route, {
           ok: false,
-          error: { errcode: "missing_request_id", error: "missing x-contrix-request-id" },
+          error: { code: "missing_request_id", message: "missing x-contrix-request-id" },
         }, 428);
       }
       let syncToken = "sx:e2e:event";
@@ -530,69 +535,78 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/sync") {
       const demoTimelineEvents = timelineEvents.filter((event) => event.space_id === DEMO_SPACE);
       return json(route, {
-        next_batch: "sx:e2e:2",
+        cursor: "cx:cursor:e2e-2",
         spaces: {
-          [DEMO_SPACE]: {
-            summary: {
-              title: "Contrix Demo Space",
-              summary: "Shared demo Space served by mocked server",
-              child_space_ids: [CHILD_SPACE],
+          join: {
+            [DEMO_SPACE]: {
+              summary: {
+                title: "Contrix Demo Space",
+                summary: "Shared demo Space served by mocked server",
+                child_space_ids: [CHILD_SPACE],
+              },
+              timeline: { events: demoTimelineEvents, limited: false },
+              state: { events: [] },
+              ephemeral: { events: [] },
+              unread: { notification_count: 0, highlight_count: 0 },
             },
-            timeline: { events: demoTimelineEvents, limited: false },
-            state: [],
-            ephemeral: [],
-            unread: { notification_count: 0, highlight_count: 0 },
-          },
-          [CHILD_SPACE]: {
-            summary: {
-              title: "Launch Child Space",
-              summary: "Nested board and discussion scope",
-              parent_space_id: DEMO_SPACE,
-              child_space_ids: [GRANDCHILD_SPACE],
+            [CHILD_SPACE]: {
+              summary: {
+                title: "Launch Child Space",
+                summary: "Nested board and discussion scope",
+                parent_space_id: DEMO_SPACE,
+                child_space_ids: [GRANDCHILD_SPACE],
+              },
+              timeline: { events: [], limited: false },
+              state: { events: [] },
+              ephemeral: { events: [] },
+              unread: { notification_count: 0, highlight_count: 0 },
             },
-            timeline: { events: [], limited: false },
-            state: [],
-            ephemeral: [],
-            unread: { notification_count: 0, highlight_count: 0 },
-          },
-          [GRANDCHILD_SPACE]: {
-            summary: {
-              title: "Launch Deep Space",
-              summary: "Grandchild scope fixture",
-              parent_space_id: CHILD_SPACE,
+            [GRANDCHILD_SPACE]: {
+              summary: {
+                title: "Launch Deep Space",
+                summary: "Grandchild scope fixture",
+                parent_space_id: CHILD_SPACE,
+              },
+              timeline: { events: [], limited: false },
+              state: { events: [] },
+              ephemeral: { events: [] },
+              unread: { notification_count: 0, highlight_count: 0 },
             },
-            timeline: { events: [], limited: false },
-            state: [],
-            ephemeral: [],
-            unread: { notification_count: 0, highlight_count: 0 },
           },
+          invite: {},
+          knock: {},
+          leave: {},
         },
-        to_device: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }],
-        account_data: [
-          {
-            kind: "cx.notification",
-            notification_id: "notif-msg-1",
-            title: "New message",
-            body: "Alice sent a message in Demo Space",
-            space_id: DEMO_SPACE,
-            notification_kind: "message",
-            type: "message",
-            timestamp: "2026-04-28T12:01:00Z",
-            read: false,
-          },
-          {
-            kind: "cx.notification",
-            notification_id: "notif-invite-1",
-            title: "New invite",
-            body: "You were invited to review Demo Space",
-            space_id: DEMO_SPACE,
-            notification_kind: "invite",
-            type: "invite",
-            timestamp: "2026-04-28T12:02:00Z",
-            read: false,
-          },
-        ],
+        to_device: { events: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
+        account_data: {
+          events: [
+            {
+              kind: "cx.notification",
+              notification_id: "notif-msg-1",
+              title: "New message",
+              body: "Alice sent a message in Demo Space",
+              space_id: DEMO_SPACE,
+              notification_kind: "message",
+              type: "message",
+              timestamp: "2026-04-28T12:01:00Z",
+              read: false,
+            },
+            {
+              kind: "cx.notification",
+              notification_id: "notif-invite-1",
+              title: "New invite",
+              body: "You were invited to review Demo Space",
+              space_id: DEMO_SPACE,
+              notification_kind: "invite",
+              type: "invite",
+              timestamp: "2026-04-28T12:02:00Z",
+              read: false,
+            },
+          ],
+        },
         device_lists: { changed: [], left: [] },
+        presence: { events: [] },
+        notifications: { events: [] },
       });
     }
 
@@ -777,7 +791,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/device_messages" && route.request().method() === "GET") {
-      return json(route, { events: [], next_batch: "sx:devmsg:1", limited: false });
+      return json(route, { events: [], next_cursor: "cx:cursor:devmsg-1", limited: false });
     }
 
     if (url.pathname === "/api/v1/device_messages" && route.request().method() === "POST") {
@@ -789,7 +803,7 @@ export async function mockContrixApi(page: Page) {
       if (body.receipt_type !== "cx.receipt.read") {
         return json(route, {
           ok: false,
-          error: { errcode: "invalid_receipt_type", error: "expected cx.receipt.read" },
+          error: { code: "invalid_receipt_type", message: "expected cx.receipt.read" },
         }, 400);
       }
       return json(route, { ok: true });
@@ -873,7 +887,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, { backups: [] });
     }
 
-    return json(route, { ok: false, error: { errcode: "not_found", error: `No e2e mock for ${url.pathname}` } }, 404);
+    return json(route, { ok: false, error: { code: "not_found", message: `No e2e mock for ${url.pathname}` } }, 404);
   });
 }
 

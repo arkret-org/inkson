@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn local_mls_devices_encrypt_decrypt_and_preserve_pending_ciphertext() {
         // SDK 0.7 tightened DeviceId validation — only `cx:device:<uuid7>`
-        // forms are accepted; legacy `dev_alice_1` style ids no longer pass.
+        // forms are accepted; `dev_alice_1` style ids no longer pass.
         let mut alice = LocalMlsDevice::new(
             "did:web:alice.example",
             "cx:device:01904100-0000-7000-8000-000000000001",

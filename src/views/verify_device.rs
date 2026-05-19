@@ -36,11 +36,9 @@ enum VerifyMethod {
 /// return the first non-empty `body.key` (or `content.key`) string
 /// carried by a `cx.key.verification.key` typed envelope.
 ///
-/// Soland's wire shape is either `{ "events": [...] }` (flat) or
-/// `{ "messages": { actor: { device_id: { type, content|body, ... } } } }`
-/// (per-recipient batching). Both are accepted; the helper returns
-/// `None` if no matching envelope is present so the poll loop can keep
-/// retrying without surfacing noise.
+/// The receive endpoint returns `{ "events": [...] }`; the helper
+/// returns `None` if no matching envelope is present so the poll loop
+/// can keep retrying without surfacing noise.
 fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
     fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
         if entry.get("type").and_then(|t| t.as_str()) != Some("cx.key.verification.key") {
@@ -67,24 +65,6 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
             }
         }
     }
-    if let Some(messages) = value.get("messages").and_then(|v| v.as_object()) {
-        for actor_map in messages.values() {
-            let Some(actor_obj) = actor_map.as_object() else {
-                continue;
-            };
-            for device_value in actor_obj.values() {
-                if let Some(list) = device_value.as_array() {
-                    for entry in list {
-                        if let Some(k) = key_from_entry(entry) {
-                            return Some(k);
-                        }
-                    }
-                } else if let Some(k) = key_from_entry(device_value) {
-                    return Some(k);
-                }
-            }
-        }
-    }
     None
 }
 
@@ -107,26 +87,6 @@ mod verification_key_poll_tests {
         assert_eq!(
             extract_peer_verification_key(&resp).as_deref(),
             Some("bob-pub-b64==")
-        );
-    }
-
-    #[test]
-    fn picks_key_out_of_batched_messages_map() {
-        let resp = json!({
-            "messages": {
-                "did:web:alice.example": {
-                    "cx:device:01": [
-                        {
-                            "type": "cx.key.verification.key",
-                            "content": {"key": "alice-pub-b64==", "from_device": "cx:device:01"},
-                        }
-                    ]
-                }
-            }
-        });
-        assert_eq!(
-            extract_peer_verification_key(&resp).as_deref(),
-            Some("alice-pub-b64==")
         );
     }
 
@@ -1106,7 +1066,7 @@ pub fn VerifyDevicePanel(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.submit_operation_event(&envelope).await
+                                                api.submit_event_envelope(&envelope).await
                                             },
                                         )
                                         .await

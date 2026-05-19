@@ -54,8 +54,8 @@ pub struct UpdateProfileResponse {
 /// soland's index search payload: each result row carries a `kind`
 /// (`message` | `space`), an `object_id`, and surface-specific extras
 /// (sender / thread_id / content for messages, title / summary for
-/// spaces). The body is intentionally permissive — older clients
-/// SHOULD tolerate unknown fields.
+/// spaces). Unknown fields are ignored so forward additions do not
+/// break the client.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IndexSearchResponse {
     pub query: String,
@@ -171,6 +171,10 @@ pub struct ServerDescription {
     pub auth_metadata: Value,
     #[serde(default)]
     pub limits: Value,
+    #[serde(default)]
+    pub rate_limit_policy: Value,
+    #[serde(default)]
+    pub plaintext_visibility: Value,
 }
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "cx.profile.core_event_store.v1";
@@ -212,6 +216,28 @@ impl ServerDescription {
         }
         missing
     }
+
+    pub fn missing_v1_principal_server_requirements(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if !self.service_did.starts_with("did:") {
+            missing.push("service_did");
+        }
+        if self.service_type != "principal_server" {
+            missing.push("service_type=principal_server");
+        }
+        if self.protocol_version != "1.0" {
+            missing.push("protocol_version=1.0");
+        }
+        missing.extend(self.missing_event_envelope_write_requirements());
+        if self.plaintext_visibility.is_null() {
+            missing.push("plaintext_visibility");
+        }
+        missing
+    }
+
+    pub fn is_v1_principal_server_ready(&self) -> bool {
+        self.missing_v1_principal_server_requirements().is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -247,27 +273,144 @@ pub struct SyncDescribeResBody {
     pub frontier: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ClientSyncResponse {
-    pub next_batch: String,
-    #[serde(default)]
+    pub cursor: String,
     pub spaces: BTreeMap<String, Value>,
     /// Spaces the viewer no longer has access to since the last sync —
     /// left rooms, kicks, bans, server-side deletions. The client uses
     /// this to remove the space from `space_projections` and every
     /// per-space cache (drafts, anchor views, read markers, remarks…)
-    /// so the sidebar reconciles with the server view on incremental
-    /// syncs the same way a `since=None` full sync would. Optional with
-    /// a serde default so older servers stay forward-compatible — they
-    /// just won't be able to surface "you left X" without a full sync.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// so the sidebar reconciles with the server view on incremental syncs
+    /// the same way a `since=None` full sync would.
     pub left_spaces: Vec<String>,
-    #[serde(default)]
     pub to_device: Vec<Value>,
-    #[serde(default)]
     pub account_data: Vec<Value>,
-    #[serde(default)]
     pub device_lists: Value,
+    pub notifications: Value,
+    pub presence: Value,
+}
+
+impl<'de> Deserialize<'de> for ClientSyncResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let cursor = value
+            .get("cursor")
+            .and_then(Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("sync response missing required cursor"))?
+            .to_owned();
+
+        let mut spaces = BTreeMap::new();
+        let mut left_spaces = Vec::new();
+        if let Some(spaces_value) = value.get("spaces") {
+            flatten_sync_spaces(spaces_value, &mut spaces, &mut left_spaces)
+                .map_err(serde::de::Error::custom)?;
+        }
+        left_spaces.sort();
+        left_spaces.dedup();
+
+        Ok(Self {
+            cursor,
+            spaces,
+            left_spaces,
+            to_device: sync_event_array(value.get("to_device"), "to_device")
+                .map_err(serde::de::Error::custom)?,
+            account_data: sync_event_array(value.get("account_data"), "account_data")
+                .map_err(serde::de::Error::custom)?,
+            device_lists: value
+                .get("device_lists")
+                .cloned()
+                .unwrap_or_else(empty_json_object),
+            notifications: value
+                .get("notifications")
+                .cloned()
+                .unwrap_or_else(empty_json_object),
+            presence: value
+                .get("presence")
+                .cloned()
+                .unwrap_or_else(empty_json_object),
+        })
+    }
+}
+
+fn empty_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
+fn flatten_sync_spaces(
+    value: &Value,
+    spaces: &mut BTreeMap<String, Value>,
+    left_spaces: &mut Vec<String>,
+) -> Result<(), String> {
+    let map = value
+        .as_object()
+        .ok_or_else(|| "sync spaces must be an object".to_owned())?;
+    for bucket in map.keys() {
+        if !matches!(bucket.as_str(), "join" | "invite" | "knock" | "leave") {
+            return Err(format!("unexpected sync spaces bucket `{bucket}`"));
+        }
+    }
+
+    for bucket in ["join", "invite", "knock"] {
+        collect_space_bucket(map.get(bucket), spaces, bucket)?;
+    }
+    collect_leave_bucket(map.get("leave"), left_spaces)?;
+    Ok(())
+}
+
+fn collect_space_bucket(
+    value: Option<&Value>,
+    spaces: &mut BTreeMap<String, Value>,
+    bucket: &str,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let map = value
+        .as_object()
+        .ok_or_else(|| format!("sync spaces.{bucket} must be an object"))?;
+    for (space_id, body) in map {
+        if !space_id.starts_with("cx:space:") {
+            return Err(format!(
+                "sync spaces.{bucket} key `{space_id}` is not a Space id"
+            ));
+        }
+        spaces.insert(space_id.clone(), body.clone());
+    }
+    Ok(())
+}
+
+fn collect_leave_bucket(value: Option<&Value>, ids: &mut Vec<String>) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let map = value
+        .as_object()
+        .ok_or_else(|| "sync spaces.leave must be an object".to_owned())?;
+    for id in map.keys() {
+        if !id.starts_with("cx:space:") {
+            return Err(format!("sync spaces.leave key `{id}` is not a Space id"));
+        }
+        ids.push(id.clone());
+    }
+    Ok(())
+}
+
+fn sync_event_array(value: Option<&Value>, field: &str) -> Result<Vec<Value>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("sync {field} must be an event container object"))?;
+    match object.get("events") {
+        Some(Value::Array(items)) => Ok(items.clone()),
+        Some(_) => Err(format!("sync {field}.events must be an array")),
+        None => Err(format!("sync {field} missing events array")),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -393,9 +536,10 @@ pub struct DeviceMessagesSendResBody {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceMessagesReceiveResBody {
-    #[serde(default)]
     pub events: Vec<Value>,
-    pub next_batch: Option<String>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
     pub limited: bool,
 }
 

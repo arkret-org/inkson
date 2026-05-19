@@ -278,7 +278,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.flow.move",
         "cx.flow.reorder",
         "cx.flow.restore",
-        // Per contrix-spec dc01ad7 the four legacy
+        // Per contrix-spec dc01ad7 the four
         // `cx.flow.track.{enable,disable,update,set_primary}`
         // events were unified into a single `cx.flow.tracks.update`
         // carrying a `cx.patch.v1` JSON Patch against `Flow.tracks`.
@@ -954,7 +954,7 @@ mod tests {
         let kinds = known_event_kinds();
         assert!(
             kinds.len() >= 104,
-            "yougen surfaces {} event kinds; floor 104 set after the dc01ad7 track-unification reduced the prior 107 floor by three (4 legacy track events → 1 unified `cx.flow.tracks.update`).",
+            "yougen surfaces {} event kinds; floor 104 set after the dc01ad7 track-unification reduced the prior 107 floor by three (4 track events -> 1 unified `cx.flow.tracks.update`).",
             kinds.len()
         );
     }

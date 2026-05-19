@@ -1,11 +1,21 @@
+use std::collections::BTreeSet;
+
 use reqwest::StatusCode;
 use serde_json::json;
 use yougen::{
+    account_data::{
+        AccountDataKey, ContactRemark, SpaceRemark, contact_remark_account_data_key,
+        space_remark_account_data_key,
+    },
     api::{
         ContrixApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
-        parse_resolve_space, parse_server_description, parse_sync, parse_sync_describe,
+        parse_events_subscribe_ndjson_text, parse_resolve_space, parse_server_description,
+        parse_sync, parse_sync_describe,
     },
     config::{ClientConfig, LocalConfigStore},
+    operation::OperationBuilder,
+    push::validate_blind_wakeup_payload,
+    telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line},
 };
 
 #[test]
@@ -68,15 +78,14 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: yougen::models::IdentityResolveResBody =
-        serde_json::from_value(json!({
-            "did_document": {"id": "did:web:alice.example"},
-            "key_log_head": null,
-            "seq": 0,
-            "receipts": [],
-            "method_evidence": {"mode": "development_local"}
-        }))
-        .unwrap();
+    let resolved_identity: yougen::models::IdentityResolveResBody = serde_json::from_value(json!({
+        "did_document": {"id": "did:web:alice.example"},
+        "key_log_head": null,
+        "seq": 0,
+        "receipts": [],
+        "method_evidence": {"mode": "development_local"}
+    }))
+    .unwrap();
     assert_eq!(
         resolved_identity.did_document["id"],
         "did:web:alice.example"
@@ -96,23 +105,28 @@ fn yougen_accepts_server_contract_payloads() {
     );
 
     let sync = parse_sync(json!({
-        "next_batch": "sx:1760000000000",
+        "cursor": "cx:cursor:contract-sync",
         "spaces": {
-            "cx:space:0196419b-0000-7000-8000-000000000000": {
-                "summary": {
-                    "title": "Contrix Demo Space",
-                    "summary": "Shared demo Space served by server",
-                    "tags": ["demo"],
-                    "category": "collaboration"
-                },
-                "timeline": {"events": [], "limited": false},
-                "state": [],
-                "ephemeral": [],
-                "unread": {"notification_count": 0, "highlight_count": 0}
-            }
+            "join": {
+                "cx:space:0196419b-0000-7000-8000-000000000000": {
+                    "summary": {
+                        "title": "Contrix Demo Space",
+                        "summary": "Shared demo Space served by server",
+                        "tags": ["demo"],
+                        "category": "collaboration"
+                    },
+                    "timeline": {"events": [], "limited": false},
+                    "state": {"events": []},
+                    "ephemeral": {"events": []},
+                    "unread": {"notification_count": 0, "highlight_count": 0}
+                }
+            },
+            "invite": {},
+            "knock": {},
+            "leave": {}
         },
-        "to_device": [],
-        "account_data": [],
+        "to_device": {"events": []},
+        "account_data": {"events": []},
         "device_lists": {"changed": [], "left": []}
     }))
     .unwrap();
@@ -226,7 +240,7 @@ fn yougen_accepts_server_contract_payloads() {
     let device_receive: yougen::models::DeviceMessagesReceiveResBody =
         serde_json::from_value(json!({
             "events": [],
-            "next_batch": "sx:1760000000000",
+            "next_cursor": "cx:cursor:device-messages",
             "limited": false
         }))
         .unwrap();
@@ -263,7 +277,7 @@ fn yougen_accepts_server_contract_payloads() {
 
     let error = decode_contrix_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"expected_head mismatch","retry_after_ms":null}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null}}"#,
     );
     assert_eq!(error.code(), "expected_head_mismatch");
     assert_eq!(error.message(), "expected_head mismatch");
@@ -284,10 +298,13 @@ fn server_description_gates_event_envelope_write_plane() {
             "cx.events.submit",
             "cx.sync.account"
         ],
-        "supported_features": ["events.submit", "sync.account"]
+        "supported_features": ["events.submit", "sync.account"],
+        "plaintext_visibility": {"default": "e2ee", "allowed_services": []},
+        "rate_limit_policy": {"writes_per_minute": 120}
     }))
     .unwrap();
     assert!(events_ready.supports_event_envelope_write_plane());
+    assert!(events_ready.is_v1_principal_server_ready());
     assert!(
         events_ready
             .missing_event_envelope_write_requirements()
@@ -312,6 +329,180 @@ fn server_description_gates_event_envelope_write_plane() {
             "cx.events.submit"
         ]
     );
+    assert_eq!(
+        events_missing.missing_v1_principal_server_requirements(),
+        vec![
+            "cx.profile.core_event_store.v1",
+            "cx.events.describe",
+            "cx.events.submit",
+            "plaintext_visibility"
+        ]
+    );
+}
+
+#[test]
+fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
+    let sync = parse_sync(json!({
+        "cursor": "sx:v1-bucket",
+        "spaces": {
+            "join": {
+                "cx:space:joined": {
+                    "summary": {"title": "Joined Space"},
+                    "timeline": {"events": [], "limited": false},
+                    "state": [],
+                    "ephemeral": [],
+                    "unread": {"notification_count": 0, "highlight_count": 0}
+                }
+            },
+            "leave": {
+                "cx:space:left": {"reason": "left"}
+            }
+        },
+        "to_device": {"events": [{"type": "cx.mls.welcome"}]},
+        "account_data": {"events": [{
+            "data_type": "cx.push_rules",
+            "content": {"global": {"enabled": true}}
+        }]},
+        "device_lists": {"changed": [], "left": []},
+        "notifications": {"rooms": {"cx:space:joined": {"count": 1}}},
+        "presence": {"events": [{"sender": "did:web:alice.example"}]}
+    }))
+    .unwrap();
+    assert_eq!(sync.cursor, "sx:v1-bucket");
+    assert!(sync.spaces.contains_key("cx:space:joined"));
+    assert_eq!(sync.left_spaces, vec!["cx:space:left".to_owned()]);
+    assert_eq!(sync.to_device.len(), 1);
+    assert_eq!(sync.account_data.len(), 1);
+    assert_eq!(sync.notifications["rooms"]["cx:space:joined"]["count"], 1);
+    assert_eq!(
+        sync.presence["events"][0]["sender"],
+        "did:web:alice.example"
+    );
+
+    let frames = parse_events_subscribe_ndjson_text(
+        r#"{"kind":"heartbeat"}
+{"kind":"frontier","cursor":"sx:2"}
+{"kind":"catchup_complete","cursor":"sx:3"}
+"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        frames[0],
+        contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+    ));
+    assert!(matches!(
+        &frames[1],
+        contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:2"
+    ));
+    assert!(matches!(
+        &frames[2],
+        contrix_sdk::EventsSubscribeFrame::CatchupComplete { cursor } if cursor.as_deref() == Some("sx:3")
+    ));
+}
+
+#[test]
+fn account_data_canonical_contact_and_space_remark_keys_contract() {
+    assert_eq!(
+        space_remark_account_data_key("cx:space:contract"),
+        "cx.contacts.space.cx:space:contract"
+    );
+    assert_eq!(
+        contact_remark_account_data_key("did:web:alice.example"),
+        "cx.contacts.actor.did:web:alice.example"
+    );
+    assert_eq!(
+        AccountDataKey::ClientReadReceipts.as_wire(),
+        "cx.read_receipt.preferences"
+    );
+    assert_eq!(
+        AccountDataKey::ClientNotifications.as_wire(),
+        "cx.push_rules"
+    );
+    assert_eq!(
+        AccountDataKey::ClientDndSchedule.as_wire(),
+        "cx.dnd_schedule"
+    );
+}
+
+#[test]
+fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() {
+    fn assert_no_secret<T: serde::Serialize>(label: &str, value: &T, secret: &str) {
+        let wire = serde_json::to_string(value).unwrap();
+        assert!(
+            !wire.contains(secret),
+            "{label} leaked private remark secret: {wire}"
+        );
+    }
+
+    let secret = "Alice from Ops Private";
+    let contact_remark = ContactRemark::new("did:web:alice.example", secret);
+    let space_remark = SpaceRemark::new("cx:space:contract", secret);
+
+    let event = OperationBuilder::new(
+        "cx:space:contract",
+        "did:web:local.example",
+        "cx.message.create",
+    )
+    .body(json!({
+        "body": "hello",
+        "mentions": [{
+            "kind": "actor",
+            "target": contact_remark.actor_did,
+            "token": "@alice"
+        }]
+    }))
+    .build("contract-test");
+    assert_no_secret("event", &event, secret);
+
+    let blind_push = json!({
+        "type": "cx.push.blind_wakeup.v1",
+        "reason": "background_sync_needed"
+    });
+    validate_blind_wakeup_payload(&blind_push).unwrap();
+    validate_blind_wakeup_payload(&json!({"local_name": secret}))
+        .expect_err("blind push must reject local remark fields");
+
+    let search = yougen::models::IndexSearchResponse {
+        query: "hello".to_owned(),
+        results: vec![json!({
+            "kind": "message",
+            "space_id": "cx:space:contract",
+            "sender": "did:web:alice.example",
+            "content": {"body": "hello"}
+        })],
+        next_cursor: None,
+    };
+    assert_no_secret("search", &search, secret);
+
+    let log_line = format_user_action_line(
+        "did:web:local.example",
+        "message.create",
+        UserActionOutcome::Success,
+        None,
+    );
+    assert!(!log_line.contains(secret));
+    let log_entry = build_user_action_entry(
+        "did:web:local.example",
+        "message.create",
+        UserActionOutcome::Success,
+        None,
+    );
+    assert_no_secret("log", &log_entry, secret);
+
+    let directory = yougen::models::SearchSpacesResponse {
+        results: vec![yougen::models::SpacePreview {
+            space_id: space_remark.space_id,
+            name: "Contract Space".to_owned(),
+            description: Some("Public description".to_owned()),
+            tags: BTreeSet::from(["contract".to_owned()]),
+            public: true,
+            category: Some("collaboration".to_owned()),
+            parent_space_id: None,
+            child_space_ids: Vec::new(),
+        }],
+        next_cursor: None,
+    };
+    assert_no_secret("directory", &directory, secret);
 }
 
 #[test]
@@ -504,11 +695,11 @@ fn bare_401_does_not_count_as_session_loss() {
     assert!(!is_auth_expired_error(&unrelated));
 }
 
-/// Regression: `decode_contrix_error` MUST tolerate three
-/// on-the-wire shapes (canonical wrapped, plain envelope without
-/// `request_id`, Matrix-style legacy `errcode`) and synthesise a
-/// stable `http_status` envelope when none match. A regression here
-/// silently degrades every error message in the UI.
+/// Regression: `decode_contrix_error` MUST tolerate the current
+/// on-the-wire shapes (canonical wrapped and plain envelope without
+/// `request_id`) and synthesise a stable `http_status` envelope when
+/// none match. A regression here silently degrades every error message
+/// in the UI.
 #[test]
 fn decoder_handles_all_envelope_shapes() {
     // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints
@@ -517,7 +708,7 @@ fn decoder_handles_all_envelope_shapes() {
     //    surface them.
     let wrapped = decode_contrix_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"head mismatch","retry_after_ms":250,"cell":"cx:cell:cx.component.flow.position.v1:demo"}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"cx:cell:cx.component.flow.position.v1:demo"}}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
@@ -533,14 +724,7 @@ fn decoder_handles_all_envelope_shapes() {
     );
     assert_eq!(plain.code(), "invalid_param");
 
-    // 3. Legacy Matrix-style.
-    let legacy = decode_contrix_error(
-        StatusCode::BAD_REQUEST,
-        br#"{"errcode":"invalid_param","error":"bad did"}"#,
-    );
-    assert_eq!(legacy.code(), "invalid_param");
-
-    // 4. Garbage / non-JSON: synthesised fallback.
+    // 3. Garbage / non-JSON: synthesised fallback.
     let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503"));

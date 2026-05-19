@@ -112,7 +112,7 @@ mod tests {
             Some("uploaded in error"),
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.blob.revoke");
-        assert_eq!(op.body["reason"], "uploaded in error");
+        assert_eq!(op.kind, "cx.blob.revoke");
+        assert_eq!(op.payload["reason"], "uploaded in error");
     }
 }

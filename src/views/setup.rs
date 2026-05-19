@@ -177,10 +177,6 @@ impl NewSpaceStep {
     }
 }
 
-fn discoverability_is_publicish(value: &str) -> bool {
-    matches!(value, "public" | "listed")
-}
-
 fn plaintext_services_for_policy(service_did: &str) -> Vec<String> {
     let service_did = service_did.trim();
     if service_did.is_empty() {
@@ -587,15 +583,14 @@ pub fn SetupPanel(
                                                 let summary = space_summary();
                                                 let discoverability = space_discoverability();
                                                 let join_rule = space_policy_join_rule();
-                                                let history_visibility = space_policy_history_visibility();
-                                                let seed_text = seed_members();
-                                                let actor = account_did();
-                                                let device = device_id();
+                                                    let history_visibility = space_policy_history_visibility();
+                                                    let seed_text = seed_members();
+                                                    let actor = account_did();
+                                                    let device = device_id();
                                                 let configured_plaintext_service_did =
                                                     plaintext_service_did.clone();
                                                 spawn(async move {
                                                     let invitees = parse_seed_members(&seed_text);
-                                                    let publicish = discoverability_is_publicish(&discoverability);
                                                     match authed_api(&base, api_token) {
                                                         Ok(api) => {
                                                             let mut plaintext_services = plaintext_services_for_policy(
@@ -608,9 +603,12 @@ pub fn SetupPanel(
                                                                 plaintext_services.push(description.service_did);
                                                             }
                                                             match api.create_space(
+                                                                &actor,
                                                                 &title,
                                                                 Some(&summary),
-                                                                publicish,
+                                                                &discoverability,
+                                                                &join_rule,
+                                                                &history_visibility,
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),
                                                             ).await {
@@ -669,31 +667,17 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     steps.push(format!("seeded {} member(s)", invitees.len()));
                                                                 }
-
-                                                                match api.set_space_policy(
-                                                                    &space.space_id,
-                                                                    &join_rule,
-                                                                    &history_visibility,
-                                                                ).await {
-                                                                    Ok(result) => steps.push(format!(
-                                                                        "policy {} / {}",
-                                                                        result.join_rule,
-                                                                        result.history_visibility
-                                                                    )),
-                                                                    Err(error) => steps.push(format!("policy sync failed: {error}")),
-                                                                }
-
-                                                                match api.update_space(
-                                                                    &space.space_id,
-                                                                    json!({
-                                                                        "title": title,
-                                                                        "summary": summary,
-                                                                        "discoverability": discoverability.clone(),
-                                                                        "plaintext_visible_services": plaintext_services,
-                                                                    }),
-                                                                ).await {
-                                                                    Ok(_) => steps.push(format!("discoverability {}", discoverability)),
-                                                                    Err(error) => steps.push(format!("discoverability sync failed: {error}")),
+                                                                steps.push(format!(
+                                                                    "canonical policy {} / {} / {}",
+                                                                    discoverability,
+                                                                    join_rule,
+                                                                    history_visibility
+                                                                ));
+                                                                if !plaintext_services.is_empty() {
+                                                                    steps.push(format!(
+                                                                        "plaintext services {}",
+                                                                        plaintext_services.len()
+                                                                    ));
                                                                 }
 
                                                                 let message = steps.join(" · ");

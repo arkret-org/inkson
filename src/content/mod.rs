@@ -1,7 +1,6 @@
 //! Rich content rendering for message bodies (timeline + chat).
 //!
-//! Task A3 (round 28). Replaces the legacy plaintext `{event.body}` /
-//! `{msg.body}` rendering with a structured pipeline:
+//! Task A3 (round 28). Uses a structured pipeline:
 //!
 //! 1. [`parse_message_body`] applies a small set of heuristics to split
 //!    the body into a `Vec<ContentBlock>` — attachment markers become

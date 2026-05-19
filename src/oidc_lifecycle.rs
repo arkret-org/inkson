@@ -447,12 +447,12 @@ mod tests {
         // disk-state has `refresh_token: None` and the secret lives
         // only in `secure`.
         store.set_oidc_tokens_with_secure_store(Some(fresh_bundle(20)), actor, &secure);
-        // The legacy `evaluate_refresh_policy` MUST see no refresh
-        // token (it only inspects disk) — proving the migration.
+        // The disk-only evaluator MUST see no refresh token — proving
+        // the secure-store path kept the secret out of state.json.
         assert_eq!(
             evaluate_refresh_policy(&store),
             RefreshDecision::NoRefreshToken,
-            "legacy poller can't see the migrated refresh_token",
+            "disk-only poller can't see the secure-store refresh_token",
         );
         // The new poller MUST reattach + decide Refresh.
         match evaluate_refresh_policy_with_secure_store(&store, actor, &secure) {

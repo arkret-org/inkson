@@ -74,7 +74,7 @@ impl Default for MimiDraftPinning {
 /// Parsed `provider_directory` response. The full payload is much
 /// richer — this struct projects just the fields the yougen
 /// settings UI needs for "is this provider reachable + on a
-/// compatible draft" diagnostics.
+/// draft-interop diagnostics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MimiProviderDirectorySummary {
     pub service_did: String,
@@ -159,7 +159,7 @@ impl MimiClient {
 
     /// GET `/.well-known/mimi-protocol-directory`. Surfaces just
     /// enough of the response to verify draft pinning + service
-    /// DID compatibility; returns the parsed summary plus the raw
+    /// DID interop; returns the parsed summary plus the raw
     /// JSON for surfaces that want richer detail.
     pub async fn fetch_provider_directory(
         &self,

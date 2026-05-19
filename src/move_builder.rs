@@ -103,7 +103,7 @@ pub fn build_consent_revoke_move(
 /// `contrix_sdk::authz::ProtocolGrantConstraint` but kept JSON-shaped
 /// because soland's reducer round-trips constraints as opaque values
 /// today - typing them up here would force every UI
-/// surface to re-typing the SDK enum and slow forward compatibility.
+/// surface to re-typing the SDK enum and future additions.
 ///
 /// Use [`Self::temporal`] for the most common flavour (`not_before` /
 /// `not_after` window). The wire shape lands in the OrSet `add` op as a
@@ -414,14 +414,14 @@ pub fn build_mls_commit_move_with_governance_binding(
 }
 
 /// Construct a `cx.component.flow.position.v1` Move that records a Flow's
-/// position inside its containing list. Used for the
+/// position inside its containing Place. Used for the
 /// canonical Move path of board-level entity create + move / position
 /// update operations (kanban.rs add card / move card / add list).
 ///
 /// `flow_id` is the cell subject (per-flow position cell). `value` is the
 /// position record soland's reducer stores verbatim — typically:
 ///
-///   `{"list_id": "cx:list:...", "rank": "r042", "title": "..."}`
+///   `{"list_place_id": "cx:place:...", "rank": "r042", "title": "..."}`
 ///
 /// Reducer treats the cell as a cas-register: concurrent writes from
 /// two devices to the same flow_id surface as `bottom=expose` and the
@@ -532,7 +532,7 @@ impl FlowPositionEffect {
 /// Construct a `cx.flow.move` / `cx.flow.reorder` Move that targets the
 /// spec-canonical cell `cx:cell:cx.component.flow.position.v1:<board_place_id>:<flow_id>`
 /// with a `head_eq` precondition expressing the caller's view of
-/// pre-state. This is the spec-compliant replacement for the legacy
+/// pre-state. This is the spec-compliant replacement for the earlier
 /// [`build_flow_position_move`] (which used a non-composite cell
 /// subject and skipped CAS preconditions).
 ///
@@ -719,8 +719,8 @@ fn build_move_inner(
 
 /// Variant of [`build_move_inner`] that accepts an explicit
 /// `preconditions[]` array. Used by builders that emit CAS-style Moves
-/// (`cx.flow.move` / `cx.flow.reorder` with `head_eq`); the legacy
-/// `build_move_inner` keeps the unconditional-write call sites compact.
+/// (`cx.flow.move` / `cx.flow.reorder` with `head_eq`); `build_move_inner`
+/// keeps unconditional-write call sites compact.
 fn build_move_inner_with_preconditions(
     issuer: &str,
     space_id: &str,
@@ -1470,7 +1470,7 @@ mod tests {
             "cx:space:0196419b-0000-7000-8000-000000000000",
             "cx:flow:01abcd",
             serde_json::json!({
-                "list_id": "cx:list:01todo",
+                "list_place_id": "cx:place:01todo",
                 "rank": "r042",
                 "title": "Add tests",
             }),
@@ -1486,8 +1486,8 @@ mod tests {
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set carries value");
         assert_eq!(
-            value.get("list_id").and_then(|v| v.as_str()),
-            Some("cx:list:01todo")
+            value.get("list_place_id").and_then(|v| v.as_str()),
+            Some("cx:place:01todo")
         );
         assert_eq!(value.get("rank").and_then(|v| v.as_str()), Some("r042"));
     }
@@ -1507,7 +1507,7 @@ mod tests {
 
     /// Initial-entry CAS Move: `head_eq null` precondition and a
     /// `set { list_place_id, rank }` effect that carries the spec wire
-    /// shape (spec field names, not the legacy `list_id`).
+    /// shape (spec field names only).
     ///
     /// We assert against the canonical body bytes — `Option<Value>` in
     /// the typed SDK structs loses the literal `null` on round-trip, but

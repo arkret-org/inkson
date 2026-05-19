@@ -305,7 +305,7 @@ pub fn DashboardPanel(
                                 to: Route::SettingsSection { section: "release".to_owned() },
                                 onclick: move |_| view.set(super::View::Settings),
                                 UiIcon { name: "settings" }
-                                "Operational Settings"
+                                "Advanced Diagnostics"
                             }
                             button {
                                 class: "btn icon sm ghost",

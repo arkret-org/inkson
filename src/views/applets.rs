@@ -9,7 +9,7 @@
 //!   * Surfaces a registration form bound to
 //!     [`crate::operation::cx_ops::applet_registration`] — fills `service_did`
 //!     + `namespace` + `capabilities` and submits via
-//!     `with_authed_api(api.submit_operation_event)`.
+//!     `with_authed_api(api.submit_event_envelope)`.
 //!   * Per-session monitor lists active `protocol_session.start/status` rows
 //!     so an operator can see in-flight applet calls + their bridge errors.
 //!
@@ -174,7 +174,7 @@ pub fn AppletsPanel(
                                         )
                                         .build("yougen");
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_operation_event(&op).await
+                                            api.submit_event_envelope(&op).await
                                         })
                                         .await
                                         {
@@ -249,8 +249,8 @@ pub fn AppletsPanel(
                 } else {
                     for e in bridge_errors {
                         {
-                            let errcode = e.payload.get("body")
-                                .and_then(|b| b.get("errcode"))
+                            let error_code = e.payload.get("body")
+                                .and_then(|b| b.get("error_code"))
                                 .and_then(Value::as_str)
                                 .unwrap_or("?")
                                 .to_owned();
@@ -266,7 +266,7 @@ pub fn AppletsPanel(
                             rsx! {
                                 div { class: "event", "data-testid": "applet-bridge-error-row",
                                     div { class: "event-head",
-                                        span { class: "mono", "{errcode}" }
+                                        span { class: "mono", "{error_code}" }
                                         span { class: "mono", "{session_id}" }
                                     }
                                     if let Some(msg) = msg_opt {
@@ -299,9 +299,9 @@ mod tests {
             &["read"],
         )
         .build("yougen");
-        assert_eq!(op.body["service_did"], "did:web:applet.example");
-        assert_eq!(op.body["namespace"], "extensions");
-        assert_eq!(op.body["capabilities"][0], "read");
+        assert_eq!(op.payload["service_did"], "did:web:applet.example");
+        assert_eq!(op.payload["namespace"], "extensions");
+        assert_eq!(op.payload["capabilities"][0], "read");
     }
 
     #[test]

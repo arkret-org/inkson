@@ -306,7 +306,7 @@ impl SecureKeyStore for KeyringSecureKeyStore {
 /// Hosts that don't install a bridge get
 /// [`MemorySecureKeyStore`] as the fallback (matches existing
 /// "secrets in plaintext heap" caveat), so the API is forwards-
-/// compatible: a binary that never wires a bridge keeps working,
+/// safe by default: a binary that never wires a bridge keeps working,
 /// it just loses the OS-keychain tier.
 ///
 /// The host implementation contract:

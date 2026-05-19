@@ -242,6 +242,59 @@ fn push_space_remark_account_data(
     });
 }
 
+fn push_contact_remark_account_data(
+    base_url: String,
+    api_token: String,
+    actor_did: String,
+    remark: crate::account_data::ContactRemark,
+) {
+    let key = crate::account_data::contact_remark_account_data_key(&actor_did);
+    spawn(async move {
+        if remark.is_empty() {
+            let key_for_log = key.clone();
+            if let Err(err) = with_authed_api(&base_url, api_token, |api| {
+                let key = key.clone();
+                async move { api.delete_account_data(&key).await }
+            })
+            .await
+            {
+                tracing::debug!(
+                    "account_data DELETE for {key_for_log} failed: {}; local state still authoritative",
+                    err.display()
+                );
+            }
+            return;
+        }
+        let body = match serde_json::to_value(&remark) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("contact remark serialisation failed: {error}");
+                return;
+            }
+        };
+        let key_for_log = key.clone();
+        match with_authed_api(&base_url, api_token, |api| {
+            let key = key.clone();
+            async move { api.set_account_data(&key, body).await }
+        })
+        .await
+        {
+            Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT for {key_for_log} returned {status}; local state still authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "account_data PUT for {key_for_log} failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
 fn render_notification_kind_toggle(
     kind: &'static str,
     label: &'static str,
@@ -320,7 +373,7 @@ impl SettingsSection {
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
             Self::Theme => "Appearance & locale",
-            Self::Release => "Operational status",
+            Self::Release => "Diagnostics",
         }
     }
 
@@ -333,7 +386,7 @@ impl SettingsSection {
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy",
             Self::Theme => "Preferences",
-            Self::Release => "Operations",
+            Self::Release => "Advanced",
         }
     }
 
@@ -358,7 +411,9 @@ impl SettingsSection {
             Self::Theme => {
                 "Theme, locale, and client-facing defaults that stay private to this actor."
             }
-            Self::Release => "Client health, sync posture, and operational status in one place.",
+            Self::Release => {
+                "Advanced diagnostics, release blockers, sync posture, and operational status in one place."
+            }
         }
     }
 }
@@ -370,6 +425,7 @@ const SETTINGS_DELIVERY_GROUP: &[SettingsSection] =
 const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
     &[SettingsSection::Theme, SettingsSection::Storage];
 const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
+const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[SettingsSection::Release];
 const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (
         "Account",
@@ -395,6 +451,11 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         "Integrations",
         "Applets, agents, and interop-specific controls.",
         SETTINGS_INTEGRATIONS_GROUP,
+    ),
+    (
+        "Advanced",
+        "Diagnostics, release blockers, and protocol health checks.",
+        SETTINGS_ADVANCED_GROUP,
     ),
 ];
 
@@ -443,6 +504,17 @@ pub fn SettingsPanel(
     });
     let mut new_space_remark_id = use_signal(String::new);
     let mut new_space_remark_name = use_signal(String::new);
+    let mut contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
+    let mut contact_remark_inputs = use_signal(|| {
+        state_store
+            .read()
+            .contact_remarks()
+            .into_iter()
+            .map(|(did, r)| (did, r.local_name))
+            .collect::<std::collections::BTreeMap<String, String>>()
+    });
+    let mut new_contact_remark_did = use_signal(String::new);
+    let mut new_contact_remark_name = use_signal(String::new);
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `cx.account_data.set("client.ui", { avatar_blob_ref })` and is
@@ -545,7 +617,7 @@ pub fn SettingsPanel(
                                 span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
                             }
                             if active_section == SettingsSection::Release {
-                                span { class: "badge amber", "Primary nav simplified" }
+                                span { class: "badge amber", "Advanced diagnostics" }
                             }
                         }
                     }
@@ -1905,6 +1977,183 @@ pub fn SettingsPanel(
                     }
                 }
 
+                div { class: "event", "data-testid": "contact-remarks-editor",
+                    div { class: "event-head",
+                        span { "Contact remarks" }
+                        span { "cx.contacts.actor.<did>" }
+                        HelpTip { text: "Private to this account. The local name is shown only on this device/account and is synced through actor-private account_data." }
+                    }
+                    {
+                        let remarks = contact_remarks_snapshot();
+                        if remarks.is_empty() {
+                            rsx! {
+                                div {
+                                    class: "muted",
+                                    "data-testid": "contact-remarks-empty",
+                                    "No contact remarks yet. Add a DID below to label someone privately."
+                                }
+                            }
+                        } else {
+                            rsx! {
+                                for (actor_did, remark) in remarks {
+                                    div {
+                                        class: "actions",
+                                        "data-testid": "contact-remark-row",
+                                        "data-actor-did": "{actor_did}",
+                                        span { class: "mono", "{actor_did}" }
+                                        input {
+                                            r#type: "text",
+                                            "data-testid": "contact-remark-input",
+                                            placeholder: "Local name (private)",
+                                            value: "{contact_remark_inputs().get(&actor_did).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                            oninput: {
+                                                let did = actor_did.clone();
+                                                move |evt: FormEvent| {
+                                                    let mut current = contact_remark_inputs();
+                                                    current.insert(did.clone(), evt.value());
+                                                    contact_remark_inputs.set(current);
+                                                }
+                                            },
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "contact-remark-save",
+                                            onclick: {
+                                                let did = actor_did.clone();
+                                                let existing = remark.clone();
+                                                move |_| {
+                                                    let did = did.clone();
+                                                    let next_name = contact_remark_inputs()
+                                                        .get(&did)
+                                                        .cloned()
+                                                        .unwrap_or_default();
+                                                    let mut next = existing.clone();
+                                                    next.local_name = next_name.trim().to_owned();
+                                                    next.updated_at = Some(
+                                                        chrono::Utc::now()
+                                                            .to_rfc3339_opts(
+                                                                chrono::SecondsFormat::Secs,
+                                                                true,
+                                                            ),
+                                                    );
+                                                    state_store
+                                                        .write()
+                                                        .set_contact_remark(did.clone(), next.clone());
+                                                    contact_remarks_snapshot.set(
+                                                        state_store.read().contact_remarks(),
+                                                    );
+                                                    status.set(if next.is_empty() {
+                                                        format!("Contact remark cleared for {did}")
+                                                    } else {
+                                                        format!(
+                                                            "Contact remark saved: {} → {}",
+                                                            did, next.local_name
+                                                        )
+                                                    });
+                                                    push_contact_remark_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        did,
+                                                        next,
+                                                    );
+                                                }
+                                            },
+                                            "Save"
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "contact-remark-delete",
+                                            onclick: {
+                                                let did = actor_did.clone();
+                                                move |_| {
+                                                    let did = did.clone();
+                                                    state_store.write().remove_contact_remark(&did);
+                                                    let mut inputs = contact_remark_inputs();
+                                                    inputs.remove(&did);
+                                                    contact_remark_inputs.set(inputs);
+                                                    contact_remarks_snapshot.set(
+                                                        state_store.read().contact_remarks(),
+                                                    );
+                                                    status.set(format!(
+                                                        "Contact remark cleared for {did}"
+                                                    ));
+                                                    push_contact_remark_account_data(
+                                                        base_url(),
+                                                        token(),
+                                                        did,
+                                                        crate::account_data::ContactRemark::default(),
+                                                    );
+                                                }
+                                            },
+                                            "Delete"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "actions", "data-testid": "contact-remark-add-row",
+                        input {
+                            r#type: "text",
+                            "data-testid": "contact-remark-add-did",
+                            placeholder: "did:web:...",
+                            value: "{new_contact_remark_did()}",
+                            oninput: move |evt| new_contact_remark_did.set(evt.value()),
+                        }
+                        input {
+                            r#type: "text",
+                            "data-testid": "contact-remark-add-name",
+                            placeholder: "Local name",
+                            value: "{new_contact_remark_name()}",
+                            oninput: move |evt| new_contact_remark_name.set(evt.value()),
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "contact-remark-add-save",
+                            onclick: move |_| {
+                                let actor_did = new_contact_remark_did().trim().to_owned();
+                                let local_name = new_contact_remark_name().trim().to_owned();
+                                if actor_did.is_empty() || local_name.is_empty() {
+                                    status.set(
+                                        "Enter both an actor DID and a local name".to_owned(),
+                                    );
+                                    return;
+                                }
+                                if !actor_did.starts_with("did:") {
+                                    status.set("Actor DID must start with did:".to_owned());
+                                    return;
+                                }
+                                let now_rfc3339 = chrono::Utc::now()
+                                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                                let remark = crate::account_data::ContactRemark {
+                                    version: 1,
+                                    actor_did: actor_did.clone(),
+                                    local_name: local_name.clone(),
+                                    saved_at: Some(now_rfc3339.clone()),
+                                    updated_at: Some(now_rfc3339),
+                                    ..crate::account_data::ContactRemark::default()
+                                };
+                                state_store
+                                    .write()
+                                    .set_contact_remark(actor_did.clone(), remark.clone());
+                                contact_remarks_snapshot.set(state_store.read().contact_remarks());
+                                new_contact_remark_did.set(String::new());
+                                new_contact_remark_name.set(String::new());
+                                status.set(format!(
+                                    "Contact remark saved: {actor_did} → {local_name}"
+                                ));
+                                push_contact_remark_account_data(
+                                    base_url(),
+                                    token(),
+                                    actor_did,
+                                    remark,
+                                );
+                            },
+                            "Add contact"
+                        }
+                    }
+                }
+
                 // Progressive disclosure — identity-handles.md §16
                 // Four canonical events drive selective claim sharing:
                 //   cx.identity.disclosure_policy   — actor sets which fields are
@@ -2239,13 +2488,13 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "release-moved-banner",
                                 div { class: "event-head",
-                                    span { "Operational status" }
+                                    span { "Diagnostics" }
                                     span { "{blocked_count} tracked blockers" }
-                                    HelpTip { text: "The separate tools area has been removed from primary navigation. Keep release blockers, sync posture, and investigations summarized here so operational context stays adjacent to account settings." }
+                                    HelpTip { text: "Developer diagnostics stay under Advanced so normal settings remain focused. Release blockers, sync posture, and investigations are summarized here." }
                                 }
                                 div { class: "actions",
                                     span { class: "badge amber", "{blocked_count} blockers" }
-                                    span { class: "badge blue", "settings-owned surface" }
+                                    span { class: "badge blue", "advanced diagnostics" }
                                 }
                             }
                         }

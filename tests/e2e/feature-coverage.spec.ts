@@ -330,6 +330,7 @@ test.describe("feature coverage placeholders", () => {
     // contract a future server-side renderer of the same shape MUST
     // honor.
     await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.getByTestId("directory-advanced-diagnostics-toggle").click();
     await page.getByTestId("tab-objects").click();
     await page.getByTestId("directory-search-input").fill("locked");
     await page.getByTestId("directory-search-button").click();

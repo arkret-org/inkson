@@ -118,14 +118,12 @@ fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
     })
 }
 
-/// Extract `BackupSummaryRow`s from either the typed `list_key_backups`
-/// response (`{"backups": [...]}`) or the legacy raw-list shape (`[...]`).
+/// Extract `BackupSummaryRow`s from the typed `list_key_backups`
+/// response (`{"backups": [...]}`).
 fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummaryRow> {
-    let candidate = payload
+    payload
         .get("backups")
         .and_then(|v| v.as_array())
-        .or_else(|| payload.as_array());
-    candidate
         .map(|arr| arr.iter().filter_map(parse_backup_summary).collect())
         .unwrap_or_default()
 }
@@ -164,11 +162,10 @@ mod restore_parse_tests {
     }
 
     #[test]
-    fn parse_backup_list_handles_envelope_and_bare_array() {
+    fn parse_backup_list_handles_envelope() {
         let enveloped = json!({"backups": [{"backup_id": "cx:backup:x"}]});
-        let bare = json!([{"backup_id": "cx:backup:y"}]);
         assert_eq!(parse_backup_list(&enveloped).len(), 1);
-        assert_eq!(parse_backup_list(&bare).len(), 1);
+        assert!(parse_backup_list(&json!([{"backup_id": "cx:backup:y"}])).is_empty());
     }
 
     #[test]

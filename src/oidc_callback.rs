@@ -270,10 +270,9 @@ pub async fn process_callback(
     // When the audience_grant leg carries a `principal_did`, route the
     // bundle through the SecureKeyStore helper so the `refresh_token`
     // field lands in `coauth.refresh_token.<principal_did>` instead of
-    // plain `state.json`. Without an explicit actor DID at this stage we
-    // fall back to the legacy `set_oidc_tokens` write — the next refresh
-    // poller tick with secure-store wiring will migrate the bundle on a
-    // successful refresh.
+    // plain `state.json`. Without an explicit actor DID at this stage,
+    // store the non-audience bundle in state.json; there is no principal
+    // namespace for a secure-store key yet.
     if let Some(audience_grant) = request.audience_grant.as_ref() {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         state_store.set_oidc_tokens_with_secure_store(

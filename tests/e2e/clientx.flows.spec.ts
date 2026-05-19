@@ -393,6 +393,7 @@ test("directory search resolve and space selection flow works", async ({ page })
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
   await expect(page.getByTestId("directory-result").first()).toContainText("Contrix Demo Space");
 
+  await page.getByTestId("directory-advanced-diagnostics-toggle").click();
   await page.getByTestId("tab-objects").click();
   await page.getByTestId("directory-search-input").fill("launch");
   await page.getByTestId("directory-search-button").click();
@@ -919,4 +920,3 @@ test("visual smoke renders core client pages on desktop and mobile", async ({ pa
   const mobileShot = await page.screenshot();
   expect(mobileShot.length).toBeGreaterThan(10_000);
 });
-

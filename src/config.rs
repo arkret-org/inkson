@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_legacy_device_id_is_replaced_and_token_cleared() {
+    fn invalid_device_id_is_replaced_and_token_cleared() {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",

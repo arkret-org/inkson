@@ -7,6 +7,7 @@ use chime::{
     build_unregister_device_request, push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
+use serde_json::Value;
 
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
@@ -49,6 +50,70 @@ pub fn ensure_production_register_request(request: &RegisterDeviceRequest) -> an
              before contacting the push gateway.",
             device_id = request.device_id,
         );
+    }
+    Ok(())
+}
+
+const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
+    "actor",
+    "actor_id",
+    "device_id",
+    "did",
+    "event_id",
+    "flow_id",
+    "local_name",
+    "message_id",
+    "note",
+    "principal_did",
+    "principal_id",
+    "push_target_id",
+    "remark",
+    "room_id",
+    "sender",
+    "sender_id",
+    "space_id",
+    "user_id",
+];
+
+/// Lint a push wakeup payload before it leaves the client / bridge tests.
+///
+/// Spec `discovery/push-notifications.md` requires blind wakeups: the payload
+/// must not carry stable identities or Space/Event/Flow ids. The delivery route
+/// already knows the push target; the app resolves the actual notification body
+/// locally after waking and syncing.
+pub fn validate_blind_wakeup_payload(payload: &Value) -> anyhow::Result<()> {
+    validate_blind_wakeup_payload_at(payload, "$")
+}
+
+fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Result<()> {
+    match payload {
+        Value::Object(map) => {
+            for (key, value) in map {
+                let normalized = key.to_ascii_lowercase();
+                if BLIND_WAKEUP_FORBIDDEN_KEYS
+                    .iter()
+                    .any(|forbidden| normalized == *forbidden)
+                {
+                    anyhow::bail!("blind push payload leaks `{key}` at {path}");
+                }
+                validate_blind_wakeup_payload_at(value, &format!("{path}.{key}"))?;
+            }
+        }
+        Value::Array(items) => {
+            for (idx, value) in items.iter().enumerate() {
+                validate_blind_wakeup_payload_at(value, &format!("{path}[{idx}]"))?;
+            }
+        }
+        Value::String(value) => {
+            if value.starts_with("did:")
+                || value.starts_with("cx:space:")
+                || value.starts_with("cx:flow:")
+                || value.starts_with("cx:event:")
+            {
+                anyhow::bail!("blind push payload leaks stable id at {path}");
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -816,6 +881,28 @@ mod tests {
         let mut request = build_register_request("dev_yougen").unwrap();
         request.push_key = "apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d".to_owned();
         ensure_production_register_request(&request).expect("real push key must be accepted");
+    }
+
+    #[test]
+    fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
+        let ok = serde_json::json!({
+            "type": "cx.push.blind_wakeup.v1",
+            "reason": "background_sync_needed"
+        });
+        validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
+
+        for payload in [
+            serde_json::json!({"space_id": "cx:space:demo"}),
+            serde_json::json!({"event": {"event_id": "cx:event:1"}}),
+            serde_json::json!({"sender": "did:web:alice.example"}),
+            serde_json::json!({"items": [{"flow_id": "cx:flow:demo"}]}),
+            serde_json::json!({"local_name": "Alice from Ops"}),
+            serde_json::json!({"remark": "private label"}),
+            serde_json::json!({"opaque": "did:web:alice.example"}),
+        ] {
+            validate_blind_wakeup_payload(&payload)
+                .expect_err("stable ids must not appear in blind wakeups");
+        }
     }
 
     #[test]

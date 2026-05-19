@@ -32,6 +32,7 @@ pub mod mls_passphrase;
 pub mod mls_persistence;
 pub mod models;
 pub mod move_builder;
+pub mod notification_rules;
 pub mod objects;
 pub mod offline;
 pub mod oidc_callback;

@@ -138,11 +138,6 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     })
 }
 
-/// Back-compat helper kept for tests and older call sites.
-pub fn result_space_route(result: &Value) -> Option<Route> {
-    result_destination(result).map(|destination| destination.route)
-}
-
 fn string_field(result: &Value, fields: &[&str]) -> Option<String> {
     fields.iter().find_map(|field| {
         result
@@ -412,19 +407,6 @@ mod tests {
 
         let empty = json!({});
         assert_eq!(result_snippet(&empty), "<no body>");
-    }
-
-    #[test]
-    fn result_space_route_extracts_space_id() {
-        let row = json!({"space_id": "cx:space:demo"});
-        let route = result_space_route(&row).expect("should produce a route");
-        match route {
-            Route::Space { space_id } => assert_eq!(space_id, "cx:space:demo"),
-            _ => panic!("expected Route::Space"),
-        }
-
-        let no_space = json!({"kind": "actor"});
-        assert!(result_space_route(&no_space).is_none());
     }
 
     #[test]

@@ -284,7 +284,7 @@ pub fn DocumentPanel(
                                     .build("yougen");
 
                                     match with_authed_api(&base, token_val, |api| async move {
-                                        api.submit_operation_event(&op).await
+                                        api.submit_event_envelope(&op).await
                                     })
                                     .await
                                     {

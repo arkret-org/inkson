@@ -142,9 +142,9 @@ mod tests {
             "did:key:zDevice",
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.audit.accessed");
-        assert_eq!(op.body["target_event_id"], "cx:event:abc");
-        assert_eq!(op.body["reader_device"], "did:key:zDevice");
+        assert_eq!(op.kind, "cx.audit.accessed");
+        assert_eq!(op.payload["target_event_id"], "cx:event:abc");
+        assert_eq!(op.payload["reader_device"], "did:key:zDevice");
     }
 
     #[test]
@@ -156,8 +156,8 @@ mod tests {
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.audit.ryw_receipt");
-        assert_eq!(op.body["delivered_to_devices"][1], "did:key:zB");
+        assert_eq!(op.kind, "cx.audit.ryw_receipt");
+        assert_eq!(op.payload["delivered_to_devices"][1], "did:key:zB");
     }
 
     #[test]
@@ -169,8 +169,8 @@ mod tests {
             vec!["display_name".into(), "avatar".into()],
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.identity.presentation_request");
-        assert_eq!(op.body["requested_claims"][0], "display_name");
+        assert_eq!(op.kind, "cx.identity.presentation_request");
+        assert_eq!(op.payload["requested_claims"][0], "display_name");
     }
 
     #[test]
@@ -183,8 +183,8 @@ mod tests {
             vec!["email".into()],
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.identity.disclosure_receipt");
-        assert_eq!(op.body["counterparty"], "did:web:bob");
+        assert_eq!(op.kind, "cx.identity.disclosure_receipt");
+        assert_eq!(op.payload["counterparty"], "did:web:bob");
     }
 
     #[test]

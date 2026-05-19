@@ -14,7 +14,7 @@ use contrix_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
 use reqwest::{
     Client, Method, StatusCode,
-    header::{HeaderMap, RETRY_AFTER},
+    header::{ACCEPT, HeaderMap, RETRY_AFTER},
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use url::Url;
 
+use crate::hlc::{Hlc, next_seq};
 /// A token that can be used to cancel in-flight API requests.
 #[derive(Clone, Debug)]
 pub struct CancellationToken {
@@ -191,27 +192,27 @@ use crate::models::{
     AppletQuerySpaceResponse, AppletTransactionResBody, ArchiveSpaceResponse, AuthzCheckResBody,
     BackfillResBody, BanMemberResponse, BlobUploadResBody, ClientSyncResponse, ContactResponse,
     ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
-    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody,
-    EventsDescribeResBody, FederationOperationsResponse, FederationSpaceMembersResBody,
-    FederationTransactionResBody, FederationVerifyActorResBody, HealthResponse, IceConfigRequest,
-    IceConfigResponse, IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody,
-    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
-    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
-    MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody,
-    MimiNotifyResBody, MimiProviderDirectoryResBody, MimiProxyDownloadResBody,
-    MimiReportAbuseResBody, MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsEpochResponse,
-    MlsRotateResponse, ModerationReportResBody, ModerationReportsResponse,
-    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResBody,
-    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResBody, PolicyResponse,
-    PushRegisterResponse, ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse,
-    RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    ServerDescription, SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse,
-    SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse,
-    SubmitDidOperationResBody, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResBody,
-    ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
-    UpdateProfileResponse, UpdateSpaceResponse, VerifyDeviceResponse,
+    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EventsDescribeResBody,
+    FederationOperationsResponse, FederationSpaceMembersResBody, FederationTransactionResBody,
+    FederationVerifyActorResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
+    IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody, IdentityResolveResBody,
+    IndexSearchResponse, InvitesResponse, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody,
+    LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody, MimiIdentifierQueryResBody,
+    MimiKeyMaterialResBody, MimiNotifyResBody, MimiProviderDirectoryResBody,
+    MimiProxyDownloadResBody, MimiReportAbuseResBody, MimiRoomUpdateResBody,
+    MimiSubmitMessageResBody, MlsEpochResponse, MlsRotateResponse, ModerationReportResBody,
+    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
+    OidcCallbackResponse, OkResBody, PasskeyChallengeResponse, PasskeyVerifyResponse,
+    PolicyCheckResBody, PolicyResponse, PushRegisterResponse, ReceiptResponse,
+    ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse,
+    SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SignAnchorResponse,
+    SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
+    SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResBody, SubmitEventResponse,
+    SubmitMoveResponse, SyncDescribeResBody, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
+    TokenRefreshResponse, TypingResponse, UpdateProfileResponse, UpdateSpaceResponse,
+    VerifyDeviceResponse,
 };
-use crate::operation::{OperationEnvelope, uuid_v7};
+use crate::operation::{EventEnvelope, OperationEnvelope, uuid_v7};
 
 /// Generic wrapper for soland's
 /// `/api/v1/projection/{places|flows}` lifecycle endpoints. Keeps the
@@ -234,6 +235,8 @@ pub struct LifecycleProjectionResponse<T> {
 pub struct PlaceProjectionView {
     pub place_id: String,
     pub space_id: String,
+    #[serde(default)]
+    pub kind: String,
     #[serde(default)]
     pub title: String,
     /// `active` / `archived` / `tombstoned` per spec
@@ -389,11 +392,7 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
                     | "invalid_cursor"
                     | "cursor_integrity_invalid"
                     | "invalid_param"
-            ) && api_error
-                .error
-                .message()
-                .to_lowercase()
-                .contains("cursor")
+            ) && api_error.error.message().to_lowercase().contains("cursor")
                 || matches!(
                     api_error.error.code(),
                     "sync_token_expired" | "cursor_integrity_invalid"
@@ -758,23 +757,61 @@ impl ContrixApi {
 
     pub async fn create_space(
         &self,
+        actor_id: &str,
         title: &str,
         summary: Option<&str>,
-        public: bool,
+        discoverability: &str,
+        join_rule: &str,
+        history_visibility: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
-        self.post_json(
-            "api/v1/spaces",
-            json!({
-                "title": title,
-                "summary": summary,
-                "public": public,
-                "invitees": invitees,
-                "plaintext_visible_services": plaintext_visible_services
-            }),
-        )
-        .await
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for canonical cx.space.create"
+            ));
+        }
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("title is required for cx.space.create"));
+        }
+
+        let space_id = format!("cx:space:{}", uuid_v7());
+        let join_rule = canonical_space_join_rule_v1(join_rule);
+        let events = build_space_bootstrap_events(
+            &space_id,
+            actor_id,
+            title,
+            summary,
+            discoverability,
+            join_rule,
+            history_visibility,
+            &invitees,
+            &plaintext_visible_services,
+        )?;
+        for event in events {
+            self.submit_event(&event).await?;
+        }
+
+        let mut members = Vec::new();
+        if !actor_id.is_empty() {
+            members.push(actor_id.to_owned());
+        }
+        for invitee in invitees {
+            let invitee = invitee.trim();
+            if !invitee.is_empty() && !members.iter().any(|member| member == invitee) {
+                members.push(invitee.to_owned());
+            }
+        }
+
+        Ok(SpaceLifecycleResponse {
+            ok: true,
+            space_id,
+            owner: actor_id.to_owned(),
+            members,
+            deleted: false,
+        })
     }
 
     pub async fn get_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
@@ -1002,53 +1039,48 @@ impl ContrixApi {
 
     /// Query durable events through the current `/api/v1/events` surface.
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResBody> {
-        self.get_json(&format!(
-            "api/v1/events?spaces={space_id}&direction=backward"
-        ))
-        .await
+        self.get_json(&events_query_path(space_id)).await
     }
 
-    /// Subscribe to the live event stream for one or more Spaces.
-    pub async fn events_subscribe(
+    /// Stream the canonical `/api/v1/events/subscribe` NDJSON response and
+    /// invoke `on_frame` once per parsed frame.
+    pub async fn events_subscribe_ndjson<F>(
         &self,
         space_id: &str,
-        from: Option<&str>,
+        after: Option<&str>,
         include_history: Option<bool>,
-    ) -> anyhow::Result<serde_json::Value> {
-        let mut url = format!("api/v1/events/subscribe?spaces={space_id}");
-        if let Some(from) = from {
-            url.push_str(&format!("&from={from}"));
-        }
-        if let Some(inc) = include_history {
-            url.push_str(&format!("&include_history={inc}"));
-        }
-        self.get_json(&url).await
-    }
-
-    /// Typed wrapper around [`Self::events_subscribe`]: parse the unary
-    /// response's `frames[]` array into a vector of typed
-    /// [`contrix_sdk::EventsSubscribeFrame`] values. Unknown frame kinds are
-    /// surfaced as `EventsSubscribeFrame::Unknown` so the caller can log +
-    /// continue rather than break the stream on every spec addition.
-    pub async fn events_subscribe_typed(
-        &self,
-        space_id: &str,
-        from: Option<&str>,
-        include_history: Option<bool>,
-    ) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrame>> {
-        let response = self
-            .events_subscribe(space_id, from, include_history)
+        mut on_frame: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(contrix_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
+    {
+        let request = self
+            .http
+            .get(self.endpoint(&events_subscribe_path(space_id, after, include_history))?)
+            .header(ACCEPT, "application/x-ndjson");
+        let mut response = self
+            .send_with_retry(self.prepare_request(request), Method::GET, true)
             .await?;
-        let mut frames = Vec::new();
-        if let Some(frames_array) = response.get("frames").and_then(|f| f.as_array()) {
-            for frame in frames_array {
-                let typed: contrix_sdk::EventsSubscribeFrame =
-                    serde_json::from_value(frame.clone())
-                        .map_err(|err| anyhow::anyhow!("failed to parse subscribe frame: {err}"))?;
-                frames.push(typed);
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response.bytes().await?;
+            return Err(ContrixApiError {
+                status,
+                error: decode_contrix_error(status, &bytes),
             }
+            .into());
         }
-        Ok(frames)
+
+        let mut pending = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            pending.extend_from_slice(&chunk);
+            drain_events_subscribe_ndjson_lines(&mut pending, &mut on_frame)?;
+        }
+
+        if let Some(frame) = parse_events_subscribe_ndjson_line(&pending)? {
+            on_frame(frame)?;
+        }
+        Ok(())
     }
 
     pub async fn snapshot_head(&self, space_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
@@ -1337,6 +1369,8 @@ impl ContrixApi {
         backup_id: &str,
         payload: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
+            .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
         self.put_json(&format!("api/v1/keys/backups/{backup_id}"), payload)
             .await
     }
@@ -1601,18 +1635,37 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn set_space_policy(
+    pub async fn set_space_policy_events(
         &self,
         space_id: &str,
+        actor_id: &str,
         join_rule: &str,
         history_visibility: &str,
     ) -> anyhow::Result<SpacePolicyResponse> {
-        let join_rule = canonical_space_policy_join_rule(join_rule);
-        self.put_json(
-            &format!("api/v1/spaces/{space_id}/policy"),
-            json!({"join_rule": join_rule, "history_visibility": history_visibility}),
-        )
-        .await
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for canonical Space policy events"
+            ));
+        }
+        let join_rule = canonical_space_join_rule_v1(join_rule);
+        for event in [
+            build_space_state_event(space_id, actor_id, "cx.space.join_rule", json!(join_rule))?,
+            build_space_state_event(
+                space_id,
+                actor_id,
+                "cx.space.history_visibility",
+                json!(history_visibility),
+            )?,
+        ] {
+            self.submit_event(&event).await?;
+        }
+        Ok(SpacePolicyResponse {
+            ok: true,
+            space_id: space_id.to_owned(),
+            join_rule: join_rule.to_owned(),
+            history_visibility: history_visibility.to_owned(),
+        })
     }
 
     pub async fn invite_to_space(
@@ -1942,10 +1995,7 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn mimi_request_consent(
-        &self,
-        request: Value,
-    ) -> anyhow::Result<MimiConsentResBody> {
+    pub async fn mimi_request_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
         self.post_json("api/v1/mimi/consent/request", request).await
     }
 
@@ -1982,10 +2032,7 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn applet_describe(
-        &self,
-        applet_did: &str,
-    ) -> anyhow::Result<AppletDescribeResBody> {
+    pub async fn applet_describe(&self, applet_did: &str) -> anyhow::Result<AppletDescribeResBody> {
         self.get_json(&format!("api/v1/applet/describe?applet_did={applet_did}"))
             .await
     }
@@ -2103,12 +2150,21 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn submit_event_envelope(
+        &self,
+        event: &EventEnvelope,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let event = serde_json::to_value(event)?;
+        self.submit_event(&event).await
+    }
+
+    #[deprecated(note = "legacy adapter only; active writes must use submit_event_envelope")]
     pub async fn submit_operation_event(
         &self,
         operation: &OperationEnvelope,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let event = operation_event_envelope(operation)?;
-        self.submit_event(&event).await
+        let event = EventEnvelope::from_legacy_operation(operation)?;
+        self.submit_event_envelope(&event).await
     }
 
     pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResBody> {
@@ -2325,46 +2381,278 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     format!("{base}/api/v1/blob/get?blob_ref={blob_ref}")
 }
 
-fn operation_event_envelope(operation: &OperationEnvelope) -> anyhow::Result<Value> {
+const ZERO_ANCHOR_REF: &str =
+    "cx:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+pub fn build_space_bootstrap_events(
+    space_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_visibility: &str,
+    invitees: &[String],
+    plaintext_visible_services: &[String],
+) -> anyhow::Result<Vec<Value>> {
+    let mut events = Vec::new();
+    events.push(build_space_create_event(
+        space_id,
+        actor_id,
+        title,
+        summary,
+        discoverability,
+        join_rule,
+        history_visibility,
+    )?);
+    events.push(build_space_state_event(
+        space_id,
+        actor_id,
+        "cx.space.join_rule",
+        json!(join_rule),
+    )?);
+    events.push(build_space_state_event(
+        space_id,
+        actor_id,
+        "cx.space.history_visibility",
+        json!(history_visibility),
+    )?);
+    events.push(build_space_state_event(
+        space_id,
+        actor_id,
+        "cx.space.discovery",
+        json!(discoverability),
+    )?);
+
+    let plaintext_services_event =
+        build_plaintext_visible_services_event(space_id, actor_id, plaintext_visible_services)?;
+    if let Some(event) = plaintext_services_event {
+        events.push(event);
+    }
+
+    events.push(build_member_state_event(
+        space_id, actor_id, actor_id, "join",
+    )?);
+    for invitee in invitees {
+        let invitee = invitee.trim();
+        if !invitee.is_empty() && invitee != actor_id {
+            events.push(build_member_state_event(
+                space_id, actor_id, invitee, "invite",
+            )?);
+        }
+    }
+    Ok(events)
+}
+
+pub fn build_space_create_event(
+    space_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_visibility: &str,
+) -> anyhow::Result<Value> {
+    let created_at = event_timestamp();
+    let federation_policy = if discoverability == "public" {
+        "open"
+    } else {
+        "restricted"
+    };
+    let mut object = json!({
+        "id": space_id,
+        "schema": "cx.schema.space.v1",
+        "title": title,
+        "created_by_principal": actor_id,
+        "schema_refs": ["cx.schema.space.v1"],
+        "default_discoverability": discoverability,
+        "default_join_rule": join_rule,
+        "history_visibility": history_visibility,
+        "encryption_profile": "mls_rfc9420",
+        "federation_policy": federation_policy,
+        "anchor_profile": "single_did",
+        "anchorer": {
+            "type": "single_did",
+            "did": actor_id,
+        },
+        "created_at": created_at,
+    });
+    if let Some(summary) = summary
+        && !summary.trim().is_empty()
+    {
+        object["summary"] = Value::String(summary.trim().to_owned());
+    }
+
+    build_reducer_event(
+        "cx.space.create",
+        space_id,
+        actor_id,
+        &created_at,
+        json!({ "object": object }),
+        &space_cell("cx.component.space.create.v1", space_id),
+        "append",
+        json!({ "space_id": space_id }),
+    )
+}
+
+pub fn build_space_state_event(
+    space_id: &str,
+    actor_id: &str,
+    kind: &str,
+    value: Value,
+) -> anyhow::Result<Value> {
+    let cell_family = match kind {
+        "cx.space.join_rule" => "cx.component.space.join_rule.v1",
+        "cx.space.history_visibility" => "cx.component.space.history_visibility.v1",
+        "cx.space.discovery" => "cx.component.space.discovery.v1",
+        "cx.space.schema" => "cx.component.space.schema.v1",
+        "cx.space.policy_components" => "cx.component.space.policy_components.v1",
+        other => {
+            return Err(anyhow::anyhow!(
+                "unsupported Space state event kind {other}"
+            ));
+        }
+    };
+    let created_at = event_timestamp();
+    let payload_value = value.clone();
+    build_reducer_event(
+        kind,
+        space_id,
+        actor_id,
+        &created_at,
+        json!({ "value": payload_value }),
+        &space_cell(cell_family, space_id),
+        "set",
+        json!({ "value": value }),
+    )
+}
+
+pub fn build_plaintext_visible_services_event(
+    space_id: &str,
+    actor_id: &str,
+    service_dids: &[String],
+) -> anyhow::Result<Option<Value>> {
+    let services = service_dids
+        .iter()
+        .map(|service| service.trim())
+        .filter(|service| !service.is_empty())
+        .map(|service| {
+            json!({
+                "service_did": service,
+                "service_type": "principal_server",
+                "purposes": ["message_index", "notification_fanout"],
+                "visibility": "private_plaintext",
+            })
+        })
+        .collect::<Vec<_>>();
+    if services.is_empty() {
+        return Ok(None);
+    }
+
+    let created_at = event_timestamp();
+    build_reducer_event(
+        "cx.space.plaintext_visible_services",
+        space_id,
+        actor_id,
+        &created_at,
+        json!({ "services": services.clone() }),
+        &space_cell("cx.component.space.plaintext_visible_services.v1", space_id),
+        "set",
+        json!({ "services": services }),
+    )
+    .map(Some)
+}
+
+fn build_member_state_event(
+    space_id: &str,
+    actor_id: &str,
+    member_actor_id: &str,
+    membership: &str,
+) -> anyhow::Result<Value> {
+    let created_at = event_timestamp();
+    build_reducer_event(
+        "cx.member.state",
+        space_id,
+        actor_id,
+        &created_at,
+        json!({
+            "actor_id": member_actor_id,
+            "membership": membership,
+            "reason": "space_create",
+        }),
+        &format!(
+            "{}:{}",
+            space_cell("cx.component.member.state.v1", space_id),
+            member_actor_id
+        ),
+        "transition",
+        json!({ "from": null, "to": membership }),
+    )
+}
+
+fn build_reducer_event(
+    kind: &str,
+    space_id: &str,
+    actor_id: &str,
+    created_at: &str,
+    payload: Value,
+    cell: &str,
+    op_kind: &str,
+    op_value: Value,
+) -> anyhow::Result<Value> {
     let event_id = format!("cx:event:{}", uuid_v7());
-    let payload = operation.body.clone();
-    let operation_id = typed_operation_id(&operation.operation_id);
+    let mut op = json!({ "kind": op_kind });
+    match op_value {
+        Value::Object(map) => {
+            if let Value::Object(op_object) = &mut op {
+                for (key, value) in map {
+                    op_object.insert(key, value);
+                }
+            }
+        }
+        value => {
+            op["value"] = value;
+        }
+    }
     let mut event = json!({
-        "event_id": event_id,
-        "kind": operation.op_type,
-        "actor_id": operation.actor,
-        "actor_seq": operation.causal.actor_seq,
-        "space_id": operation.space_id,
-        "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        "hlc": operation.causal.hlc,
+        "event_id": event_id.clone(),
+        "kind": kind,
+        "actor_id": actor_id,
+        "actor_seq": next_seq(),
+        "space_id": space_id,
+        "created_at": created_at,
+        "hlc": Hlc::now("yougen").encode(),
         "prev_refs": [],
         "refs": [],
+        "preconditions": [],
+        "effects": [{
+            "cell": cell,
+            "op": op,
+        }],
+        "anchor_ref": ZERO_ANCHOR_REF,
         "payload": payload,
         "unsigned": {
-            "local_operation_idempotency_alias": operation_id,
+            "local_operation_idempotency_alias": event_id,
         },
         "proofs": [{
             "kind": "detached_jws",
             "alg": "EdDSA",
-            "verification_method": format!("{}#yougen", operation.actor),
+            "verification_method": format!("{actor_id}#yougen"),
             "payload_hash": "",
-            "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "created_at": created_at,
             "jws": "a..b",
         }],
     });
-    if let Some(target_ref) = &operation.target_ref {
-        event["unsigned"]["local_target_ref"] = Value::String(target_ref.clone());
-    }
     refresh_event_proof(&mut event)?;
     Ok(event)
 }
 
-fn typed_operation_id(operation_id: &str) -> String {
-    if operation_id.starts_with("cx:operation:") {
-        operation_id.to_owned()
-    } else {
-        format!("cx:operation:{operation_id}")
-    }
+fn event_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn space_cell(cell_family: &str, space_id: &str) -> String {
+    format!("cx:cell:{cell_family}:{space_id}")
 }
 
 fn event_canonical_digest(event: &Value) -> anyhow::Result<String> {
@@ -2505,8 +2793,8 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
     }
 }
 
-/// Best-effort decoding of a server error response into an SDK
-/// [`ErrorEnvelope`]. We try three on-the-wire shapes in order:
+/// Decode a server error response into an SDK [`ErrorEnvelope`]. We try
+/// the current on-the-wire shapes in order:
 ///
 ///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what
 ///      our principal server emits when its inner handler bubbles a
@@ -2516,8 +2804,6 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
 ///      [`ErrorEnvelope`] requires `request_id`, so we tolerate its
 ///      absence via a local shadow type that defaults it to
 ///      `"unknown"`.
-///   3. The Matrix-style legacy shape `{ "errcode": "...", "error":
-///      "..." }` — older co-deployed services still surface this form.
 ///
 /// If none match, we synthesise a minimal envelope tagged
 /// `cx.error.http_status` so downstream code always has something
@@ -2544,59 +2830,11 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
         }
     }
 
-    #[derive(serde::Deserialize)]
-    struct LegacyMatrixEnvelope {
-        errcode: String,
-        #[serde(default)]
-        error: String,
-    }
-    impl From<LegacyMatrixEnvelope> for ErrorEnvelope {
-        fn from(value: LegacyMatrixEnvelope) -> Self {
-            ErrorEnvelope::new(value.errcode, value.error)
-        }
-    }
-
-    /// `{ok, error: { errcode, error, retry_after_ms?, ...extras }}` — the
-    /// soland Move/Anchor pipeline wraps Matrix-style envelopes this way
-    /// for conflict responses (expected_head_mismatch, etc.). Extra
-    /// fields beyond errcode/error/retry_after_ms are surfaced via the
-    /// envelope `details` map so callers (e.g. conflict UI) can read
-    /// per-cell / per-frontier hints the server attaches.
-    #[derive(serde::Deserialize)]
-    struct WrappedLegacyMatrixEnvelope {
-        #[serde(default)]
-        error: WrappedLegacyMatrixDetail,
-    }
-    #[derive(Default, serde::Deserialize)]
-    struct WrappedLegacyMatrixDetail {
-        #[serde(default)]
-        errcode: String,
-        #[serde(default)]
-        error: String,
-        #[serde(default)]
-        retry_after_ms: Option<u64>,
-        #[serde(flatten)]
-        extras: std::collections::BTreeMap<String, serde_json::Value>,
-    }
-
     if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
         return body.error;
     }
     if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
         return plain.into();
-    }
-    if let Ok(wrapped) = serde_json::from_slice::<WrappedLegacyMatrixEnvelope>(bytes)
-        && !wrapped.error.errcode.is_empty()
-    {
-        let mut envelope = ErrorEnvelope::new(wrapped.error.errcode, wrapped.error.error)
-            .with_retry_after_ms(wrapped.error.retry_after_ms);
-        for (key, value) in wrapped.error.extras {
-            envelope = envelope.with_detail(key, value);
-        }
-        return envelope;
-    }
-    if let Ok(legacy) = serde_json::from_slice::<LegacyMatrixEnvelope>(bytes) {
-        return legacy.into();
     }
     ErrorEnvelope::new(
         "http_status",
@@ -2627,11 +2865,11 @@ fn is_retryable_reqwest_error(error: &reqwest::Error) -> bool {
     }
 }
 
-fn canonical_space_policy_join_rule(join_rule: &str) -> &str {
+fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
     match join_rule {
-        "invite" => "invite_only",
         "open" => "public",
         "request" => "knock",
+        "invite_only" => "invite",
         value => value,
     }
 }
@@ -2687,6 +2925,90 @@ pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescriptio
     Ok(serde_json::from_value(value)?)
 }
 
+fn query_component(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+fn events_query_path(space_id: &str) -> String {
+    format!("api/v1/events?spaces={}", query_component(space_id))
+}
+
+fn events_subscribe_path(
+    space_id: &str,
+    after: Option<&str>,
+    include_history: Option<bool>,
+) -> String {
+    let mut url = format!(
+        "api/v1/events/subscribe?spaces={}",
+        query_component(space_id)
+    );
+    if let Some(after) = after {
+        url.push_str("&after=");
+        url.push_str(&query_component(after));
+    }
+    if let Some(include_history) = include_history {
+        url.push_str("&include_history=");
+        url.push_str(if include_history { "true" } else { "false" });
+    }
+    url
+}
+
+pub fn parse_events_subscribe_ndjson_text(
+    input: &str,
+) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrame>> {
+    let mut frames = Vec::new();
+    for line in input.lines() {
+        if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
+            frames.push(frame);
+        }
+    }
+    Ok(frames)
+}
+
+fn drain_events_subscribe_ndjson_lines<F>(
+    pending: &mut Vec<u8>,
+    on_frame: &mut F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(contrix_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
+{
+    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+        let mut line: Vec<u8> = pending.drain(..=newline).collect();
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if let Some(frame) = parse_events_subscribe_ndjson_line(&line)? {
+            on_frame(frame)?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_events_subscribe_ndjson_line(
+    line: &[u8],
+) -> anyhow::Result<Option<contrix_sdk::EventsSubscribeFrame>> {
+    let trimmed = trim_ascii(line);
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_slice(trimmed)
+        .map(Some)
+        .map_err(|err| anyhow::anyhow!("failed to parse subscribe NDJSON frame: {err}"))
+}
+
+fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[1..];
+    }
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
+}
+
 pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncResponse> {
     Ok(serde_json::from_value(value)?)
 }
@@ -2731,14 +3053,51 @@ mod tests {
         assert_eq!(description.protocol_version, "1.0");
 
         let sync = parse_sync(json!({
-            "next_batch": "sx:1",
-            "spaces": {"cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}},
-            "to_device": [],
-            "account_data": [],
+            "cursor": "cx:cursor:test-1",
+            "spaces": {
+                "join": {
+                    "cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
+                },
+                "invite": {},
+                "knock": {},
+                "leave": {}
+            },
+            "to_device": {"events": []},
+            "account_data": {"events": []},
             "device_lists": {"changed": [], "left": []}
         }))
         .unwrap();
         assert_eq!(sync.spaces.len(), 1);
+        assert_eq!(sync.cursor, "cx:cursor:test-1");
+
+        let sync_v1 = parse_sync(json!({
+            "cursor": "cx:cursor:v1",
+            "spaces": {
+                "join": {
+                    "cx:space:joined": {
+                        "summary": {"title": "Joined"}
+                    }
+                },
+                "leave": {
+                    "cx:space:left": {
+                        "reason": "left"
+                    }
+                }
+            },
+            "to_device": {"events": [{"type": "cx.mls.welcome"}]},
+            "account_data": {"events": [{"data_type": "client.ui", "content": {"theme": "system"}}]},
+            "device_lists": {"changed": [], "left": []},
+            "notifications": {"events": []},
+            "presence": {"events": []}
+        }))
+        .unwrap();
+        assert_eq!(sync_v1.cursor, "cx:cursor:v1");
+        assert!(sync_v1.spaces.contains_key("cx:space:joined"));
+        assert_eq!(sync_v1.left_spaces, vec!["cx:space:left".to_owned()]);
+        assert_eq!(sync_v1.to_device.len(), 1);
+        assert_eq!(sync_v1.account_data.len(), 1);
+        assert!(sync_v1.notifications.is_object());
+        assert!(sync_v1.presence.is_object());
 
         let directory = parse_directory_describe(json!({
             "service_did": "did:web:server.local",
@@ -2751,10 +3110,158 @@ mod tests {
     }
 
     #[test]
+    fn event_paths_use_v1_query_parameters() {
+        let backfill = events_query_path("cx:space:demo");
+        assert_eq!(backfill, "api/v1/events?spaces=cx%3Aspace%3Ademo");
+        assert!(!backfill.contains("direction="));
+
+        let subscribe = events_subscribe_path("cx:space:demo", Some("sx:1"), Some(true));
+        assert_eq!(
+            subscribe,
+            "api/v1/events/subscribe?spaces=cx%3Aspace%3Ademo&after=sx%3A1&include_history=true"
+        );
+        assert!(!subscribe.contains("&from="));
+    }
+
+    #[test]
+    fn canonical_space_join_rule_keeps_v1_invite_value() {
+        assert_eq!(canonical_space_join_rule_v1("open"), "public");
+        assert_eq!(canonical_space_join_rule_v1("request"), "knock");
+        assert_eq!(canonical_space_join_rule_v1("invite_only"), "invite");
+        assert_eq!(canonical_space_join_rule_v1("invite"), "invite");
+    }
+
+    #[test]
+    fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
+        let events = build_space_bootstrap_events(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Engineering",
+            Some("Roadmap work"),
+            "listed",
+            "invite",
+            "shared",
+            &["did:web:bob.example".to_owned()],
+            &["did:web:server.example".to_owned()],
+        )
+        .unwrap();
+        let kinds = events
+            .iter()
+            .map(|event| event["kind"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                "cx.space.create",
+                "cx.space.join_rule",
+                "cx.space.history_visibility",
+                "cx.space.discovery",
+                "cx.space.plaintext_visible_services",
+                "cx.member.state",
+                "cx.member.state",
+            ]
+        );
+
+        let create = &events[0];
+        assert_eq!(create["payload"]["object"]["schema"], "cx.schema.space.v1");
+        assert_eq!(
+            create["payload"]["object"]["created_by_principal"],
+            create["actor_id"]
+        );
+        assert_eq!(
+            create["payload"]["object"]["created_at"], create["created_at"],
+            "Space create cross-field semantic validation requires matching timestamps",
+        );
+        assert_eq!(create["payload"]["object"]["default_join_rule"], "invite");
+        assert_eq!(create["payload"]["object"]["history_visibility"], "shared");
+        assert_eq!(
+            create["effects"][0]["cell"],
+            "cx:cell:cx.component.space.create.v1:cx:space:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(create["effects"][0]["op"]["kind"], "append");
+        assert_eq!(create["anchor_ref"], ZERO_ANCHOR_REF);
+        assert!(
+            create["proofs"][0]["payload_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+
+        assert_eq!(events[1]["payload"]["value"], "invite");
+        assert_eq!(events[2]["payload"]["value"], "shared");
+        assert_eq!(events[3]["payload"]["value"], "listed");
+        assert_eq!(
+            events[4]["payload"]["services"][0]["service_did"],
+            "did:web:server.example"
+        );
+        assert_eq!(events[5]["payload"]["membership"], "join");
+        assert_eq!(events[6]["payload"]["membership"], "invite");
+    }
+
+    #[test]
+    fn parses_events_subscribe_ndjson_frames() {
+        let frames = parse_events_subscribe_ndjson_text(
+            r#"
+{"kind":"heartbeat"}
+{"kind":"frontier","cursor":"sx:2"}
+{"kind":"catchup_complete","cursor":"sx:3"}
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            frames[0],
+            contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+        ));
+        assert!(matches!(
+            &frames[1],
+            contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:2"
+        ));
+        assert!(matches!(
+            &frames[2],
+            contrix_sdk::EventsSubscribeFrame::CatchupComplete { cursor } if cursor.as_deref() == Some("sx:3")
+        ));
+    }
+
+    #[test]
+    fn drains_split_events_subscribe_ndjson_chunks() {
+        let mut pending = br#"{"kind":"heartbeat"}
+{"kind":"frontier""#
+            .to_vec();
+        let mut frames = Vec::new();
+        drain_events_subscribe_ndjson_lines(&mut pending, &mut |frame| {
+            frames.push(frame);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(frames.len(), 1);
+        assert!(matches!(
+            frames[0],
+            contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+        ));
+
+        pending.extend_from_slice(
+            br#","cursor":"sx:split"}
+"#,
+        );
+        drain_events_subscribe_ndjson_lines(&mut pending, &mut |frame| {
+            frames.push(frame);
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(pending.is_empty());
+        assert!(matches!(
+            &frames[1],
+            contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:split"
+        ));
+    }
+
+    #[test]
     fn decodes_wrapped_contrix_error_envelope() {
         let decoded = decode_contrix_error(
             StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"errcode":"expected_head_mismatch","error":"expected_head mismatch","retry_after_ms":250,"scope":"repo"}}"#,
+            br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}}}"#,
         );
         assert_eq!(decoded.code(), "expected_head_mismatch");
         assert_eq!(decoded.message(), "expected_head mismatch");
@@ -2766,7 +3273,7 @@ mod tests {
     fn decodes_plain_error_envelope_and_falls_back() {
         let decoded = decode_contrix_error(
             StatusCode::BAD_REQUEST,
-            br#"{"errcode":"invalid_param","error":"invalid did"}"#,
+            br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"}}"#,
         );
         assert_eq!(decoded.code(), "invalid_param");
 
@@ -2865,14 +3372,6 @@ mod tests {
         }
         .into();
         assert!(!is_plaintext_visibility_policy_error(&other_policy));
-    }
-
-    #[test]
-    fn canonicalizes_space_policy_join_rule_aliases_for_current_server_api() {
-        assert_eq!(canonical_space_policy_join_rule("invite"), "invite_only");
-        assert_eq!(canonical_space_policy_join_rule("open"), "public");
-        assert_eq!(canonical_space_policy_join_rule("request"), "knock");
-        assert_eq!(canonical_space_policy_join_rule("restricted"), "restricted");
     }
 
     #[test]

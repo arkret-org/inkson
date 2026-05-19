@@ -5,6 +5,10 @@ use serde_json::Value;
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip, UiIcon},
     local_state::{ClientLocalState, LocalStateStore},
+    notification_rules::{
+        DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
+        dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
+    },
     routes::Route,
     views::helpers::with_authed_api,
 };
@@ -40,6 +44,8 @@ pub fn NotificationsPanel(
     let initial_notifications = hydrate_notifications(
         initial_state.notification_projection.clone(),
         &initial_state,
+        None,
+        None,
     );
 
     let mut notifications = use_signal(move || initial_notifications.clone());
@@ -337,6 +343,8 @@ fn refresh_notifications(
         .await
         {
             Ok(response) => {
+                let push_rules = push_rules_from_account_data(&response.account_data);
+                let dnd = dnd_settings_from_account_data(&response.account_data);
                 let raw_notifications = response
                     .account_data
                     .into_iter()
@@ -347,7 +355,12 @@ fn refresh_notifications(
                     let mut store = state_store.write();
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
-                    hydrate_notifications(raw_notifications, &local_state)
+                    hydrate_notifications(
+                        raw_notifications,
+                        &local_state,
+                        push_rules.as_ref(),
+                        dnd.as_ref(),
+                    )
                 };
                 let loaded_count = hydrated.len();
                 notifications.set(hydrated);
@@ -376,11 +389,15 @@ fn is_notification_account_data(value: &Value) -> bool {
 fn hydrate_notifications(
     raw_notifications: Vec<Value>,
     local_state: &ClientLocalState,
+    push_rules: Option<&PushRulesConfig>,
+    dnd: Option<&DndSettings>,
 ) -> Vec<Notification> {
     raw_notifications
         .into_iter()
         .enumerate()
-        .map(|(index, value)| notification_from_value(index, value, local_state))
+        .filter_map(|(index, value)| {
+            notification_from_value(index, value, local_state, push_rules, dnd)
+        })
         .collect()
 }
 
@@ -388,7 +405,15 @@ fn notification_from_value(
     index: usize,
     value: Value,
     local_state: &ClientLocalState,
-) -> Notification {
+    push_rules: Option<&PushRulesConfig>,
+    dnd: Option<&DndSettings>,
+) -> Option<Notification> {
+    let eval_ctx = notification_eval_context(&value);
+    let decision = evaluate_notification(push_rules, dnd, &eval_ctx);
+    if !decision.should_notify {
+        return None;
+    }
+
     let id = value_string(&value, &["notification_id", "id"])
         .unwrap_or_else(|| format!("notification-{index}"));
     let client_state = local_state
@@ -406,7 +431,7 @@ fn notification_from_value(
     let timestamp = value_string(&value, &["timestamp", "created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
-    Notification {
+    Some(Notification {
         id,
         title,
         body,
@@ -416,7 +441,7 @@ fn notification_from_value(
         archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
         timestamp,
         action_label: Some(default_notification_action(&kind).to_owned()),
-    }
+    })
 }
 
 fn default_notification_title(kind: &str) -> String {
@@ -448,6 +473,47 @@ fn value_bool(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(|field| field.as_bool())
 }
 
+fn value_u32(value: &Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(|field| field.as_u64())
+        .and_then(|field| u32::try_from(field).ok())
+}
+
+fn notification_eval_context(value: &Value) -> NotificationEvalContext {
+    let notification_type = value_string(
+        value,
+        &["notification_type", "notification_kind", "type", "kind"],
+    )
+    .unwrap_or_else(|| "message".to_owned());
+    let event_kind = value_string(value, &["event_kind", "source_event_kind", "kind", "type"])
+        .unwrap_or_else(|| notification_type.clone());
+    let is_e2ee = value_bool(value, "is_e2ee")
+        .or_else(|| value_bool(value, "encrypted"))
+        .unwrap_or_else(|| value.get("encrypted_payload").is_some());
+    NotificationEvalContext {
+        event_kind,
+        notification_type,
+        space_id: value_string(value, &["space_id"]).unwrap_or_default(),
+        flow_id: value_string(value, &["flow_id"]),
+        flow_track: value_string(value, &["flow_track", "track_name"]),
+        sender: value_string(value, &["sender", "sender_did", "actor_id"]),
+        body: value_string(value, &["body", "summary", "preview"]),
+        is_e2ee,
+        local_decrypted: value_bool(value, "local_decrypted").unwrap_or(!is_e2ee),
+        mentions_actor: value_bool(value, "mentions_actor"),
+        assigned_to_actor: value_bool(value, "assigned_to_actor").unwrap_or(false),
+        reply_to_self: value_bool(value, "reply_to_self").unwrap_or(false),
+        participating_thread_update: value_bool(value, "participating_thread_update")
+            .unwrap_or(false),
+        is_direct_message: value_bool(value, "is_direct_message").unwrap_or(false),
+        member_count: value_u32(value, "member_count"),
+        watch_level: value_string(value, &["watch_state", "watch_level"])
+            .and_then(|level| WatchLevel::from_wire(&level)),
+        now_minutes: None,
+    }
+}
+
 fn space_is_muted(local_state: &ClientLocalState, space_id: &str) -> bool {
     !space_id.is_empty()
         && local_state
@@ -463,4 +529,59 @@ fn notification_kind_enabled(local_state: &ClientLocalState, kind: &str) -> bool
         .get(kind)
         .copied()
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn hydrate_notifications_applies_push_rules_and_dnd() {
+        let raw = vec![json!({
+            "notification_id": "n1",
+            "kind": "cx.notification",
+            "notification_type": "message",
+            "space_id": "cx:space:quiet",
+            "body": "hello"
+        })];
+        let rules = crate::notification_rules::parse_push_rules(&json!({
+            "rules": [{
+                "rule_id": "override.quiet",
+                "conditions": [
+                    {"kind": "field_match", "field": "space_id", "pattern": "cx:space:quiet"}
+                ],
+                "actions": ["dont_notify"]
+            }]
+        }))
+        .unwrap();
+
+        let notifications =
+            hydrate_notifications(raw, &ClientLocalState::default(), Some(&rules), None);
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn notification_eval_context_extracts_watch_and_e2ee_flags() {
+        let ctx = notification_eval_context(&json!({
+            "notification_id": "n1",
+            "event_kind": "cx.message.create",
+            "notification_type": "mention",
+            "space_id": "cx:space:e2ee",
+            "flow_id": "cx:flow:1",
+            "track_name": "discussion",
+            "watch_state": "participating",
+            "encrypted": true,
+            "local_decrypted": false,
+            "mentions_actor": true
+        }));
+
+        assert_eq!(ctx.event_kind, "cx.message.create");
+        assert_eq!(ctx.notification_type, "mention");
+        assert_eq!(ctx.flow_track.as_deref(), Some("discussion"));
+        assert_eq!(ctx.watch_level, Some(WatchLevel::Participating));
+        assert!(ctx.is_e2ee);
+        assert!(!ctx.local_decrypted);
+        assert_eq!(ctx.mentions_actor, Some(true));
+    }
 }

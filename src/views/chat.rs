@@ -10,8 +10,8 @@ use crate::{
     hlc::{Hlc, observe_seq},
     local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
     models::SubmitEventResponse,
-    move_builder::{build_mls_commit_move, did_key_verification_method, sign_unsigned_move},
-    operation::{OperationBuilder, OperationEnvelope, cx_ops, uuid_v7},
+    move_builder::{did_key_verification_method, sign_unsigned_move},
+    operation::{EventEnvelope, OperationBuilder, cx_ops, uuid_v7},
     routes::Route,
     views::helpers::{
         StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
@@ -117,9 +117,8 @@ struct SpaceParticipant {
 ///   `serde_json::Value` ready to drop into `content.encrypted_payload`.
 ///
 /// On any failure (empty passphrase, restore fails, encrypt fails) the
-/// helper returns `(None, vec![], None)` and the caller falls back to
-/// the legacy placeholder ciphertext path so the rest of the Send
-/// Secure pipeline (commit Move + audit receipt) still works.
+/// helper returns `(None, vec![], None, None)` and the caller aborts the
+/// Send Secure flow.
 #[cfg(not(target_arch = "wasm32"))]
 fn run_local_mls_encrypt(
     mut state_store: Signal<LocalStateStore>,
@@ -136,9 +135,6 @@ fn run_local_mls_encrypt(
 ) {
     let empty = (None, Vec::new(), None, None);
     if passphrase.is_empty() {
-        // No passphrase set this session — legacy placeholder path stays
-        // active. B3d/B6c readers fall back to server-projected hash +
-        // single device.
         return empty;
     }
     let snapshot = state_store.read().mls_snapshot_for(space_id);
@@ -235,39 +231,19 @@ fn run_local_mls_encrypt(
 
 /// Walk a `DeviceMessagesReceiveResBody` JSON representation and
 /// pull out every `cx.mls.welcome` content payload.
-/// Soland's wire shape for that endpoint is `{ "messages": { actor:
-/// { device_id: { type, content, ... } } } }`; this helper does NOT
-/// assume only one welcome per poll — multiple inviters into multiple
-/// Spaces all flow through the same envelope.
+/// The receive endpoint returns `{ "events": [{ type, content, ... }] }`;
+/// this helper does not assume only one welcome per poll.
 #[cfg(not(target_arch = "wasm32"))]
 fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
     let mut welcomes = Vec::new();
-    let Some(messages) = value.get("messages").and_then(|v| v.as_object()) else {
+    let Some(events) = value.get("events").and_then(|v| v.as_array()) else {
         return welcomes;
     };
-    for actor_map in messages.values() {
-        let Some(actor_obj) = actor_map.as_object() else {
-            continue;
-        };
-        for device_value in actor_obj.values() {
-            // Each device entry may be either a single
-            // `{type, content}` map or a list of such maps depending on
-            // soland's batching mode. Handle both shapes.
-            if let Some(list) = device_value.as_array() {
-                for entry in list {
-                    if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome") {
-                        if let Some(content) = entry.get("content") {
-                            welcomes.push(content.clone());
-                        }
-                    }
-                }
-            } else if let Some(entry) = device_value.as_object() {
-                if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome") {
-                    if let Some(content) = entry.get("content") {
-                        welcomes.push(content.clone());
-                    }
-                }
-            }
+    for entry in events {
+        if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome")
+            && let Some(content) = entry.get("content")
+        {
+            welcomes.push(content.clone());
         }
     }
     welcomes
@@ -288,7 +264,7 @@ fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> 
 /// 5. Ship the typed `MlsWelcomeEnvelope` to the target via
 ///    `send_device_message_envelope` with `type = "cx.mls.welcome"`.
 /// 6. Submit the SDK-built `commit_operation` via
-///    `submit_operation_event` so other server-side state machines
+///    `submit_event_envelope` so other server-side state machines
 ///    (epoch / covered_frontier) observe the new epoch.
 /// 7. Re-persist the post-commit group state so the next Send Secure
 ///    starts from the new epoch + member set.
@@ -434,7 +410,7 @@ async fn run_mls_add_member_and_invite(
     }
     let envelope = envelope_builder.build("yougen");
     let submit = crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
-        api.submit_operation_event(&envelope).await
+        api.submit_event_envelope(&envelope).await
     })
     .await;
     if let Err(err) = submit {
@@ -501,7 +477,7 @@ fn chat_message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> crate::operation::OperationEnvelope {
+) -> crate::operation::EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.message.revise")
         .target_ref(event_id)
         .body(json!({
@@ -520,7 +496,7 @@ fn chat_message_redact_operation(
     actor: &str,
     event_id: &str,
     reason: &str,
-) -> crate::operation::OperationEnvelope {
+) -> crate::operation::EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.message.redact")
         .target_ref(event_id)
         .body(json!({
@@ -535,7 +511,7 @@ fn chat_reaction_add_operation(
     actor: &str,
     event_id: &str,
     key: &str,
-) -> crate::operation::OperationEnvelope {
+) -> crate::operation::EventEnvelope {
     OperationBuilder::new(space_id, actor, "cx.reaction.add")
         .target_ref(event_id)
         .body(json!({
@@ -1063,7 +1039,7 @@ fn chat_message_create_operation(
     body: &str,
     mentions: &[StructuredMention],
     reply_to: Option<&str>,
-) -> crate::operation::OperationEnvelope {
+) -> crate::operation::EventEnvelope {
     let mention_values = mentions_to_json(mentions);
     let mention_relations = mention_relation_json(message_id, mentions);
     OperationBuilder::new(space_id, actor, "cx.message.create")
@@ -1571,9 +1547,9 @@ async fn submit_chat_operation_with_plaintext_retry(
     api: &ContrixApi,
     space_id: &str,
     plaintext_visible_services: &[String],
-    operation: &OperationEnvelope,
+    operation: &EventEnvelope,
 ) -> anyhow::Result<SubmitEventResponse> {
-    match api.submit_operation_event(operation).await {
+    match api.submit_event_envelope(operation).await {
         Ok(response) => Ok(response),
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
             let mut services = plaintext_visible_services.to_vec();
@@ -1596,7 +1572,7 @@ async fn submit_chat_operation_with_plaintext_retry(
                     "plaintext policy update failed: {update_error}; original send failed: {error}"
                 )
             })?;
-            api.submit_operation_event(operation).await
+            api.submit_event_envelope(operation).await
         }
         Err(error) => Err(error),
     }
@@ -1638,12 +1614,9 @@ pub fn ChatPanel(
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
     let mut message_context_menu = use_signal(|| Option::<String>::None);
-    // Read the shared per-Space MLS passphrase store. Set from the new
-    // passphrase input the composer renders
-    // above Send Secure; read by the secure-send path to actually
-    // run `group.encrypt_payload()`. When empty for this Space, the
-    // legacy placeholder ciphertext path stays active so non-MLS
-    // users / sealed pages don't break.
+    // Read the shared per-Space MLS passphrase store. Set from the
+    // passphrase input above Send Secure; read by the secure-send path
+    // to run `group.encrypt_payload()`.
     let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
     // A2 / AW-3.10: shared owned-agent list so the composer can mount
     // [`PrivateComposeBanner`] + apply the `private-compose-mode` class
@@ -1789,7 +1762,7 @@ pub fn ChatPanel(
             if let Ok(sync) = api.sync(None).await {
                 {
                     let mut store = state_store.write();
-                    store.save_sync_cursor(sync.next_batch.clone());
+                    store.save_sync_cursor(sync.cursor.clone());
                     for (space_id, projection) in &sync.spaces {
                         store.save_space_projection(space_id.clone(), projection.clone());
                     }
@@ -1799,7 +1772,7 @@ pub fn ChatPanel(
                     &mut channels.write(),
                     channels_from_sync_spaces(&sync.spaces),
                 );
-                sync_cursor.set(sync.next_batch);
+                sync_cursor.set(sync.cursor);
             }
 
             let spaces_to_backfill = if selected_scope_for_load.is_empty() {
@@ -2235,32 +2208,38 @@ pub fn ChatPanel(
                                         ) {
                                             Ok(builder) => {
                                                 let mut op = builder.build("yougen");
-                                                op.body["category"] = json!(category.clone());
-                                                op.body["create_card"] = json!(create_card);
-                                                if !op.body.get("fields").is_some_and(|fields| fields.is_object()) {
-                                                    op.body["fields"] = json!({});
+                                                op.payload["category"] = json!(category.clone());
+                                                op.payload["create_card"] = json!(create_card);
+                                                if !op.payload.get("fields").is_some_and(|fields| fields.is_object()) {
+                                                    op.payload["fields"] = json!({});
                                                 }
-                                                op.body["fields"]["category"] = json!(category.clone());
-                                                op.body["fields"]["has_synthesis"] = json!(create_card);
-                                                if !op.body["object"]
+                                                op.payload["fields"]["category"] = json!(category.clone());
+                                                op.payload["fields"]["has_synthesis"] = json!(create_card);
+                                                if !op.payload["object"]
                                                     .get("fields")
                                                     .is_some_and(|fields| fields.is_object())
                                                 {
-                                                    op.body["object"]["fields"] = json!({});
+                                                    op.payload["object"]["fields"] = json!({});
                                                 }
-                                                op.body["object"]["fields"]["category"] =
+                                                op.payload["object"]["fields"]["category"] =
                                                     json!(category.clone());
-                                                op.body["object"]["fields"]["has_synthesis"] =
+                                                op.payload["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
-                                                op.body["rank"] = json!(rank.clone());
+                                                op.payload["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
-                                                    op.body["summary"] = json!(summary.clone());
-                                                    op.body["object"]["summary"] = json!(summary.clone());
+                                                    op.payload["summary"] = json!(summary.clone());
+                                                    op.payload["object"]["summary"] = json!(summary.clone());
                                                 }
                                                 if !create_card {
-                                                    if let Some(tracks) = op.body["object"]["tracks"].as_object_mut() {
+                                                    if let Some(tracks) = op.payload["object"]["tracks"].as_object_mut() {
                                                         tracks.remove("synthesis");
                                                     }
+                                                }
+                                                if let Err(error) = op.refresh_proof_hashes() {
+                                                    status_msg.set(format!(
+                                                        "Could not create discussion proof: {error}"
+                                                    ));
+                                                    return;
                                                 }
                                                 op
                                             }
@@ -2276,7 +2255,7 @@ pub fn ChatPanel(
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let space = space.clone();
-                                        let watch_ops: Vec<crate::operation::OperationEnvelope> = initial_watchers
+                                        let watch_ops: Vec<crate::operation::EventEnvelope> = initial_watchers
                                             .iter()
                                             .map(|target_did| {
                                                 cx_ops::flow_watch_set(
@@ -2294,7 +2273,7 @@ pub fn ChatPanel(
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
                                                 Ok(api) => match api
-                                                        .submit_operation_event(&op)
+                                                        .submit_event_envelope(&op)
                                                         .await
                                                     {
                                                         Ok(submitted) => {
@@ -2313,7 +2292,7 @@ pub fn ChatPanel(
                                                                 let mut store = state_store.write();
                                                                 store.save_sync_cursor(submitted.sync_token.clone());
                                                                 store.append_raw_operation(
-                                                                    op.operation_id.clone(),
+                                                                    op.local_operation_id().to_owned(),
                                                                     Some(space.clone()),
                                                                     json!({
                                                                         "flow_id": flow_id,
@@ -2322,7 +2301,7 @@ pub fn ChatPanel(
                                                                         "category": category,
                                                                         "summary": channel_topic,
                                                                         "create_card": create_card,
-                                                                        "object": op.body["object"].clone(),
+                                                                        "object": op.payload["object"].clone(),
                                                                         "event_id": submitted.event_id,
                                                                     }),
                                                                 );
@@ -2339,7 +2318,7 @@ pub fn ChatPanel(
                                                                 if let Ok(watch_api) = authed_api_with_sync(&base, api_token, watch_wait) {
                                                                     for watch_op in &watch_ops {
                                                                         if watch_api
-                                                                            .submit_operation_event(watch_op)
+                                                                            .submit_event_envelope(watch_op)
                                                                             .await
                                                                             .is_err()
                                                                         {
@@ -2754,7 +2733,7 @@ pub fn ChatPanel(
                                                                         let mut store = state_store.write();
                                                                         store.save_sync_cursor(resp.sync_token.clone());
                                                                         store.append_raw_operation(
-                                                                            op.operation_id.clone(),
+                                                                            op.local_operation_id().to_owned(),
                                                                             Some(space_for_record),
                                                                             json!({
                                                                                 "event_id": resp.event_id.clone(),
@@ -2906,7 +2885,7 @@ pub fn ChatPanel(
                                                                     let op = chat_reaction_add_operation(
                                                                         &space, &actor, &msg_id, &emoji,
                                                                     );
-                                                                    api.submit_operation_event(&op).await
+                                                                    api.submit_event_envelope(&op).await
                                                                 },
                                                             )
                                                             .await;
@@ -2958,7 +2937,7 @@ pub fn ChatPanel(
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
                                                                     let op = chat_message_revise_operation(&space, &actor, &msg_id, &content);
-                                                                    match api.submit_operation_event(&op).await {
+                                                                    match api.submit_event_envelope(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
@@ -3012,7 +2991,7 @@ pub fn ChatPanel(
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
                                                                     let op = chat_message_redact_operation(&space, &actor, &msg_id, "user requested tombstone");
-                                                                    match api.submit_operation_event(&op).await {
+                                                                    match api.submit_event_envelope(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
@@ -3385,7 +3364,7 @@ pub fn ChatPanel(
                                                     let mut store = state_store.write();
                                                     store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
-                                                        op.operation_id.clone(),
+                                                        op.local_operation_id().to_owned(),
                                                         Some(space_for_record),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
@@ -3457,8 +3436,8 @@ pub fn ChatPanel(
                     // Send Secure switches to the
                     // real `group.encrypt_payload()` path (typed
                     // EncryptedPayload + persisted post-encrypt state).
-                    // When empty, the legacy placeholder ciphertext
-                    // path stays active for backwards compatibility.
+                    // Send Secure requires a saved passphrase for the
+                    // active Space.
                     input {
                         class: "secondary",
                         r#type: "password",
@@ -3479,7 +3458,7 @@ pub fn ChatPanel(
                                 if value.is_empty() {
                                     store.write().clear(&space_id);
                                     status_msg.set(
-                                        "MLS passphrase cleared — Send Secure uses placeholder path".to_owned(),
+                                        "MLS passphrase cleared; Send Secure requires a passphrase".to_owned(),
                                     );
                                 } else {
                                     store.write().set(space_id.clone(), value);
@@ -3681,7 +3660,6 @@ pub fn ChatPanel(
                                         "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
                                     });
                                 let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
-                                let new_epoch = prev_epoch + 1;
                                 let identity =
                                     match state_store.write().ensure_local_identity() {
                                         Ok(id) => id,
@@ -3697,28 +3675,10 @@ pub fn ChatPanel(
                                     did_key_verification_method(&identity.signing_key.verifying_key());
                                 // 1) MLS commit Move bumps the epoch +
                                 //    records covered_frontier.
-                                //
-                                // B3c: when the anchor view carries every
-                                // input required by
-                                // `mls_governance_binding.full.v1` (typed
-                                // SpaceId, the prior key-schedule hash,
-                                // and a frontier anchor id), build the
-                                // commit through
-                                // `build_mls_commit_move_with_governance_binding`
-                                // so the server can enforce the binding.
-                                // If anything is missing — typically a
-                                // brand-new Space with no observed key
-                                // schedule — we fall back to the legacy
-                                // single-effect commit so the chat flow
-                                // still works against servers that have
-                                // not turned on the hardening profile.
-                                // Real MLS encrypt path. When the user
-                                // has entered a
-                                // passphrase for this Space (or one is
-                                // already persisted via the empty default
-                                // for snapshots written before this
-                                // sprint), hydrate / bootstrap the local
-                                // `ContrixMlsGroup`, encrypt the message
+                                // Real MLS encrypt path. When the user has entered a
+                                // passphrase for this Space, hydrate /
+                                // bootstrap the local `ContrixMlsGroup`,
+                                // encrypt the message
                                 // body via `group.encrypt_payload`, and
                                 // persist the post-encrypt group state so
                                 // a refresh + decrypt round trip can
@@ -3762,10 +3722,36 @@ pub fn ChatPanel(
                                     Option<contrix_sdk::MlsCommitEnvelope>,
                                 ) = (None, Vec::new(), None, None);
 
+                                let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
+                                    status_msg.set(
+                                        "Send Secure requires a saved MLS passphrase and a decryptable local group".to_owned(),
+                                    );
+                                    return;
+                                };
+                                let Some(encrypted_payload_json) = encrypted_payload_value.clone() else {
+                                    status_msg.set(
+                                        "Send Secure could not produce an MLS encrypted payload".to_owned(),
+                                    );
+                                    return;
+                                };
+                                let Some(local_schedule_hash) = local_schedule_hash.clone() else {
+                                    status_msg.set(
+                                        "Send Secure could not derive the MLS key schedule hash".to_owned(),
+                                    );
+                                    return;
+                                };
+                                if local_member_dids.is_empty() {
+                                    status_msg.set(
+                                        "Send Secure could not resolve MLS group members".to_owned(),
+                                    );
+                                    return;
+                                }
+                                let mls_commit_epoch = real_commit_envelope.epoch;
+
                                 let mls_binding = (|| -> anyhow::Result<
                                     crate::mls_governance::GovernanceBindingPayload,
                                 > {
-                                    use contrix_sdk::{AnchorId, Hash, SpaceId};
+                                    use contrix_sdk::{AnchorId, SpaceId};
                                     let space_id = SpaceId::new(space.clone()).map_err(|e| {
                                         anyhow::anyhow!("invalid space id: {e:?}")
                                     })?;
@@ -3773,71 +3759,30 @@ pub fn ChatPanel(
                                         .map_err(|e| {
                                             anyhow::anyhow!("invalid anchor ref: {e:?}")
                                         })?;
-                                    // B3d: prefer local group → fall back
-                                    // to server projection. Either source
-                                    // produces a canonical `sha256:<hex>`
-                                    // Hash that the binding consumes
-                                    // without re-deriving.
-                                    let schedule = if let Some(h) = &local_schedule_hash {
-                                        h.clone()
-                                    } else {
-                                        let schedule_hash_str = anchor_view
-                                            .key_schedule_hash
-                                            .as_ref()
-                                            .ok_or_else(|| {
-                                                anyhow::anyhow!("no prior key schedule observed")
-                                            })?;
-                                        Hash::new(schedule_hash_str.clone())
-                                            .map_err(|e| {
-                                                anyhow::anyhow!("invalid schedule hash: {e:?}")
-                                            })?
-                                    };
                                     crate::mls_governance::GovernanceBindingPayload::from_anchor(
                                         &space,
                                         &space_id,
                                         prev_epoch,
-                                        new_epoch,
-                                        &schedule,
+                                        mls_commit_epoch,
+                                        &local_schedule_hash,
                                         &anchor_id,
                                     )
                                 })()
                                 .ok();
-                                // Prefer the real SDK self-update commit
-                                // envelope's
-                                // epoch when present. `run_local_mls_encrypt`
-                                // now runs `group.self_update_commit()`
-                                // before encrypting, so the Move-pipeline
-                                // mls_commit row writes the actual new
-                                // epoch instead of a synthesized
-                                // `prev_epoch + 1`. When the local group
-                                // hasn't been hydrated (no passphrase /
-                                // wasm32 / restore failed), fall through to
-                                // the legacy synthesized value so the
-                                // chat flow still produces a Move.
-                                let mls_commit_epoch = real_commit_envelope
-                                    .as_ref()
-                                    .map(|c| c.epoch)
-                                    .unwrap_or(new_epoch);
-                                let commit_unsigned_result = match &mls_binding {
-                                    Some(binding) => {
-                                        crate::move_builder::build_mls_commit_move_with_governance_binding(
-                                            &did,
-                                            &space,
-                                            binding,
-                                            &anchor_ref,
-                                            &hlc,
-                                        )
-                                    }
-                                    None => build_mls_commit_move(
+                                let Some(binding) = &mls_binding else {
+                                    status_msg.set(
+                                        "Send Secure requires MLS governance binding metadata".to_owned(),
+                                    );
+                                    return;
+                                };
+                                let commit_unsigned_result =
+                                    crate::move_builder::build_mls_commit_move_with_governance_binding(
                                         &did,
                                         &space,
-                                        &space,
-                                        mls_commit_epoch,
-                                        &covered_frontier,
+                                        binding,
                                         &anchor_ref,
                                         &hlc,
-                                    ),
-                                };
+                                    );
                                 let commit_unsigned = match commit_unsigned_result {
                                     Ok(u) => u,
                                     Err(err) => {
@@ -3849,36 +3794,20 @@ pub fn ChatPanel(
                                 };
                                 let commit_signed =
                                     sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
-                                // Prefer the typed `EncryptedPayload`
-                                // from `run_local_mls_encrypt`
-                                // — when the user has supplied a passphrase
-                                // for this Space, that path produces a real
-                                // SDK-typed payload (decryptable by the same
-                                // device + by future timeline.B7 audit hooks).
-                                // When no passphrase is set we fall back to
-                                // the legacy placeholder block so non-MLS
-                                // tenants and tests don't regress.
-                                let encrypted_payload_json = encrypted_payload_value
-                                    .clone()
-                                    .unwrap_or_else(|| {
-                                        json!({
-                                            "ciphertext": body.clone(),
-                                            "epoch": new_epoch,
-                                        })
-                                    });
+                                let encrypted_epoch = mls_commit_epoch;
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
                                     "cx.message.create",
                                 )
                                 .body(json!({
-                                    "body": format!("[encrypted epoch {new_epoch}]"),
+                                    "body": format!("[encrypted epoch {encrypted_epoch}]"),
                                     "content": {
                                         "blocks": [{
                                             "kind": "text",
-                                            "text": format!("[encrypted epoch {new_epoch}]"),
+                                            "text": format!("[encrypted epoch {encrypted_epoch}]"),
                                         }],
-                                        "body": format!("[encrypted epoch {new_epoch}]"),
+                                        "body": format!("[encrypted epoch {encrypted_epoch}]"),
                                         "encrypted_payload": encrypted_payload_json,
                                     },
                                     "covered_frontier": covered_frontier.clone(),
@@ -3889,26 +3818,10 @@ pub fn ChatPanel(
                                 let space_for_record = space.clone();
                                 let anchor_for_record = anchor_ref.clone();
                                 let actor_for_audit = actor.clone();
-                                // When a local MLS group is hydrated
-                                // for this Space, expand
-                                // `delivered_to_devices` to every
-                                // principal DID in the group (returned by
-                                // SDK `member_principal_dids()`). Falls
-                                // back to the local device's did:key — the
-                                // sender is the one device we can always
-                                // prove reached, even when no local group
-                                // is persisted yet. (`local_member_dids`
-                                // is computed in the snapshot-hydrate
-                                // block above.)
-                                let device_did_for_audit = did.clone();
-                                let audit_delivered: Vec<String> = if local_member_dids.is_empty() {
-                                    vec![device_did_for_audit.clone()]
-                                } else {
-                                    local_member_dids
-                                        .iter()
-                                        .map(|did| did.as_str().to_owned())
-                                        .collect()
-                                };
+                                let audit_delivered: Vec<String> = local_member_dids
+                                    .iter()
+                                    .map(|did| did.as_str().to_owned())
+                                    .collect();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit first; if
@@ -3943,13 +3856,13 @@ pub fn ChatPanel(
                                                 return;
                                             }
                                         }
-                                        match api.submit_operation_event(&msg_op).await {
+                                        match api.submit_event_envelope(&msg_op).await {
                                             Ok(resp) => {
                                                 {
                                                     let mut store = state_store.write();
                                                     store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
-                                                        msg_op.operation_id.clone(),
+                                                        msg_op.local_operation_id().to_owned(),
                                                         Some(space_for_record.clone()),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
@@ -3996,7 +3909,7 @@ pub fn ChatPanel(
                                                 audit_delivered.clone(),
                                             )
                                             .build("yougen");
-                                            let _ = api.submit_operation_event(&audit_op).await;
+                                            let _ = api.submit_event_envelope(&audit_op).await;
                                         }
                                         Err(err) => status_msg.set(format!(
                                             "Message send failed: {err}"
@@ -4049,55 +3962,40 @@ fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<se
 mod tests {
     use super::*;
 
-    /// The Welcome-receive shuttle iterates
-    /// `messages -> actor -> device -> {type, content}` from
-    /// `DeviceMessagesReceiveResBody`. Pin the parse so multi-actor /
-    /// list-vs-object device entries / mixed-type batches all surface
-    /// only the `cx.mls.welcome` payloads.
+    /// The Welcome-receive shuttle iterates `events[]` from
+    /// `DeviceMessagesReceiveResBody` and surfaces only
+    /// `cx.mls.welcome` payloads.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn collect_welcome_entries_filters_cx_mls_welcome_and_drops_other_kinds() {
         let value = json!({
-            "messages": {
-                "did:web:alice.example": {
-                    // device A: list shape — 2 welcomes + 1 unrelated.
-                    "cx:device:01": [
-                        {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
-                        {"type": "cx.key.verify.request", "content": {"ignore_me": true}},
-                        {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
-                    ],
-                    // device B: single object shape — 1 welcome.
-                    "cx:device:02": {
-                        "type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-3"}
-                    },
-                    // device C: single object — unrelated kind.
-                    "cx:device:03": {
-                        "type": "cx.device.message", "content": {"ignore_me": true}
-                    },
-                }
-            }
+            "events": [
+                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
+                {"type": "cx.key.verify.request", "content": {"ignore_me": true}},
+                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
+                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-3"}},
+                {"type": "cx.device.message", "content": {"ignore_me": true}},
+            ]
         });
         let welcomes = collect_welcome_entries(&value);
         let ids: Vec<&str> = welcomes
             .iter()
             .filter_map(|w| w.get("welcome_envelope_id").and_then(|v| v.as_str()))
             .collect();
-        // We MUST see all three welcomes regardless of object-vs-list
-        // shape, and zero of the unrelated kinds.
         assert_eq!(ids.len(), 3);
         assert!(ids.contains(&"w-1"));
         assert!(ids.contains(&"w-2"));
         assert!(ids.contains(&"w-3"));
     }
 
-    /// Empty / missing `messages` envelope returns no welcomes — the
+    /// Empty / missing `events` envelope returns no welcomes — the
     /// shuttle silently returns instead of panicking.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn collect_welcome_entries_tolerates_missing_messages_envelope() {
+    fn collect_welcome_entries_tolerates_missing_events_envelope() {
         assert!(collect_welcome_entries(&json!({})).is_empty());
-        assert!(collect_welcome_entries(&json!({"messages": null})).is_empty());
-        assert!(collect_welcome_entries(&json!({"messages": {}})).is_empty());
+        assert!(collect_welcome_entries(&json!({"events": null})).is_empty());
+        assert!(collect_welcome_entries(&json!({"events": []})).is_empty());
     }
 
     #[test]

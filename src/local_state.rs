@@ -114,7 +114,7 @@ fn default_true() -> bool {
 /// `getrandom::fill` on first access; existing dev installs that still
 /// hold a `[42; 32]` cache are simply broken - they regenerate the next
 /// time the store is loaded with no record present (Contrix v1 protocol is
-/// pre-release, no compat path).
+/// pre-release, with no migration path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentityRecord {
     /// Hex-encoded 32-byte ed25519 seed. Production deploys MUST move this
@@ -807,6 +807,11 @@ pub struct ClientLocalState {
     /// `local_name` when set.
     #[serde(default)]
     pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,
+    /// Actor-private contact remarks per
+    /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
+    /// hydrated from `cx.contacts.actor.<did>` account_data entries.
+    #[serde(default)]
+    pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
     /// Actor-private personal blocklist per
     /// `discovery/client-preferences.md` (`cx.account.blocklist`). Each
     /// entry hides messages from the targeted DID in the timeline/chat
@@ -903,7 +908,7 @@ pub struct OidcTokenBundle {
     pub access_token: String,
     #[serde(default)]
     pub refresh_token: Option<String>,
-    /// `Bearer` per RFC 6750; recorded verbatim for forward compat.
+    /// `Bearer` per RFC 6750; recorded verbatim for future use.
     pub token_type: String,
     /// Unix epoch seconds at which `access_token` expires. `None` when
     /// the token endpoint did not return `expires_in`.
@@ -950,6 +955,7 @@ impl Default for ClientLocalState {
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             space_remarks: BTreeMap::new(),
+            contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
         }
     }
@@ -1073,12 +1079,8 @@ impl LocalStateStore {
         self.cached.space_remarks.remove(space_id);
         self.cached.mls_snapshots.remove(space_id);
         self.cached.muted_spaces.remove(space_id);
-        self.cached
-            .read_receipt_space_overrides
-            .remove(space_id);
-        self.cached
-            .read_receipt_policy_snapshots
-            .remove(space_id);
+        self.cached.read_receipt_space_overrides.remove(space_id);
+        self.cached.read_receipt_policy_snapshots.remove(space_id);
         // `read_markers` are keyed by `"{space}\n{topic}"` — strip every
         // marker whose space prefix matches.
         let prefix = format!("{space_id}\n");
@@ -1405,6 +1407,49 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.cached.space_remarks.remove(space_id);
         let _ = self.flush();
+    }
+
+    // ── Contact remarks (spec client-preferences.md §3.6) ─
+
+    pub fn contact_remark(&self, actor_did: &str) -> Option<crate::account_data::ContactRemark> {
+        self.load().contact_remarks.get(actor_did).cloned()
+    }
+
+    pub fn contact_remarks(&self) -> BTreeMap<String, crate::account_data::ContactRemark> {
+        self.load().contact_remarks
+    }
+
+    pub fn set_contact_remark(
+        &mut self,
+        actor_did: impl Into<String>,
+        remark: crate::account_data::ContactRemark,
+    ) {
+        self.ensure_cached_loaded();
+        let actor_did = actor_did.into();
+        if remark.is_empty() {
+            self.cached.contact_remarks.remove(&actor_did);
+        } else {
+            self.cached.contact_remarks.insert(actor_did, remark);
+        }
+        let _ = self.flush();
+    }
+
+    pub fn remove_contact_remark(&mut self, actor_did: &str) {
+        self.ensure_cached_loaded();
+        self.cached.contact_remarks.remove(actor_did);
+        let _ = self.flush();
+    }
+
+    pub fn display_name_for_actor(&self, actor_did: &str, public_name: &str) -> String {
+        match self
+            .load()
+            .contact_remarks
+            .get(actor_did)
+            .map(|r| r.display_name(public_name).to_owned())
+        {
+            Some(name) => name,
+            None => public_name.to_owned(),
+        }
     }
 
     // ── Personal blocklist (spec client-preferences.md "cx.account.blocklist") ─
@@ -2742,7 +2787,9 @@ mod tests {
         assert!(state.muted_spaces.contains_key("cx:space:keep"));
         let kept_marker_keys: Vec<&str> = state.read_markers.keys().map(String::as_str).collect();
         assert!(
-            kept_marker_keys.iter().any(|k| k.starts_with("cx:space:keep\n")),
+            kept_marker_keys
+                .iter()
+                .any(|k| k.starts_with("cx:space:keep\n")),
             "kept space marker should survive prune: {kept_marker_keys:?}",
         );
         assert!(
@@ -3658,5 +3705,29 @@ mod tests {
             reader.display_name_for_space(space_id, "Engineering"),
             "Acme · Eng"
         );
+    }
+
+    #[test]
+    fn contact_remark_set_tombstone_and_display_name() {
+        let path = temp_state_path("contact-remark-set");
+        let mut store = LocalStateStore::with_path(path);
+        let did = "did:web:alice.example";
+        assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice");
+
+        store.set_contact_remark(
+            did,
+            crate::account_data::ContactRemark::new(did, "Alice from Ops"),
+        );
+        assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice from Ops");
+        assert!(store.contact_remarks().contains_key(did));
+
+        store.set_contact_remark(
+            did,
+            crate::account_data::ContactRemark {
+                actor_did: did.to_owned(),
+                ..crate::account_data::ContactRemark::default()
+            },
+        );
+        assert!(store.contact_remark(did).is_none());
     }
 }

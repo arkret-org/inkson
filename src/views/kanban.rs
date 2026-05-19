@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use crate::{
     components::HelpTip,
@@ -21,7 +21,7 @@ use crate::{
 /// kanban routes resolve this from the URL / saved View; until that
 /// wiring lands the seed columns and offline-queued Moves share this
 /// constant so CAS cell keys are stable across reloads.
-const DEMO_BOARD_PLACE_ID: &str = "cx:place:01launch-board0000000000000000";
+const DEMO_BOARD_PLACE_ID: &str = "cx:place:0196419b-0000-7000-8000-00000000b0a0";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
 /// rebased + re-submitted before the UI surfaces it as Quarantined and
@@ -85,6 +85,15 @@ struct KanbanCard {
     lifecycle: FlowLifecycleState,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CardDetailDraft {
+    title: String,
+    description: String,
+    labels: Vec<String>,
+    assignee: String,
+    due: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum FlowLifecycleState {
     #[default]
@@ -122,6 +131,13 @@ struct DraggedCard {
     card_id: String,
     from_column_id: String,
     from_rank: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BoardPlaceOption {
+    id: String,
+    title: String,
+    state: PlaceLifecycleState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -185,16 +201,15 @@ impl CardState {
 /// Board write records track a Move pipeline submission. The Move's
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
-/// mirrors the MoveSubmissionState classifier (`cx.list.create` /
+/// mirrors the MoveSubmissionState classifier (`cx.place.create` /
 /// `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`contrix_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST
 /// the exact same signed payload — server-side dedup is content-addressed
-/// on `move_id`, making replay idempotent. None on legacy records that
-/// were built via the old envelope path; those replay through the
-/// kind+value reconstruction fallback in [`replay_first_move`].
+/// on `move_id`, making replay idempotent. None means the record cannot
+/// be replayed idempotently.
 #[derive(Clone, Debug, PartialEq)]
 struct BoardWriteRecord {
     state: CardState,
@@ -230,6 +245,9 @@ enum BoardProjectionSource {
     /// unavailable, the view is not yet defined in the spec, or the client
     /// is offline.
     SeedFallback,
+    /// No projection was available and demo seed fallback is disabled for
+    /// this server profile.
+    Unavailable,
 }
 
 impl BoardProjectionSource {
@@ -237,6 +255,7 @@ impl BoardProjectionSource {
         match self {
             Self::ApiDerived => "API-derived (collection projection)",
             Self::SeedFallback => "seed fallback (demo)",
+            Self::Unavailable => "projection unavailable",
         }
     }
 
@@ -244,6 +263,7 @@ impl BoardProjectionSource {
         match self {
             Self::ApiDerived => "badge green",
             Self::SeedFallback => "badge amber",
+            Self::Unavailable => "badge red",
         }
     }
 
@@ -255,8 +275,37 @@ impl BoardProjectionSource {
             Self::SeedFallback => {
                 "The view-projection endpoint is unavailable, so we are showing local seed data. Drag-and-drop edits still emit cx.flow.move / cx.flow.reorder and queue offline."
             }
+            Self::Unavailable => {
+                "The view-projection endpoint is unavailable and demo seed fallback is disabled for this server profile."
+            }
         }
     }
+}
+
+fn kanban_seed_fallback_allowed(base_url: &str) -> bool {
+    if truthy_env_value(option_env!("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK"))
+        || std::env::var("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK")
+            .ok()
+            .as_deref()
+            .is_some_and(|value| truthy_env_value(Some(value)))
+    {
+        return true;
+    }
+    kanban_seed_fallback_allowed_for_url(base_url)
+}
+
+fn kanban_seed_fallback_allowed_for_url(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url) else {
+        return false;
+    };
+    matches!(
+        url.host_str().unwrap_or_default(),
+        "localhost" | "127.0.0.1" | "::1" | "local.host"
+    )
+}
+
+fn truthy_env_value(value: Option<&str>) -> bool {
+    value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 /// T20 — Attempt to load the board projection from the API; return `None`
@@ -278,6 +327,42 @@ fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     // promotes to ApiDerived via [`fetch_api_columns`] once the async
     // call returns.
     None
+}
+
+fn initial_board_place_options(seed_fallback_allowed: bool) -> Vec<BoardPlaceOption> {
+    if seed_fallback_allowed {
+        vec![BoardPlaceOption {
+            id: DEMO_BOARD_PLACE_ID.to_owned(),
+            title: "Local demo board".to_owned(),
+            state: PlaceLifecycleState::Active,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
+fn board_place_options_from_projection(
+    places: &[crate::api::PlaceProjectionView],
+) -> Vec<BoardPlaceOption> {
+    let mut options = places
+        .iter()
+        .filter(|place| {
+            place.kind == "board" || (place.kind.trim().is_empty() && place.parent_ref.is_none())
+        })
+        .map(|place| BoardPlaceOption {
+            id: place.place_id.clone(),
+            title: if place.title.trim().is_empty() {
+                place.place_id.clone()
+            } else {
+                place.title.clone()
+            },
+            state: place_state_from_wire(&place.state),
+        })
+        .collect::<Vec<_>>();
+    options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
+    options.dedup_by(|left, right| left.id == right.id);
+    options.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
+    options
 }
 
 /// T20 — Map a SDK [`CollectionProjectionResBody`] into the yougen
@@ -396,7 +481,7 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
         due: item
             .object
             .get("fields")
-            .and_then(|f| f.get("due"))
+            .and_then(|f| f.get("due_at").or_else(|| f.get("due")))
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),
@@ -428,14 +513,29 @@ pub fn KanbanPanel(
     // T20 — load board projection from API when available, otherwise seed.
     // Source signal lets the UI surface "API-derived" vs "seed fallback" in
     // the board header; refresh button (added below) re-runs the probe.
-    let view_id = "cx:view:01js0vw0000000000000000000release"; // TODO(T20): wire to active saved View
-    let initial_source = if let Some(api_cols) = try_load_api_columns(view_id) {
-        let _ = api_cols; // keep API path warm for compile coverage
-        BoardProjectionSource::ApiDerived
-    } else {
-        BoardProjectionSource::SeedFallback
+    let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
+    let initial_api_columns = try_load_api_columns("");
+    let initial_source = match initial_api_columns {
+        Some(_) => BoardProjectionSource::ApiDerived,
+        None if seed_fallback_allowed => BoardProjectionSource::SeedFallback,
+        None => BoardProjectionSource::Unavailable,
     };
-    let mut columns = use_signal(|| try_load_api_columns(view_id).unwrap_or_else(seed_columns));
+    let initial_columns = initial_api_columns.unwrap_or_else(|| {
+        if seed_fallback_allowed {
+            seed_columns()
+        } else {
+            Vec::new()
+        }
+    });
+    let initial_board_options = initial_board_place_options(seed_fallback_allowed);
+    let initial_board_place_id = initial_board_options
+        .first()
+        .map(|option| option.id.clone())
+        .unwrap_or_default();
+    let mut columns = use_signal(|| initial_columns);
+    let mut board_place_options = use_signal(move || initial_board_options.clone());
+    let mut selected_board_place_id = use_signal(move || initial_board_place_id.clone());
+    let mut board_view_id = use_signal(String::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still
@@ -443,14 +543,23 @@ pub fn KanbanPanel(
     // gate inside the render path.
     let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
     let mut projection_source = use_signal(|| initial_source);
+    let mut new_board_title = use_signal(|| "Board".to_owned());
     let mut new_column_title = use_signal(String::new);
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
+    let mut editing_card_detail = use_signal(|| false);
+    let mut card_edit_title = use_signal(String::new);
+    let mut card_edit_description = use_signal(String::new);
+    let mut card_edit_labels = use_signal(String::new);
+    let mut card_edit_assignee = use_signal(String::new);
+    let mut card_edit_due = use_signal(String::new);
     let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
-        if event_write_ready {
+        if initial_source == BoardProjectionSource::Unavailable {
+            "API projection unavailable; demo seed fallback disabled for this server".to_owned()
+        } else if event_write_ready {
             "Event write plane ready".to_owned()
         } else {
             "Event write plane unavailable; board writes queue locally".to_owned()
@@ -474,6 +583,8 @@ pub fn KanbanPanel(
     let mut bootstrapped = use_signal(|| false);
     let auto_base = base_url.clone();
     let auto_token = token;
+    let auto_seed_fallback_allowed = seed_fallback_allowed;
+    let auto_board_view_id = board_view_id;
     use_future(move || {
         let base = auto_base.clone();
         async move {
@@ -482,8 +593,16 @@ pub fn KanbanPanel(
             }
             bootstrapped.set(true);
             let api_token = auto_token();
+            let view = auto_board_view_id();
+            if view.trim().is_empty() {
+                board_status.set(
+                    "No board View selected; using Place/Flow projections and local queue only"
+                        .to_owned(),
+                );
+                return;
+            }
             match with_authed_api(&base, api_token, |api| async move {
-                api.collection_projection(view_id).await
+                api.collection_projection(&view).await
             })
             .await
             {
@@ -500,10 +619,20 @@ pub fn KanbanPanel(
                     ));
                 }
                 Err(err) => {
-                    board_status.set(format!(
-                        "API projection unavailable on mount: {}",
-                        err.display()
-                    ));
+                    if auto_seed_fallback_allowed {
+                        projection_source.set(BoardProjectionSource::SeedFallback);
+                        board_status.set(format!(
+                            "API projection unavailable on mount: {}; showing local seed fallback",
+                            err.display()
+                        ));
+                    } else {
+                        columns.set(Vec::new());
+                        projection_source.set(BoardProjectionSource::Unavailable);
+                        board_status.set(format!(
+                            "API projection unavailable on mount: {}; seed fallback disabled",
+                            err.display()
+                        ));
+                    }
                 }
             }
         }
@@ -548,6 +677,16 @@ pub fn KanbanPanel(
             if places_ok || flows_ok {
                 let mut cols = columns.write();
                 if let Ok(resp) = places_res {
+                    let options = board_place_options_from_projection(&resp.items);
+                    if !options.is_empty() {
+                        let current_board = selected_board_place_id();
+                        if current_board.trim().is_empty()
+                            || !options.iter().any(|option| option.id == current_board)
+                        {
+                            selected_board_place_id.set(options[0].id.clone());
+                        }
+                        board_place_options.set(options);
+                    }
                     for view in &resp.items {
                         if let Some(col) = cols.iter_mut().find(|c| c.id == view.place_id) {
                             let new_state = place_state_from_wire(&view.state);
@@ -634,7 +773,14 @@ pub fn KanbanPanel(
                             move |_| {
                                 let base = base.clone();
                                 let api_token = token();
-                                let view = view_id.to_owned();
+                                let view = board_view_id();
+                                if view.trim().is_empty() {
+                                    board_status.set(
+                                        "enter a Board View ID before refreshing collection projection"
+                                            .to_owned(),
+                                    );
+                                    return;
+                                }
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.collection_projection(&view).await
@@ -654,10 +800,21 @@ pub fn KanbanPanel(
                                             ));
                                         }
                                         Err(err) => {
-                                            projection_source.set(BoardProjectionSource::SeedFallback);
-                                            board_status.set(format!(
-                                                "API projection unavailable: {}", err.display()
-                                            ));
+                                            if seed_fallback_allowed {
+                                                columns.set(seed_columns());
+                                                projection_source.set(BoardProjectionSource::SeedFallback);
+                                                board_status.set(format!(
+                                                    "API projection unavailable: {}; showing local seed fallback",
+                                                    err.display()
+                                                ));
+                                            } else {
+                                                columns.set(Vec::new());
+                                                projection_source.set(BoardProjectionSource::Unavailable);
+                                                board_status.set(format!(
+                                                    "API projection unavailable: {}; seed fallback disabled",
+                                                    err.display()
+                                                ));
+                                            }
                                         }
                                     }
                                 });
@@ -670,8 +827,91 @@ pub fn KanbanPanel(
                     }
                 }
 
+                div { class: "actions", "data-testid": "board-place-selector",
+                    span { class: "muted", "Board Place:" }
+                    select {
+                        "data-testid": "board-place-select",
+                        value: "{selected_board_place_id}",
+                        onchange: move |event| selected_board_place_id.set(event.value()),
+                        option {
+                            value: "",
+                            selected: selected_board_place_id().is_empty(),
+                            "Select board"
+                        }
+                        for board_option in board_place_options().iter() {
+                            option {
+                                value: "{board_option.id}",
+                                selected: selected_board_place_id() == board_option.id,
+                                "{board_option.title}"
+                            }
+                        }
+                    }
+                    input {
+                        "data-testid": "board-view-id-input",
+                        value: "{board_view_id}",
+                        placeholder: "cx:view:...",
+                        oninput: move |evt| board_view_id.set(evt.value()),
+                    }
+                    input {
+                        "data-testid": "new-board-title-input",
+                        value: "{new_board_title}",
+                        placeholder: "Board title",
+                        oninput: move |evt| new_board_title.set(evt.value()),
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "create-board-place-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            move |_| {
+                                let title = new_board_title().trim().to_owned();
+                                if title.is_empty() {
+                                    board_status.set("board title is required".to_owned());
+                                    return;
+                                }
+                                let board_place_id = format!("cx:place:{}", uuid_v7());
+                                let identity = match state_store.write().ensure_local_identity() {
+                                    Ok(identity) => identity,
+                                    Err(err) => {
+                                        board_status.set(format!("identity unavailable: {err}"));
+                                        return;
+                                    }
+                                };
+                                board_place_options.write().push(BoardPlaceOption {
+                                    id: board_place_id.clone(),
+                                    title: title.clone(),
+                                    state: PlaceLifecycleState::Active,
+                                });
+                                selected_board_place_id.set(board_place_id.clone());
+                                let op = crate::operation::cx_ops::place_create(
+                                    &space,
+                                    &identity.device_did,
+                                    &board_place_id,
+                                    "board",
+                                    &title,
+                                    None,
+                                    None,
+                                )
+                                .build("yougen");
+                                submit_kanban_operation_event(
+                                    base.clone(),
+                                    token,
+                                    space.clone(),
+                                    op,
+                                    state_store,
+                                    board_status,
+                                );
+                                new_board_title.set("Board".to_owned());
+                            }
+                        },
+                        "Create Board"
+                    }
+                }
+
                 div { class: "metric-grid", "data-testid": "board-projection-model",
-                    div { class: "metric", strong { "Board" } span { "cx:board:launch" } div { class: "muted", "View renderer: kanban" } }
+                    div { class: "metric", strong { "Board" } span { "{selected_board_place_id}" } div { class: "muted", "View renderer: kanban" } }
+                    div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "Collection projection source" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
                     div { class: "metric", strong { "Frontier" } span { "{frontier_state}" } div { class: "muted", "CAS moves rebase from latest projection" } }
                     div { class: "metric", strong { "Write plane" } span { if event_write_ready { "cx.events.submit" } else { "queued local" } } div { class: "muted", "active writes use operation/event surfaces directly" } }
@@ -688,15 +928,9 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "add-column-button",
                             onclick: {
-                                // List-create travels through the canonical
-                                // Move pipeline. We build a
-                                // `cx.component.flow.position.v1` Move whose
-                                // subject is the list_id and whose value
-                                // carries the list metadata (title + rank +
-                                // container ref). soland's reducer treats it
-                                // as a cas-register set
-                                // and the position cell becomes the
-                                // canonical source of truth for the list.
+                                // Lists are Places in v1. The optimistic
+                                // local column uses the new Place id while
+                                // the write submits `cx.place.create`.
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
                                 move |_| {
@@ -704,32 +938,44 @@ pub fn KanbanPanel(
                                     if title.is_empty() {
                                         return;
                                     }
+                                    let board_place_id = selected_board_place_id();
+                                    if board_place_id.trim().is_empty() {
+                                        board_status.set("select or create a Board Place before adding lists".to_owned());
+                                        return;
+                                    }
                                     let col_count = columns().len();
                                     let rank = format!("r{:03}", col_count + 1);
-                                    let list_id = format!("cx:list:{}", uuid_v7());
+                                    let list_place_id = format!("cx:place:{}", uuid_v7());
                                     columns.write().push(KanbanColumn {
-                                        id: list_id.clone(),
+                                        id: list_place_id.clone(),
                                         title: title.clone(),
                                         rank: rank.clone(),
                                         cards: Vec::new(),
                                         state: PlaceLifecycleState::Active,
                                     });
-                                    let value = json!({
-                                        "kind": "list",
-                                        "list_id": list_id,
-                                        "title": title,
-                                        "rank": rank,
-                                        "container_ref": "cx:board:launch",
-                                    });
-                                    submit_kanban_move(
+                                    let identity = match state_store.write().ensure_local_identity() {
+                                        Ok(identity) => identity,
+                                        Err(err) => {
+                                            board_status.set(format!("identity unavailable: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let op = crate::operation::cx_ops::place_create(
+                                        &space,
+                                        &identity.device_did,
+                                        &list_place_id,
+                                        "list",
+                                        &title,
+                                        Some(&board_place_id),
+                                        Some(&rank),
+                                    )
+                                    .build("yougen");
+                                    submit_kanban_operation_event(
                                         base.clone(),
                                         token,
                                         space.clone(),
-                                        list_id.clone(),
-                                        "cx.list.create",
-                                        value,
+                                        op,
                                         state_store,
-                                        write_records,
                                         board_status,
                                     );
                                     new_column_title.set(String::new());
@@ -744,13 +990,10 @@ pub fn KanbanPanel(
                                 // Replay path resubmits a queued Move via
                                 // api.submit_move.
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
                                 move |_| {
                                     replay_first_move(
                                         base.clone(),
                                         token,
-                                        space.clone(),
-                                        state_store,
                                         write_records,
                                         board_status,
                                     );
@@ -782,16 +1025,23 @@ pub fn KanbanPanel(
                                 let Some(dragged) = dragging_card() else {
                                     return;
                                 };
+                                let board_place_id = selected_board_place_id();
+                                if board_place_id.trim().is_empty() {
+                                    board_status.set("select or create a Board Place before moving cards".to_owned());
+                                    return;
+                                }
                                 dragging_card.set(None);
                                 let neighbours = ColumnNeighbours {
                                     prev_rank: last_rank.clone(),
                                     next_rank: None,
                                 };
+                                let view_id_for_rebase = board_view_id();
                                 dispatch_flow_position_move(
                                     base.clone(),
                                     token,
                                     space.clone(),
-                                    DEMO_BOARD_PLACE_ID.to_owned(),
+                                    board_place_id,
+                                    view_id_for_rebase,
                                     dragged,
                                     target_column_id.clone(),
                                     neighbours,
@@ -887,16 +1137,23 @@ pub fn KanbanPanel(
                                         let Some(dragged) = dragging_card() else {
                                             return;
                                         };
+                                        let board_place_id = selected_board_place_id();
+                                        if board_place_id.trim().is_empty() {
+                                            board_status.set("select or create a Board Place before moving cards".to_owned());
+                                            return;
+                                        }
                                         dragging_card.set(None);
                                         let neighbours = ColumnNeighbours {
                                             prev_rank: prev_rank.clone(),
                                             next_rank: Some(this_rank.clone()),
                                         };
+                                        let view_id_for_rebase = board_view_id();
                                         dispatch_flow_position_move(
                                             base.clone(),
                                             token,
                                             space.clone(),
-                                            DEMO_BOARD_PLACE_ID.to_owned(),
+                                            board_place_id,
+                                            view_id_for_rebase,
                                             dragged,
                                             target_column_id.clone(),
                                             neighbours,
@@ -922,7 +1179,16 @@ pub fn KanbanPanel(
                                 ondragend: move |_| dragging_card.set(None),
                                 onclick: {
                                     let c = card.clone();
-                                    move |_| selected_card.set(Some(c.clone()))
+                                    move |_| {
+                                        let draft = card_detail_draft_from_card(&c);
+                                        card_edit_title.set(draft.title);
+                                        card_edit_description.set(draft.description);
+                                        card_edit_labels.set(draft.labels.join(", "));
+                                        card_edit_assignee.set(draft.assignee);
+                                        card_edit_due.set(draft.due);
+                                        editing_card_detail.set(false);
+                                        selected_card.set(Some(c.clone()));
+                                    }
                                 },
                                 div { class: "event-head",
                                     span { class: "space-title", "{card.title}" }
@@ -1005,8 +1271,9 @@ pub fn KanbanPanel(
                                             // Card create submits a
                                             // flow.position Move (subject =
                                             // flow_id) carrying the canonical
-                                            // position record {list_id, rank,
-                                            // title}. Soland's reducer treats
+                                            // position record
+                                            // {list_place_id, rank, title}.
+                                            // Soland's reducer treats
                                             // it as cas-register set on the
                                             // flow.position cell.
                                             let base = base_url.clone();
@@ -1015,6 +1282,11 @@ pub fn KanbanPanel(
                                             move |_| {
                                                 let title = new_card_title().trim().to_owned();
                                                 if title.is_empty() {
+                                                    return;
+                                                }
+                                                let board_place_id = selected_board_place_id();
+                                                if board_place_id.trim().is_empty() {
+                                                    board_status.set("select or create a Board Place before adding cards".to_owned());
                                                     return;
                                                 }
                                                 let flow_id = format!("cx:flow:{}", uuid_v7());
@@ -1060,12 +1332,12 @@ pub fn KanbanPanel(
                                                     col.cards.push(card);
                                                 }
                                                 let value = json!({
-                                                    "kind": "flow",
                                                     "flow_id": flow_id,
-                                                    "list_id": col_id,
+                                                    "board_place_id": board_place_id,
+                                                    "list_place_id": col_id,
                                                     "title": title,
                                                     "rank": rank,
-                                                    "kind": "card",
+                                                    "flow_kind": "card",
                                                 });
                                                 submit_kanban_move(
                                                     base.clone(),
@@ -1310,13 +1582,206 @@ pub fn KanbanPanel(
                         span { "Card Detail" }
                         span { "{card.id} / {card.state.label()}" }
                     }
-                    div { class: "space-title", "{card.title}" }
-                    div { class: "muted", "{card.description}" }
-                    div { class: "actions",
-                        for label in &card.labels {
-                            span { class: "badge", "{label}" }
+                    if editing_card_detail() {
+                        div { class: "workflow-form", "data-testid": "card-detail-edit-form",
+                            div { class: "field",
+                                label { "Title" }
+                                input {
+                                    class: "input",
+                                    "data-testid": "card-detail-title-input",
+                                    value: "{card_edit_title}",
+                                    maxlength: "512",
+                                    oninput: move |evt| card_edit_title.set(evt.value()),
+                                }
+                            }
+                            div { class: "field",
+                                label { "Description" }
+                                textarea {
+                                    class: "textarea",
+                                    "data-testid": "card-detail-description-input",
+                                    value: "{card_edit_description}",
+                                    maxlength: "2048",
+                                    oninput: move |evt| card_edit_description.set(evt.value()),
+                                }
+                            }
+                            div { class: "metric-grid",
+                                div { class: "field",
+                                    label { "Labels" }
+                                    input {
+                                        class: "input",
+                                        "data-testid": "card-detail-labels-input",
+                                        value: "{card_edit_labels}",
+                                        placeholder: "release, ops",
+                                        oninput: move |evt| card_edit_labels.set(evt.value()),
+                                    }
+                                }
+                                div { class: "field",
+                                    label { "Assignee" }
+                                    input {
+                                        class: "input",
+                                        "data-testid": "card-detail-assignee-input",
+                                        value: "{card_edit_assignee}",
+                                        placeholder: "did:web:alice.example",
+                                        oninput: move |evt| card_edit_assignee.set(evt.value()),
+                                    }
+                                }
+                                div { class: "field",
+                                    label { "Due date" }
+                                    input {
+                                        class: "input",
+                                        "data-testid": "card-detail-due-input",
+                                        value: "{card_edit_due}",
+                                        placeholder: "2026-05-20",
+                                        oninput: move |evt| card_edit_due.set(evt.value()),
+                                    }
+                                }
+                            }
+                            div { class: "actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "card-detail-save-button",
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let space = selected_space.clone();
+                                        let actor = account_did.clone();
+                                        let current = card.clone();
+                                        move |_| {
+                                            let draft = CardDetailDraft {
+                                                title: card_edit_title().trim().to_owned(),
+                                                description: card_edit_description().trim().to_owned(),
+                                                labels: parse_card_labels(&card_edit_labels()),
+                                                assignee: card_edit_assignee().trim().to_owned(),
+                                                due: card_edit_due().trim().to_owned(),
+                                            };
+                                            if dispatch_card_detail_update(
+                                                base.clone(),
+                                                token,
+                                                space.clone(),
+                                                actor.clone(),
+                                                current.clone(),
+                                                draft,
+                                                columns,
+                                                selected_card,
+                                                state_store,
+                                                board_status,
+                                            ) {
+                                                editing_card_detail.set(false);
+                                            }
+                                        }
+                                    },
+                                    "Save"
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "card-detail-cancel-edit-button",
+                                    onclick: {
+                                        let current = card.clone();
+                                        move |_| {
+                                            let draft = card_detail_draft_from_card(&current);
+                                            card_edit_title.set(draft.title);
+                                            card_edit_description.set(draft.description);
+                                            card_edit_labels.set(draft.labels.join(", "));
+                                            card_edit_assignee.set(draft.assignee);
+                                            card_edit_due.set(draft.due);
+                                            editing_card_detail.set(false);
+                                        }
+                                    },
+                                    "Cancel"
+                                }
+                            }
                         }
-                        span { class: card.state.class_name(), "{card.state.label()}" }
+                    } else {
+                        div { class: "space-title", "{card.title}" }
+                        div { class: "muted", "{card.description}" }
+                        div { class: "actions",
+                            for label in &card.labels {
+                                span { class: "badge", "{label}" }
+                            }
+                            span { class: card.state.class_name(), "{card.state.label()}" }
+                            button {
+                                class: "secondary",
+                                "data-testid": "card-detail-edit-button",
+                                onclick: {
+                                    let current = card.clone();
+                                    move |_| {
+                                        let draft = card_detail_draft_from_card(&current);
+                                        card_edit_title.set(draft.title);
+                                        card_edit_description.set(draft.description);
+                                        card_edit_labels.set(draft.labels.join(", "));
+                                        card_edit_assignee.set(draft.assignee);
+                                        card_edit_due.set(draft.due);
+                                        editing_card_detail.set(true);
+                                    }
+                                },
+                                "Edit"
+                            }
+                            {
+                                let target = if card.lifecycle == FlowLifecycleState::Archived {
+                                    FlowLifecycleState::Active
+                                } else {
+                                    FlowLifecycleState::Archived
+                                };
+                                let action = if target == FlowLifecycleState::Archived {
+                                    "flow.archive"
+                                } else {
+                                    "flow.restore"
+                                };
+                                let gate = capability_gate_for_flow(
+                                    &capability_engine,
+                                    &account_did,
+                                    &selected_space,
+                                    &card.id,
+                                    action,
+                                );
+                                let label = if target == FlowLifecycleState::Archived {
+                                    crate::i18n::tr("kanban.archive_action")
+                                } else {
+                                    crate::i18n::tr("kanban.restore_action")
+                                };
+                                let testid = if target == FlowLifecycleState::Archived {
+                                    "card-detail-archive-button"
+                                } else {
+                                    "card-detail-restore-button"
+                                };
+                                let title_text = if gate.enabled {
+                                    format!("{label} this card (cx.{action})")
+                                } else {
+                                    format!("{label} gated: {}", gate.reason)
+                                };
+                                let testid_state = if gate.enabled { "open" } else { "denied" };
+                                rsx! {
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": testid,
+                                        "data-flow-id": "{card.id}",
+                                        "data-cap-gate": testid_state,
+                                        disabled: !gate.enabled,
+                                        title: title_text,
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
+                                            let flow_id = card.id.clone();
+                                            move |_| {
+                                                dispatch_flow_lifecycle(
+                                                    base.clone(),
+                                                    token,
+                                                    space.clone(),
+                                                    actor.clone(),
+                                                    flow_id.clone(),
+                                                    target,
+                                                    columns,
+                                                    board_status,
+                                                );
+                                                selected_card.set(None);
+                                                editing_card_detail.set(false);
+                                            }
+                                        },
+                                        "{label}"
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Branch tabs — current-model.md §3 (synthesis / discussion dual branch)
                     div { class: "actions", "data-testid": "card-branch-tabs", role: "tablist", "aria-label": "Flow branches",
@@ -1495,12 +1960,223 @@ pub fn KanbanPanel(
     }
 }
 
+fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft {
+    CardDetailDraft {
+        title: card.title.clone(),
+        description: card.description.clone(),
+        labels: card.labels.clone(),
+        assignee: editor_value_for_optional_card_field(&card.assignee),
+        due: editor_value_for_optional_card_field(&card.due),
+    }
+}
+
+fn parse_card_labels(raw: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    for label in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        if !labels
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(label))
+        {
+            labels.push(label.to_owned());
+        }
+    }
+    labels
+}
+
+fn editor_value_for_optional_card_field(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        String::new()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn display_optional_card_field(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        "—".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn set_or_unset_patch(value: &str) -> Value {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        json!({ "$op": "unset" })
+    } else {
+        json!({ "$op": "set", "value": trimmed })
+    }
+}
+
+fn card_detail_update_patch(
+    current: &KanbanCard,
+    draft: &CardDetailDraft,
+) -> Result<Value, String> {
+    let title = draft.title.trim();
+    if title.is_empty() {
+        return Err("card title is required".to_owned());
+    }
+    if title.chars().count() > 512 {
+        return Err("card title exceeds 512 characters".to_owned());
+    }
+    if draft.description.chars().count() > 2048 {
+        return Err("card description exceeds 2048 characters".to_owned());
+    }
+
+    let mut patch = Map::new();
+    if current.title.trim() != title {
+        patch.insert("title".to_owned(), json!({ "$op": "set", "value": title }));
+    }
+
+    let description = draft.description.trim();
+    if current.description.trim() != description {
+        let op = if description.is_empty() {
+            json!({ "$op": "unset" })
+        } else {
+            json!({ "$op": "set", "value": description })
+        };
+        patch.insert("summary".to_owned(), op);
+    }
+
+    if current.labels != draft.labels {
+        patch.insert(
+            "fields.labels".to_owned(),
+            json!({ "$op": "set", "value": draft.labels.clone() }),
+        );
+    }
+
+    let current_assignee = editor_value_for_optional_card_field(&current.assignee);
+    if current_assignee != draft.assignee.trim() {
+        patch.insert(
+            "fields.assignee".to_owned(),
+            set_or_unset_patch(&draft.assignee),
+        );
+    }
+
+    let current_due = editor_value_for_optional_card_field(&current.due);
+    if current_due != draft.due.trim() {
+        patch.insert("fields.due_at".to_owned(), set_or_unset_patch(&draft.due));
+    }
+
+    if patch.is_empty() {
+        return Err("no card detail changes to save".to_owned());
+    }
+    Ok(Value::Object(patch))
+}
+
+fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
+    card.title = draft.title.trim().to_owned();
+    card.description = draft.description.trim().to_owned();
+    card.labels = draft.labels.clone();
+    card.assignee = display_optional_card_field(&draft.assignee);
+    card.due = display_optional_card_field(&draft.due);
+    card.state = CardState::Queued;
+    card.activity_hint = "Local cx.flow.update pending server projection.".to_owned();
+    card.audit_hint = "Card detail edit submitted as cx.flow.update payload.patch.".to_owned();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_card_detail_update(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    current: KanbanCard,
+    draft: CardDetailDraft,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut selected_card: Signal<Option<KanbanCard>>,
+    state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+) -> bool {
+    let patch = match card_detail_update_patch(&current, &draft) {
+        Ok(patch) => patch,
+        Err(msg) => {
+            board_status.set(msg);
+            return false;
+        }
+    };
+
+    let mut updated_card = current.clone();
+    let mut found = false;
+    {
+        let mut cols = columns.write();
+        for col in cols.iter_mut() {
+            if let Some(card) = col.cards.iter_mut().find(|card| card.id == current.id) {
+                apply_card_detail_draft(card, &draft);
+                updated_card = card.clone();
+                found = true;
+                break;
+            }
+        }
+    }
+    if !found {
+        board_status.set(format!("internal: card {} not in board state", current.id));
+        return false;
+    }
+    selected_card.set(Some(updated_card));
+
+    let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
+        .build("yougen");
+    submit_kanban_operation_event(base_url, token, space_id, op, state_store, board_status);
+    true
+}
+
 /// Build + sign + submit a `cx.component.flow.position.v1` Move via
 /// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
 /// queue regardless of submit outcome. Used by both list and card create
-/// paths - `subject` is the cell subject (list_id or flow_id), `kind` is
+/// paths - `subject` is the cell subject (Place id or Flow id), `kind` is
 /// the classifier the MoveSubmissionState tracker uses to decorate state
-/// pills (`cx.list.create` / `cx.flow.create`).
+/// pills (`cx.place.create` / `cx.flow.create`).
+fn submit_kanban_operation_event(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    operation: crate::operation::EventEnvelope,
+    mut state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+) {
+    let operation_id = operation.local_operation_id().to_owned();
+    let kind = operation.kind.clone();
+    state_store.write().append_raw_operation(
+        operation_id.clone(),
+        Some(space_id),
+        json!({
+            "kind": kind,
+            "operation_id": operation_id,
+            "write_state": "queued",
+            "body": operation.payload.clone(),
+        }),
+    );
+    board_status.set(format!("submitting {kind} operation {operation_id}"));
+    let api_token = token();
+    spawn(async move {
+        let operation_for_submit = operation.clone();
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_event_envelope(&operation_for_submit).await
+        })
+        .await
+        {
+            Ok(_) => {
+                board_status.set(format!("{kind} operation accepted"));
+            }
+            Err(err) => {
+                board_status.set(format!("{kind} operation failed: {}", err.display()));
+            }
+        }
+    });
+}
+
+/// Build + sign + submit a `cx.component.flow.position.v1` Move via
+/// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
+/// queue regardless of submit outcome. Used by card create and flow-position
+/// paths - `subject` is the cell subject (Flow id), `kind` is the classifier
+/// the MoveSubmissionState tracker uses to decorate state pills.
 fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -1646,6 +2322,7 @@ fn dispatch_flow_position_move(
     token: Signal<String>,
     space_id: String,
     board_place_id: String,
+    board_view_id: String,
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
@@ -1718,6 +2395,7 @@ fn dispatch_flow_position_move(
         token,
         space_id,
         board_place_id,
+        board_view_id,
         dragged.card_id,
         kind,
         expected,
@@ -1878,12 +2556,12 @@ fn dispatch_place_lifecycle(
     };
     let op = builder.build("yougen");
 
-    let kind = op.op_type.clone();
+    let kind = op.kind.clone();
     let base = base_url.clone();
     let api_token = token();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
-            api.submit_operation_event(&op).await
+            api.submit_event_envelope(&op).await
         })
         .await;
         match result {
@@ -1986,12 +2664,12 @@ fn dispatch_flow_lifecycle(
     };
     let op = builder.build("yougen");
 
-    let kind = op.op_type.clone();
+    let kind = op.kind.clone();
     let base = base_url.clone();
     let api_token = token();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
-            api.submit_operation_event(&op).await
+            api.submit_event_envelope(&op).await
         })
         .await;
         match result {
@@ -2058,6 +2736,7 @@ fn submit_flow_position_cas_move(
     token: Signal<String>,
     space_id: String,
     board_place_id: String,
+    board_view_id: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -2071,6 +2750,7 @@ fn submit_flow_position_cas_move(
         token,
         space_id,
         board_place_id,
+        board_view_id,
         flow_id,
         kind,
         expected,
@@ -2093,6 +2773,7 @@ fn submit_flow_position_cas_move_with_attempt(
     token: Signal<String>,
     space_id: String,
     board_place_id: String,
+    board_view_id: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -2190,6 +2871,7 @@ fn submit_flow_position_cas_move_with_attempt(
     let base_for_rebase = base_url.clone();
     let space_for_rebase = space_id.clone();
     let board_for_rebase = board_place_id.clone();
+    let view_for_rebase = board_view_id.clone();
     let flow_for_rebase = flow_id.clone();
     let effect_for_rebase = effect.clone();
     spawn(async move {
@@ -2247,6 +2929,7 @@ fn submit_flow_position_cas_move_with_attempt(
                         token,
                         space_for_rebase,
                         board_for_rebase,
+                        view_for_rebase,
                         flow_for_rebase,
                         kind_for_record,
                         effect_for_rebase,
@@ -2307,6 +2990,7 @@ fn rebase_flow_position_after_conflict(
     token: Signal<String>,
     space_id: String,
     board_place_id: String,
+    board_view_id: String,
     flow_id: String,
     kind: String,
     effect: FlowPositionEffect,
@@ -2319,12 +3003,16 @@ fn rebase_flow_position_after_conflict(
         "rebase {kind} attempt {attempt}/{MAX_CONFLICT_REBASE_ATTEMPTS} — refetching projection"
     ));
     spawn(async move {
-        // We hardcode the view id to match the rest of this view —
-        // production wiring should pass it through from the saved
-        // View. Falling back to seed leaves the conflict in place.
-        let view_id = "cx:view:01js0vw0000000000000000000release";
+        if board_view_id.trim().is_empty() {
+            board_status.set(
+                "rebase aborted: enter a Board View ID so projection can provide the current cell head"
+                    .to_owned(),
+            );
+            return;
+        }
+        let view_for_projection = board_view_id.clone();
         let new_expected = match with_authed_api(&base_url, token(), |api| async move {
-            api.collection_projection(view_id).await
+            api.collection_projection(&view_for_projection).await
         })
         .await
         {
@@ -2351,6 +3039,7 @@ fn rebase_flow_position_after_conflict(
             token,
             space_id,
             board_place_id,
+            board_view_id,
             flow_id,
             kind_static,
             new_expected,
@@ -2392,17 +3081,12 @@ fn locate_flow_position_in_projection(
     FlowPositionExpectation::Initial
 }
 
-/// Replay the first queued / soft-failed Move. When the record carries
-/// `signed_move_json` (the post-CAS-refactor path), we re-POST the
-/// signed payload verbatim — server-side dedup is content-addressed
-/// on `move_id` so the replay is idempotent. Records without a stored
-/// signed Move fall through to the legacy rebuild path that hands
-/// `effect_summary` back to [`submit_kanban_move`].
+/// Replay the first queued / soft-failed Move by re-posting the stored
+/// signed payload verbatim. Server-side dedup is content-addressed on
+/// `move_id`, so the replay is idempotent.
 fn replay_first_move(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
-    mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -2416,10 +3100,6 @@ fn replay_first_move(
     };
     let queued = write_records.read()[idx].clone();
 
-    // Fast path: signed Move already on disk — just re-POST it. The
-    // server validates the JWS, recomputes the content-addressed move
-    // id, and treats an already-anchored move_id as idempotent. This
-    // is the spec-blessed offline-queue replay path.
     if let Some(signed_value) = queued.signed_move_json.clone() {
         let signed: contrix_sdk::Move = match serde_json::from_value(signed_value) {
             Ok(m) => m,
@@ -2476,40 +3156,12 @@ fn replay_first_move(
         return;
     }
 
-    // Legacy fallback: rebuild from `effect_summary` + `cell_id` and
-    // re-submit through `submit_kanban_move`. This produces a NEW
-    // content-addressed move_id because the HLC advances.
-    let value: serde_json::Value =
-        serde_json::from_str(&queued.effect_summary).unwrap_or_else(|_| json!({}));
-    let subject = queued
-        .cell_id
-        .strip_prefix("cx:cell:cx.component.flow.position.v1:")
-        .map(str::to_owned)
-        .unwrap_or_default();
-    if subject.is_empty() {
-        board_status.set("queued record has no cell subject".to_owned());
-        return;
+    if let Some(record) = write_records.write().get_mut(idx) {
+        record.state = CardState::Quarantined;
+        record.note = "queued record has no signed Move payload".to_owned();
     }
-    write_records.write().remove(idx);
-    let kind: &'static str = match queued.kind.as_str() {
-        "cx.list.create" => "cx.list.create",
-        "cx.flow.move" => "cx.flow.move",
-        "cx.flow.reorder" => "cx.flow.reorder",
-        "cx.flow.position" => "cx.flow.position",
-        _ => "cx.flow.create",
-    };
-    submit_kanban_move(
-        base_url,
-        token,
-        space_id,
-        subject,
-        kind,
-        value,
-        state_store,
-        write_records,
-        board_status,
-    );
-    let _ = &mut state_store; // keep mut binding for IDE / unused-warn coverage
+    let _ = (base_url, token);
+    board_status.set("queued record has no signed Move payload".to_owned());
 }
 
 fn write_state_samples() -> Vec<CardState> {
@@ -2646,7 +3298,7 @@ mod tests {
     /// HTTP call returns.
     #[test]
     fn try_load_api_columns_returns_none_in_sync_init_context() {
-        let result = try_load_api_columns("cx:view:01js0vw0000000000000000000release");
+        let result = try_load_api_columns("");
         assert!(
             result.is_none(),
             "synchronous init MUST return None; async refresh handles real fetch"
@@ -2915,12 +3567,21 @@ mod tests {
             BoardProjectionSource::ApiDerived.label(),
             BoardProjectionSource::SeedFallback.label()
         );
+        assert_ne!(
+            BoardProjectionSource::SeedFallback.label(),
+            BoardProjectionSource::Unavailable.label()
+        );
         assert!(
             BoardProjectionSource::ApiDerived
                 .label()
                 .contains("API-derived")
         );
         assert!(BoardProjectionSource::SeedFallback.label().contains("seed"));
+        assert!(
+            BoardProjectionSource::Unavailable
+                .label()
+                .contains("unavailable")
+        );
     }
 
     #[test]
@@ -2935,6 +3596,127 @@ mod tests {
             BoardProjectionSource::SeedFallback.class_name(),
             "badge amber"
         );
+        assert_eq!(BoardProjectionSource::Unavailable.class_name(), "badge red");
+    }
+
+    #[test]
+    fn board_place_options_pick_board_places_from_projection() {
+        let options = board_place_options_from_projection(&[
+            crate::api::PlaceProjectionView {
+                place_id: "cx:place:0196419b-0000-7000-8000-000000000001".to_owned(),
+                space_id: "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+                kind: "board".to_owned(),
+                title: "Release".to_owned(),
+                state: "active".to_owned(),
+                rank: None,
+                parent_ref: None,
+            },
+            crate::api::PlaceProjectionView {
+                place_id: "cx:place:0196419b-0000-7000-8000-000000000002".to_owned(),
+                space_id: "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+                kind: "list".to_owned(),
+                title: "Todo".to_owned(),
+                state: "active".to_owned(),
+                rank: Some("U".to_owned()),
+                parent_ref: Some("cx:place:0196419b-0000-7000-8000-000000000001".to_owned()),
+            },
+        ]);
+
+        assert_eq!(options.len(), 1);
+        assert_eq!(
+            options[0].id,
+            "cx:place:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(options[0].title, "Release");
+    }
+
+    #[test]
+    fn kanban_seed_fallback_is_dev_only_by_default() {
+        assert!(kanban_seed_fallback_allowed_for_url("https://local.host"));
+        assert!(kanban_seed_fallback_allowed_for_url(
+            "http://127.0.0.1:8787"
+        ));
+        assert!(!kanban_seed_fallback_allowed_for_url(
+            "https://contrix.example"
+        ));
+        assert!(truthy_env_value(Some("1")));
+        assert!(truthy_env_value(Some("true")));
+        assert!(!truthy_env_value(Some("0")));
+        assert!(!truthy_env_value(None));
+    }
+
+    #[test]
+    fn parse_card_labels_trims_and_deduplicates() {
+        assert_eq!(
+            parse_card_labels(" release, ops, release, ,OPS "),
+            vec!["release".to_owned(), "ops".to_owned()]
+        );
+    }
+
+    #[test]
+    fn card_detail_update_patch_uses_flow_update_patch_paths() {
+        let mut current = test_card("cx:flow:f1", "U");
+        current.title = "Old".to_owned();
+        current.description = "old summary".to_owned();
+        current.labels = vec!["old".to_owned()];
+        current.assignee = "did:web:bob.example".to_owned();
+        current.due = "2026-05-19".to_owned();
+        let draft = CardDetailDraft {
+            title: "Launch checklist".to_owned(),
+            description: "Ship blockers only".to_owned(),
+            labels: vec!["release".to_owned(), "ops".to_owned()],
+            assignee: "did:web:alice.example".to_owned(),
+            due: "2026-05-20".to_owned(),
+        };
+
+        let patch = card_detail_update_patch(&current, &draft).unwrap();
+        assert_eq!(patch["title"]["value"], "Launch checklist");
+        assert_eq!(patch["summary"]["value"], "Ship blockers only");
+        assert_eq!(patch["fields.labels"]["value"][0], "release");
+        assert_eq!(patch["fields.assignee"]["value"], "did:web:alice.example");
+        assert_eq!(patch["fields.due_at"]["value"], "2026-05-20");
+        assert!(patch.get("fields.due").is_none());
+    }
+
+    #[test]
+    fn card_detail_update_patch_unsets_empty_optional_fields() {
+        let mut current = test_card("cx:flow:f1", "U");
+        current.title = "Keep".to_owned();
+        current.description = "old summary".to_owned();
+        current.assignee = "did:web:bob.example".to_owned();
+        current.due = "2026-05-19".to_owned();
+        let draft = CardDetailDraft {
+            title: "Keep".to_owned(),
+            description: String::new(),
+            labels: Vec::new(),
+            assignee: String::new(),
+            due: String::new(),
+        };
+
+        let patch = card_detail_update_patch(&current, &draft).unwrap();
+        assert_eq!(patch["summary"]["$op"], "unset");
+        assert_eq!(patch["fields.assignee"]["$op"], "unset");
+        assert_eq!(patch["fields.due_at"]["$op"], "unset");
+    }
+
+    #[test]
+    fn apply_card_detail_draft_marks_card_queued() {
+        let mut card = test_card("cx:flow:f1", "U");
+        let draft = CardDetailDraft {
+            title: "New title".to_owned(),
+            description: "New summary".to_owned(),
+            labels: vec!["ops".to_owned()],
+            assignee: String::new(),
+            due: "2026-05-20".to_owned(),
+        };
+
+        apply_card_detail_draft(&mut card, &draft);
+        assert_eq!(card.title, "New title");
+        assert_eq!(card.description, "New summary");
+        assert_eq!(card.labels, vec!["ops".to_owned()]);
+        assert_eq!(card.assignee, "—");
+        assert_eq!(card.due, "2026-05-20");
+        assert_eq!(card.state, CardState::Queued);
     }
 
     /// `relocate_card` is the optimistic local mutation that runs as

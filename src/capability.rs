@@ -44,7 +44,7 @@ impl ActionGroup {
             Self::PlaceFlow => &[
                 "flow.move",
                 "flow.reorder",
-                // Per contrix-spec dc01ad7 the four legacy
+                // Per contrix-spec dc01ad7 the four
                 // `flow.track.{enable,disable,update,set_primary}`
                 // verbs were unified into a single `flow.tracks.update`
                 // capability covering all track mutations via a

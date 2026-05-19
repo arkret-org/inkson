@@ -1196,9 +1196,11 @@ pub fn SpaceAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
+                            let actor = account_did.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
+                                let actor = actor.clone();
                                 let api_token = token();
                                 let rule = join_rule();
                                 let vis = history_visibility();
@@ -1207,7 +1209,7 @@ pub fn SpaceAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.set_space_policy(&space, &rule, &vis).await
+                                            api.set_space_policy_events(&space, &actor, &rule, &vis).await
                                         },
                                     )
                                     .await
@@ -1301,8 +1303,9 @@ pub fn SpaceAdminPanel(
                                                         &resp.state,
                                                     )
                                                     .build("yougen");
+                                                    let op_id = op.local_operation_id().to_owned();
                                                     match api
-                                                        .submit_operation_event(&op)
+                                                        .submit_event_envelope(&op)
                                                         .await
                                                     {
                                                         Ok(submitted) => {
@@ -1311,7 +1314,7 @@ pub fn SpaceAdminPanel(
                                                                 target: resp.target.clone(),
                                                                 role: None,
                                                                 state: resp.state.clone(),
-                                                                operation_id: Some(op.operation_id.clone()),
+                                                                operation_id: Some(op_id.clone()),
                                                                 event_id: Some(submitted.event_id.clone()),
                                                             });
                                                             frontier_state.set(submitted.event_id.clone());
@@ -1320,7 +1323,7 @@ pub fn SpaceAdminPanel(
                                                                 let mut store = state_store.write();
                                                                 store.save_sync_cursor(submitted.sync_token.clone());
                                                                 store.append_raw_operation(
-                                                                    op.operation_id.clone(),
+                                                                    op_id.clone(),
                                                                     Some(space.clone()),
                                                                     json!({
                                                                         "kind": "cx.invite.create",
@@ -1334,7 +1337,7 @@ pub fn SpaceAdminPanel(
                                                             invite_target.set(String::new());
                                                             status_msg.set(format!(
                                                                 "invited {} ({}) fact {}",
-                                                                target, "pending", op.operation_id
+                                                                target, "pending", op_id
                                                             ));
                                                         }
                                                         Err(error) => status_msg.set(format!("invite fact failed: {error}")),
@@ -1816,15 +1819,16 @@ pub fn SpaceAdminPanel(
                                                 Ok(api) => match api.accept_space_invite(&space, &invite_id).await {
                                                     Ok(resp) => {
                                                         let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
+                                                        let op_id = op.local_operation_id().to_owned();
                                                         match api
-                                                            .submit_operation_event(&op)
+                                                            .submit_event_envelope(&op)
                                                             .await
                                                         {
                                                             Ok(submitted) => {
                                                                 for row in space_invites.write().iter_mut() {
                                                                     if row.invite_id == invite_id {
                                                                         row.state = resp.state.clone();
-                                                                        row.operation_id = Some(op.operation_id.clone());
+                                                                        row.operation_id = Some(op_id.clone());
                                                                         row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
@@ -1834,7 +1838,7 @@ pub fn SpaceAdminPanel(
                                                                     let mut store = state_store.write();
                                                                     store.save_sync_cursor(submitted.sync_token.clone());
                                                                     store.append_raw_operation(
-                                                                        op.operation_id.clone(),
+                                                                        op_id.clone(),
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "kind": "cx.invite.accept",
@@ -1844,7 +1848,7 @@ pub fn SpaceAdminPanel(
                                                                         }),
                                                                     );
                                                                 }
-                                                                status_msg.set(format!("accepted invite fact {}", op.operation_id));
+                                                                status_msg.set(format!("accepted invite fact {op_id}"));
                                                             }
                                                             Err(error) => status_msg.set(format!("accept fact failed: {error}")),
                                                         }
@@ -1884,15 +1888,16 @@ pub fn SpaceAdminPanel(
                                                             Some("declined"),
                                                         )
                                                         .build("yougen");
+                                                        let op_id = op.local_operation_id().to_owned();
                                                         match api
-                                                            .submit_operation_event(&op)
+                                                            .submit_event_envelope(&op)
                                                             .await
                                                         {
                                                             Ok(submitted) => {
                                                                 for row in space_invites.write().iter_mut() {
                                                                     if row.invite_id == invite_id {
                                                                         row.state = resp.state.clone();
-                                                                        row.operation_id = Some(op.operation_id.clone());
+                                                                        row.operation_id = Some(op_id.clone());
                                                                         row.event_id = Some(submitted.event_id.clone());
                                                                     }
                                                                 }
@@ -1902,7 +1907,7 @@ pub fn SpaceAdminPanel(
                                                                     let mut store = state_store.write();
                                                                     store.save_sync_cursor(submitted.sync_token.clone());
                                                                     store.append_raw_operation(
-                                                                        op.operation_id.clone(),
+                                                                        op_id.clone(),
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "kind": "cx.invite.cancel",
@@ -1912,7 +1917,7 @@ pub fn SpaceAdminPanel(
                                                                         }),
                                                                     );
                                                                 }
-                                                                status_msg.set(format!("canceled invite fact {}", op.operation_id));
+                                                                status_msg.set(format!("canceled invite fact {op_id}"));
                                                             }
                                                             Err(error) => status_msg.set(format!("cancel fact failed: {error}")),
                                                         }
@@ -2044,6 +2049,8 @@ pub fn SpaceAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
+                            let mut state_store = state_store;
+                            let mut sync_cursor = sync_cursor;
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -2057,7 +2064,13 @@ pub fn SpaceAdminPanel(
                                     )
                                     .await
                                     {
-                                        Ok(_) => status_msg.set(format!("left {space_for_msg}")),
+                                        Ok(_) => {
+                                            state_store.write().forget_space(&space_for_msg);
+                                            sync_cursor.set("-".to_owned());
+                                            status_msg.set(format!(
+                                                "left {space_for_msg}; local cache cleared"
+                                            ));
+                                        }
                                         Err(err) => status_msg.set(format!(
                                             "leave failed: {}", err.display()
                                         )),
@@ -2888,8 +2901,8 @@ async fn run_device_revoke_from_snapshot(
     let removed_count = full.output.result.removed_leaves.len();
     let post_state = full.post_state.clone();
     // The SDK's `commit_operation` returns an SDK-typed Operation. We
-    // wrap its payload into yougen's OperationEnvelope shape so the
-    // existing `submit_operation_event` path (Event envelope wrapper +
+    // wrap its payload into yougen's EventEnvelope shape so the
+    // existing `submit_event_envelope` path (Event envelope wrapper +
     // /api/v1/events POST) accepts it without a separate wire route.
     let actor = full
         .output
@@ -2909,7 +2922,7 @@ async fn run_device_revoke_from_snapshot(
     let envelope = envelope_builder.build("yougen");
     let submit_result =
         crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_operation_event(&envelope).await
+            api.submit_event_envelope(&envelope).await
         })
         .await;
     match submit_result {

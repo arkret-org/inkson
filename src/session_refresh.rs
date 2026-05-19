@@ -255,10 +255,10 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
 
 fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     // We don't have a structured error code for "grant revoked" — fall
-    // back to the same heuristic the legacy session-expired surface
-    // uses. A bare 401 might be transient (proxy hiccup, clock skew),
-    // but if the error chain mentions `auth_expired` / `invalid_grant`
-    // we treat it as terminal.
+    // back to the same heuristic as session-expired handling. A bare 401
+    // might be transient (proxy hiccup, clock skew), but if the error
+    // chain mentions `auth_expired` / `invalid_grant` we treat it as
+    // terminal.
     crate::api::is_auth_expired_error(error) || {
         let chain = format!("{error}");
         chain.contains("invalid_grant") || chain.contains("grant_expired")

@@ -3,8 +3,8 @@
 //! Spec: actor-private preferences (UI state, read-receipt overrides, presence
 //! gating, blocklist, language) are stored as `cx.account_data.set` events with
 //! actor-private wire scope. Yougen previously kept these as ad-hoc fields on
-//! `LocalState`; this module centralizes the storage shape so the future
-//! `cx.account_data.set` write path has a single canonical entry point.
+//! `LocalState`; this module centralizes the storage shape so
+//! `cx.account_data.set` writes have a single canonical entry point.
 
 use std::collections::BTreeMap;
 
@@ -23,14 +23,16 @@ use crate::operation::OperationBuilder;
 pub enum AccountDataKey {
     /// `client.ui` — sidebar collapsed, theme, default view per Space.
     ClientUi,
-    /// `client.read_receipts` — global + per-space + per-flow send override.
+    /// `cx.read_receipt.preferences` — global + per-space + per-flow send override.
     ClientReadReceipts,
     /// `client.presence` — per-space typing / online / last-seen toggles.
     ClientPresence,
     /// `cx.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
-    /// `client.notifications` — per-space mute, sound, push routing.
+    /// `cx.push_rules` — per-space mute, sound, push routing.
     ClientNotifications,
+    /// `cx.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
+    ClientDndSchedule,
     /// `client.language` — locale / RTL preferences.
     ClientLanguage,
     /// Application-specific extension key.
@@ -41,10 +43,11 @@ impl AccountDataKey {
     pub fn as_wire(&self) -> &str {
         match self {
             Self::ClientUi => "client.ui",
-            Self::ClientReadReceipts => "client.read_receipts",
+            Self::ClientReadReceipts => "cx.read_receipt.preferences",
             Self::ClientPresence => "client.presence",
             Self::ClientBlocklist => "cx.account.blocklist",
-            Self::ClientNotifications => "client.notifications",
+            Self::ClientNotifications => "cx.push_rules",
+            Self::ClientDndSchedule => "cx.dnd_schedule",
             Self::ClientLanguage => "client.language",
             Self::Custom(s) => s,
         }
@@ -53,10 +56,11 @@ impl AccountDataKey {
     pub fn from_wire(s: &str) -> Self {
         match s {
             "client.ui" => Self::ClientUi,
-            "client.read_receipts" => Self::ClientReadReceipts,
+            "cx.read_receipt.preferences" => Self::ClientReadReceipts,
             "client.presence" => Self::ClientPresence,
-            "cx.account.blocklist" | "client.blocklist" => Self::ClientBlocklist,
-            "client.notifications" => Self::ClientNotifications,
+            "cx.account.blocklist" => Self::ClientBlocklist,
+            "cx.push_rules" => Self::ClientNotifications,
+            "cx.dnd_schedule" => Self::ClientDndSchedule,
             "client.language" => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
         }
@@ -255,6 +259,18 @@ pub fn space_id_from_space_remark_key(key: &str) -> Option<&str> {
     key.strip_prefix("cx.contacts.space.")
 }
 
+/// Wire-key for an actor-private contact remark per
+/// `discovery/client-preferences.md` §3.6: `cx.contacts.actor.<did>`.
+pub fn contact_remark_account_data_key(actor_did: &str) -> String {
+    format!("cx.contacts.actor.{actor_did}")
+}
+
+/// Inverse of [`contact_remark_account_data_key`]. Returns the DID segment
+/// when `key` is an actor contact remark.
+pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
+    key.strip_prefix("cx.contacts.actor.")
+}
+
 /// User-private Space remark per `discovery/client-preferences.md` §3.7.
 ///
 /// Persisted as the `content` payload under
@@ -349,12 +365,64 @@ impl SpaceRemark {
     }
 }
 
+/// User-private actor/contact remark per
+/// `discovery/client-preferences.md` §3.6.
+///
+/// Stored under `cx.contacts.actor.<did>` and intentionally never embedded in
+/// public profile, mention, message, search, or push payloads.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactRemark {
+    #[serde(default = "default_space_remark_version")]
+    pub version: u32,
+    pub actor_did: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_handle_at_save: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+impl ContactRemark {
+    pub fn new(actor_did: impl Into<String>, local_name: impl Into<String>) -> Self {
+        Self {
+            version: 1,
+            actor_did: actor_did.into(),
+            local_name: local_name.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.local_name.trim().is_empty()
+            && self.note.trim().is_empty()
+            && self.tags.is_empty()
+            && !self.pinned
+    }
+
+    pub fn display_name<'a>(&'a self, fallback: &'a str) -> &'a str {
+        let trimmed = self.local_name.trim();
+        if trimmed.is_empty() {
+            fallback
+        } else {
+            trimmed
+        }
+    }
+}
+
 /// A single entry in the actor-private personal blocklist
 /// (`cx.account.blocklist` per `discovery/client-preferences.md`).
 ///
-/// The wire shape is intentionally permissive — older clients SHOULD
-/// tolerate unknown fields — but every entry MUST carry `did`. `reason`
-/// is free-form text shown back to the user in the Privacy settings;
+/// Every entry MUST carry `did`. `reason` is free-form text shown back
+/// to the user in the Privacy settings;
 /// `blocked_at` is an RFC 3339 timestamp set at the time of the block,
 /// useful for the UI "blocked since…" hint and for conflict resolution
 /// across devices.
@@ -368,8 +436,6 @@ pub struct BlocklistEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// RFC 3339 timestamp at which the block was first written.
-    /// Optional because legacy entries hydrated from older clients may
-    /// not carry it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_at: Option<String>,
 }
@@ -491,18 +557,15 @@ mod tests {
     fn key_round_trip() {
         for s in [
             "client.ui",
-            "client.read_receipts",
+            "cx.read_receipt.preferences",
             "client.presence",
             "cx.account.blocklist",
-            "client.notifications",
+            "cx.push_rules",
+            "cx.dnd_schedule",
             "client.language",
         ] {
             assert_eq!(AccountDataKey::from_wire(s).as_wire(), s);
         }
-        assert_eq!(
-            AccountDataKey::from_wire("client.blocklist").as_wire(),
-            "cx.account.blocklist"
-        );
         assert_eq!(AccountDataKey::from_wire("custom.x").as_wire(), "custom.x");
     }
 
@@ -538,6 +601,18 @@ mod tests {
         assert_eq!(space_id_from_space_remark_key(&key), Some(space_id));
         assert_eq!(
             space_id_from_space_remark_key("cx.read_receipt.preferences"),
+            None
+        );
+    }
+
+    #[test]
+    fn contact_remark_key_round_trip() {
+        let did = "did:web:alice.example";
+        let key = contact_remark_account_data_key(did);
+        assert_eq!(key, format!("cx.contacts.actor.{did}"));
+        assert_eq!(actor_did_from_contact_remark_key(&key), Some(did));
+        assert_eq!(
+            actor_did_from_contact_remark_key("cx.contacts.space.x"),
             None
         );
     }
@@ -586,6 +661,24 @@ mod tests {
             ..SpaceRemark::default()
         };
         assert!(!r2.is_empty());
+    }
+
+    #[test]
+    fn contact_remark_serialises_minimal_private_payload() {
+        let remark = ContactRemark::new("did:web:alice.example", "Alice from Ops");
+        let wire = serde_json::to_value(&remark).unwrap();
+        assert_eq!(wire["version"], 1);
+        assert_eq!(wire["actor_did"], "did:web:alice.example");
+        assert_eq!(wire["local_name"], "Alice from Ops");
+        assert!(wire.get("note").is_none());
+        assert_eq!(remark.display_name("Alice"), "Alice from Ops");
+
+        let empty = ContactRemark {
+            actor_did: "did:web:alice.example".to_owned(),
+            local_name: " ".to_owned(),
+            ..ContactRemark::default()
+        };
+        assert!(empty.is_empty());
     }
 
     #[test]
@@ -719,9 +812,8 @@ mod tests {
         assert_eq!(avatar_blob_ref_from_client_ui(&tombstoned), None);
         assert!(avatar_blob_ref_tombstoned_from_client_ui(&tombstoned));
 
-        // Older client wrote `client.ui` without the field — parse returns None.
-        let legacy = json!({"theme": "light"});
-        assert_eq!(avatar_blob_ref_from_client_ui(&legacy), None);
+        let without_avatar = json!({"theme": "light"});
+        assert_eq!(avatar_blob_ref_from_client_ui(&without_avatar), None);
 
         // Non-string values are rejected.
         let weird = json!({"avatar_blob_ref": 42});
@@ -781,8 +873,8 @@ mod tests {
             json!({"send": false}),
         )
         .build("node");
-        assert_eq!(op.op_type, "cx.account_data.set");
-        assert_eq!(op.body["key"], "client.read_receipts");
-        assert_eq!(op.body["value"]["send"], false);
+        assert_eq!(op.kind, "cx.account_data.set");
+        assert_eq!(op.payload["key"], "cx.read_receipt.preferences");
+        assert_eq!(op.payload["value"]["send"], false);
     }
 }
