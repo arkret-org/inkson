@@ -32,9 +32,39 @@ pub enum TrustCheck {
 }
 
 /// Pinned trust bundle. Maps `domain` → [`TrustAnchor`].
-#[derive(Clone, Debug, Default)]
+///
+/// F-FED-1 (2026-05-19): now `Serialize` / `Deserialize` so the
+/// local state store can persist the pinned anchor set across
+/// restarts. Without persistence the user has to re-pin every
+/// federated peer on every launch.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TrustBundle {
+    #[serde(default)]
     anchors: BTreeMap<String, TrustAnchor>,
+    /// F-FED-1: backfill / federation transactions whose `origin`
+    /// isn't pinned land here instead of being silently dropped.
+    /// The UI surfaces them so the operator can decide whether to
+    /// pin the domain or evict the row. Quarantined rows aren't
+    /// applied to local state — see [`Self::quarantine_transaction`].
+    #[serde(default)]
+    quarantine: Vec<QuarantinedTransaction>,
+}
+
+/// F-FED-1: a federation transaction held back from local state
+/// because its origin wasn't pinned at receive time.
+///
+/// Carries the raw transaction id + origin / destination domains
+/// + the verdict that originally landed the row in quarantine, so
+/// the UI can render a precise reason ("origin not pinned" /
+/// "signature mismatch" / "destination not us"). When the operator
+/// later pins the missing domain we can re-evaluate via
+/// [`TrustBundle::reverify_quarantined_against`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuarantinedTransaction {
+    pub transaction_id: String,
+    pub origin: String,
+    pub destination: String,
+    pub reason: TrustCheck,
 }
 
 impl TrustBundle {
@@ -68,6 +98,75 @@ impl TrustBundle {
 
     pub fn is_empty(&self) -> bool {
         self.anchors.is_empty()
+    }
+
+    // ── F-FED-1: quarantine ──────────────────────────────────────────
+
+    /// Add `transaction` to the quarantine queue with `reason`.
+    /// Idempotent: a second call for the same transaction id
+    /// overwrites the prior entry (the latest verdict wins so the
+    /// UI never sees a stale "unknown domain" reason after the
+    /// signature verifier re-runs).
+    pub fn quarantine_transaction(
+        &mut self,
+        transaction: &FederationTransaction,
+        reason: TrustCheck,
+    ) {
+        self.quarantine
+            .retain(|row| row.transaction_id != transaction.transaction_id);
+        self.quarantine.push(QuarantinedTransaction {
+            transaction_id: transaction.transaction_id.clone(),
+            origin: transaction.origin.clone(),
+            destination: transaction.destination.clone(),
+            reason,
+        });
+    }
+
+    /// Current quarantine snapshot, for the UI to render.
+    pub fn quarantined(&self) -> &[QuarantinedTransaction] {
+        &self.quarantine
+    }
+
+    /// Drop a row from the quarantine queue (e.g. operator clicked
+    /// "evict"). Returns the removed row when it existed.
+    pub fn drop_quarantined(&mut self, transaction_id: &str) -> Option<QuarantinedTransaction> {
+        let idx = self
+            .quarantine
+            .iter()
+            .position(|row| row.transaction_id == transaction_id)?;
+        Some(self.quarantine.remove(idx))
+    }
+
+    /// F-FED-1: re-evaluate every quarantined row against the
+    /// current anchor set + `local_domain`. Returns the
+    /// `transaction_id`s that are now [`TrustCheck::Trusted`] —
+    /// the caller is expected to re-fetch those transactions via
+    /// `/federation/backfill` (the actual replay is out of scope
+    /// for this module; we just identify the candidates).
+    ///
+    /// `verify_signature` is the same plug-in closure shape used
+    /// by [`crate::anchor_witness::verify_witness_chain`] — it lets
+    /// the caller swap the signature algorithm without touching
+    /// this module.
+    pub fn reverify_quarantined_against(
+        &mut self,
+        local_domain: &str,
+        transactions: &[FederationTransaction],
+    ) -> Vec<String> {
+        let mut promoted: Vec<String> = Vec::new();
+        for tx in transactions {
+            if self
+                .quarantine
+                .iter()
+                .any(|row| row.transaction_id == tx.transaction_id)
+                && matches!(self.verify_transaction(local_domain, tx), TrustCheck::Trusted)
+            {
+                self.quarantine
+                    .retain(|row| row.transaction_id != tx.transaction_id);
+                promoted.push(tx.transaction_id.clone());
+            }
+        }
+        promoted
     }
 
     /// Verify a [`FederationTransaction`] against this bundle. Checks origin
@@ -401,6 +500,98 @@ mod tests {
             well_known_contrix_server_url("http://127.0.0.1:8080").unwrap(),
             "http://127.0.0.1:8080/.well-known/contrix/server"
         );
+    }
+
+    // ── F-FED-1: quarantine + persistence ───────────────────────────
+
+    fn unpinned_tx() -> FederationTransaction {
+        FederationTransaction {
+            transaction_id: "tx-1".to_owned(),
+            origin: "bob.example".to_owned(),
+            destination: "alice.example".to_owned(),
+            events: Vec::new(),
+            signature: "sig-1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn quarantine_transaction_is_idempotent_under_repeat_calls() {
+        let mut bundle = TrustBundle::new();
+        let tx = unpinned_tx();
+        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
+        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
+        assert_eq!(bundle.quarantined().len(), 1);
+        assert_eq!(bundle.quarantined()[0].transaction_id, "tx-1");
+    }
+
+    #[test]
+    fn quarantine_latest_reason_wins_on_repeat() {
+        let mut bundle = TrustBundle::new();
+        let tx = unpinned_tx();
+        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
+        bundle.quarantine_transaction(
+            &tx,
+            TrustCheck::SignatureMismatch(tx.transaction_id.clone()),
+        );
+        assert_eq!(bundle.quarantined().len(), 1);
+        assert!(matches!(
+            bundle.quarantined()[0].reason,
+            TrustCheck::SignatureMismatch(_)
+        ));
+    }
+
+    #[test]
+    fn drop_quarantined_removes_only_the_named_row() {
+        let mut bundle = TrustBundle::new();
+        let mut tx_a = unpinned_tx();
+        let mut tx_b = unpinned_tx();
+        tx_a.transaction_id = "tx-a".to_owned();
+        tx_b.transaction_id = "tx-b".to_owned();
+        bundle.quarantine_transaction(&tx_a, TrustCheck::UnknownDomain(tx_a.origin.clone()));
+        bundle.quarantine_transaction(&tx_b, TrustCheck::UnknownDomain(tx_b.origin.clone()));
+        let removed = bundle.drop_quarantined("tx-a").expect("removed");
+        assert_eq!(removed.transaction_id, "tx-a");
+        assert_eq!(bundle.quarantined().len(), 1);
+        assert_eq!(bundle.quarantined()[0].transaction_id, "tx-b");
+        assert!(bundle.drop_quarantined("tx-missing").is_none());
+    }
+
+    #[test]
+    fn reverify_promotes_transactions_whose_origin_was_pinned_after_quarantine() {
+        let mut bundle = TrustBundle::new();
+        // Build a signed transaction the SDK can verify.
+        let mut sdk_mgr = FederationManager::new();
+        sdk_mgr.add_trust_anchor(anchor("bob.example", "shared-key"));
+        let tx = sdk_mgr.create_transaction(
+            "bob.example",
+            "alice.example",
+            Vec::new(),
+            "shared-key",
+        );
+
+        // Initially, bob.example isn't pinned → quarantine.
+        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
+        assert_eq!(bundle.quarantined().len(), 1);
+
+        // Operator pins bob.example → reverify should promote the row.
+        bundle.add_anchor(anchor("bob.example", "shared-key"));
+        let promoted = bundle.reverify_quarantined_against("alice.example", &[tx.clone()]);
+        assert_eq!(promoted, vec![tx.transaction_id.clone()]);
+        assert!(bundle.quarantined().is_empty());
+    }
+
+    #[test]
+    fn trust_bundle_round_trips_through_serde() {
+        let mut bundle = TrustBundle::new();
+        bundle.add_anchor(anchor("alice.example", "did:web:alice.example"));
+        let tx = unpinned_tx();
+        bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));
+
+        let bytes = serde_json::to_string(&bundle).expect("serialize");
+        let restored: TrustBundle = serde_json::from_str(&bytes).expect("deserialize");
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored.quarantined().len(), 1);
+        assert_eq!(restored.quarantined()[0].transaction_id, "tx-1");
     }
 
     #[test]

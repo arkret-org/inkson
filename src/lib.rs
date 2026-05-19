@@ -21,6 +21,8 @@ pub mod cursor;
 pub mod device_revoke;
 pub mod did_resolver;
 pub mod discovery;
+pub mod dpop;
+pub mod presence_rx;
 pub mod federation;
 pub mod hlc;
 pub mod i18n;
