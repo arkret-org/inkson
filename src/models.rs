@@ -215,7 +215,7 @@ impl ServerDescription {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityDescribeResponse {
+pub struct IdentityDescribeResBody {
     pub service_did: String,
     pub registry_mode: String,
     #[serde(default)]
@@ -226,7 +226,7 @@ pub struct IdentityDescribeResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityResolveResponse {
+pub struct IdentityResolveResBody {
     pub did_document: Value,
     pub key_log_head: Option<String>,
     pub seq: u64,
@@ -237,7 +237,7 @@ pub struct IdentityResolveResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SyncDescribeResponse {
+pub struct SyncDescribeResBody {
     pub service_did: String,
     #[serde(default)]
     pub supported_sync_profiles: Vec<String>,
@@ -267,7 +267,7 @@ pub struct SearchSpacesResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DirectoryDescribeResponse {
+pub struct DirectoryDescribeResBody {
     pub service_did: String,
     pub resource_types: Vec<String>,
     pub discovery_profiles: Vec<String>,
@@ -300,7 +300,7 @@ pub struct SpacePreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BackfillResponse {
+pub struct BackfillResBody {
     #[serde(default)]
     pub events: Vec<Value>,
     pub prev_cursor: Option<String>,
@@ -319,7 +319,7 @@ pub struct SnapshotHeadResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AuthzCheckResponse {
+pub struct AuthzCheckResBody {
     pub allowed: bool,
     pub reason_code: Option<String>,
     #[serde(default)]
@@ -329,7 +329,7 @@ pub struct AuthzCheckResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EffectiveGrantsResponse {
+pub struct EffectiveGrantsResBody {
     #[serde(default)]
     pub grants: Vec<Value>,
     pub state_hash: Option<String>,
@@ -352,37 +352,37 @@ pub struct PushRegisterResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OkResponse {
+pub struct OkResBody {
     pub ok: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysUploadResponse {
+pub struct KeysUploadResBody {
     pub one_time_key_counts: Value,
     pub fallback_keys: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysQueryResponse {
+pub struct KeysQueryResBody {
     pub device_keys: Value,
     pub failures: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysClaimResponse {
+pub struct KeysClaimResBody {
     pub one_time_keys: Value,
     pub failures: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceMessagesSendResponse {
+pub struct DeviceMessagesSendResBody {
     pub ok: bool,
     pub delivered: Value,
     pub unknown_devices: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceMessagesReceiveResponse {
+pub struct DeviceMessagesReceiveResBody {
     #[serde(default)]
     pub events: Vec<Value>,
     pub next_batch: Option<String>,
@@ -390,7 +390,7 @@ pub struct DeviceMessagesReceiveResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BlobUploadResponse {
+pub struct BlobUploadResBody {
     pub blob_ref: String,
     pub size: usize,
     pub media_type: String,
@@ -401,7 +401,7 @@ pub struct BlobUploadResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ModerationReportResponse {
+pub struct ModerationReportResBody {
     pub report_id: String,
     pub status: String,
     #[serde(default)]
@@ -607,7 +607,7 @@ pub struct PolicyResponse {
 // ── Federation ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationTransactionResponse {
+pub struct FederationTransactionResBody {
     pub ok: bool,
     pub txn_id: String,
     #[serde(default)]
@@ -624,14 +624,14 @@ pub struct FederationOperationsResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationSpaceMembersResponse {
+pub struct FederationSpaceMembersResBody {
     #[serde(default)]
     pub members: Vec<Value>,
     pub frontier: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationVerifyActorResponse {
+pub struct FederationVerifyActorResBody {
     pub verified: bool,
     pub actor: String,
     pub evidence: Value,
@@ -640,7 +640,7 @@ pub struct FederationVerifyActorResponse {
 // ── Policy Check ─────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PolicyCheckResponse {
+pub struct PolicyCheckResBody {
     pub decision: String,
     #[serde(default)]
     pub obligations: Vec<Value>,
@@ -652,13 +652,13 @@ pub struct PolicyCheckResponse {
 // ── Applet ───────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletPingResponse {
+pub struct AppletPingResBody {
     pub ok: bool,
     pub latency_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletDescribeResponse {
+pub struct AppletDescribeResBody {
     pub applet_did: String,
     pub name: String,
     pub version: String,
@@ -669,7 +669,7 @@ pub struct AppletDescribeResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletTransactionResponse {
+pub struct AppletTransactionResBody {
     pub ok: bool,
     pub txn_id: String,
     #[serde(default)]
@@ -714,21 +714,21 @@ pub struct ThirdPartyLocationsResponse {
 // ── Identity (extended) ──────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityLogResponse {
+pub struct IdentityLogResBody {
     #[serde(default)]
     pub entries: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitDidOperationResponse {
+pub struct SubmitDidOperationResBody {
     pub ok: bool,
     pub operation_id: String,
     pub status: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EventsDescribeResponse {
+pub struct EventsDescribeResBody {
     pub service_did: String,
     #[serde(default)]
     pub supported_profiles: Vec<String>,
@@ -759,7 +759,7 @@ pub struct SubmitEventResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityReceiptsResponse {
+pub struct IdentityReceiptsResBody {
     #[serde(default)]
     pub receipts: Vec<Value>,
 }
@@ -802,7 +802,7 @@ pub struct IceConfigRequest {
 // ── MIMI Provider Facade ─────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProviderDirectoryResponse {
+pub struct MimiProviderDirectoryResBody {
     pub service_did: Option<String>,
     pub service_type: String,
     #[serde(default)]
@@ -831,7 +831,7 @@ pub struct MimiProviderProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiKeyMaterialResponse {
+pub struct MimiKeyMaterialResBody {
     pub ok: bool,
     #[serde(default)]
     pub key_packages: Vec<Value>,
@@ -840,7 +840,7 @@ pub struct MimiKeyMaterialResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiRoomUpdateResponse {
+pub struct MimiRoomUpdateResBody {
     pub ok: bool,
     pub room_id: Option<String>,
     #[serde(default)]
@@ -848,7 +848,7 @@ pub struct MimiRoomUpdateResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiNotifyResponse {
+pub struct MimiNotifyResBody {
     pub ok: bool,
     #[serde(default)]
     pub accepted: Vec<String>,
@@ -857,7 +857,7 @@ pub struct MimiNotifyResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiSubmitMessageResponse {
+pub struct MimiSubmitMessageResBody {
     pub ok: bool,
     pub mimi_message_id: Option<String>,
     pub mapped_operation_id: Option<String>,
@@ -867,7 +867,7 @@ pub struct MimiSubmitMessageResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiGroupInfoResponse {
+pub struct MimiGroupInfoResBody {
     pub room_id: String,
     pub mimi_room_uri: Option<String>,
     pub group_info: Value,
@@ -878,7 +878,7 @@ pub struct MimiGroupInfoResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiConsentResponse {
+pub struct MimiConsentResBody {
     pub ok: bool,
     pub consent_id: Option<String>,
     pub state: Option<String>,
@@ -887,7 +887,7 @@ pub struct MimiConsentResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiIdentifierQueryResponse {
+pub struct MimiIdentifierQueryResBody {
     pub query: String,
     pub reachable: bool,
     pub mapped_did: Option<String>,
@@ -899,7 +899,7 @@ pub struct MimiIdentifierQueryResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiReportAbuseResponse {
+pub struct MimiReportAbuseResBody {
     pub ok: bool,
     pub report_id: Option<String>,
     pub status: Option<String>,
@@ -908,7 +908,7 @@ pub struct MimiReportAbuseResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProxyDownloadResponse {
+pub struct MimiProxyDownloadResBody {
     pub ok: bool,
     pub blob_ref: String,
     pub media_type: Option<String>,

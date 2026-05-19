@@ -233,7 +233,7 @@ fn run_local_mls_encrypt(
     )
 }
 
-/// Walk a `DeviceMessagesReceiveResponse` JSON representation and
+/// Walk a `DeviceMessagesReceiveResBody` JSON representation and
 /// pull out every `cx.mls.welcome` content payload.
 /// Soland's wire shape for that endpoint is `{ "messages": { actor:
 /// { device_id: { type, content, ... } } } }`; this helper does NOT
@@ -4051,7 +4051,7 @@ mod tests {
 
     /// The Welcome-receive shuttle iterates
     /// `messages -> actor -> device -> {type, content}` from
-    /// `DeviceMessagesReceiveResponse`. Pin the parse so multi-actor /
+    /// `DeviceMessagesReceiveResBody`. Pin the parse so multi-actor /
     /// list-vs-object device entries / mixed-type batches all surface
     /// only the `cx.mls.welcome` payloads.
     #[cfg(not(target_arch = "wasm32"))]

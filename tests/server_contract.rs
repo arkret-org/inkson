@@ -58,7 +58,7 @@ fn yougen_accepts_server_contract_payloads() {
     );
     assert_eq!(describe.supported_bindings[0]["base_path"], "/api/v1");
 
-    let identity: yougen::models::IdentityDescribeResponse = serde_json::from_value(json!({
+    let identity: yougen::models::IdentityDescribeResBody = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
@@ -68,7 +68,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: yougen::models::IdentityResolveResponse =
+    let resolved_identity: yougen::models::IdentityResolveResBody =
         serde_json::from_value(json!({
             "did_document": {"id": "did:web:alice.example"},
             "key_log_head": null,
@@ -177,7 +177,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(login.token_type, "Bearer");
 
-    let authz: yougen::models::AuthzCheckResponse = serde_json::from_value(json!({
+    let authz: yougen::models::AuthzCheckResBody = serde_json::from_value(json!({
         "allowed": true,
         "reason_code": null,
         "grants": [{"actor": "did:web:alice.example"}],
@@ -186,7 +186,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(authz.allowed);
 
-    let grants: yougen::models::EffectiveGrantsResponse = serde_json::from_value(json!({
+    let grants: yougen::models::EffectiveGrantsResBody = serde_json::from_value(json!({
         "grants": [{"subject": "did:web:alice.example"}],
         "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00Z"
@@ -201,21 +201,21 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(invites.invites.is_empty());
 
-    let keys: yougen::models::KeysUploadResponse = serde_json::from_value(json!({
+    let keys: yougen::models::KeysUploadResBody = serde_json::from_value(json!({
         "one_time_key_counts": {"signed_curve25519": 1},
         "fallback_keys": {}
     }))
     .unwrap();
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
-    let claimed: yougen::models::KeysClaimResponse = serde_json::from_value(json!({
+    let claimed: yougen::models::KeysClaimResBody = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"dev_alice": {"key_id": "alice-otk-1"}}},
         "failures": {}
     }))
     .unwrap();
     assert!(claimed.one_time_keys.is_object());
 
-    let device_send: yougen::models::DeviceMessagesSendResponse = serde_json::from_value(json!({
+    let device_send: yougen::models::DeviceMessagesSendResBody = serde_json::from_value(json!({
         "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
@@ -223,7 +223,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
-    let device_receive: yougen::models::DeviceMessagesReceiveResponse =
+    let device_receive: yougen::models::DeviceMessagesReceiveResBody =
         serde_json::from_value(json!({
             "events": [],
             "next_batch": "sx:1760000000000",
@@ -240,10 +240,10 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(push.registration_id.as_deref(), Some("cx:push:dev_alice"));
 
-    let ok: yougen::models::OkResponse = serde_json::from_value(json!({"ok": true})).unwrap();
+    let ok: yougen::models::OkResBody = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
-    let blob: yougen::models::BlobUploadResponse = serde_json::from_value(json!({
+    let blob: yougen::models::BlobUploadResBody = serde_json::from_value(json!({
         "blob_ref": "cx:blob:sha256:abc",
         "size": 23,
         "media_type": "application/octet-stream",
@@ -253,7 +253,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(blob.size, 23);
 
-    let report: yougen::models::ModerationReportResponse = serde_json::from_value(json!({
+    let report: yougen::models::ModerationReportResBody = serde_json::from_value(json!({
         "report_id": "cx:report:1760000000000",
         "status": "queued",
         "routed_to": ["did:web:server.local#moderation"]

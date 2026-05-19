@@ -280,13 +280,13 @@ fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     None
 }
 
-/// T20 — Map a SDK [`CollectionProjectionResponse`] into the yougen
+/// T20 — Map a SDK [`CollectionProjectionResBody`] into the yougen
 /// renderer's [`Vec<KanbanColumn>`] shape.
 ///
 /// Pure adapter so it's unit-testable without a live HTTP client.
 /// Position rank, when present, drives stable ordering inside a column.
 fn collection_projection_to_columns(
-    projection: &contrix_sdk::CollectionProjectionResponse,
+    projection: &contrix_sdk::CollectionProjectionResBody,
 ) -> Vec<KanbanColumn> {
     projection
         .groups
@@ -2368,7 +2368,7 @@ fn rebase_flow_position_after_conflict(
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
 fn locate_flow_position_in_projection(
-    projection: &contrix_sdk::CollectionProjectionResponse,
+    projection: &contrix_sdk::CollectionProjectionResBody,
     flow_id: &str,
 ) -> FlowPositionExpectation {
     for group in &projection.groups {
@@ -2830,9 +2830,9 @@ mod tests {
     fn collection_projection_maps_to_kanban_columns() {
         use contrix_sdk::{
             CollectionProjectionDiscussion, CollectionProjectionGroup, CollectionProjectionItem,
-            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
+            CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
         };
-        let projection = CollectionProjectionResponse {
+        let projection = CollectionProjectionResBody {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -3027,9 +3027,9 @@ mod tests {
     fn locate_flow_position_finds_present_flow_with_rank() {
         use contrix_sdk::{
             CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionPosition,
-            CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer,
+            CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
         };
-        let projection = CollectionProjectionResponse {
+        let projection = CollectionProjectionResBody {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -3067,8 +3067,8 @@ mod tests {
     /// is actually non-initial, which is the safe behaviour.
     #[test]
     fn locate_flow_position_missing_flow_returns_initial() {
-        use contrix_sdk::{CollectionProjectionResponse, ViewId, ViewKind, ViewRenderer};
-        let projection = CollectionProjectionResponse {
+        use contrix_sdk::{CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer};
+        let projection = CollectionProjectionResBody {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,
             view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),

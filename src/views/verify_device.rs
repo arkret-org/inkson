@@ -32,7 +32,7 @@ enum VerifyMethod {
     Sas,
 }
 
-/// Walk a `DeviceMessagesReceiveResponse` JSON representation and
+/// Walk a `DeviceMessagesReceiveResBody` JSON representation and
 /// return the first non-empty `body.key` (or `content.key`) string
 /// carried by a `cx.key.verification.key` typed envelope.
 ///

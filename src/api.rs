@@ -186,28 +186,28 @@ impl Default for CancellationToken {
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResponse,
-    AppletPingResponse, AppletProtocolMetadataResponse, AppletQueryActorResponse,
-    AppletQuerySpaceResponse, AppletTransactionResponse, ArchiveSpaceResponse, AuthzCheckResponse,
-    BackfillResponse, BanMemberResponse, BlobUploadResponse, ClientSyncResponse, ContactResponse,
-    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResponse, DeviceMessagesSendResponse,
-    DeviceTrustResponse, DirectoryDescribeResponse, EffectiveGrantsResponse,
-    EventsDescribeResponse, FederationOperationsResponse, FederationSpaceMembersResponse,
-    FederationTransactionResponse, FederationVerifyActorResponse, HealthResponse, IceConfigRequest,
-    IceConfigResponse, IdentityDescribeResponse, IdentityLogResponse, IdentityReceiptsResponse,
-    IdentityResolveResponse, IndexSearchResponse, InvitesResponse, KeysClaimResponse,
-    KeysQueryResponse, KeysUploadResponse, LogoutResponse, MimiConsentResponse,
-    MimiGroupInfoResponse, MimiIdentifierQueryResponse, MimiKeyMaterialResponse,
-    MimiNotifyResponse, MimiProviderDirectoryResponse, MimiProxyDownloadResponse,
-    MimiReportAbuseResponse, MimiRoomUpdateResponse, MimiSubmitMessageResponse, MlsEpochResponse,
-    MlsRotateResponse, ModerationReportResponse, ModerationReportsResponse,
-    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResponse,
-    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResponse, PolicyResponse,
+    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResBody,
+    AppletPingResBody, AppletProtocolMetadataResponse, AppletQueryActorResponse,
+    AppletQuerySpaceResponse, AppletTransactionResBody, ArchiveSpaceResponse, AuthzCheckResBody,
+    BackfillResBody, BanMemberResponse, BlobUploadResBody, ClientSyncResponse, ContactResponse,
+    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
+    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody,
+    EventsDescribeResBody, FederationOperationsResponse, FederationSpaceMembersResBody,
+    FederationTransactionResBody, FederationVerifyActorResBody, HealthResponse, IceConfigRequest,
+    IceConfigResponse, IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody,
+    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
+    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
+    MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody,
+    MimiNotifyResBody, MimiProviderDirectoryResBody, MimiProxyDownloadResBody,
+    MimiReportAbuseResBody, MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsEpochResponse,
+    MlsRotateResponse, ModerationReportResBody, ModerationReportsResponse,
+    ModerationResolveResponse, OidcAuthorizeResponse, OidcCallbackResponse, OkResBody,
+    PasskeyChallengeResponse, PasskeyVerifyResponse, PolicyCheckResBody, PolicyResponse,
     PushRegisterResponse, ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse,
     RotateKeysResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     ServerDescription, SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse,
     SpaceLeaveResponse, SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse,
-    SubmitDidOperationResponse, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResponse,
+    SubmitDidOperationResBody, SubmitEventResponse, SubmitMoveResponse, SyncDescribeResBody,
     ThirdPartyLocationsResponse, ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse,
     UpdateProfileResponse, UpdateSpaceResponse, VerifyDeviceResponse,
 };
@@ -912,11 +912,11 @@ impl ContrixApi {
         }
     }
 
-    pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResponse> {
+    pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResBody> {
         self.get_json("api/v1/identity/describe").await
     }
 
-    pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveResponse> {
+    pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveResBody> {
         self.post_json(
             "api/v1/identity/resolve",
             json!({"did": did, "include": []}),
@@ -924,7 +924,7 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResponse> {
+    pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
         self.get_json("api/v1/sync/describe").await
     }
 
@@ -948,7 +948,7 @@ impl ContrixApi {
         self.post_json("api/v1/directory/search-spaces", body).await
     }
 
-    pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResponse> {
+    pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResBody> {
         self.get_json("api/v1/directory/describe").await
     }
 
@@ -961,7 +961,7 @@ impl ContrixApi {
     }
 
     /// Query durable events through the current `/api/v1/events` surface.
-    pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResponse> {
+    pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResBody> {
         self.get_json(&format!(
             "api/v1/events?spaces={space_id}&direction=backward"
         ))
@@ -1021,7 +1021,7 @@ impl ContrixApi {
         actor: &str,
         action: &str,
         space_id: &str,
-    ) -> anyhow::Result<AuthzCheckResponse> {
+    ) -> anyhow::Result<AuthzCheckResBody> {
         self.post_json(
             "api/v1/authz/check",
             json!({
@@ -1033,7 +1033,7 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<EffectiveGrantsResponse> {
+    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<EffectiveGrantsResBody> {
         self.get_json(&format!("api/v1/authz/effective-grants?subject={subject}"))
             .await
     }
@@ -1078,7 +1078,7 @@ impl ContrixApi {
         Ok(map_chime_register_response(response.body))
     }
 
-    pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
+    pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
         let request = crate::push::build_unregister_request(device_id, None)?;
         self.unregister_push_device_with_request(&request).await
     }
@@ -1086,13 +1086,13 @@ impl ContrixApi {
     pub async fn unregister_push_device_with_request(
         &self,
         request: &UnregisterDeviceRequest,
-    ) -> anyhow::Result<OkResponse> {
+    ) -> anyhow::Result<OkResBody> {
         let response = self
             .push_client(None, None)
             .unregister_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(OkResponse {
+        Ok(OkResBody {
             ok: response.body.ok,
         })
     }
@@ -1121,7 +1121,7 @@ impl ContrixApi {
         client
     }
 
-    pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResponse> {
+    pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         self.post_json(
             "api/v1/keys/upload",
@@ -1145,7 +1145,7 @@ impl ContrixApi {
         actor: &str,
         device_id: &str,
         algorithm: &str,
-    ) -> anyhow::Result<KeysClaimResponse> {
+    ) -> anyhow::Result<KeysClaimResBody> {
         self.post_json(
             "api/v1/keys/claim",
             json!({"one_time_keys": {actor: {device_id: algorithm}}}),
@@ -1157,7 +1157,7 @@ impl ContrixApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<KeysQueryResponse> {
+    ) -> anyhow::Result<KeysQueryResBody> {
         self.post_json(
             "api/v1/keys/query",
             json!({"device_keys": {actor: [device_id]}}),
@@ -1175,7 +1175,7 @@ impl ContrixApi {
         &self,
         device_id: &str,
         record: &contrix_sdk::MlsKeyPackageRecord,
-    ) -> anyhow::Result<KeysUploadResponse> {
+    ) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
         self.post_json(
             "api/v1/keys/upload",
@@ -1232,7 +1232,7 @@ impl ContrixApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesSendResponse> {
+    ) -> anyhow::Result<DeviceMessagesSendResBody> {
         self.ensure_demo_crypto_fallback_allowed("device_messages opaque test ciphertext")?;
         self.send_device_message_envelope(
             "yougen-txn-1",
@@ -1275,7 +1275,7 @@ impl ContrixApi {
         target_device_id: &str,
         message_type: &str,
         content: serde_json::Value,
-    ) -> anyhow::Result<DeviceMessagesSendResponse> {
+    ) -> anyhow::Result<DeviceMessagesSendResBody> {
         let path = "api/v1/device_messages";
         let payload =
             build_device_message_envelope(target_actor, target_device_id, message_type, content);
@@ -1288,7 +1288,7 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResponse> {
+    pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResBody> {
         self.get_json("api/v1/device_messages").await
     }
 
@@ -1318,7 +1318,7 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResponse> {
+    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResBody> {
         let request = self
             .http
             .post(self.endpoint("api/v1/blob/upload")?)
@@ -1337,7 +1337,7 @@ impl ContrixApi {
         &self,
         bytes: Vec<u8>,
         content_type: &str,
-    ) -> anyhow::Result<BlobUploadResponse> {
+    ) -> anyhow::Result<BlobUploadResBody> {
         let content_type = if content_type.trim().is_empty() {
             "application/octet-stream"
         } else {
@@ -1366,7 +1366,7 @@ impl ContrixApi {
         target_ref: &str,
         reason: &str,
         reporter: &str,
-    ) -> anyhow::Result<ModerationReportResponse> {
+    ) -> anyhow::Result<ModerationReportResBody> {
         self.post_json(
             "api/v1/moderation/report",
             json!({
@@ -1658,11 +1658,11 @@ impl ContrixApi {
     //
     // Pairs with contrix-rust-sdk@9d02761 + soland@1cdab88.
     // POST /api/v1/views/{view_id}/projection returns the typed
-    // CollectionProjectionResponse defined in contrix_core::model.
+    // CollectionProjectionResBody defined in contrix_core::model.
     pub async fn collection_projection(
         &self,
         view_id: &str,
-    ) -> anyhow::Result<contrix_sdk::CollectionProjectionResponse> {
+    ) -> anyhow::Result<contrix_sdk::CollectionProjectionResBody> {
         self.post_json(&format!("api/v1/views/{view_id}/projection"), json!({}))
             .await
     }
@@ -1701,7 +1701,7 @@ impl ContrixApi {
 
     // ── Device & Crypto ─────────────────────────────────────────────
 
-    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResponse> {
+    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
         self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
             .await
     }
@@ -1779,7 +1779,7 @@ impl ContrixApi {
         origin: &str,
         destination: &str,
         operations: Vec<Value>,
-    ) -> anyhow::Result<FederationTransactionResponse> {
+    ) -> anyhow::Result<FederationTransactionResBody> {
         self.put_json(
             &format!("api/v1/federation/transactions/{txn_id}"),
             json!({
@@ -1795,7 +1795,7 @@ impl ContrixApi {
         &self,
         space_id: &str,
         operations: Vec<Value>,
-    ) -> anyhow::Result<FederationTransactionResponse> {
+    ) -> anyhow::Result<FederationTransactionResBody> {
         self.post_json(
             "api/v1/federation/push-operations",
             json!({"space_id": space_id, "operations": operations}),
@@ -1823,7 +1823,7 @@ impl ContrixApi {
     pub async fn federation_space_members(
         &self,
         space_id: &str,
-    ) -> anyhow::Result<FederationSpaceMembersResponse> {
+    ) -> anyhow::Result<FederationSpaceMembersResBody> {
         self.get_json(&format!(
             "api/v1/federation/space-members?space_id={space_id}"
         ))
@@ -1834,7 +1834,7 @@ impl ContrixApi {
         &self,
         actor: &str,
         space_id: &str,
-    ) -> anyhow::Result<FederationVerifyActorResponse> {
+    ) -> anyhow::Result<FederationVerifyActorResBody> {
         self.post_json(
             "api/v1/federation/verify-actor",
             json!({"actor": actor, "space_id": space_id}),
@@ -1849,7 +1849,7 @@ impl ContrixApi {
         actor: &str,
         action: &str,
         resource: &str,
-    ) -> anyhow::Result<PolicyCheckResponse> {
+    ) -> anyhow::Result<PolicyCheckResBody> {
         self.post_json(
             "api/v1/policy/check",
             json!({"actor": actor, "action": action, "resource": resource}),
@@ -1859,14 +1859,14 @@ impl ContrixApi {
 
     // ── MIMI Provider Facade ─────────────────────────────────────
 
-    pub async fn mimi_provider_directory(&self) -> anyhow::Result<MimiProviderDirectoryResponse> {
+    pub async fn mimi_provider_directory(&self) -> anyhow::Result<MimiProviderDirectoryResBody> {
         self.get_json("api/v1/mimi/provider-directory").await
     }
 
     pub async fn mimi_key_material(
         &self,
         request: Value,
-    ) -> anyhow::Result<MimiKeyMaterialResponse> {
+    ) -> anyhow::Result<MimiKeyMaterialResBody> {
         self.post_json("api/v1/mimi/key-material", request).await
     }
 
@@ -1874,7 +1874,7 @@ impl ContrixApi {
         &self,
         room_id: &str,
         request: Value,
-    ) -> anyhow::Result<MimiRoomUpdateResponse> {
+    ) -> anyhow::Result<MimiRoomUpdateResBody> {
         self.put_json(&format!("api/v1/mimi/rooms/{room_id}/update"), request)
             .await
     }
@@ -1883,7 +1883,7 @@ impl ContrixApi {
         &self,
         room_id: &str,
         request: Value,
-    ) -> anyhow::Result<MimiNotifyResponse> {
+    ) -> anyhow::Result<MimiNotifyResBody> {
         self.post_json(&format!("api/v1/mimi/rooms/{room_id}/notify"), request)
             .await
     }
@@ -1892,12 +1892,12 @@ impl ContrixApi {
         &self,
         room_id: &str,
         request: Value,
-    ) -> anyhow::Result<MimiSubmitMessageResponse> {
+    ) -> anyhow::Result<MimiSubmitMessageResBody> {
         self.post_json(&format!("api/v1/mimi/rooms/{room_id}/messages"), request)
             .await
     }
 
-    pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResponse> {
+    pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResBody> {
         self.get_json(&format!("api/v1/mimi/rooms/{room_id}/group-info"))
             .await
     }
@@ -1905,18 +1905,18 @@ impl ContrixApi {
     pub async fn mimi_request_consent(
         &self,
         request: Value,
-    ) -> anyhow::Result<MimiConsentResponse> {
+    ) -> anyhow::Result<MimiConsentResBody> {
         self.post_json("api/v1/mimi/consent/request", request).await
     }
 
-    pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiConsentResponse> {
+    pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
         self.post_json("api/v1/mimi/consent/update", request).await
     }
 
     pub async fn mimi_identifier_query(
         &self,
         request: Value,
-    ) -> anyhow::Result<MimiIdentifierQueryResponse> {
+    ) -> anyhow::Result<MimiIdentifierQueryResBody> {
         self.post_json("api/v1/mimi/identifiers/query", request)
             .await
     }
@@ -1924,20 +1924,20 @@ impl ContrixApi {
     pub async fn mimi_report_abuse(
         &self,
         request: Value,
-    ) -> anyhow::Result<MimiReportAbuseResponse> {
+    ) -> anyhow::Result<MimiReportAbuseResBody> {
         self.post_json("api/v1/mimi/report-abuse", request).await
     }
 
     pub async fn mimi_proxy_download(
         &self,
         request: Value,
-    ) -> anyhow::Result<MimiProxyDownloadResponse> {
+    ) -> anyhow::Result<MimiProxyDownloadResBody> {
         self.post_json("api/v1/mimi/proxy-download", request).await
     }
 
     // ── Applet ──────────────────────────────────────────────────────
 
-    pub async fn applet_ping(&self, applet_did: &str) -> anyhow::Result<AppletPingResponse> {
+    pub async fn applet_ping(&self, applet_did: &str) -> anyhow::Result<AppletPingResBody> {
         self.post_json("api/v1/applet/ping", json!({"applet_did": applet_did}))
             .await
     }
@@ -1945,7 +1945,7 @@ impl ContrixApi {
     pub async fn applet_describe(
         &self,
         applet_did: &str,
-    ) -> anyhow::Result<AppletDescribeResponse> {
+    ) -> anyhow::Result<AppletDescribeResBody> {
         self.get_json(&format!("api/v1/applet/describe?applet_did={applet_did}"))
             .await
     }
@@ -1954,7 +1954,7 @@ impl ContrixApi {
         &self,
         applet_did: &str,
         operations: Vec<Value>,
-    ) -> anyhow::Result<AppletTransactionResponse> {
+    ) -> anyhow::Result<AppletTransactionResBody> {
         self.post_json(
             "api/v1/applet/transaction",
             json!({"applet_did": applet_did, "operations": operations}),
@@ -2026,7 +2026,7 @@ impl ContrixApi {
         &self,
         did: &str,
         limit: Option<usize>,
-    ) -> anyhow::Result<IdentityLogResponse> {
+    ) -> anyhow::Result<IdentityLogResBody> {
         self.post_json(
             "api/v1/identity/log",
             json!({"did": did, "limit": limit.unwrap_or(50)}),
@@ -2038,7 +2038,7 @@ impl ContrixApi {
         &self,
         did: &str,
         operation: Value,
-    ) -> anyhow::Result<SubmitDidOperationResponse> {
+    ) -> anyhow::Result<SubmitDidOperationResBody> {
         self.post_json(
             "api/v1/identity/submit-did-operation",
             json!({"did": did, "operation": operation}),
@@ -2046,7 +2046,7 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResponse> {
+    pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResBody> {
         self.get_json("api/v1/events/describe").await
     }
 
@@ -2071,7 +2071,7 @@ impl ContrixApi {
         self.submit_event(&event).await
     }
 
-    pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResponse> {
+    pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResBody> {
         self.post_json("api/v1/identity/receipts", json!({"did": did}))
             .await
     }
@@ -2651,11 +2651,11 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncResponse> {
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeResponse> {
+pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeResBody> {
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescribeResponse> {
+pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescribeResBody> {
     Ok(serde_json::from_value(value)?)
 }
 
