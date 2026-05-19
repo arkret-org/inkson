@@ -376,6 +376,31 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
         })
 }
 
+/// `true` when `/sync` rejected the cursor — either expired, invalid,
+/// or with an integrity mismatch — so the SyncEngine knows to demote to
+/// a `since=None` full sync instead of looping on the same broken cursor.
+pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ContrixApiError>()
+        .is_some_and(|api_error| {
+            matches!(
+                api_error.error.code(),
+                "sync_token_expired"
+                    | "invalid_cursor"
+                    | "cursor_integrity_invalid"
+                    | "invalid_param"
+            ) && api_error
+                .error
+                .message()
+                .to_lowercase()
+                .contains("cursor")
+                || matches!(
+                    api_error.error.code(),
+                    "sync_token_expired" | "cursor_integrity_invalid"
+                )
+        })
+}
+
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<ContrixApiError>()
@@ -929,9 +954,24 @@ impl ContrixApi {
     }
 
     pub async fn sync(&self, since: Option<&str>) -> anyhow::Result<ClientSyncResponse> {
+        self.sync_with_timeout(since, 0).await
+    }
+
+    /// `/sync` with an explicit long-poll timeout. `timeout_ms == 0` makes
+    /// soland reply immediately with whatever it has cached for the
+    /// cursor; non-zero values are honoured as the upper bound the
+    /// server will hold the request open waiting for new events. The
+    /// `SyncEngine` background task uses ~30s for the streaming-style
+    /// loop and 0 for the boot bootstrap that just wants the current
+    /// snapshot.
+    pub async fn sync_with_timeout(
+        &self,
+        since: Option<&str>,
+        timeout_ms: u64,
+    ) -> anyhow::Result<ClientSyncResponse> {
         self.post_json(
             "api/v1/sync",
-            json!({"since": since, "timeout_ms": 0, "set_presence": "online"}),
+            json!({"since": since, "timeout_ms": timeout_ms, "set_presence": "online"}),
         )
         .await
     }

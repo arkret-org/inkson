@@ -45,6 +45,7 @@ pub mod routes;
 pub mod secure_key_store;
 pub mod session_refresh;
 pub mod snapshot;
+pub mod sync_engine;
 pub mod telemetry;
 pub mod views;
 pub mod webrtc;

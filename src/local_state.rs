@@ -1021,6 +1021,115 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Drop every `space_projections` entry whose key isn't in `keep`. Used
+    /// by the sync reconcile path when `since=None` so spaces the server
+    /// no longer reports get pruned from the local cache instead of
+    /// lingering as ghost entries in the sidebar.
+    ///
+    /// Also prunes the auxiliary per-space caches (`drafts`,
+    /// `anchor_views`, `read_markers`, `space_remarks`,
+    /// `mls_snapshots`, `move_submissions` keyed by space, the
+    /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
+    /// `muted_spaces`, and any leftover encrypted-message draft) so a
+    /// pruned Space doesn't leave private remnants behind.
+    pub fn retain_space_projections<F>(&mut self, keep: F) -> Vec<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        self.ensure_cached_loaded();
+        let removed: Vec<String> = self
+            .cached
+            .space_projections
+            .keys()
+            .filter(|id| !keep(id))
+            .cloned()
+            .collect();
+        if removed.is_empty() {
+            return removed;
+        }
+        for id in &removed {
+            self.forget_space_inner(id);
+        }
+        let _ = self.flush();
+        removed
+    }
+
+    /// Remove a single Space and every per-space derived record. Public
+    /// entry point for `left_spaces`-style sync deltas. Flushes once.
+    pub fn forget_space(&mut self, space_id: &str) {
+        self.ensure_cached_loaded();
+        let trimmed = space_id.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.forget_space_inner(trimmed);
+        let _ = self.flush();
+    }
+
+    fn forget_space_inner(&mut self, space_id: &str) {
+        self.cached.space_projections.remove(space_id);
+        self.cached.drafts.remove(space_id);
+        self.cached.anchor_views.remove(space_id);
+        self.cached.space_remarks.remove(space_id);
+        self.cached.mls_snapshots.remove(space_id);
+        self.cached.muted_spaces.remove(space_id);
+        self.cached
+            .read_receipt_space_overrides
+            .remove(space_id);
+        self.cached
+            .read_receipt_policy_snapshots
+            .remove(space_id);
+        // `read_markers` are keyed by `"{space}\n{topic}"` — strip every
+        // marker whose space prefix matches.
+        let prefix = format!("{space_id}\n");
+        self.cached
+            .read_markers
+            .retain(|key, _| !key.starts_with(&prefix));
+        // `move_submissions` carry a `space_id` field; drop matching entries.
+        self.cached
+            .move_submissions
+            .retain(|_, record| record.space_id != space_id);
+        // `pending_encrypted_messages` are keyed by message id, not space id,
+        // so we leave them alone — the per-message flush path will reject
+        // them if the target Space is gone.
+    }
+
+    /// Wipe every account-scoped projection field while keeping
+    /// device-level state (`local_identity`, `push_registration`,
+    /// `telemetry_log`) and the auth-token state (`oidc_tokens`,
+    /// `session_grant`). Called on logout, when the principal DID
+    /// changes between logins, or when the user switches servers —
+    /// anything that means the cached *projection* no longer
+    /// represents the current viewer.
+    ///
+    /// The auth tokens are deliberately preserved here because the
+    /// caller usually has its own opinion: a fresh-login flow has just
+    /// written the new account's tokens via `set_oidc_tokens` and would
+    /// be sad to see them disappear, while a `logout` flow follows up
+    /// with explicit `set_oidc_tokens(None)` + `set_session_grant(None)`
+    /// of its own. Bundling the token clear into this helper would have
+    /// made the account-change-during-connect path racy.
+    ///
+    /// Pairs with [`Self::retain_space_projections`] which only handles
+    /// the steady-state sync reconcile case.
+    pub fn clear_account_scoped(&mut self) {
+        self.ensure_cached_loaded();
+        let preserved_identity = self.cached.local_identity.clone();
+        let preserved_push = self.cached.push_registration.clone();
+        let preserved_telemetry = std::mem::take(&mut self.cached.telemetry_log);
+        let preserved_oidc = self.cached.oidc_tokens.clone();
+        let preserved_grant = self.cached.session_grant.clone();
+        self.cached = ClientLocalState {
+            local_identity: preserved_identity,
+            push_registration: preserved_push,
+            telemetry_log: preserved_telemetry,
+            oidc_tokens: preserved_oidc,
+            session_grant: preserved_grant,
+            ..ClientLocalState::default()
+        };
+        let _ = self.flush();
+    }
+
     pub fn save_draft(&mut self, space_id: impl Into<String>, draft: impl Into<String>) {
         self.ensure_cached_loaded();
         let space_id = space_id.into();
@@ -2588,6 +2697,150 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("yougen-state-{name}-{stamp}.json"))
+    }
+
+    #[test]
+    fn retain_space_projections_prunes_per_space_caches() {
+        let path = temp_state_path("retain-prunes");
+        let mut store = LocalStateStore::with_path(path);
+        // Seed three spaces with overlapping per-space caches.
+        for id in ["cx:space:keep", "cx:space:drop-a", "cx:space:drop-b"] {
+            store.save_space_projection(id, serde_json::json!({"name": id}));
+            store.save_draft(id, "draft");
+            store.set_anchor_view(id, LocalAnchorView::default());
+            store.set_space_muted(id, true);
+        }
+        // Independently keyed records that should follow the prune.
+        store.save_read_marker(
+            "did:web:tester.example",
+            "device-1",
+            "cx:space:drop-a",
+            None,
+            "cx:event:42",
+        );
+        store.save_read_marker(
+            "did:web:tester.example",
+            "device-1",
+            "cx:space:keep",
+            None,
+            "cx:event:99",
+        );
+
+        let pruned = store.retain_space_projections(|id| id == "cx:space:keep");
+        assert_eq!(pruned.len(), 2);
+        assert!(pruned.contains(&"cx:space:drop-a".to_owned()));
+        assert!(pruned.contains(&"cx:space:drop-b".to_owned()));
+
+        let state = store.load();
+        assert_eq!(state.space_projections.len(), 1);
+        assert!(state.space_projections.contains_key("cx:space:keep"));
+        assert!(!state.drafts.contains_key("cx:space:drop-a"));
+        assert!(state.drafts.contains_key("cx:space:keep"));
+        assert!(!state.anchor_views.contains_key("cx:space:drop-a"));
+        assert!(state.anchor_views.contains_key("cx:space:keep"));
+        assert!(!state.muted_spaces.contains_key("cx:space:drop-b"));
+        assert!(state.muted_spaces.contains_key("cx:space:keep"));
+        let kept_marker_keys: Vec<&str> = state.read_markers.keys().map(String::as_str).collect();
+        assert!(
+            kept_marker_keys.iter().any(|k| k.starts_with("cx:space:keep\n")),
+            "kept space marker should survive prune: {kept_marker_keys:?}",
+        );
+        assert!(
+            kept_marker_keys
+                .iter()
+                .all(|k| !k.starts_with("cx:space:drop-a\n")),
+            "pruned space marker should be gone: {kept_marker_keys:?}",
+        );
+    }
+
+    #[test]
+    fn retain_space_projections_keeps_everything_when_all_match() {
+        let path = temp_state_path("retain-all");
+        let mut store = LocalStateStore::with_path(path);
+        store.save_space_projection("cx:space:a", serde_json::json!({}));
+        store.save_space_projection("cx:space:b", serde_json::json!({}));
+        let pruned = store.retain_space_projections(|_| true);
+        assert!(pruned.is_empty());
+        assert_eq!(store.load().space_projections.len(), 2);
+    }
+
+    #[test]
+    fn forget_space_clears_a_single_space() {
+        let path = temp_state_path("forget-one");
+        let mut store = LocalStateStore::with_path(path);
+        for id in ["cx:space:gone", "cx:space:stay"] {
+            store.save_space_projection(id, serde_json::json!({}));
+            store.save_draft(id, "draft");
+            store.set_anchor_view(id, LocalAnchorView::default());
+        }
+
+        store.forget_space("cx:space:gone");
+
+        let state = store.load();
+        assert!(!state.space_projections.contains_key("cx:space:gone"));
+        assert!(state.space_projections.contains_key("cx:space:stay"));
+        assert!(!state.drafts.contains_key("cx:space:gone"));
+        assert!(state.drafts.contains_key("cx:space:stay"));
+    }
+
+    #[test]
+    fn clear_account_scoped_preserves_device_level_and_token_state() {
+        let path = temp_state_path("clear-account");
+        let mut store = LocalStateStore::with_path(path);
+        // Account-scoped projections.
+        store.save_sync_cursor("sx:before");
+        store.save_space_projection("cx:space:a", serde_json::json!({}));
+        store.save_draft("cx:space:a", "draft");
+        store.save_private_data("did:web:tester.example", "theme", "night");
+        // Device-level state that MUST survive. ensure_local_identity
+        // generates a fresh seed + DID and persists the record under
+        // local_identity — the canonical device-level field this helper
+        // is responsible for not nuking.
+        let identity = store
+            .ensure_local_identity()
+            .expect("ensure_local_identity should succeed in plaintext mode");
+        // Auth-token state that clear_account_scoped MUST preserve too.
+        let bundle = OidcTokenBundle {
+            access_token: "at".to_owned(),
+            refresh_token: Some("rt".to_owned()),
+            token_type: "Bearer".to_owned(),
+            expires_at_unix: None,
+            id_token: None,
+            scope: None,
+            audience: None,
+            stored_at: chrono::Utc::now(),
+        };
+        store.set_oidc_tokens(Some(bundle.clone()));
+
+        store.clear_account_scoped();
+
+        let state = store.load();
+        assert!(state.sync_cursor.is_none(), "sync cursor should be wiped");
+        assert!(
+            state.space_projections.is_empty(),
+            "projections should be wiped"
+        );
+        assert!(state.drafts.is_empty(), "drafts should be wiped");
+        assert!(
+            state.private_data.is_empty(),
+            "private_data is account-scoped and should be wiped"
+        );
+        assert!(
+            state.local_identity.is_some(),
+            "device identity must survive an account-level wipe"
+        );
+        assert_eq!(
+            state.local_identity.as_ref().unwrap().did_key,
+            identity.device_did,
+        );
+        assert!(
+            state.oidc_tokens.is_some(),
+            "OIDC tokens must survive — login flow owns them",
+        );
+        assert_eq!(
+            state.oidc_tokens.as_ref().unwrap().access_token,
+            bundle.access_token,
+        );
     }
 
     #[test]

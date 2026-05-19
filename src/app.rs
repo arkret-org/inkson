@@ -4002,32 +4002,6 @@ fn normalize_space_hierarchy(spaces: &mut [SpacePreview]) {
     }
 }
 
-fn merge_space_previews(
-    mut base: Vec<SpacePreview>,
-    additions: impl IntoIterator<Item = SpacePreview>,
-) -> Vec<SpacePreview> {
-    for preview in additions.into_iter().filter(is_real_space_preview) {
-        if let Some(existing) = base
-            .iter_mut()
-            .find(|space| space.space_id == preview.space_id)
-        {
-            *existing = preview;
-        } else {
-            base.push(preview);
-        }
-    }
-    normalize_space_hierarchy(&mut base);
-    base
-}
-
-fn is_real_space_preview(preview: &SpacePreview) -> bool {
-    preview.space_id.starts_with("cx:space:")
-        && !matches!(
-            preview.category.as_deref(),
-            Some("discussion" | "flow" | "card" | "announce" | "support" | "activity")
-        )
-}
-
 fn descendant_space_ids(spaces: &[SpacePreview], root_space_id: &str) -> Vec<String> {
     if root_space_id.trim().is_empty() {
         return Vec::new();
@@ -4243,7 +4217,7 @@ pub fn RouterView() -> Element {
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
     let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let sync_cursor = use_signal({
+    let mut sync_cursor = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || {
             initial_local_state
@@ -4261,11 +4235,11 @@ pub fn RouterView() -> Element {
                 .unwrap_or_default()
         }
     });
-    let spaces = use_signal({
+    let mut spaces = use_signal({
         let initial_spaces = initial_spaces.clone();
         move || initial_spaces.clone()
     });
-    let timeline = use_signal(Vec::<TimelineEvent>::new);
+    let mut timeline = use_signal(Vec::<TimelineEvent>::new);
     let agent_workspace_pending = use_signal({
         let initial_agent_workspace = initial_agent_workspace.clone();
         move || initial_agent_workspace.pending.clone()
@@ -4297,7 +4271,7 @@ pub fn RouterView() -> Element {
                 .unwrap_or_default()
         }
     });
-    let device_queue = use_signal(|| 0usize);
+    let mut device_queue = use_signal(|| 0usize);
     let push_state = use_signal({
         let initial_local_state = initial_local_state.clone();
         move || crate::push::push_status_label(initial_local_state.push_registration.as_ref())
@@ -4457,12 +4431,36 @@ pub fn RouterView() -> Element {
         }
     });
 
-    let mut auto_refresh_pending = use_signal(|| true);
-    if auto_refresh_pending() {
+    // SyncEngine generation counter. Declared up front so the
+    // bootstrap connect() can pass it via `ConnectContext`. The engine
+    // itself is spawned by the `use_effect` further down.
+    let mut sync_generation = use_signal(|| 0u64);
+
+    // Single-source-of-truth for the sidebar. Anything that wants to
+    // change the visible Space list writes to
+    // `state_store.space_projections` (sync engine, connect()'s initial
+    // bootstrap, setup's optimistic post-create insert, future
+    // push-notification ingestion). This effect derives the `spaces`
+    // Signal from those projections so consumers can keep reading
+    // `spaces()` as before — but the only path into the data is
+    // through the store. Avoids the "stale ghost space" class of bugs
+    // where signal writers forgot to also update the projection (or
+    // vice versa) and the two slid out of sync.
+    use_effect(move || {
+        let projections = state_store.read().load().space_projections;
+        spaces.set(space_previews_from_sync_spaces(&projections));
+    });
+
+    // Bootstrap handshake: on first render with a valid session, run
+    // `connect()` exactly once to do the `/server/describe` +
+    // `/account/me` probes and the initial server-authoritative full
+    // sync. After that, the SyncEngine (below) owns continuous sync.
+    let mut bootstrap_pending = use_signal(|| true);
+    if bootstrap_pending() {
         let base = base_url();
         let session = token();
         if !base.trim().is_empty() && !session.trim().is_empty() {
-            auto_refresh_pending.set(false);
+            bootstrap_pending.set(false);
             connect(
                 base,
                 account_did(),
@@ -4491,11 +4489,54 @@ pub fn RouterView() -> Element {
                     server_description,
                     server_probe_status,
                     theme,
+                    sync_generation,
                     navigator,
                 },
             );
         }
     }
+
+    // SyncEngine — long-poll loop that keeps `space_projections` +
+    // derived signals continuously aligned with `/sync`. Spawn per
+    // generation so logout / server-switch / account-change can stop
+    // the previous loop cleanly by bumping the counter.
+    //
+    // The use_effect re-runs whenever `sync_generation`, `base_url`, or
+    // `token` changes. Each respawn passes the engine the generation
+    // value it started with so a stale iteration can self-check and
+    // exit before writing back to signals owned by the new generation.
+    use_effect(move || {
+        let current_gen = sync_generation();
+        let base = base_url();
+        let session = token();
+        if base.trim().is_empty() || session.trim().is_empty() {
+            return;
+        }
+        let ctx = crate::sync_engine::SyncEngineContext {
+            base_url,
+            token,
+            state_store,
+            spaces,
+            timeline,
+            sync_cursor,
+            status,
+            network_state,
+            last_error,
+            device_queue,
+            theme,
+            account_did,
+            selected_space,
+            agent_workspace_pending,
+            agent_workspace_in_flight,
+            agent_workspace_recent,
+            agent_workspace_agents,
+            agent_workspace_details,
+            owned_agents_context,
+        };
+        spawn(async move {
+            crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
+        });
+    });
 
     let routed_space_id = route.space_id().map(str::to_owned);
     let remembered_space_id = selected_space();
@@ -4867,6 +4908,7 @@ pub fn RouterView() -> Element {
                                 server_description,
                                 server_probe_status,
                                 theme,
+                                sync_generation,
                                 navigator,
                             },
                         ),
@@ -4996,6 +5038,7 @@ pub fn RouterView() -> Element {
                                                     frontier_state,
                                                     crypto_state,
                                                     config_store,
+                                                    state_store,
                                                     network_state,
                                                     last_error,
                                                     server_description,
@@ -5003,6 +5046,7 @@ pub fn RouterView() -> Element {
                                                     status,
                                                     account_did,
                                                     device_id,
+                                                    sync_generation,
                                                 });
                                                 server_menu_open.set(false);
                                                 connect(
@@ -5033,6 +5077,7 @@ pub fn RouterView() -> Element {
                                                         server_description,
                                                         server_probe_status,
                                                         theme,
+                                                        sync_generation,
                                                         navigator,
                                                     },
                                                 );
@@ -5537,13 +5582,37 @@ pub fn RouterView() -> Element {
                                                     let device = device_id();
                                                     let api_token = token();
                                                     account_session_state.set("Logging out".to_owned());
-                                                    // Clear local OIDC state immediately so a
-                                                    // refresh-token-based silent re-auth cannot
-                                                    // resurrect the session if the server-side
-                                                    // logout call later fails or is cancelled.
+                                                    // Clear OIDC + session-grant state up
+                                                    // front so a refresh-token-based silent
+                                                    // re-auth cannot resurrect the session
+                                                    // if the server-side logout call later
+                                                    // fails or is cancelled.
                                                     state_store.write().set_oidc_tokens(None);
                                                     state_store.write().set_session_grant(None);
+                                                    // Then wipe every account-scoped local
+                                                    // projection cache (spaces, drafts,
+                                                    // anchors, read markers, remarks…) so
+                                                    // whoever signs in next on this browser
+                                                    // can't see the previous session's data.
+                                                    // Device-level state (local_identity,
+                                                    // push_registration) is preserved.
+                                                    state_store.write().clear_account_scoped();
                                                     let _ = crate::coauth::clear_persisted_oidc_scaffold();
+                                                    // Wipe the in-memory UI signals too so the
+                                                    // sidebar can't paint a frame of stale
+                                                    // spaces between this click and the
+                                                    // navigator.push(Login).
+                                                    spaces.set(Vec::new());
+                                                    timeline.set(Vec::new());
+                                                    sync_cursor.set("-".to_owned());
+                                                    selected_space.set(String::new());
+                                                    device_queue.set(0);
+                                                    last_error.set(None);
+                                                    // Bump the SyncEngine generation so any
+                                                    // in-flight long-poll exits on its next
+                                                    // iteration check instead of applying a
+                                                    // response after the wipe.
+                                                    sync_generation.set(sync_generation() + 1);
                                                     spawn(async move {
                                                         let api_result = ContrixApi::new(&base)
                                                             .map(|api| api.with_bearer(api_token));
@@ -5760,7 +5829,6 @@ pub fn RouterView() -> Element {
                         crate::views::directory::DirectoryPanel {
                             base_url: base_url(),
                             selected_space,
-                            spaces,
                             status,
                             token,
                             view,
@@ -5778,7 +5846,6 @@ pub fn RouterView() -> Element {
                                     config_store,
                                     state_store,
                                     selected_space,
-                                    spaces,
                                     status,
                                     section: route.setup_section().map(str::to_owned),
                                 }
@@ -6526,6 +6593,7 @@ struct ServerSelectionContext {
     frontier_state: Signal<String>,
     crypto_state: Signal<String>,
     config_store: Signal<LocalConfigStore>,
+    state_store: Signal<LocalStateStore>,
     network_state: Signal<String>,
     last_error: Signal<Option<String>>,
     server_description: Signal<Option<ServerDescription>>,
@@ -6533,6 +6601,9 @@ struct ServerSelectionContext {
     status: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
+    /// SyncEngine generation counter — bumped to retire the
+    /// previous-server engine after the cache wipe + URL repoint.
+    sync_generation: Signal<u64>,
 }
 
 fn select_server(server_url: String, ctx: ServerSelectionContext) {
@@ -6550,6 +6621,20 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut server_description = ctx.server_description;
     let mut server_probe_status = ctx.server_probe_status;
     let mut status = ctx.status;
+    let mut state_store = ctx.state_store;
+    let mut sync_generation = ctx.sync_generation;
+
+    // A space cached against the previous server's view is meaningless
+    // on the new server (different service DID, different membership,
+    // potentially overlapping cx:space ids that point at unrelated
+    // rooms). Wipe the account-scoped cache before re-pointing the URL
+    // so the next sync starts from a clean slate. Device-level state
+    // (local_identity, push_registration) is preserved.
+    state_store.write().clear_account_scoped();
+    // Retire the previous server's SyncEngine. The use_effect's
+    // base_url tracking would re-spawn anyway, but bumping here ensures
+    // the in-flight long-poll exits before the new URL takes over.
+    sync_generation.set(sync_generation() + 1);
 
     base_url.set(server_url.clone());
     sync_cursor.set("-".to_owned());
@@ -6638,6 +6723,11 @@ struct ConnectContext {
     /// from the remote `client.ui` account-data payload right after
     /// session bootstrap. Stub field — wire-up is tracked under A4a.
     theme: Signal<String>,
+    /// SyncEngine generation counter. Bumped when `connect()` detects
+    /// the canonical actor has changed since the last persisted run
+    /// (account swap on the same device) so any in-flight engine for
+    /// the previous account exits before applying its response.
+    sync_generation: Signal<u64>,
     navigator: Navigator,
 }
 
@@ -6783,6 +6873,35 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     }
                 };
                 if canonical_actor != actor {
+                    // Account changed since the last persisted run (the
+                    // server's `/account/me` disagrees with our cached
+                    // actor). When the previous actor was non-empty this
+                    // means a different human is signing in on the same
+                    // device — every account-scoped cache (projections,
+                    // drafts, anchor views, read markers, remarks…) is
+                    // someone else's data and must be wiped before the
+                    // sync below repopulates the store. Device-level
+                    // state (local_identity, push_registration) is
+                    // preserved.
+                    if !actor.trim().is_empty() {
+                        let mut store = state_store.write();
+                        store.clear_account_scoped();
+                        // Also wipe the in-memory UI signals so the
+                        // sidebar can't paint the previous actor's
+                        // spaces between this point and the sync that's
+                        // about to run.
+                        drop(store);
+                        spaces.set(Vec::new());
+                        timeline.set(Vec::new());
+                        selected_space.set(String::new());
+                        sync_cursor.set("-".to_owned());
+                        device_queue.set(0);
+                        // Retire the previous-account SyncEngine so its
+                        // in-flight long-poll doesn't write back into
+                        // the freshly-wiped state.
+                        let mut sync_generation = ctx.sync_generation;
+                        sync_generation.set(sync_generation() + 1);
+                    }
                     account_did.set(canonical_actor.clone());
                 }
                 persist_config(
@@ -6794,13 +6913,41 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 );
                 crypto_state.set(format!("session token loaded for {device}"));
 
-                let cached_spaces =
-                    space_previews_from_sync_spaces(&state_store.read().load().space_projections);
+                // `connect()` always issues a full sync (`since=None`) —
+                // it's invoked on app boot, the mobile Refresh button,
+                // and server switches, all of which represent
+                // "re-establish the world from scratch". The SyncEngine
+                // (see crate::sync_engine) owns the long-poll loop that
+                // threads the cursor for incremental deltas.
                 match authed.sync(None).await {
                     Ok(sync) => {
                         {
                             let mut store = state_store.write();
                             store.save_sync_cursor(sync.next_batch.clone());
+                            // Server-authoritative reconcile: drop every
+                            // cached projection whose space_id isn't in
+                            // the response. Without this, a Space the
+                            // viewer left (or that was deleted server-side)
+                            // would linger in the sidebar forever because
+                            // `save_space_projection` is upsert-only.
+                            let server_set: BTreeSet<String> =
+                                sync.spaces.keys().cloned().collect();
+                            let pruned =
+                                store.retain_space_projections(|id| server_set.contains(id));
+                            if !pruned.is_empty() {
+                                tracing::info!(
+                                    pruned_count = pruned.len(),
+                                    "full sync pruned stale space projections",
+                                );
+                            }
+                            // Explicit `left_spaces` deltas — soland emits
+                            // these on incremental syncs too; for full sync
+                            // they're redundant with `retain_space_projections`
+                            // above but cheap to apply and forward-compatible
+                            // when soland evolves to send them on full sync.
+                            for left_id in &sync.left_spaces {
+                                store.forget_space(left_id);
+                            }
                             for (id, body) in &sync.spaces {
                                 store.save_space_projection(id.clone(), body.clone());
                                 // Thread the per-Space Anchor view (frontier /
@@ -6922,23 +7069,27 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             }
                         }
                         let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
-                        let synced_previews = space_previews_from_sync_spaces(&sync.spaces);
-                        let merged = merge_space_previews(cached_spaces, synced_previews);
-                        if merged.is_empty() {
+                        // `spaces` is derived from `state_store.space_projections`
+                        // by a use_effect in `RouterView` — we don't set it
+                        // here. Read a reconciled snapshot for status text
+                        // and selected_space bookkeeping only.
+                        let reconciled = space_previews_from_sync_spaces(
+                            &state_store.read().load().space_projections,
+                        );
+                        if reconciled.is_empty() {
                             status.set(ConnectionState::Empty.label().to_owned());
                         } else {
                             status.set(format!(
                                 "{}: synced {} space(s)",
                                 ConnectionState::Online.label(),
-                                merged.len()
+                                reconciled.len()
                             ));
                         }
-                        let first_space = merged.first().map(|space| space.space_id.clone());
+                        let first_space = reconciled.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset =
-                            trimmed.is_empty() || !merged.iter().any(|s| s.space_id == trimmed);
-                        spaces.set(merged);
+                        let needs_reset = trimmed.is_empty()
+                            || !reconciled.iter().any(|s| s.space_id == trimmed);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());
                         }
@@ -6977,8 +7128,15 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         return;
                     }
                     Err(error) => {
-                        let merged = merge_space_previews(cached_spaces, spaces());
-                        if merged.is_empty() {
+                        // Sync failed — the `spaces` Signal already
+                        // reflects what's in the local store via the
+                        // derive effect; just refresh status text and
+                        // make sure selected_space points at something
+                        // still in scope.
+                        let fallback = space_previews_from_sync_spaces(
+                            &state_store.read().load().space_projections,
+                        );
+                        if fallback.is_empty() {
                             status.set(format!(
                                 "{}: sync failed: {error}",
                                 ConnectionState::Reconnecting.label()
@@ -6989,12 +7147,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     .to_owned(),
                             );
                         }
-                        let first_space = merged.first().map(|space| space.space_id.clone());
+                        let first_space = fallback.first().map(|space| space.space_id.clone());
                         let current = selected_space();
                         let trimmed = current.trim();
-                        let needs_reset =
-                            trimmed.is_empty() || !merged.iter().any(|s| s.space_id == trimmed);
-                        spaces.set(merged);
+                        let needs_reset = trimmed.is_empty()
+                            || !fallback.iter().any(|s| s.space_id == trimmed);
                         if needs_reset {
                             selected_space.set(first_space.unwrap_or_default());
                         }
@@ -7052,7 +7209,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     });
 }
 
-fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
+pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
     let mut previews: Vec<SpacePreview> = spaces
         .iter()
         .filter(|(id, body)| id.starts_with("cx:space:") && !projection_looks_like_flow(body))
@@ -7124,7 +7281,7 @@ fn projection_looks_like_flow(body: &Value) -> bool {
         )
 }
 
-fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
+pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
     for (id, body) in spaces {
         let mut summary_event = TimelineEvent::system_notice(
@@ -7204,12 +7361,12 @@ fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<Tim
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-struct AgentWorkspaceProjection {
-    pending: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    in_flight: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    recent: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    agents: Vec<crate::views::agent_workspace::OwnedAgentSummary>,
-    details: BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>,
+pub struct AgentWorkspaceProjection {
+    pub pending: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    pub in_flight: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    pub recent: Vec<crate::views::agent_workspace::AgentTaskSummary>,
+    pub agents: Vec<crate::views::agent_workspace::OwnedAgentSummary>,
+    pub details: BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -7220,7 +7377,7 @@ struct SpaceMirrorRelation {
     mirror_label: Option<String>,
 }
 
-fn agent_workspace_projection_from_sync_spaces(
+pub fn agent_workspace_projection_from_sync_spaces(
     spaces: &BTreeMap<String, Value>,
 ) -> AgentWorkspaceProjection {
     use crate::views::agent_workspace::{AgentTaskDetail, OwnedAgentSummary};
@@ -7802,25 +7959,27 @@ mod tests {
     }
 
     #[test]
-    fn merge_space_previews_filters_flow_like_search_results() {
-        let merged = merge_space_previews(
-            Vec::new(),
-            [
-                SpacePreview {
-                    space_id: "cx:flow:discussion".to_owned(),
-                    name: "Discussion".to_owned(),
-                    description: None,
-                    tags: Default::default(),
-                    public: true,
-                    category: Some("discussion".to_owned()),
-                    parent_space_id: None,
-                    child_space_ids: Vec::new(),
-                },
-                preview("cx:space:real", "Real Space", None),
-            ],
+    fn space_previews_from_sync_spaces_filters_flow_like_projections() {
+        // Replacement for the old `merge_space_previews_filters_flow_like_search_results`
+        // test. The sync engine relies on `space_previews_from_sync_spaces`
+        // (rather than the retired client-side merge filter) to keep
+        // flow-like projections out of the sidebar — verify that here.
+        let mut spaces = BTreeMap::new();
+        spaces.insert(
+            "cx:flow:discussion".to_owned(),
+            json!({
+                "flow_id": "cx:flow:discussion",
+                "summary": {"title": "Discussion", "category": "discussion"}
+            }),
+        );
+        spaces.insert(
+            "cx:space:real".to_owned(),
+            json!({"summary": {"title": "Real Space"}}),
         );
 
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].space_id, "cx:space:real");
+        let previews = space_previews_from_sync_spaces(&spaces);
+
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].space_id, "cx:space:real");
     }
 }

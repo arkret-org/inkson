@@ -7,7 +7,6 @@ use crate::{
     components::PermissionPillRow,
     config::LocalConfigStore,
     local_state::LocalStateStore,
-    models::SpacePreview,
     routes::Route,
     views::helpers::{authed_api, persist_config},
 };
@@ -243,26 +242,6 @@ fn policy_combination_hint(
     None
 }
 
-fn sync_space_preview(
-    previews: &mut Vec<SpacePreview>,
-    space_id: String,
-    name: String,
-    summary: String,
-    public: bool,
-) {
-    previews.retain(|preview| preview.space_id != space_id);
-    previews.push(SpacePreview {
-        space_id,
-        name,
-        description: Some(summary),
-        tags: Default::default(),
-        public,
-        category: Some("collaboration".to_owned()),
-        parent_space_id: None,
-        child_space_ids: Vec::new(),
-    });
-}
-
 #[component]
 pub fn SetupPanel(
     base_url: String,
@@ -273,7 +252,6 @@ pub fn SetupPanel(
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     mut selected_space: Signal<String>,
-    mut spaces: Signal<Vec<SpacePreview>>,
     mut status: Signal<String>,
     section: Option<String>,
 ) -> Element {
@@ -639,13 +617,14 @@ pub fn SetupPanel(
                                                             Ok(space) => {
                                                                 selected_space.set(space.space_id.clone());
                                                                 created_space_id.set(space.space_id.clone());
-                                                                sync_space_preview(
-                                                                    &mut spaces.write(),
-                                                                    space.space_id.clone(),
-                                                                    title.clone(),
-                                                                    summary.clone(),
-                                                                    publicish,
-                                                                );
+                                                                // Optimistic sidebar update goes
+                                                                // through the canonical store —
+                                                                // the `spaces` Signal is derived
+                                                                // from `state_store.space_projections`
+                                                                // by RouterView's derive effect, so
+                                                                // the `save_space_projection`
+                                                                // below is the single write the
+                                                                // sidebar picks up.
                                                                 let mut projection_members = Vec::new();
                                                                 if !actor.trim().is_empty() {
                                                                     projection_members.push(actor.clone());

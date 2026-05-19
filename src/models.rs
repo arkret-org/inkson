@@ -252,6 +252,16 @@ pub struct ClientSyncResponse {
     pub next_batch: String,
     #[serde(default)]
     pub spaces: BTreeMap<String, Value>,
+    /// Spaces the viewer no longer has access to since the last sync —
+    /// left rooms, kicks, bans, server-side deletions. The client uses
+    /// this to remove the space from `space_projections` and every
+    /// per-space cache (drafts, anchor views, read markers, remarks…)
+    /// so the sidebar reconciles with the server view on incremental
+    /// syncs the same way a `since=None` full sync would. Optional with
+    /// a serde default so older servers stay forward-compatible — they
+    /// just won't be able to surface "you left X" without a full sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_spaces: Vec<String>,
     #[serde(default)]
     pub to_device: Vec<Value>,
     #[serde(default)]

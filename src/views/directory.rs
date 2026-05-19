@@ -30,13 +30,19 @@ struct PaginationState {
 pub fn DirectoryPanel(
     base_url: String,
     selected_space: Signal<String>,
-    spaces: Signal<Vec<SpacePreview>>,
     status: Signal<String>,
     token: Signal<String>,
     view: Signal<super::View>,
 ) -> Element {
     let mut active_tab = use_signal(|| DirectoryTab::Spaces);
     let mut query = use_signal(String::new);
+    // Local search-results scratch. Previously this view borrowed the
+    // global `spaces` Signal as a write target — that overloaded the
+    // sidebar's "joined Spaces" channel with directory search hits and
+    // was the original reason the SyncEngine's reconcile couldn't be
+    // trusted (any directory search would resurrect ghost results
+    // until the next sync). Keeping the buffer local closes that hole.
+    let mut spaces = use_signal(Vec::<SpacePreview>::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
