@@ -3049,12 +3049,29 @@ pub fn ChatPanel(
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Space users" } }
                         for participant in participants {
+                            // F-REMARK-FANOUT-1: prefer the actor-private
+                            // ContactRemark.local_name (sync'd via
+                            // cx.contacts.actor.<did> account_data) over
+                            // the raw DID. The DID stays in the `title`
+                            // attribute so it's still copy-pasteable for
+                            // verification / debugging.
+                            {
+                                let participant_display = crate::views::helpers::display_name_for_did(
+                                    &state_store.read(),
+                                    &participant.did,
+                                );
+                                let participant_did_attr = participant.did.clone();
+                                rsx! {
                             div {
                                 class: if participant.is_self { "contact-row participant-row self" } else { "contact-row participant-row" },
                                 "data-testid": "discussion-user-row",
                                 span { class: "participant-avatar", UiIcon { name: "user" } }
                                 div { class: "participant-main",
-                                    strong { class: "mono participant-did", "{participant.did}" }
+                                    strong {
+                                        class: "mono participant-did",
+                                        title: "{participant_did_attr}",
+                                        "{participant_display}"
+                                    }
                                     div { class: "participant-badges",
                                         if participant.is_self {
                                             span { class: "badge participant-badge self", {crate::i18n::tr("chat.you_badge")} }
@@ -3077,6 +3094,8 @@ pub fn ChatPanel(
                                             "{participant.role.label()}"
                                         }
                                     }
+                                }
+                            }
                                 }
                             }
                         }

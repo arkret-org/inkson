@@ -5832,6 +5832,7 @@ pub fn RouterView() -> Element {
                             status,
                             token,
                             view,
+                            state_store,
                         }
                     },
                     Route::Setup | Route::SetupSection { .. } => {

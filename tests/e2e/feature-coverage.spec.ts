@@ -111,13 +111,13 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
   });
 
-  test("cross-signing: Run setup submits cx.cross_signing.publish.v1 into the principal control space", async ({
+  test("cross-signing: Run setup submits cx.cross_signing.publish into the principal control space", async ({
     page,
   }) => {
     // D2 — formerly unwritten. The verify-device panel now runs the
     // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
     // binding signatures + persist to a SecureKeyStore), then submits
-    // the publish content as `cx.cross_signing.publish.v1` into the
+    // the publish content as `cx.cross_signing.publish` into the
     // principal control space (`cx:space:control:<did>`). This test
     // catches regressions in: (a) the executor's wire-shape contract,
     // (b) the control-space pinning, (c) the SDK binding alg field, and
@@ -145,21 +145,21 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("setup-cross-signing").click();
     await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
 
-    // Step 2: capture the cx.cross_signing.publish.v1 submission before
+    // Step 2: capture the cx.cross_signing.publish submission before
     // it fires so we don't race the spawn task.
     const publishPromise = page.waitForRequest((request) => {
       if (request.method() !== "POST" || !request.url().endsWith("/api/v1/events")) {
         return false;
       }
       const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
-      return body?.kind === "cx.cross_signing.publish.v1";
+      return body?.kind === "cx.cross_signing.publish";
     });
 
     await page.getByTestId("run-cross-signing-setup").click();
 
     const publishRequest = await publishPromise;
     const body = publishRequest.postDataJSON() as Record<string, unknown>;
-    expect(body.kind).toBe("cx.cross_signing.publish.v1");
+    expect(body.kind).toBe("cx.cross_signing.publish");
 
     // The envelope MUST target the principal control space (spec
     // key-management.md §4.1). Yougen derives it via

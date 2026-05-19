@@ -438,6 +438,38 @@ const EPHEMERAL_EVENT_KINDS: &[&str] = &[
     "cx.typing",
 ];
 
+/// F-PROFILE-1: cheap fast-path version of "is `kind` in
+/// [`known_event_kinds()`]?" used by inbound event-parse gates.
+///
+/// Spec `conformance/conformance-profiles.md §2` says implementations
+/// MUST reject events whose `kind` is outside the profile they declared
+/// — yougen's profile surface lives in [`known_event_kinds()`], so any
+/// kind absent from that list is by definition out-of-profile and a
+/// likely sign of either a buggy server, a profile-drift attack, or a
+/// spec bump that yougen hasn't picked up yet.
+///
+/// Returns `true` for every kind yougen typed (durable / actor-private
+/// / ephemeral); returns `false` for unknown kinds. Reducer / sync
+/// entry points should call [`require_known_event_kind`] to convert
+/// the rejection into a [`ValidationError`].
+pub fn is_known_event_kind(event_kind: &str) -> bool {
+    event_kind_wire_scope(event_kind).is_some()
+}
+
+/// F-PROFILE-1: stricter sibling of [`is_known_event_kind`] that
+/// returns a [`ValidationError::UnknownEventKind`] for kinds outside
+/// the conformance profile. Use at event ingest boundaries (sync
+/// engine event-stream dispatch, fixture parsers, reducer input
+/// validation) so an unknown kind aborts processing instead of
+/// falling through to a default branch.
+pub fn require_known_event_kind(event_kind: &str) -> Result<(), ValidationError> {
+    if is_known_event_kind(event_kind) {
+        Ok(())
+    } else {
+        Err(ValidationError::UnknownEventKind(event_kind.to_owned()))
+    }
+}
+
 /// Returns the canonical `wire_scope` for `event_kind`, or `None` when the
 /// kind is unknown to yougen. Unknown kinds default to "treat as durable" at
 /// the call site so we never leak signaling into a state path by accident.
@@ -647,6 +679,14 @@ fn validate_event_schema(value: &Value) -> Result<(), ValidationError> {
             return Err(ValidationError::MissingField(field.to_string()));
         }
     }
+    // F-PROFILE-1: enforce the conformance profile by rejecting any
+    // `type` (canonical event kind) outside `known_event_kinds()`.
+    // The schema-level shape check above already guarantees `type` is
+    // present; here we ensure it's also a kind yougen is qualified
+    // to apply.
+    if let Some(kind) = obj.get("type").and_then(|v| v.as_str()) {
+        require_known_event_kind(kind)?;
+    }
     Ok(())
 }
 
@@ -689,6 +729,11 @@ pub enum ValidationError {
     ExpectedObject(String),
     MissingField(String),
     InvalidValue { field: String, expected: String },
+    /// F-PROFILE-1: the event's `type` is not in the conformance profile
+    /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
+    /// rejection at event ingest so a profile-drift attack / spec bump
+    /// can't smuggle an unknown reducer kind into local state.
+    UnknownEventKind(String),
 }
 
 impl std::fmt::Display for ValidationError {
@@ -699,6 +744,9 @@ impl std::fmt::Display for ValidationError {
             Self::MissingField(field) => write!(f, "missing required field: {field}"),
             Self::InvalidValue { field, expected } => {
                 write!(f, "invalid value for {field}, expected: {expected}")
+            }
+            Self::UnknownEventKind(kind) => {
+                write!(f, "event kind `{kind}` is outside yougen's conformance profile")
             }
         }
     }
@@ -834,6 +882,36 @@ mod tests {
             "causal": {"hlc": "0000018ef01234-00000001-deadbeef", "actor_seq": 1}
         });
         assert!(validate_structure(&event, "event").is_ok());
+    }
+
+    /// F-PROFILE-1: an otherwise well-formed event whose `type` falls
+    /// outside `known_event_kinds()` must be rejected at the validate
+    /// boundary instead of being treated as a "default" branch later.
+    #[test]
+    fn validate_event_schema_rejects_unknown_kind() {
+        let event = json!({
+            "operation_id": "op1",
+            "space_id": "cx:space:s1",
+            "actor": "did:web:alice",
+            "type": "cx.bogus.kind",
+            "causal": {"hlc": "0000018ef01234-00000001-deadbeef", "actor_seq": 1}
+        });
+        match validate_structure(&event, "event") {
+            Err(ValidationError::UnknownEventKind(kind)) => {
+                assert_eq!(kind, "cx.bogus.kind");
+            }
+            other => panic!("expected UnknownEventKind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn require_known_event_kind_accepts_canonical_and_rejects_garbage() {
+        assert!(require_known_event_kind("cx.message.create").is_ok());
+        assert!(require_known_event_kind("cx.flow.update").is_ok());
+        assert!(require_known_event_kind("cx.typing").is_ok());
+        let err = require_known_event_kind("cx.bogus.kind")
+            .expect_err("unknown kind must error");
+        assert!(matches!(err, ValidationError::UnknownEventKind(_)));
     }
 
     #[test]

@@ -71,6 +71,29 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
+/// F-REMARK-FANOUT-1: actor-private `local_name` lookup for a DID,
+/// reused everywhere yougen would otherwise show a raw `did:web:...`.
+///
+/// The actor's `ContactRemark` rows arrive via account_data sync
+/// (`cx.contacts.actor.<did>`) and live on `LocalStateStore`. Each
+/// view used to fall back to the raw DID — this helper centralises the
+/// "prefer the user's chosen alias, else the canonical DID" decision so
+/// chat headers, @mention popovers, directory rows, verify-device peer
+/// labels, and message-author lines stay consistent.
+///
+/// The `did` argument is returned verbatim when no remark / no
+/// `local_name` is set, so callers can use the result wherever they
+/// would have used the DID itself.
+pub fn display_name_for_did(
+    state_store: &crate::local_state::LocalStateStore,
+    did: &str,
+) -> String {
+    match state_store.contact_remark(did) {
+        Some(remark) => remark.display_name(did).to_owned(),
+        None => did.to_owned(),
+    }
+}
+
 /// Reason a view-side API call failed. Roughly mirrors `connect()`'s
 /// three-way error split:
 ///

@@ -103,6 +103,19 @@ pub fn NotificationsPanel(
         .count();
     let total_notifications = notifications().len();
 
+    // F-NOTIF-VLIST-1: client-side paging — start by rendering only the
+    // first 50 notifications and let the user expand the window via the
+    // "Load more" button at the foot of the list. A user with 1000+
+    // notifications no longer pays the full DOM cost on every render,
+    // and the "0/N" badge below makes it obvious how much more is
+    // available. Real virtualization (windowed rows) is a follow-up.
+    let mut visible_limit = use_signal(|| 50usize);
+    let visible_total = visible_notifications.len();
+    let visible_window: usize = visible_total.min(visible_limit());
+    let visible_notifications: Vec<_> =
+        visible_notifications.into_iter().take(visible_window).collect();
+    let has_more_to_load = visible_total > visible_window;
+
     rsx! {
         div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
             div { class: "event notification-toolbar", role: "status", "aria-live": "polite",
@@ -304,6 +317,31 @@ pub fn NotificationsPanel(
                     kind: EmptyStateKind::Filtered,
                     message: Some(crate::i18n::tr("notifications.filtered_body")),
                     test_id: Some("notifications-muted-empty".to_owned()),
+                }
+            }
+
+            // F-NOTIF-VLIST-1: progress + "Load more" affordance for the
+            // client-side paging window. We surface the visible / total
+            // count so the user knows there's more to expand, then step
+            // the window forward by another page when they click.
+            if has_more_to_load {
+                div { class: "actions", "data-testid": "notifications-load-more-row",
+                    div { class: "muted",
+                        {format!(
+                            "{} {} / {}",
+                            crate::i18n::tr("notifications.showing"),
+                            visible_window,
+                            visible_total,
+                        )}
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "notifications-load-more",
+                        onclick: move |_| {
+                            visible_limit.with_mut(|n| *n = n.saturating_add(50));
+                        },
+                        {crate::i18n::tr("notifications.load_more")}
+                    }
                 }
             }
 

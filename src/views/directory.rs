@@ -4,9 +4,10 @@ use serde_json::Value;
 
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
+    local_state::LocalStateStore,
     models::*,
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{display_name_for_did, with_authed_api},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +34,9 @@ pub fn DirectoryPanel(
     status: Signal<String>,
     token: Signal<String>,
     view: Signal<super::View>,
+    // F-REMARK-FANOUT-1: needed so handle resolution can prefer the
+    // actor-private ContactRemark.local_name over the raw DID.
+    state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut active_tab = use_signal(|| DirectoryTab::Spaces);
     let mut query = use_signal(String::new);
@@ -604,7 +608,11 @@ pub fn DirectoryPanel(
                                             });
                                         }
                                     },
-                                    if pagination().loading_more { "Loading..." } else { "Load More Spaces" }
+                                    if pagination().loading_more {
+                                        {crate::i18n::tr("directory.loading_more")}
+                                    } else {
+                                        {crate::i18n::tr("directory.load_more_spaces")}
+                                    }
                                 }
                             }
                         }
@@ -723,7 +731,11 @@ pub fn DirectoryPanel(
                                         });
                                     }
                                 },
-                                if pagination().loading_more { "Loading..." } else { "Load More Organizations" }
+                                if pagination().loading_more {
+                                    {crate::i18n::tr("directory.loading_more")}
+                                } else {
+                                    {crate::i18n::tr("directory.load_more_organizations")}
+                                }
                             }
                         }
                     }
@@ -814,7 +826,11 @@ pub fn DirectoryPanel(
                                         });
                                     }
                                 },
-                                if pagination().loading_more { "Loading..." } else { "Load More Actors" }
+                                if pagination().loading_more {
+                                    {crate::i18n::tr("directory.loading_more")}
+                                } else {
+                                    {crate::i18n::tr("directory.load_more_actors")}
+                                }
                             }
                         }
                     }
@@ -824,15 +840,26 @@ pub fn DirectoryPanel(
             // Handles tab result
             if active_tab() == DirectoryTab::Handles {
                 if let Some(ref resolved) = handle_result() {
-                    div { class: "event", "data-testid": "handle-result",
-                        div { class: "event-head",
-                            span { "Resolved" }
-                            span { "{resolved.handle}" }
-                        }
-                        div { class: "space-title", "{resolved.did}" }
-                        if let Some(ref doc) = resolved.did_document {
-                            div { class: "muted", "DID document loaded" }
-                            div { class: "muted", "{doc}" }
+                    {
+                        // F-REMARK-FANOUT-1: surface the user's chosen alias
+                        // (if any) for the resolved DID, with the canonical
+                        // DID kept verbatim in `title` for verification.
+                        let resolved_display =
+                            display_name_for_did(&state_store.read(), &resolved.did);
+                        let resolved_did_attr = resolved.did.clone();
+                        let resolved_did_document = resolved.did_document.clone();
+                        rsx! {
+                            div { class: "event", "data-testid": "handle-result",
+                                div { class: "event-head",
+                                    span { "Resolved" }
+                                    span { "{resolved.handle}" }
+                                }
+                                div { class: "space-title", title: "{resolved_did_attr}", "{resolved_display}" }
+                                if let Some(doc) = resolved_did_document {
+                                    div { class: "muted", "DID document loaded" }
+                                    div { class: "muted", "{doc}" }
+                                }
+                            }
                         }
                     }
                 } else {

@@ -53,7 +53,7 @@ pub enum CrossSigningSetupStep {
     /// `cx.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
     /// spec §11 + §7.1 domain separation.
     PublishSecretStorageBackup,
-    /// Publish `cx.cross_signing.publish.v1` to the principal control space.
+    /// Publish `cx.cross_signing.publish` to the principal control space.
     EmitCrossSigningPublish,
     /// Use the SSK to issue a `cross_signing_binding` over the current
     /// device's verify_key (spec §5.2), and attach it to the latest
@@ -66,14 +66,30 @@ pub enum CrossSigningSetupStep {
 }
 
 impl CrossSigningSetupStep {
-    /// Canonical event kind for this step; steps with no matching event
-    /// return `None`.
+    /// Canonical wire-kind for this step; steps with no matching wire
+    /// payload return `None`.
+    ///
+    /// F-CXSIGN-KIND-1 (2026-05-19): the spec `event-kind-registry.json`
+    /// declares cross-signing events without a `.v1` suffix
+    /// (`cx.cross_signing.publish`, `cx.cross_signing.reset`); the
+    /// suffix is reserved for `schema-registry.json` entries. Yougen
+    /// historically wrote the suffixed forms everywhere — this method,
+    /// the OperationBuilder kind constant, the conformance test
+    /// assertions, the workflows.rs dependency note, the verify_device
+    /// test, and the e2e specs were all aligned in one pass.
+    ///
+    /// `PublishSecretStorageBackup` keeps `cx.schema.key_backup.v1`
+    /// because key-backup is uploaded via PUT /api/v1/keys/backups/*
+    /// rather than emitted as a wire event — the value here is the
+    /// schema_id of the request body envelope, intentionally
+    /// schema-namespaced. Renaming the function to
+    /// `canonical_wire_kind` is left as the natural follow-up.
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::GeneratePrincipalSigningKey | Self::GenerateSelfAndUserSigningKeys => None,
             Self::SignSubordinateBindings => None,
             Self::PublishSecretStorageBackup => Some("cx.schema.key_backup.v1"),
-            Self::EmitCrossSigningPublish => Some("cx.cross_signing.publish.v1"),
+            Self::EmitCrossSigningPublish => Some("cx.cross_signing.publish"),
             Self::SignCurrentDeviceBinding => Some("cx.device.authorized"),
             Self::RecomputeDeviceTrustStates => None,
         }
@@ -93,7 +109,7 @@ impl CrossSigningSetupStep {
                 "Write SSK / USK private keys into the encrypted secret_storage backup"
             }
             Self::EmitCrossSigningPublish => {
-                "Publish cx.cross_signing.publish.v1 to the control stream"
+                "Publish cx.cross_signing.publish to the control stream"
             }
             Self::SignCurrentDeviceBinding => {
                 "Use SSK to sign a cross_signing_binding over this device's verify_key"
@@ -106,7 +122,7 @@ impl CrossSigningSetupStep {
 }
 
 /// Initial setup and cross-signing reset share the same plan skeleton; reset
-/// carries an extra prelude step (writing `cx.cross_signing.reset.v1`).
+/// carries an extra prelude step (writing `cx.cross_signing.reset`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossSigningSetupMode {
@@ -146,7 +162,7 @@ impl CrossSigningSetupPlan {
         }
     }
 
-    /// Build a reset plan; carries an extra `cx.cross_signing.reset.v1`
+    /// Build a reset plan; carries an extra `cx.cross_signing.reset`
     /// prelude event but does not regenerate the PSK (PSK comes from the DID
     /// control chain and is out of scope for a cross-signing reset).
     pub fn build_reset(principal_id: &str, device_id: &str, previous_generation: u64) -> Self {
@@ -182,7 +198,7 @@ impl CrossSigningSetupPlan {
     pub fn event_kinds(&self) -> Vec<&'static str> {
         let mut seen: Vec<&'static str> = Vec::new();
         if matches!(self.mode, CrossSigningSetupMode::Reset) {
-            seen.push("cx.cross_signing.reset.v1");
+            seen.push("cx.cross_signing.reset");
         }
         for step in &self.steps {
             if let Some(kind) = step.canonical_event_kind()
@@ -236,7 +252,7 @@ impl CrossSigningTrustState {
 /// Executor for [`CrossSigningSetupPlan`]. Generates the three keypairs
 /// locally, computes the PSK-signed bindings for SSK / USK, and assembles
 /// the [`CrossSigningPublishContent`] body the caller must submit as a
-/// `cx.cross_signing.publish.v1` operation.
+/// `cx.cross_signing.publish` operation.
 ///
 /// What this executor **does** (per spec §5.1):
 ///   * Generates Ed25519 keypairs for PSK, SSK, USK via the platform RNG.
@@ -256,7 +272,7 @@ impl CrossSigningTrustState {
 ///     whether to push them through `secure_key_store::SecureKeyStore`
 ///     (preferred) or hand them to the recovery vault for backup. Both
 ///     paths are downstream consumers of [`CrossSigningSetupOutput`].
-///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish.v1`, or
+///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish`, or
 ///     `cx.device.authorized` to the server. Those are API-bound side
 ///     effects; the executor returns the canonical event bodies and the
 ///     caller (a view handler / orchestrator) drives the API.
@@ -277,7 +293,7 @@ pub struct CrossSigningSetupOutput {
     pub self_signing_key: SigningKey,
     pub user_signing_key: SigningKey,
     /// The fully validated publish content the caller submits as
-    /// `cx.cross_signing.publish.v1`.
+    /// `cx.cross_signing.publish`.
     pub publish_content: CrossSigningPublishContent,
 }
 
@@ -355,7 +371,7 @@ impl CrossSigningSetupOutput {
     }
 
     /// Construct the [`EventEnvelope`] yougen submits to write the
-    /// `cx.cross_signing.publish.v1` event. The caller supplies the
+    /// `cx.cross_signing.publish` event. The caller supplies the
     /// `space_id` of the principal's control space and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
     /// callers attach a `proof` via the standard signing pipeline before
@@ -368,7 +384,7 @@ impl CrossSigningSetupOutput {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
         Ok(
-            OperationBuilder::new(space_id, actor, "cx.cross_signing.publish.v1")
+            OperationBuilder::new(space_id, actor, "cx.cross_signing.publish")
                 .target_ref(self.publish_content.principal_id.as_str())
                 .body(body)
                 .build("yougen"),
@@ -581,7 +597,7 @@ mod tests {
         assert_eq!(plan.new_generation, 1);
         assert_eq!(plan.steps.len(), 7);
         let kinds = plan.event_kinds();
-        assert!(kinds.contains(&"cx.cross_signing.publish.v1"));
+        assert!(kinds.contains(&"cx.cross_signing.publish"));
         assert!(kinds.contains(&"cx.device.authorized"));
         assert!(kinds.contains(&"cx.schema.key_backup.v1"));
     }
@@ -592,7 +608,7 @@ mod tests {
         assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
         assert_eq!(plan.previous_generation, Some(2));
         assert_eq!(plan.new_generation, 3);
-        assert_eq!(plan.event_kinds()[0], "cx.cross_signing.reset.v1");
+        assert_eq!(plan.event_kinds()[0], "cx.cross_signing.reset");
     }
 
     #[test]
@@ -741,7 +757,7 @@ mod tests {
                 principal.as_str(),
             )
             .unwrap();
-        assert_eq!(envelope.kind, "cx.cross_signing.publish.v1");
+        assert_eq!(envelope.kind, "cx.cross_signing.publish");
         assert_eq!(
             envelope.local_target_ref(),
             Some(principal.as_str()),

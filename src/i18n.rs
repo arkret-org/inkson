@@ -369,6 +369,13 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.archived", "Show archived");
     dict.set("notifications.mark_all_read", "Mark all read");
     dict.set("notifications.empty_state", "No notifications loaded.");
+    // F-NOTIF-VLIST-1: client-side paging UI.
+    dict.set("notifications.showing", "Showing");
+    dict.set("notifications.load_more", "Load more");
+    dict.set("directory.loading_more", "Loading...");
+    dict.set("directory.load_more_spaces", "Load More Spaces");
+    dict.set("directory.load_more_organizations", "Load More Organizations");
+    dict.set("directory.load_more_actors", "Load More Actors");
 
     dict.set("composer.send", "Send");
     dict.set("composer.encrypted_toggle", "Encrypt locally");
@@ -996,6 +1003,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.archived", "显示已归档");
     dict.set("notifications.mark_all_read", "全部标记已读");
     dict.set("notifications.empty_state", "暂无通知。");
+    // F-NOTIF-VLIST-1: 与 en dict 同步的分页按钮文案。
+    dict.set("notifications.showing", "已显示");
+    dict.set("notifications.load_more", "加载更多");
+    dict.set("directory.loading_more", "加载中…");
+    dict.set("directory.load_more_spaces", "加载更多 Space");
+    dict.set("directory.load_more_organizations", "加载更多组织");
+    dict.set("directory.load_more_actors", "加载更多用户");
 
     dict.set("composer.send", "发送");
     dict.set("composer.encrypted_toggle", "本地加密");
