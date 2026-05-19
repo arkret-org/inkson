@@ -1,10 +1,11 @@
 use std::sync::{Arc, OnceLock};
 
 use chime::{
-    PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
-    PushPreferences, PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse,
-    UnregisterDeviceRequest, build_register_device_request, build_registration_state,
-    build_unregister_device_request, push_bridge_describe_url, push_integration_describe_url,
+    GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
+    PushGatewayType, PushPreferences, PushRegistrationState, RegisterDeviceRequest,
+    RegisterDeviceResponse, UnregisterDeviceRequest, build_register_device_request,
+    build_registration_state, build_unregister_device_request, push_bridge_describe_url,
+    push_integration_describe_url,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -139,6 +140,7 @@ pub fn build_register_request_for_actor(
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
     let prefs = push_preferences();
+    let binding = default_gateway_binding();
     let idempotency_key = format!("yougen-push-register-{device_id}");
     let config = PushDeviceConfig {
         principal_did,
@@ -154,7 +156,7 @@ pub fn build_register_request_for_actor(
         proof: None,
     };
 
-    Ok(build_register_device_request(&config, &prefs)?)
+    Ok(build_register_device_request(&config, &binding, &prefs)?)
 }
 
 pub fn build_unregister_request(
@@ -183,6 +185,7 @@ pub fn build_unregister_request(
 
     Ok(build_unregister_device_request(
         &config,
+        &default_gateway_binding(),
         &PushPreferences::default(),
     )?)
 }
@@ -191,32 +194,10 @@ pub fn registration_state_from_response(
     request: &RegisterDeviceRequest,
     response: &RegisterDeviceResponse,
 ) -> PushRegistrationState {
-    let config = PushDeviceConfig {
-        principal_did: request.principal_did.as_deref(),
-        device_id: &request.device_id,
-        push_key: Some(&request.push_key),
-        platform: request.platform.as_deref(),
-        app_id: request.app_id.as_deref(),
-        domestic_app_id: None,
-        registration_id: response.registration_id.as_deref(),
-        display_name: request.display_name.as_deref(),
-        idempotency_key: request.idempotency_key.as_deref(),
-        request_id: None,
-        proof: request.proof.as_ref(),
-    };
-    let prefs = PushPreferences {
-        enabled: true,
-        push_gateway: request.push_gateway.clone(),
-        ..Default::default()
-    };
+    let binding = GatewayBinding::new(PushGatewayType::Standard, request.push_gateway.clone());
+    let registered_at = Utc::now().to_rfc3339();
 
-    build_registration_state(
-        &config,
-        &prefs,
-        request,
-        response,
-        Some(&Utc::now().to_rfc3339()),
-    )
+    build_registration_state(&binding, request, response, Some(registered_at.as_str()))
 }
 
 pub async fn describe_push_gateway_bridge(
@@ -320,10 +301,20 @@ pub fn summarize_push_gateway_integration(
 fn push_preferences() -> PushPreferences {
     PushPreferences {
         enabled: true,
-        push_gateway: configured_push_gateway(),
         allow_insecure_loopback_push_gateway: true,
+        gateways: vec![default_gateway_binding()],
         ..Default::default()
     }
+}
+
+/// F-BUILD-FIX-1: chime's `build_register_device_request` moved the push
+/// gateway URL off `PushPreferences` and onto a per-call `GatewayBinding`.
+/// Yougen only registers against a single configured gateway (the floria
+/// `/api/v1/push/notify` endpoint by default), so this helper resolves the
+/// runtime gateway URL into a freshly-constructed binding for every
+/// register / state-rebuild call site.
+fn default_gateway_binding() -> GatewayBinding {
+    GatewayBinding::new(PushGatewayType::Standard, configured_push_gateway())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -2316,3 +2316,35 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 /* Generic attachment row + unknown fallback. */
 .content-block-attachment { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
 .content-block-unknown { background: var(--surface-2); padding: 8px 10px; border-radius: var(--radius); font-size: 12px; overflow-x: auto; }
+
+/* F-KANBAN-DRAG-VFX-1: visual feedback for HTML5 drag-and-drop on the
+   kanban board. Three layered classes the rsx! root toggles when
+   `dragging_card` is `Some`:
+     - .board-grid.is-dragging      — sets cursor on the whole grid so
+                                       the pointer reads "this is a drag"
+                                       even outside of a card.
+     - .board-column.drop-zone-available
+                                     — subtle dashed outline + soft
+                                       background tint on every column,
+                                       so the user can see *which*
+                                       columns are valid drop targets.
+     - .board-card.dragging-source   — the card the user is currently
+                                       holding fades to ~35% opacity so
+                                       the placeholder behaviour is
+                                       obvious even before any drop
+                                       happens. */
+.board-grid.is-dragging,
+.board-grid.is-dragging .board-card,
+.board-grid.is-dragging .board-column { cursor: grabbing; }
+.board-card { cursor: grab; }
+.board-column.drop-zone-available {
+    outline: 2px dashed var(--accent, #7c83ff);
+    outline-offset: -2px;
+    background-color: color-mix(in srgb, var(--accent, #7c83ff) 6%, transparent);
+    transition: background-color 120ms ease-out, outline-color 120ms ease-out;
+}
+.board-card.dragging-source {
+    opacity: 0.35;
+    filter: saturate(60%);
+    transition: opacity 120ms ease-out, filter 120ms ease-out;
+}

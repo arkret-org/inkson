@@ -88,9 +88,9 @@ pub fn DashboardPanel(
                                 view.set(super::View::Timeline);
                             }
                         },
-                        div { class: "lbl", "Current Space" }
+                        div { class: "lbl", {crate::i18n::tr("dashboard.current_space")} }
                         div { class: "val", "{space.name}" }
-                        div { class: "delta", "Resume in the current context" }
+                        div { class: "delta", {crate::i18n::tr("dashboard.resume_context")} }
                     }
                     Link {
                         class: "metric",
@@ -148,8 +148,12 @@ pub fn DashboardPanel(
                                     "data-testid": "dashboard-spaces-empty",
                                     span { class: "avatar", "0" }
                                     span { class: "grow",
-                                        span { class: "title", if has_session { "No spaces loaded" } else { "Sign in to load spaces" } }
-                                        span { class: "sub", if has_session { "The connected server did not return spaces yet." } else { "The client is not showing placeholder spaces." } }
+                                        span { class: "title",
+                                            {crate::i18n::tr(if has_session { "dashboard.no_spaces" } else { "dashboard.spaces_delta_signin" })}
+                                        }
+                                        span { class: "sub",
+                                            {crate::i18n::tr(if has_session { "dashboard.no_spaces_help" } else { "dashboard.no_session_help" })}
+                                        }
                                     }
                                 }
                             } else {
@@ -264,8 +268,10 @@ pub fn DashboardPanel(
                             div { class: "m-list-item",
                                 span { class: "avatar xs", "0" }
                                 span { class: "grow",
-                                    span { class: "title f-13", if has_session { "No notifications loaded" } else { "Sign in to load notifications" } }
-                                    span { class: "sub", "Unread items, approvals, and alerts appear here" }
+                                    span { class: "title f-13",
+                                        {crate::i18n::tr(if has_session { "dashboard.no_notifications" } else { "dashboard.notifications_signin" })}
+                                    }
+                                    span { class: "sub", {crate::i18n::tr("dashboard.notifications_empty_sub")} }
                                 }
                             }
                         }

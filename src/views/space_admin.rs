@@ -1749,7 +1749,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 if members().is_empty() {
-                    div { class: "muted", "No members loaded." }
+                    div { class: "muted", {crate::i18n::tr("space_admin.no_members_loaded")} }
                 }
             }
 

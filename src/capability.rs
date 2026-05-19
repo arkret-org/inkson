@@ -16,71 +16,79 @@ pub enum ActionGroup {
 
 impl ActionGroup {
     /// Returns the set of actions in this group.
+    ///
+    /// Action names are the **canonical, fully-qualified** forms from the
+    /// spec `capability-action-registry.json` (always `cx.` prefixed).
+    /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
+    /// fixtures, which write `actions: ["cx.flow.read", ...]` — under the
+    /// previous bare-name table a wire-shaped grant from any conforming
+    /// server would have failed `CapabilityEngine::check`'s string
+    /// comparison and produced false denies.
     pub fn actions(&self) -> &'static [&'static str] {
         match self {
             Self::Common => &[
-                "space.read",
-                "space.update",
-                "place.create",
-                "place.update",
-                "place.archive",
-                "place.restore",
-                "place.tombstone",
-                "flow.create",
-                "flow.read",
-                "flow.update",
-                "flow.archive",
-                "flow.restore",
-                "relation.create",
-                "relation.read",
-                "relation.delete",
-                "view.create",
-                "view.read",
-                "view.update",
-                "invite.create",
-                "invite.accept",
-                "invite.cancel",
+                "cx.space.read",
+                "cx.space.update",
+                "cx.place.create",
+                "cx.place.update",
+                "cx.place.archive",
+                "cx.place.restore",
+                "cx.place.tombstone",
+                "cx.flow.create",
+                "cx.flow.read",
+                "cx.flow.update",
+                "cx.flow.archive",
+                "cx.flow.restore",
+                "cx.relation.create",
+                "cx.relation.read",
+                "cx.relation.delete",
+                "cx.view.create",
+                "cx.view.read",
+                "cx.view.update",
+                "cx.invite.create",
+                "cx.invite.accept",
+                "cx.invite.cancel",
             ],
             Self::PlaceFlow => &[
-                "flow.move",
-                "flow.reorder",
+                "cx.flow.move",
+                "cx.flow.reorder",
                 // Per contrix-spec dc01ad7 the four
                 // `flow.track.{enable,disable,update,set_primary}`
-                // verbs were unified into a single `flow.tracks.update`
+                // verbs were unified into a single `cx.flow.tracks.update`
                 // capability covering all track mutations via a
                 // `cx.patch.v1` JSON Patch against `Flow.tracks`.
-                "flow.tracks.update",
+                "cx.flow.tracks.update",
             ],
             Self::Conversation => &[
-                "message.create",
-                "message.revise",
-                "message.redact",
-                "reaction.add",
-                "reaction.remove",
-                "typing.send",
-                "read_marker.update",
-                "comment.create",
-                "comment.update",
-                "comment.redact",
+                "cx.message.create",
+                "cx.message.revise",
+                "cx.message.redact",
+                "cx.reaction.add",
+                "cx.reaction.remove",
+                "cx.typing.send",
+                "cx.read_marker.update",
+                "cx.comment.create",
+                "cx.comment.update",
+                "cx.comment.redact",
             ],
             Self::Morph => &[
-                "morph.create",
-                "morph.read",
-                "morph.update",
-                "morph.archive",
-                "morph.restore",
-                "morph.tombstone",
+                "cx.morph.create",
+                "cx.morph.read",
+                "cx.morph.update",
+                "cx.morph.archive",
+                "cx.morph.restore",
+                "cx.morph.tombstone",
             ],
             Self::Administrative => &[
-                "capability.grant",
-                "capability.delegate",
-                "capability.revoke",
-                "policy.set",
-                "schema.define",
-                "schema.update",
-                "member.invite",
-                "member.remove",
-                "member.role_change",
+                "cx.capability.grant",
+                "cx.capability.delegate",
+                "cx.capability.revoke",
+                "cx.policy.set",
+                "cx.schema.define",
+                "cx.schema.update",
+                "cx.member.invite",
+                "cx.member.remove",
+                "cx.member.role_change",
             ],
         }
     }
@@ -560,9 +568,9 @@ impl CapabilityEngine {
         resource: &ResourceRef,
         ctx: &EvalContext,
     ) -> AuthzDecision {
-        // Check if subject has the capability.grant or capability.delegate action
-        let grant_check = self.check(subject, "capability.grant", resource, ctx);
-        let delegate_check = self.check(subject, "capability.delegate", resource, ctx);
+        // Check if subject has the cx.capability.grant or cx.capability.delegate action
+        let grant_check = self.check(subject, "cx.capability.grant", resource, ctx);
+        let delegate_check = self.check(subject, "cx.capability.delegate", resource, ctx);
 
         match (grant_check, delegate_check) {
             (AuthzDecision::Allow, _) | (_, AuthzDecision::Allow) => {
@@ -873,8 +881,8 @@ mod tests {
 
     fn test_grant() -> CapabilityGrant {
         GrantBuilder::new("did:web:alice", "did:web:bob")
-            .with_action("flow.read")
-            .with_action("flow.update")
+            .with_action("cx.flow.read")
+            .with_action("cx.flow.update")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_constraint(Constraint::Temporal {
                 not_before: None,
@@ -896,11 +904,17 @@ mod tests {
 
     #[test]
     fn test_action_groups() {
-        assert!(ActionGroup::Common.contains("space.read"));
-        assert!(ActionGroup::Common.contains("flow.create"));
-        assert!(ActionGroup::Conversation.contains("message.create"));
-        assert!(ActionGroup::Administrative.contains("capability.grant"));
-        assert!(!ActionGroup::Common.contains("message.create"));
+        // F-CAP-FIX-1: spec capability-action-registry.json uses the
+        // fully-qualified `cx.<noun>.<verb>` form everywhere; the local
+        // ActionGroup table mirrors that exactly. A bare-name lookup
+        // (`flow.create`) is now an explicit miss so we catch any
+        // regression that re-introduces the legacy short form.
+        assert!(ActionGroup::Common.contains("cx.space.read"));
+        assert!(ActionGroup::Common.contains("cx.flow.create"));
+        assert!(ActionGroup::Conversation.contains("cx.message.create"));
+        assert!(ActionGroup::Administrative.contains("cx.capability.grant"));
+        assert!(!ActionGroup::Common.contains("cx.message.create"));
+        assert!(!ActionGroup::Common.contains("flow.create"));
     }
 
     #[test]
@@ -910,12 +924,12 @@ mod tests {
         // pre-existing Common group already had flow.archive + flow.restore;
         // place.restore and morph.restore were missing — these asserts pin
         // the symmetry so future trims won't reintroduce the gap.
-        assert!(ActionGroup::Common.contains("flow.archive"));
-        assert!(ActionGroup::Common.contains("flow.restore"));
-        assert!(ActionGroup::Common.contains("place.archive"));
-        assert!(ActionGroup::Common.contains("place.restore"));
-        assert!(ActionGroup::Morph.contains("morph.archive"));
-        assert!(ActionGroup::Morph.contains("morph.restore"));
+        assert!(ActionGroup::Common.contains("cx.flow.archive"));
+        assert!(ActionGroup::Common.contains("cx.flow.restore"));
+        assert!(ActionGroup::Common.contains("cx.place.archive"));
+        assert!(ActionGroup::Common.contains("cx.place.restore"));
+        assert!(ActionGroup::Morph.contains("cx.morph.archive"));
+        assert!(ActionGroup::Morph.contains("cx.morph.restore"));
     }
 
     #[test]
@@ -929,7 +943,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }
@@ -942,7 +956,7 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(
             GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_action("space.read")
+                .with_action("cx.space.read")
                 .with_resource(ResourceSelector::Wildcard)
                 .build(),
         );
@@ -951,9 +965,9 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
         assert!(!gate.enabled);
-        assert!(gate.reason.contains("place.archive"));
+        assert!(gate.reason.contains("cx.place.archive"));
     }
 
     #[test]
@@ -961,7 +975,7 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(
             GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_actions(&["place.archive", "place.restore"])
+                .with_actions(&["cx.place.archive", "cx.place.restore"])
                 .with_resource(ResourceSelector::Wildcard)
                 .build(),
         );
@@ -970,7 +984,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }
@@ -1049,7 +1063,7 @@ mod tests {
             ..Default::default()
         };
 
-        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "cx.flow.read", &resource, &ctx);
         assert_eq!(decision, AuthzDecision::Allow);
     }
 
@@ -1059,7 +1073,7 @@ mod tests {
         let resource = ResourceRef::default();
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "cx.flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -1074,7 +1088,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "flow.archive", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "cx.flow.archive", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -1089,7 +1103,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "cx.flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -1114,7 +1128,7 @@ mod tests {
         };
         let ctx = EvalContext::default();
 
-        let decision = engine.check("did:web:bob", "flow.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "cx.flow.read", &resource, &ctx);
         assert!(matches!(decision, AuthzDecision::Deny(_)));
     }
 
@@ -1126,7 +1140,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("flow.read")
+            .with_action("cx.flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
@@ -1148,7 +1162,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("flow.read")
+            .with_action("cx.flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
@@ -1167,7 +1181,7 @@ mod tests {
         engine.add_grant(parent);
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("flow.read")
+            .with_action("cx.flow.read")
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)

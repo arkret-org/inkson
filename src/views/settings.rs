@@ -184,6 +184,35 @@ pub(crate) fn push_blocklist_account_data(
     });
 }
 
+/// F-BLOCKLIST-VALID-1: client-side DID format sanity check for live form
+/// validation. Matches the canonical DID Core scheme (`did:<method>:<id>`)
+/// where method is at least one ASCII letter / digit and id is at least one
+/// printable character. Reused by the blocklist add form (and intended to
+/// gradually replace the bare `starts_with("did:")` check in the contact
+/// remark add form too). The point is to give the user *live* feedback
+/// while typing, not to enforce server-side DID validity — the soland
+/// reducer still has final say.
+pub(crate) fn is_likely_valid_did(input: &str) -> bool {
+    let trimmed = input.trim();
+    let Some(rest) = trimmed.strip_prefix("did:") else {
+        return false;
+    };
+    let mut parts = rest.splitn(2, ':');
+    let Some(method) = parts.next() else {
+        return false;
+    };
+    let Some(id) = parts.next() else {
+        return false;
+    };
+    if method.is_empty()
+        || !method.chars().all(|c| c.is_ascii_alphanumeric())
+        || id.trim().is_empty()
+    {
+        return false;
+    }
+    true
+}
+
 /// Spec client-preferences.md §3.7: push (or tombstone) a Space remark to
 /// soland via `cx.account_data.set`. Same graceful-degradation contract as
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
@@ -1525,7 +1554,7 @@ pub fn SettingsPanel(
                             span { "{muted_spaces.len()} muted" }
                         }
                         if muted_spaces.is_empty() {
-                            div { class: "muted", "No spaces muted. Use the Notifications view to mute a noisy space." }
+                            div { class: "muted", {crate::i18n::tr("settings.muted_spaces_empty")} }
                         } else {
                             for space_id in muted_spaces {
                                 div { class: "actions", "data-testid": "settings-muted-space-row",
@@ -2208,32 +2237,58 @@ pub fn SettingsPanel(
                         HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use cx.account.blocklist." }
                     }
                     div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
-                        input {
-                            "data-testid": "blocklist-did-input",
-                            placeholder: crate::i18n::tr("settings.privacy.blocked_users.did_placeholder"),
-                            value: "{blocklist_did_input}",
-                            oninput: move |event| blocklist_did_input.set(event.value()),
-                        }
-                        input {
-                            "data-testid": "blocklist-reason-input",
-                            placeholder: crate::i18n::tr("settings.privacy.blocked_users.reason_placeholder"),
-                            value: "{blocklist_reason_input}",
-                            oninput: move |event| blocklist_reason_input.set(event.value()),
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "blocklist-add",
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let did = blocklist_did_input().trim().to_owned();
-                                    if did.is_empty() {
-                                        blocklist_status.set(crate::i18n::tr(
-                                            "settings.privacy.blocked_users.did_required",
-                                        ));
-                                        return;
-                                    }
-                                    let reason = blocklist_reason_input().trim().to_owned();
+                        {
+                            // F-BLOCKLIST-VALID-1: derive live validation
+                            // from the current input so the user sees the
+                            // red ring + hint as they type, and the Add
+                            // button is disabled until the value parses.
+                            let raw_did = blocklist_did_input();
+                            let did_trimmed = raw_did.trim();
+                            let did_empty = did_trimmed.is_empty();
+                            let did_valid = !did_empty && is_likely_valid_did(did_trimmed);
+                            let did_input_class = if did_empty {
+                                "blocklist-did"
+                            } else if did_valid {
+                                "blocklist-did blocklist-did-valid"
+                            } else {
+                                "blocklist-did blocklist-did-invalid"
+                            };
+                            rsx! {
+                                input {
+                                    class: "{did_input_class}",
+                                    "data-testid": "blocklist-did-input",
+                                    placeholder: crate::i18n::tr("settings.privacy.blocked_users.did_placeholder"),
+                                    value: "{blocklist_did_input}",
+                                    "aria-invalid": if !did_empty && !did_valid { "true" } else { "false" },
+                                    oninput: move |event| blocklist_did_input.set(event.value()),
+                                }
+                                input {
+                                    "data-testid": "blocklist-reason-input",
+                                    placeholder: crate::i18n::tr("settings.privacy.blocked_users.reason_placeholder"),
+                                    value: "{blocklist_reason_input}",
+                                    oninput: move |event| blocklist_reason_input.set(event.value()),
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "blocklist-add",
+                                    disabled: !did_valid,
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        move |_| {
+                                            let did = blocklist_did_input().trim().to_owned();
+                                            if did.is_empty() {
+                                                blocklist_status.set(crate::i18n::tr(
+                                                    "settings.privacy.blocked_users.did_required",
+                                                ));
+                                                return;
+                                            }
+                                            if !is_likely_valid_did(&did) {
+                                                blocklist_status.set(crate::i18n::tr(
+                                                    "settings.privacy.blocked_users.did_invalid",
+                                                ));
+                                                return;
+                                            }
+                                            let reason = blocklist_reason_input().trim().to_owned();
                                     let reason = if reason.is_empty() {
                                         None
                                     } else {
@@ -2269,6 +2324,29 @@ pub fn SettingsPanel(
                                 }
                             },
                             {crate::i18n::tr("settings.privacy.blocked_users.add")}
+                        }
+                            }
+                        }
+                        {
+                            // F-BLOCKLIST-VALID-1: live hint surfaces the
+                            // exact reason the Add button is disabled.
+                            // Empty input is a neutral state (no hint);
+                            // the warning only appears once the user has
+                            // started typing something the validator
+                            // rejects.
+                            let raw_did = blocklist_did_input();
+                            let trimmed = raw_did.trim();
+                            if !trimmed.is_empty() && !is_likely_valid_did(trimmed) {
+                                rsx! {
+                                    div {
+                                        class: "settings-inline-hint settings-inline-hint-invalid",
+                                        "data-testid": "blocklist-did-invalid",
+                                        {crate::i18n::tr("settings.privacy.blocked_users.did_invalid")}
+                                    }
+                                }
+                            } else {
+                                rsx! {}
+                            }
                         }
                     }
                     if !blocklist_status().is_empty() {
@@ -2510,6 +2588,33 @@ pub fn SettingsPanel(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// F-BLOCKLIST-VALID-1: the live form validator should accept the
+    /// DID Core shapes the rest of yougen routinely round-trips through
+    /// soland (web, key, plc) and reject the obvious noise users paste
+    /// in by accident. The point is to give *fast* feedback while the
+    /// reducer remains the source of truth — so we don't try to be
+    /// exhaustive about method-specific rules here.
+    #[test]
+    fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
+        assert!(is_likely_valid_did("did:web:alice.example"));
+        assert!(is_likely_valid_did("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"));
+        assert!(is_likely_valid_did("did:plc:abc123"));
+        assert!(is_likely_valid_did("  did:web:alice.example  "));
+
+        // Empty / missing scheme.
+        assert!(!is_likely_valid_did(""));
+        assert!(!is_likely_valid_did("   "));
+        assert!(!is_likely_valid_did("alice.example"));
+        // Missing method or method-specific id.
+        assert!(!is_likely_valid_did("did:"));
+        assert!(!is_likely_valid_did("did::alice"));
+        assert!(!is_likely_valid_did("did:web:"));
+        assert!(!is_likely_valid_did("did:web:   "));
+        // Non-alphanumeric method.
+        assert!(!is_likely_valid_did("did:we b:alice"));
+        assert!(!is_likely_valid_did("did:web-x:alice"));
+    }
 
     /// The canonical `cx.read_receipt.preferences` body shape other devices
     /// read via `/sync` account_data. Locks the field names

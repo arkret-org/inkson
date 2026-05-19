@@ -1181,7 +1181,7 @@ mod tests {
         assert_eq!(op.local_target_ref(), Some("cx:flow:f1"));
         assert_eq!(op.payload["flow_id"], "cx:flow:f1");
         assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
-        assert!(op.body.get("fields").is_none());
+        assert!(op.payload.get("fields").is_none());
     }
 
     #[test]

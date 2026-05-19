@@ -337,6 +337,34 @@ pub fn english_translations() -> TranslationDict {
         "dashboard.no_session_help",
         "The client is not showing placeholder spaces.",
     );
+    // F-I18N-CLEAN-1: en strings previously hard-coded in dashboard / chat /
+    // kanban / settings / space_admin views.
+    dict.set("dashboard.resume_context", "Resume in the current context");
+    dict.set("dashboard.no_notifications", "No notifications loaded");
+    dict.set(
+        "dashboard.notifications_signin",
+        "Sign in to load notifications",
+    );
+    dict.set(
+        "dashboard.notifications_empty_sub",
+        "Unread items, approvals, and alerts appear here",
+    );
+    dict.set("chat.empty_discussions", "No discussions yet.");
+    dict.set("chat.empty_messages", "No messages yet.");
+    // F-CHAT-DEAD-UI-1: discussion settings panel.
+    dict.set("chat.settings.mute_notifications", "Mute notifications");
+    dict.set("chat.settings.read_receipts", "Read receipts");
+    dict.set("chat.settings.shared_history", "Shared history");
+    dict.set(
+        "chat.settings.shared_history_hint",
+        "Space-scoped policy — managed under Space admin.",
+    );
+    dict.set("kanban.queue_track_member", "Queue flow track member");
+    dict.set(
+        "settings.muted_spaces_empty",
+        "No spaces muted. Use the Notifications view to mute a noisy space.",
+    );
+    dict.set("space_admin.no_members_loaded", "No members loaded.");
 
     dict.set("notifications.archived", "Show archived");
     dict.set("notifications.mark_all_read", "Mark all read");
@@ -789,6 +817,12 @@ pub fn english_translations() -> TranslationDict {
         "settings.privacy.blocked_users.did_required",
         "Enter a DID first.",
     );
+    // F-BLOCKLIST-VALID-1: shown live as the user types, and as a
+    // submit-time guard when the input still doesn't look like a DID.
+    dict.set(
+        "settings.privacy.blocked_users.did_invalid",
+        "DID must start with did: (e.g. did:web:alice.example).",
+    );
     dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
     dict.set("settings.avatar.title", "Profile picture");
@@ -934,6 +968,30 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.no_spaces", "暂无空间");
     dict.set("dashboard.no_spaces_help", "服务器尚未返回空间列表。");
     dict.set("dashboard.no_session_help", "客户端不会展示占位空间。");
+    // F-I18N-CLEAN-1: 与 en dict 同步的新 keys。
+    dict.set("dashboard.resume_context", "回到当前上下文");
+    dict.set("dashboard.no_notifications", "暂无通知");
+    dict.set("dashboard.notifications_signin", "登录后加载通知");
+    dict.set(
+        "dashboard.notifications_empty_sub",
+        "未读项、审批请求与提醒会显示在此处",
+    );
+    dict.set("chat.empty_discussions", "尚无讨论。");
+    dict.set("chat.empty_messages", "尚无消息。");
+    // F-CHAT-DEAD-UI-1: 与 en dict 同步的讨论设置面板文案。
+    dict.set("chat.settings.mute_notifications", "静音通知");
+    dict.set("chat.settings.read_receipts", "已读回执");
+    dict.set("chat.settings.shared_history", "共享历史");
+    dict.set(
+        "chat.settings.shared_history_hint",
+        "Space 级别策略——在 Space 管理处设置。",
+    );
+    dict.set("kanban.queue_track_member", "排队 Flow track 成员");
+    dict.set(
+        "settings.muted_spaces_empty",
+        "未静音任何空间。在通知视图中静音吵闹空间。",
+    );
+    dict.set("space_admin.no_members_loaded", "暂无成员。");
 
     dict.set("notifications.archived", "显示已归档");
     dict.set("notifications.mark_all_read", "全部标记已读");
@@ -1342,6 +1400,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set(
         "settings.privacy.blocked_users.did_required",
         "请先输入 DID。",
+    );
+    // F-BLOCKLIST-VALID-1: 与 en dict 同步的实时格式校验提示。
+    dict.set(
+        "settings.privacy.blocked_users.did_invalid",
+        "DID 必须以 did: 开头（如 did:web:alice.example）。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
     // A4b — 头像上传相关。

@@ -34,8 +34,9 @@
 //! ```
 
 use chime::{
-    ContrixPushClient, PushDeviceConfig, PushPreferences, PushRegistrationState,
-    RegisterDeviceRequest, RegisterDeviceResponse, build_register_device_request,
+    ContrixPushClient, GatewayBinding, PushDeviceConfig, PushGatewayType, PushPreferences,
+    PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse,
+    build_register_device_request,
 };
 
 use crate::local_state::LocalStateStore;
@@ -232,10 +233,11 @@ fn build_request(
     } else {
         ctx.floria_gateway_url.clone()
     };
+    let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
     let prefs = PushPreferences {
         enabled: true,
-        push_gateway,
         allow_insecure_loopback_push_gateway: true,
+        gateways: vec![binding.clone()],
         ..Default::default()
     };
     let idempotency_key = format!("yougen-push-register-{}", ctx.device_id);
@@ -253,7 +255,7 @@ fn build_request(
         request_id: None,
         proof: None,
     };
-    build_register_device_request(&config, &prefs).map_err(|err| {
+    build_register_device_request(&config, &binding, &prefs).map_err(|err| {
         PushRegistrationError::BuildRequest(anyhow::anyhow!("build register-device request: {err}"))
     })
 }

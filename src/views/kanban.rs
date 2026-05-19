@@ -1005,10 +1005,35 @@ pub fn KanbanPanel(
                 }
             }
 
-            div { class: "board-grid", "data-testid": "kanban-board-grid",
+            // F-KANBAN-DRAG-VFX-1: derive a dragging snapshot once per
+            // render so every column / card can paint the right visual
+            // state. The drag source picks up `dragging-source`
+            // (low-opacity ghost), the rest of the columns pick up
+            // `drop-zone-available` (subtle outline), and the
+            // board-grid root picks up `is-dragging` (sets cursor:
+            // grabbing for the whole board).
+            {
+                let dragging_now = dragging_card();
+                let is_dragging = dragging_now.is_some();
+                let dragged_card_id_for_match = dragging_now
+                    .as_ref()
+                    .map(|d| d.card_id.clone())
+                    .unwrap_or_default();
+                let board_grid_class = if is_dragging {
+                    "board-grid is-dragging"
+                } else {
+                    "board-grid"
+                };
+                let board_column_class = if is_dragging {
+                    "event board-column drop-zone-available"
+                } else {
+                    "event board-column"
+                };
+                rsx! {
+            div { class: "{board_grid_class}", "data-testid": "kanban-board-grid",
                 for column in columns().iter().filter(|c| c.state == PlaceLifecycleState::Active) {
                     div {
-                        class: "event board-column",
+                        class: "{board_column_class}",
                         "data-testid": "kanban-column",
                         ondragover: move |event| event.prevent_default(),
                         ondrop: {
@@ -1061,7 +1086,7 @@ pub fn KanbanPanel(
                                     &account_did,
                                     &selected_space,
                                     &column.id,
-                                    "place.archive",
+                                    "cx.place.archive",
                                 );
                                 let title_text = if gate.enabled {
                                     "Archive this list (cx.place.archive)".to_owned()
@@ -1108,7 +1133,15 @@ pub fn KanbanPanel(
                     .filter(|(_, c)| c.lifecycle == FlowLifecycleState::Active)
                 {
                             div {
-                                class: "event board-card",
+                                class: {
+                                    let mut classes = String::from("event board-card");
+                                    if !dragged_card_id_for_match.is_empty()
+                                        && card.id == dragged_card_id_for_match
+                                    {
+                                        classes.push_str(" dragging-source");
+                                    }
+                                    classes
+                                },
                                 "data-testid": "kanban-card",
                                 draggable: "true",
                                 // Card-level drop target: drop on this card
@@ -1212,7 +1245,7 @@ pub fn KanbanPanel(
                                             &account_did,
                                             &selected_space,
                                             &card.id,
-                                            "flow.archive",
+                                            "cx.flow.archive",
                                         );
                                         let title_text = if gate.enabled {
                                             "Archive this card (cx.flow.archive)".to_owned()
@@ -1412,7 +1445,7 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_space,
                                                 &column.id,
-                                                "place.restore",
+                                                "cx.place.restore",
                                             );
                                             let title_text = if gate.enabled {
                                                 "Restore this list (cx.place.restore)".to_owned()
@@ -1455,6 +1488,8 @@ pub fn KanbanPanel(
                             }
                         }
                     }
+                }
+            }
                 }
             }
 
@@ -1506,7 +1541,7 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_space,
                                                 &row.card.id,
-                                                "flow.restore",
+                                                "cx.flow.restore",
                                             );
                                             let title_text = if gate.enabled {
                                                 "Restore this card (cx.flow.restore)".to_owned()
@@ -1669,7 +1704,7 @@ pub fn KanbanPanel(
                                             }
                                         }
                                     },
-                                    "Save"
+                                    {crate::i18n::tr("common.save")}
                                 }
                                 button {
                                     class: "secondary",
@@ -1686,7 +1721,7 @@ pub fn KanbanPanel(
                                             editing_card_detail.set(false);
                                         }
                                     },
-                                    "Cancel"
+                                    {crate::i18n::tr("common.cancel")}
                                 }
                             }
                         }
@@ -1713,7 +1748,7 @@ pub fn KanbanPanel(
                                         editing_card_detail.set(true);
                                     }
                                 },
-                                "Edit"
+                                {crate::i18n::tr("common.edit")}
                             }
                             {
                                 let target = if card.lifecycle == FlowLifecycleState::Archived {
@@ -1722,9 +1757,9 @@ pub fn KanbanPanel(
                                     FlowLifecycleState::Archived
                                 };
                                 let action = if target == FlowLifecycleState::Archived {
-                                    "flow.archive"
+                                    "cx.flow.archive"
                                 } else {
-                                    "flow.restore"
+                                    "cx.flow.restore"
                                 };
                                 let gate = capability_gate_for_flow(
                                     &capability_engine,
@@ -1946,12 +1981,12 @@ pub fn KanbanPanel(
                                     );
                                 }
                             },
-                            "Queue flow track member"
+                            {crate::i18n::tr("kanban.queue_track_member")}
                         }
                         button {
                             class: "secondary",
                             onclick: move |_| selected_card.set(None),
-                            "Close"
+                            {crate::i18n::tr("common.close")}
                         }
                     }
                 }

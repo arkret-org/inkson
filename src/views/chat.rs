@@ -2021,7 +2021,7 @@ pub fn ChatPanel(
                             }
                         }
                         if visible_channels_empty {
-                            div { class: "discussion-empty", "data-testid": "empty-discussion-list", "No discussions yet." }
+                            div { class: "discussion-empty", "data-testid": "empty-discussion-list", {crate::i18n::tr("chat.empty_discussions")} }
                         }
                     }
                 }
@@ -3034,7 +3034,7 @@ pub fn ChatPanel(
                             }
                         }
                     } else if visible_message_count == 0 {
-                        div { class: "discussion-empty", "No messages yet." }
+                        div { class: "discussion-empty", {crate::i18n::tr("chat.empty_messages")} }
                     }
                 }
             }
@@ -3085,6 +3085,26 @@ pub fn ChatPanel(
             }
 
             if active_right_panel == Some(DiscussionSidePanel::Settings) {
+                {
+                // F-CHAT-DEAD-UI-1: three toggles in the discussion-settings
+                // panel used to be pure decoration (no onchange, hard-coded
+                // `checked: true`). The first two are now wired to the
+                // same actor-private account_data that /settings already
+                // edits, so a change here mirrors immediately into the
+                // global view. "Shared history" is a Space-scoped policy
+                // event (`cx.space.history_visibility`) — it's not a
+                // client-side per-discussion toggle, so the third row
+                // shows an explanatory hint instead of pretending to be
+                // a checkbox.
+                let space_id_for_mute = selected_space.clone();
+                let flow_id_for_rr = selected_channel_value.clone();
+                let muted_spaces_now = state_store.read().muted_spaces();
+                let space_is_muted = muted_spaces_now.contains(&space_id_for_mute);
+                let rr_default_send = state_store.read().read_receipt_default_send();
+                let rr_flow_override =
+                    state_store.read().read_receipt_flow_override(&flow_id_for_rr);
+                let rr_active = rr_flow_override.unwrap_or(rr_default_send);
+                rsx! {
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
@@ -3094,16 +3114,48 @@ pub fn ChatPanel(
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Settings" } }
                         label { class: "settings-row",
-                            span { "Mute notifications" }
-                            input { r#type: "checkbox" }
+                            span { {crate::i18n::tr("chat.settings.mute_notifications")} }
+                            input {
+                                r#type: "checkbox",
+                                "data-testid": "discussion-settings-mute",
+                                checked: space_is_muted,
+                                onchange: {
+                                    let space_id = space_id_for_mute.clone();
+                                    move |evt: Event<FormData>| {
+                                        let new_muted = evt.value() == "true";
+                                        state_store
+                                            .write()
+                                            .set_space_muted(space_id.clone(), new_muted);
+                                    }
+                                },
+                            }
                         }
                         label { class: "settings-row",
-                            span { "Read receipts" }
-                            input { r#type: "checkbox", checked: true }
+                            span { {crate::i18n::tr("chat.settings.read_receipts")} }
+                            input {
+                                r#type: "checkbox",
+                                "data-testid": "discussion-settings-read-receipts",
+                                checked: rr_active,
+                                onchange: {
+                                    let flow_id = flow_id_for_rr.clone();
+                                    move |evt: Event<FormData>| {
+                                        let new_value = evt.value() == "true";
+                                        state_store
+                                            .write()
+                                            .set_read_receipt_flow_override(
+                                                flow_id.clone(),
+                                                Some(new_value),
+                                            );
+                                    }
+                                },
+                            }
                         }
-                        label { class: "settings-row",
-                            span { "Shared history" }
-                            input { r#type: "checkbox", checked: true }
+                        div { class: "settings-row settings-row-readonly",
+                            "data-testid": "discussion-settings-shared-history-note",
+                            span { {crate::i18n::tr("chat.settings.shared_history")} }
+                            span { class: "muted",
+                                {crate::i18n::tr("chat.settings.shared_history_hint")}
+                            }
                         }
                     }
                     div { class: "discussion-detail-section",
@@ -3112,6 +3164,8 @@ pub fn ChatPanel(
                         div { class: "detail-row", span { "Unread" } strong { "{selected_channel_unread}" } }
                         div { class: "detail-row", span { "Messages" } strong { "{visible_message_count}" } }
                     }
+                }
+                }
                 }
             }
 
