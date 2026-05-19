@@ -629,6 +629,42 @@ pub struct ResolveHandleResponse {
     pub did: String,
     pub handle: String,
     pub did_document: Option<Value>,
+    /// Audience the directory bound the response claim to. Spec 0a5ab85:
+    /// the client MUST reject claims whose audience doesn't match the
+    /// invocation context (e.g. the Space the user is about to join).
+    #[serde(default)]
+    pub audience: Option<String>,
+    /// Raw handle claim envelope when the directory issued one. Shape
+    /// conforms to `handle-claim.schema.json` — typed deserialization is
+    /// TODO(spec-sync 0a5ab85) once we depend on the SDK `HandleClaim`.
+    #[serde(default)]
+    pub handle_claim: Option<Value>,
+}
+
+/// Structured mention node embedded in message body. Spec 0a5ab85
+/// `models/flow-and-message.md §9.4`. `display_snapshot` is the human
+/// label captured at compose time; UI MUST surface a "handle reassigned"
+/// badge when current resolution diverges from the snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mention {
+    pub subject: String,
+    pub handle_uri: String,
+    pub display_snapshot: String,
+    pub resolved_at: String,
+}
+
+/// Per-Space delivery binding surfaced to the member detail view.
+/// Mirrors `member_delivery_binding` from `event-payload.schema.json`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MemberDeliveryBindingView {
+    pub recipient_service_did: String,
+    pub binding_source: String,
+    pub delivery_modes: Vec<String>,
+    pub resolved_at: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub service_endpoint: Option<String>,
 }
 
 // ── Space Management ────────────────────────────────────────────
