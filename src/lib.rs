@@ -8,6 +8,7 @@ pub mod audit;
 pub mod blob;
 pub mod canonical;
 pub mod capability;
+pub mod card_comments;
 pub mod coauth;
 pub mod components;
 pub mod config;

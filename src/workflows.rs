@@ -85,9 +85,9 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
         ClientWorkflow {
             id: "space.create",
             name: "Create space",
-            stage: WorkflowStage::Blocked,
-            client_surface: "Workspace Setup space bootstrap",
-            server_dependency: "Needs metadata edit, policy templates, signed operation templates, and retention rules",
+            stage: WorkflowStage::ClientReady,
+            client_surface: "Workspace Setup space bootstrap (`views/setup.rs` → `api.create_space`)",
+            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): create-space form wired through views/setup.rs:605 (`api.create_space(actor, title, summary, discoverability, join_rule, history_visibility, invitees, plaintext_services)`). Server still owns policy template + retention rule defaults, but the client-side bootstrap path is complete and round-trips through `state_store.save_space_projection` on success.",
         },
         ClientWorkflow {
             id: "space.membership",
@@ -99,9 +99,9 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
         ClientWorkflow {
             id: "space.delete",
             name: "Leave, archive, and delete space",
-            stage: WorkflowStage::Blocked,
-            client_surface: "Workspace Setup + Space Admin destructive flows",
-            server_dependency: "Needs leave/archive UX, tombstone policy, and history retention enforcement",
+            stage: WorkflowStage::ClientReady,
+            client_surface: "Workspace Setup + Space Admin destructive flows (`views/space_admin.rs` Leave + Delete buttons)",
+            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): leave-space wired through views/space_admin.rs:2046 (`api.leave_space(space_id)` + `forget_space` + sync-cursor reset); delete-space wired through views/space_admin.rs:2566 (`api.delete_space(space_id)`). Both surfaces report success/failure via `status_msg` so the operator sees what landed. Tombstone policy + history retention enforcement remain server-side concerns.",
         },
         ClientWorkflow {
             id: "message.create",
@@ -146,13 +146,27 @@ mod tests {
                 .iter()
                 .any(|workflow| workflow.id == "account.registration")
         );
-        assert!(blocked.iter().any(|workflow| workflow.id == "space.create"));
+        // F-SPACE-LIFECYCLE-1 (2026-05-19): space.create + space.delete
+        // moved from Blocked → ClientReady because the corresponding UI
+        // wiring (`views/setup.rs` create flow + `views/space_admin.rs`
+        // Leave / Delete buttons) was already shipped — the workflow
+        // ledger had drifted. Explicitly negate them here so a future
+        // regression that reintroduces the gap fails this test.
+        assert!(
+            !blocked.iter().any(|workflow| workflow.id == "space.create"),
+            "space.create should be ClientReady — UI wired via views/setup.rs:605 (`api.create_space`)"
+        );
+        assert!(
+            !blocked.iter().any(|workflow| workflow.id == "space.delete"),
+            "space.delete should be ClientReady — UI wired via views/space_admin.rs Leave + Delete buttons"
+        );
+        // space.membership remains Blocked: MLS Welcome / Commit
+        // delivery + removal epoch rotation are still server gaps.
         assert!(
             blocked
                 .iter()
                 .any(|workflow| workflow.id == "space.membership")
         );
-        assert!(blocked.iter().any(|workflow| workflow.id == "space.delete"));
     }
 
     #[test]

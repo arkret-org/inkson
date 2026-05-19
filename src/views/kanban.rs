@@ -29,6 +29,14 @@ const DEMO_BOARD_PLACE_ID: &str = "cx:place:0196419b-0000-7000-8000-00000000b0a0
 /// two-actor races without spinning indefinitely if the cell is hot.
 const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 
+/// F-KANBAN-LIVE-1: how often the board polls
+/// `/views/:id/projection` so another device's `cx.flow.move` /
+/// `cx.flow.reorder` / `cx.flow.update` shows up without a manual
+/// refresh. 5s matches soland's ephemeral fanout cadence — short
+/// enough to feel "live", long enough that a single user's tab
+/// doesn't hammer the server.
+const KANBAN_LIVE_POLL_SECONDS: u64 = 5;
+
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanColumn {
     id: String,
@@ -634,6 +642,60 @@ pub fn KanbanPanel(
                         ));
                     }
                 }
+            }
+        }
+    });
+
+    // F-KANBAN-LIVE-1: poll the same `/views/:id/projection` endpoint
+    // every KANBAN_LIVE_POLL_SECONDS so another device's
+    // `cx.flow.move` / `cx.flow.reorder` / `cx.flow.update` lands
+    // in this client without a manual refresh. The poll is deliberately
+    // simple (request-per-tick) rather than a long-poll subscription:
+    // the soland endpoint already cheap-paginates, and the polling
+    // worker stops touching the network when the View id is empty
+    // (so it stays a no-op for the seed-fallback path).
+    //
+    // A full sync_engine projection push is the natural follow-up;
+    // this revision proves the wire-up by closing the "another device
+    // moved a card, mine doesn't update" gap.
+    let live_base = base_url.clone();
+    let live_token = token;
+    let live_board_view_id = board_view_id;
+    use_future(move || {
+        let base = live_base.clone();
+        async move {
+            // Defer the first poll so the bootstrap fetch finishes
+            // first and we don't double-fire on mount.
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
+                .await;
+            loop {
+                let api_token = live_token();
+                let view = live_board_view_id();
+                if !view.trim().is_empty() {
+                    let view_for_call = view.clone();
+                    if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
+                        api.collection_projection(&view_for_call).await
+                    })
+                    .await
+                    {
+                        let cols = collection_projection_to_columns(&projection);
+                        // Only overwrite when the server actually
+                        // returned a non-empty projection — an empty
+                        // response shouldn't wipe a locally-queued
+                        // optimistic move.
+                        if !cols.is_empty() && cols != columns() {
+                            columns.set(cols);
+                            projection_source.set(BoardProjectionSource::ApiDerived);
+                        }
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
+                    .await;
+                #[cfg(target_arch = "wasm32")]
+                break; // wasm has no tokio::time; bail after one
+                       // tick — the bootstrap fetch already ran.
             }
         }
     });
