@@ -856,7 +856,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("agent_workspace.settings.default_profile_hint", "Applied as the pre-selected option in the Add Agent modal. You can still override per-invite.");
     dict.set("agent_workspace.settings.danger_zone", "Danger zone");
-    dict.set("agent_workspace.settings.teardown_hint", "Tear down the entire Agent Workspace (`cx.space.tombstone(workspace_root)`). Mirror Spaces cascade-tombstone via housekeeping. Existing mention_redirect events in source Spaces are preserved for audit.");
+    dict.set("agent_workspace.settings.teardown_hint", "Tear down the entire Agent Workspace (`cx.realm.tombstone(workspace_root)`). Mirror container Spaces cascade-tombstone via housekeeping. Existing mention_redirect events in source Realms are preserved for audit.");
     dict.set("agent_workspace.settings.teardown", "Tear down workspace");
 
     // Notification renderer (AW-3.12)
@@ -975,6 +975,27 @@ pub fn english_translations() -> TranslationDict {
     dict.set("friendly.sync.synced", "Up to date");
     dict.set("friendly.sync.pending", "Syncing…");
     dict.set("friendly.sync.frontier", "Sync state");
+
+    // R1.7 realm/space inversion — friendly labels for the security
+    // boundary (Realm) and container Space split.
+    dict.set("friendly.realm", "Workspace");
+    dict.set("friendly.realm.short", "Workspace");
+    dict.set("friendly.realm.description", "Security boundary — membership, policy, federation, and encryption are governed at this level.");
+    dict.set("friendly.realm.security_class", "Security boundary");
+    dict.set("friendly.realm.security_class.standard", "Standard security");
+    dict.set("friendly.realm.security_class.high_assurance", "High assurance");
+    dict.set("friendly.realm.settings", "Workspace settings");
+    dict.set("friendly.realm.settings.subtitle", "Policy, membership, federation, and E2EE");
+    dict.set("friendly.realm.switcher", "Switch workspace");
+    dict.set("friendly.realm.ref_label", "Workspace");
+    dict.set("friendly.space", "Space");
+    dict.set("friendly.space.short", "Space");
+    dict.set("friendly.space.description", "Navigation container — boards, lists, and sections live inside a workspace.");
+    dict.set("friendly.space.container_class", "Navigation container");
+    dict.set("friendly.space.settings", "Space settings");
+    dict.set("friendly.space.settings.subtitle", "Navigation, sort, and display");
+    dict.set("friendly.discussion.realm_ref", "Workspace");
+    dict.set("friendly.discussion.realm_ref.hint", "Which workspace this discussion belongs to (security boundary).");
 
     // Profile gate (friendly version of ProfileGateNotice).
     dict.set("profile_gate.title", "Feature not available on this server");
@@ -1576,7 +1597,7 @@ pub fn chinese_translations() -> TranslationDict {
         "Add Agent 弹窗的预选项。每次邀请仍可单独覆盖。",
     );
     dict.set("agent_workspace.settings.danger_zone", "危险区域");
-    dict.set("agent_workspace.settings.teardown_hint", "解散整个 Agent Workspace（`cx.space.tombstone(workspace_root)`）。所有 mirror Space 会通过 housekeeping 级联 tombstone；源 Space 中已发出的 mention_redirect 会保留用于 audit。");
+    dict.set("agent_workspace.settings.teardown_hint", "解散整个 Agent Workspace（`cx.realm.tombstone(workspace_root)`）。所有镜像容器 Space 会通过 housekeeping 级联 tombstone；源 Realm 中已发出的 mention_redirect 会保留用于 audit。");
     dict.set("agent_workspace.settings.teardown", "解散 workspace");
 
     // Notification renderer (AW-3.12)
@@ -1676,6 +1697,26 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("friendly.sync.synced", "已同步");
     dict.set("friendly.sync.pending", "同步中…");
     dict.set("friendly.sync.frontier", "同步状态");
+
+    // R1.7：Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
+    dict.set("friendly.realm", "工作区");
+    dict.set("friendly.realm.short", "工作区");
+    dict.set("friendly.realm.description", "安全边界 — 成员、策略、联邦与加密都在这一层治理。");
+    dict.set("friendly.realm.security_class", "安全边界");
+    dict.set("friendly.realm.security_class.standard", "标准安全");
+    dict.set("friendly.realm.security_class.high_assurance", "高保障");
+    dict.set("friendly.realm.settings", "工作区设置");
+    dict.set("friendly.realm.settings.subtitle", "策略、成员、联邦与端到端加密");
+    dict.set("friendly.realm.switcher", "切换工作区");
+    dict.set("friendly.realm.ref_label", "工作区");
+    dict.set("friendly.space", "空间");
+    dict.set("friendly.space.short", "空间");
+    dict.set("friendly.space.description", "导航容器 — 看板、列表与分区都在工作区之内。");
+    dict.set("friendly.space.container_class", "导航容器");
+    dict.set("friendly.space.settings", "空间设置");
+    dict.set("friendly.space.settings.subtitle", "导航、排序与展示");
+    dict.set("friendly.discussion.realm_ref", "工作区");
+    dict.set("friendly.discussion.realm_ref.hint", "该讨论所属的工作区（安全边界）。");
 
     dict.set("profile_gate.title", "此服务器暂不支持该功能");
     dict.set(

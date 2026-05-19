@@ -809,14 +809,17 @@ impl ContrixApi {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
-                "actor_id is required for canonical cx.space.create"
+                "actor_id is required for canonical cx.realm.create"
             ));
         }
         let title = title.trim();
         if title.is_empty() {
-            return Err(anyhow::anyhow!("title is required for cx.space.create"));
+            return Err(anyhow::anyhow!("title is required for cx.realm.create"));
         }
 
+        // R1.7: the security boundary (formerly Space) is now Realm.
+        // TODO(realm-rework): switch local prefix to `cx:realm:` once
+        // contrix-sdk's SpaceId validator and soland accept the new shape.
         let space_id = format!("cx:space:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
         let events = build_space_bootstrap_events(
@@ -1690,11 +1693,11 @@ impl ContrixApi {
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
         for event in [
-            build_space_state_event(space_id, actor_id, "cx.space.join_rule", json!(join_rule))?,
+            build_space_state_event(space_id, actor_id, "cx.realm.join_rule", json!(join_rule))?,
             build_space_state_event(
                 space_id,
                 actor_id,
-                "cx.space.history_visibility",
+                "cx.realm.history_visibility",
                 json!(history_visibility),
             )?,
         ] {
@@ -2478,19 +2481,19 @@ pub fn build_space_bootstrap_events(
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.space.join_rule",
+        "cx.realm.join_rule",
         json!(join_rule),
     )?);
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.space.history_visibility",
+        "cx.realm.history_visibility",
         json!(history_visibility),
     )?);
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.space.discovery",
+        "cx.realm.discovery",
         json!(discoverability),
     )?);
 
@@ -2531,10 +2534,10 @@ pub fn build_space_create_event(
     };
     let mut object = json!({
         "id": space_id,
-        "schema": "cx.schema.space.v1",
+        "schema": "cx.schema.realm.v1",
         "title": title,
         "created_by_principal": actor_id,
-        "schema_refs": ["cx.schema.space.v1"],
+        "schema_refs": ["cx.schema.realm.v1"],
         "default_discoverability": discoverability,
         "default_join_rule": join_rule,
         "history_visibility": history_visibility,
@@ -2554,12 +2557,14 @@ pub fn build_space_create_event(
     }
 
     build_reducer_event(
-        "cx.space.create",
+        "cx.realm.create",
         space_id,
         actor_id,
         &created_at,
         json!({ "object": object }),
-        &space_cell("cx.component.space.create.v1", space_id),
+        // TODO(realm-rework): cell family rename to cx.component.realm.create.v1
+        // once contrix-spec publishes the renamed registry.
+        &space_cell("cx.component.realm.create.v1", space_id),
         "append",
         json!({ "space_id": space_id }),
     )
@@ -2571,15 +2576,17 @@ pub fn build_space_state_event(
     kind: &str,
     value: Value,
 ) -> anyhow::Result<Value> {
+    // R1.7: security-boundary state events now live in cx.realm.*; the
+    // matching cell families are cx.component.realm.*.v1.
     let cell_family = match kind {
-        "cx.space.join_rule" => "cx.component.space.join_rule.v1",
-        "cx.space.history_visibility" => "cx.component.space.history_visibility.v1",
-        "cx.space.discovery" => "cx.component.space.discovery.v1",
-        "cx.space.schema" => "cx.component.space.schema.v1",
-        "cx.space.policy_components" => "cx.component.space.policy_components.v1",
+        "cx.realm.join_rule" => "cx.component.realm.join_rule.v1",
+        "cx.realm.history_visibility" => "cx.component.realm.history_visibility.v1",
+        "cx.realm.discovery" => "cx.component.realm.discovery.v1",
+        "cx.realm.schema" => "cx.component.realm.schema.v1",
+        "cx.realm.policy_components" => "cx.component.realm.policy_components.v1",
         other => {
             return Err(anyhow::anyhow!(
-                "unsupported Space state event kind {other}"
+                "unsupported Realm state event kind {other}"
             ));
         }
     };
@@ -2621,12 +2628,12 @@ pub fn build_plaintext_visible_services_event(
 
     let created_at = event_timestamp();
     build_reducer_event(
-        "cx.space.plaintext_visible_services",
+        "cx.realm.plaintext_visible_services",
         space_id,
         actor_id,
         &created_at,
         json!({ "services": services.clone() }),
-        &space_cell("cx.component.space.plaintext_visible_services.v1", space_id),
+        &space_cell("cx.component.realm.plaintext_visible_services.v1", space_id),
         "set",
         json!({ "services": services }),
     )
@@ -3204,6 +3211,7 @@ mod tests {
     #[test]
     fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         let events = build_space_bootstrap_events(
+            // TODO(realm-rework): switch to a `cx:realm:` id once SDK validators accept it.
             "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
@@ -3222,31 +3230,31 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                "cx.space.create",
-                "cx.space.join_rule",
-                "cx.space.history_visibility",
-                "cx.space.discovery",
-                "cx.space.plaintext_visible_services",
+                "cx.realm.create",
+                "cx.realm.join_rule",
+                "cx.realm.history_visibility",
+                "cx.realm.discovery",
+                "cx.realm.plaintext_visible_services",
                 "cx.member.state",
                 "cx.member.state",
             ]
         );
 
         let create = &events[0];
-        assert_eq!(create["payload"]["object"]["schema"], "cx.schema.space.v1");
+        assert_eq!(create["payload"]["object"]["schema"], "cx.schema.realm.v1");
         assert_eq!(
             create["payload"]["object"]["created_by_principal"],
             create["actor_id"]
         );
         assert_eq!(
             create["payload"]["object"]["created_at"], create["created_at"],
-            "Space create cross-field semantic validation requires matching timestamps",
+            "Realm create cross-field semantic validation requires matching timestamps",
         );
         assert_eq!(create["payload"]["object"]["default_join_rule"], "invite");
         assert_eq!(create["payload"]["object"]["history_visibility"], "shared");
         assert_eq!(
             create["effects"][0]["cell"],
-            "cx:cell:cx.component.space.create.v1:cx:space:0196419b-0000-7000-8000-000000000001"
+            "cx:cell:cx.component.realm.create.v1:cx:space:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(create["effects"][0]["op"]["kind"], "append");
         assert_eq!(create["anchor_ref"], ZERO_ANCHOR_REF);

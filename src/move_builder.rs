@@ -7,7 +7,8 @@
 //! belong on the Move/Anchor pipeline. Examples:
 //!
 //! - **Yes**: `cx.consent.grant` / `revoke`, `cx.capability.*`,
-//!   `cx.member.state`, `cx.space.{create,update,destroy,...}`,
+//!   `cx.member.state`, `cx.realm.{create,update,destroy,...}`,
+//!   `cx.space.{create,update,archive,restore,...}` (container Spaces),
 //!   `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
 //! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read.marker`,
 //!   `cx.relation.*`, `cx.redaction` — these stay on the durable Event
@@ -30,8 +31,8 @@
 //! - [`build_member_state_transition_move`] — `cx.member.state` FSM
 //!   transition (`invited` → `join`, etc.) over
 //!   `cx.component.member.state.v1`
-//! - [`build_space_organization_update_move`] — `cx.space.update` over
-//!   `cx.component.space.organization.v1` (cas-register)
+//! - [`build_space_organization_update_move`] — `cx.realm.update` over
+//!   `cx.component.realm.organization.v1` (cas-register; post-R1.7)
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -301,8 +302,8 @@ pub fn build_member_state_transition_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Construct a `cx.space.update` Move that writes the
-/// `cx.component.space.organization.v1` cas-register cell with the
+/// Construct a `cx.realm.update` Move that writes the
+/// `cx.component.realm.organization.v1` cas-register cell with the
 /// provided organization metadata. `value` should be a JSON object
 /// (typically `{title, owner, ...}`); soland's reducer mirrors the
 /// fields it knows about and ignores the rest.
@@ -313,7 +314,9 @@ pub fn build_space_organization_update_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.space.organization.v1:{space_id}");
+    // TODO(realm-rework): cell family renamed from cx.component.space.organization.v1
+    // to cx.component.realm.organization.v1 in spec post-R1.7.
+    let cell_id = format!("cx:cell:cx.component.realm.organization.v1:{space_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "set", "value": value }
@@ -1208,7 +1211,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.space.organization.v1:")
+                .starts_with("cx:cell:cx.component.realm.organization.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set op carries a value");
@@ -1354,7 +1357,7 @@ mod tests {
         let result = build_conflict_repair_move(
             "did:web:admin.example",
             "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:cell:cx.component.space.organization.v1:cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:cell:cx.component.realm.organization.v1:cx:realm:0196419b-0000-7000-8000-000000000003",
             &["cx:anchor:sha256:only-one".to_owned()],
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),
@@ -1376,7 +1379,7 @@ mod tests {
         let unsigned = build_conflict_repair_move(
             "did:web:admin.example",
             "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:cell:cx.component.space.organization.v1:cx:space:0196419b-0000-7000-8000-000000000003",
+            "cx:cell:cx.component.realm.organization.v1:cx:realm:0196419b-0000-7000-8000-000000000003",
             &heads,
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),

@@ -219,8 +219,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `crypto-media/audited-e2ee.md` (attested / disclosed audit profile),
 /// `crypto-media/webrtc-signaling.md`, `extensions/applet-integration.md`,
 /// `extensions/agent-protocol-interop.md`, `extensions/mimi-interop.md`.
-/// Canonical registry: `artifacts/registry/event-kind-registry.json` (110
-/// active kinds).
+/// Canonical registry: `artifacts/registry/event-kind-registry.json`.
 pub fn known_event_kinds() -> Vec<&'static str> {
     // 110 active wire event kinds, mirrored from
     // `artifacts/registry/event-kind-registry.json` (active set, 2026-05-07).
@@ -364,18 +363,24 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.session.grant",
         // Sovereign deployment (sync/sovereign-deployment)
         "cx.sovereign.did_policy",
-        // Space / boundary
-        // T2.3: cx.space.lifecycle.set and cx.space.policy.set were removed
-        // by spec 0a5ab85 (artifacts/registry/removed-event-kinds.json,
-        // hard_reject). Lifecycle was decomposed into create / update /
-        // upgrade / archive; policy was decomposed into per-component policy
-        // cells (join-policy, history-visibility, delivery-binding-policy).
-        "cx.space.child",
+        // Realm (security boundary) — R1.7 inversion renamed the former
+        // `cx.space.*` security events to `cx.realm.*` and freed the
+        // `cx.space.*` namespace for the container lifecycle below.
+        // T2.3 history: cx.space.lifecycle.set / cx.space.policy.set were
+        // removed by spec 0a5ab85 — they have no realm successor.
+        "cx.realm.child",
+        "cx.realm.create",
+        "cx.realm.organization",
+        "cx.realm.parent",
+        "cx.realm.update",
+        "cx.realm.upgrade",
+        // Space (navigation container, post-R1.7) — former `cx.place.*`
+        // verbs over Board / List / Section containers.
+        "cx.space.archive",
         "cx.space.create",
-        "cx.space.organization",
-        "cx.space.parent",
+        "cx.space.restore",
+        "cx.space.tombstone",
         "cx.space.update",
-        "cx.space.upgrade",
         // MLS Space-key share (audited E2EE)
         "cx.space_key.share",
         "cx.space_key.share_audit",
@@ -981,7 +986,7 @@ mod tests {
         // and pruned to cx.flow.track.{enable,disable,update,set_primary}
         // (4 kinds; spec dropped member/history_visibility/policy_components
         // because tracks no longer carry independent membership/visibility/
-        // policy — see Flow.discussion_space_ref). Net -3 from prior 110.
+        // policy — see Flow.discussion_realm_ref). Net -3 from prior 110.
         // Follow-on wire-break (spec dc01ad7, 2026-05-18): the four track
         // events above unified into a single `cx.flow.tracks.update` carrying
         // a `cx.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
@@ -989,7 +994,7 @@ mod tests {
         // (cx.attestation.range_completeness / cx.identity.accountability_grant /
         // cx.morph.schema_migrate). The two `.v1`-suffixed audit kinds were
         // renamed in-place (cx.audit.epoch_key_destruction[.v1] and
-        // cx.space.audit_policy_downgrade[.v1] — yougen does not yet surface
+        // cx.realm.audit_policy_downgrade[.v1] — yougen does not yet surface
         // those typed kinds, so the rename doesn't shift the count).
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
@@ -997,7 +1002,11 @@ mod tests {
         // T2.3 wire-break: cx.space.lifecycle.set and cx.space.policy.set
         // were removed (artifacts/registry/removed-event-kinds.json,
         // hard_reject); net -2 from prior 107.
-        assert_eq!(known_event_kinds().len(), 105);
+        // R1.7 realm/space inversion: 6 former `cx.space.*` security events
+        // were renamed to `cx.realm.*`, and 5 new `cx.space.*` container
+        // lifecycle kinds (archive/create/restore/tombstone/update) were
+        // added — net +5 from prior 105.
+        assert_eq!(known_event_kinds().len(), 110);
     }
 
     #[test]
@@ -1035,6 +1044,15 @@ mod tests {
         // per-component cells / typed lifecycle events.
         assert!(!kinds.contains(&"cx.space.lifecycle.set"));
         assert!(!kinds.contains(&"cx.space.policy.set"));
+        // R1.7 realm/space inversion: security-boundary events live in
+        // cx.realm.*; container lifecycle events live in cx.space.*.
+        assert!(kinds.contains(&"cx.realm.create"));
+        assert!(kinds.contains(&"cx.realm.update"));
+        assert!(kinds.contains(&"cx.realm.child"));
+        assert!(kinds.contains(&"cx.realm.parent"));
+        assert!(kinds.contains(&"cx.space.archive"));
+        assert!(kinds.contains(&"cx.space.restore"));
+        assert!(kinds.contains(&"cx.space.tombstone"));
         // Renamed: cx.actor.profile.update -> cx.profile.update
         assert!(kinds.contains(&"cx.profile.update"));
         assert!(!kinds.contains(&"cx.actor.profile.update"));
@@ -1069,9 +1087,12 @@ mod tests {
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
+        // R1.7 realm/space inversion raised the floor from 102 to 107:
+        // the 6 renamed `cx.space.*` → `cx.realm.*` are net-zero, and the
+        // 5 new container lifecycle kinds add a stable floor of 107.
         assert!(
-            kinds.len() >= 102,
-            "yougen surfaces {} event kinds; floor 102 set after T2.3 removed cx.space.lifecycle.set and cx.space.policy.set (-2 from the prior 104 floor).",
+            kinds.len() >= 107,
+            "yougen surfaces {} event kinds; floor 107 set after R1.7 added cx.space.{{archive,create,restore,tombstone,update}} on top of the realm/space inversion.",
             kinds.len()
         );
     }

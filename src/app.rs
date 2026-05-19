@@ -4110,7 +4110,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)?;
-            if kind != "cx.space.parent" {
+            if kind != "cx.realm.parent" {
                 return None;
             }
             for container in [
@@ -4161,7 +4161,7 @@ fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str);
-        if kind != Some("cx.space.child") {
+        if kind != Some("cx.realm.child") {
             continue;
         }
         for container in [

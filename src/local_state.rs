@@ -58,12 +58,12 @@ impl ReadMarkerRecord {
     }
 }
 
-/// Server-declared `cx.space.read_receipt_policy` snapshot for a Space, as
+/// Server-declared `cx.realm.read_receipt_policy` snapshot for a Realm, as
 /// surfaced to clients via the Anchor view (P0 M3) once sync.rs lands.
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
-/// Until the sync wires the policy from soland's `cx.component.space.read_receipt_policy.v1`
+/// Until the sync wires the policy from soland's `cx.component.realm.read_receipt_policy.v1`
 /// cas-register cell, this is populated by tests / dev tooling only.
 /// See `_todos.md` C10.D "Policy lock UI".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,11 +731,11 @@ pub struct ClientLocalState {
     pub read_receipt_space_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub read_receipt_flow_overrides: BTreeMap<String, bool>,
-    /// Server-declared `cx.space.read_receipt_policy` snapshots, keyed by
-    /// space id. Populated when sync (P0 M3) lands — surfaces the
+    /// Server-declared `cx.realm.read_receipt_policy` snapshots, keyed by
+    /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
-    /// `cx.component.space.read_receipt_policy.v1` cas-register cell so
-    /// the settings UI can lock per-Space toggles when the server's
+    /// `cx.component.realm.read_receipt_policy.v1` cas-register cell so
+    /// the settings UI can lock per-Realm toggles when the server's
     /// policy is `required` or `disabled`.
     #[serde(default)]
     pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
@@ -1605,8 +1605,8 @@ impl LocalStateStore {
     /// Resolve effective send preference per spec (server policy → flow →
     /// space → default). Mirror of
     /// `contrix_sdk::ReadReceiptPreferences::effective_send` extended with
-    /// server-declared policy lock: when the Space publishes a
-    /// `cx.space.read_receipt_policy` with `disclosure="required"` the
+    /// server-declared policy lock: when the Realm publishes a
+    /// `cx.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).

@@ -2,6 +2,19 @@
 
 Cross-platform Contrix client built with Dioxus 0.7.
 
+## Realm vs Space
+
+After the Phase 1–4 terminology inversion (Round R1.x):
+
+- **Realm:** security boundary — membership, capability, E2EE, federation.
+  Surfaced in the UI as **Workspace** (zh: 工作区).
+- **Space:** navigation container — board, list, section, calendar bucket
+  inside a Realm. Surfaced in the UI as **Space** (zh: 空间).
+
+The friendly UI strings live under the `friendly.realm.*` / `friendly.space.*`
+i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
+**Show technical details** on every actor / object surface.
+
 ## Targets
 
 - Web: `dx serve --platform web`

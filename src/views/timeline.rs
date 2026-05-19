@@ -686,7 +686,7 @@ pub fn TimelinePanel(
 
                                             // Resolve effective send preference per spec
                                             // discovery/client-preferences.md §3.6 (flow → space →
-                                            // default). Server-side Space `cx.space.read_receipt_policy`
+                                            // default). Server-side Realm `cx.realm.read_receipt_policy`
                                             // is not yet exposed to the client; until it is, treat
                                             // policy as `Optional` (no override) and defer to user pref.
                                             let topic_for_pref = marker.body.topic_id.clone();

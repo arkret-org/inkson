@@ -1723,11 +1723,11 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { "Per-space overrides" }
                         span { "{read_receipt_space_overrides().len()} configured" }
-                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a cx.space.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Space policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
+                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a cx.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
                     }
                     for (space_id, send) in read_receipt_space_overrides() {
                             // Policy lock — when soland publishes a
-                            // cx.space.read_receipt_policy with disclosure=
+                            // cx.realm.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
                             // sync (P0 M3) wires the snapshot, this returns

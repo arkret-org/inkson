@@ -44,8 +44,9 @@ struct KanbanColumn {
     rank: String,
     cards: Vec<KanbanCard>,
     /// Place lifecycle state. `Active` is the wire default; `Archived` is set
-    /// optimistically after a successful `cx.place.archive` submit and reset
-    /// after `cx.place.restore`. Spec: `space-and-place.md §4.4`.
+    /// optimistically after a successful `cx.space.archive` submit and reset
+    /// after `cx.space.restore`. Spec: `models/realm-and-space.md §4.4`
+    /// (post-R1.7 rename).
     /// `Tombstoned` is irreversible and modeled here for completeness but the
     /// UI currently has no tombstone affordance — server-only path.
     state: PlaceLifecycleState,
@@ -209,7 +210,7 @@ impl CardState {
 /// Board write records track a Move pipeline submission. The Move's
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
-/// mirrors the MoveSubmissionState classifier (`cx.place.create` /
+/// mirrors the MoveSubmissionState classifier (`cx.space.create` /
 /// `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
 ///
@@ -997,7 +998,7 @@ pub fn KanbanPanel(
                             onclick: {
                                 // Lists are Places in v1. The optimistic
                                 // local column uses the new Place id while
-                                // the write submits `cx.place.create`.
+                                // the write submits `cx.space.create`.
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
                                 move |_| {
@@ -1153,10 +1154,10 @@ pub fn KanbanPanel(
                                     &account_did,
                                     &selected_space,
                                     &column.id,
-                                    "cx.place.archive",
+                                    "cx.space.archive",
                                 );
                                 let title_text = if gate.enabled {
-                                    "Archive this list (cx.place.archive)".to_owned()
+                                    "Archive this list (cx.space.archive)".to_owned()
                                 } else {
                                     format!("Archive gated: {}", gate.reason)
                                 };
@@ -1480,10 +1481,10 @@ pub fn KanbanPanel(
                 }
             }
 
-            // Archived lists panel — Place lifecycle `archived` state.
-            // Lists appear here after `cx.place.archive` is accepted and
+            // Archived lists panel — container Space lifecycle `archived` state.
+            // Lists appear here after `cx.space.archive` is accepted and
             // are removed from the main board-grid above. Each row carries
-            // a Restore button that submits `cx.place.restore` (SDK reducer
+            // a Restore button that submits `cx.space.restore` (SDK reducer
             // enforces `state == archived` server-side / next sync).
             {
                 let archived: Vec<KanbanColumn> = columns()
@@ -1512,10 +1513,10 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_space,
                                                 &column.id,
-                                                "cx.place.restore",
+                                                "cx.space.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this list (cx.place.restore)".to_owned()
+                                                "Restore this list (cx.space.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -2244,7 +2245,7 @@ fn dispatch_card_detail_update(
 /// queue regardless of submit outcome. Used by both list and card create
 /// paths - `subject` is the cell subject (Place id or Flow id), `kind` is
 /// the classifier the MoveSubmissionState tracker uses to decorate state
-/// pills (`cx.place.create` / `cx.flow.create`).
+/// pills (`cx.space.create` / `cx.flow.create`).
 fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
@@ -2611,10 +2612,10 @@ fn capability_gate_for_flow(
     engine.read().ui_gate(actor, action, &resource, &ctx)
 }
 
-/// Dispatch a `cx.place.archive` or `cx.place.restore` operation against
-/// the given list (Place) and optimistically update the column's
-/// `PlaceLifecycleState` in the UI signal. Spec:
-/// `space-and-place.md §4.4`. Soland's `PLACE_LIFECYCLE_REQUIREMENTS`
+/// Dispatch a `cx.space.archive` or `cx.space.restore` operation against
+/// the given list (container Space, former Place) and optimistically update
+/// the column's `PlaceLifecycleState` in the UI signal. Spec:
+/// `models/realm-and-space.md §4.4` (post-R1.7 rename). Soland's lifecycle
 /// envelope validator and the SDK reducer's `place_not_archived` guard
 /// both enforce wire / state shape; this helper only handles the
 /// submit + local optimistic projection. If the submit fails the local

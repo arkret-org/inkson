@@ -27,13 +27,17 @@ impl ActionGroup {
     pub fn actions(&self) -> &'static [&'static str] {
         match self {
             Self::Common => &[
-                "cx.space.read",
+                // R1.7 realm/space inversion: capabilities targeting the
+                // security boundary now live in the `cx.realm.*` namespace;
+                // container actions (former `cx.place.*`) take the
+                // `cx.space.*` slot.
+                "cx.realm.read",
+                "cx.realm.update",
+                "cx.space.create",
                 "cx.space.update",
-                "cx.place.create",
-                "cx.place.update",
-                "cx.place.archive",
-                "cx.place.restore",
-                "cx.place.tombstone",
+                "cx.space.archive",
+                "cx.space.restore",
+                "cx.space.tombstone",
                 "cx.flow.create",
                 "cx.flow.read",
                 "cx.flow.update",
@@ -909,7 +913,9 @@ mod tests {
         // ActionGroup table mirrors that exactly. A bare-name lookup
         // (`flow.create`) is now an explicit miss so we catch any
         // regression that re-introduces the legacy short form.
-        assert!(ActionGroup::Common.contains("cx.space.read"));
+        // R1.7: security boundary actions live in cx.realm.*; container
+        // (former Place) actions live in cx.space.*.
+        assert!(ActionGroup::Common.contains("cx.realm.read"));
         assert!(ActionGroup::Common.contains("cx.flow.create"));
         assert!(ActionGroup::Conversation.contains("cx.message.create"));
         assert!(ActionGroup::Administrative.contains("cx.capability.grant"));
@@ -920,14 +926,12 @@ mod tests {
     #[test]
     fn test_lifecycle_archive_restore_symmetry() {
         // Spec contract: every lifecycle family with `*.archive` MUST also
-        // expose `*.restore` (canonical archived -> active transition). The
-        // pre-existing Common group already had flow.archive + flow.restore;
-        // place.restore and morph.restore were missing — these asserts pin
-        // the symmetry so future trims won't reintroduce the gap.
+        // expose `*.restore` (canonical archived -> active transition). After
+        // R1.7 the former `cx.place.*` capabilities are now `cx.space.*`.
         assert!(ActionGroup::Common.contains("cx.flow.archive"));
         assert!(ActionGroup::Common.contains("cx.flow.restore"));
-        assert!(ActionGroup::Common.contains("cx.place.archive"));
-        assert!(ActionGroup::Common.contains("cx.place.restore"));
+        assert!(ActionGroup::Common.contains("cx.space.archive"));
+        assert!(ActionGroup::Common.contains("cx.space.restore"));
         assert!(ActionGroup::Morph.contains("cx.morph.archive"));
         assert!(ActionGroup::Morph.contains("cx.morph.restore"));
     }
@@ -943,7 +947,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }
@@ -951,12 +955,12 @@ mod tests {
     #[test]
     fn test_ui_gate_denies_when_grant_present_but_action_missing() {
         // Engine carries an unrelated grant for the subject — gate is
-        // now active and denies place.archive because the grant only
-        // covers space.read.
+        // now active and denies space.archive because the grant only
+        // covers realm.read.
         let mut engine = CapabilityEngine::new();
         engine.add_grant(
             GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_action("cx.space.read")
+                .with_action("cx.realm.read")
                 .with_resource(ResourceSelector::Wildcard)
                 .build(),
         );
@@ -965,9 +969,9 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.space.archive", &resource, &ctx);
         assert!(!gate.enabled);
-        assert!(gate.reason.contains("cx.place.archive"));
+        assert!(gate.reason.contains("cx.space.archive"));
     }
 
     #[test]
@@ -975,7 +979,7 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(
             GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_actions(&["cx.place.archive", "cx.place.restore"])
+                .with_actions(&["cx.space.archive", "cx.space.restore"])
                 .with_resource(ResourceSelector::Wildcard)
                 .build(),
         );
@@ -984,7 +988,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = EvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "cx.place.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "cx.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }

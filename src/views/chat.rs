@@ -3782,7 +3782,7 @@ pub fn ChatPanel(
                 // same actor-private account_data that /settings already
                 // edits, so a change here mirrors immediately into the
                 // global view. "Shared history" is a Space-scoped policy
-                // event (`cx.space.history_visibility`) — it's not a
+                // event (`cx.realm.history_visibility`) — it's not a
                 // client-side per-discussion toggle, so the third row
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.

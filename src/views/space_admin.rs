@@ -41,8 +41,8 @@ pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// Pure helper: build + sign a `cx.space.update` Move that writes the
-/// space organization cas-register cell. Mirrors the consent-grant signing
+/// Pure helper: build + sign a `cx.realm.update` Move that writes the
+/// realm organization cas-register cell. Mirrors the consent-grant signing
 /// flow so the Dioxus closure stays small. Takes the persisted per-device
 /// [`LocalIdentity`] in place of the historical demo seed - see
 /// `local_state::LocalStateStore::ensure_local_identity`.
@@ -705,7 +705,7 @@ pub fn SpaceAdminPanel(
                     input {
                         "data-testid": "repair-target-cell-input",
                         value: "{repair_target_cell}",
-                        placeholder: "cx:cell:cx.component.space.organization.v1:...",
+                        placeholder: "cx:cell:cx.component.realm.organization.v1:...",
                         oninput: move |evt| repair_target_cell.set(evt.value()),
                     }
                     label { "conflict_head_A" }
@@ -1055,8 +1055,8 @@ pub fn SpaceAdminPanel(
                             },
                             {crate::i18n::tr("space_admin.save_metadata")}
                         }
-                        // Alternate Move-flow path: build a cx.space.update
-                        // Move targeting cx.component.space.organization.v1
+                        // Alternate Move-flow path: build a cx.realm.update
+                        // Move targeting cx.component.realm.organization.v1
                         // (cas-register) and POST /api/v1/moves. Soland's
                         // LatticeRegistry routes this into the cell; the
                         // direct-event button above stays available until
@@ -1117,7 +1117,7 @@ pub fn SpaceAdminPanel(
                                                 let line = record_submit_outcome(
                                                     &mut state_store.write(),
                                                     &space_for_record,
-                                                    "cx.space.update",
+                                                    "cx.realm.update",
                                                     Some(anchor_for_record),
                                                     &resp,
                                                 );
@@ -2409,22 +2409,22 @@ pub fn SpaceAdminPanel(
 
             if active_section == SpaceAdminSection::Governance {
             // Organization governance — identity/identity-did.md §6 + content-moderation
-            // An Organization is a Principal (not a Space). A single Space can be
-            // jointly governed by multiple organizations; the Space's organization
-            // relationships are maintained via the cx.space.organization event.
+            // An Organization is a Principal (not a Realm). A single Realm can be
+            // jointly governed by multiple organizations; the Realm's organization
+            // relationships are maintained via the cx.realm.organization event.
             div { class: "event", "data-testid": "organization-governance",
                 div { class: "event-head",
                     span { "Organization governance" }
-                    span { "Space ≠ Organization" }
+                    span { "Realm ≠ Organization" }
                 }
                 div { class: "muted",
-                    "An Organization is a Principal (a DID), not a Space. Multi-org governance is expressed via cx.space.organization relations; organization directory and moderation policy live independently of any single Space."
+                    "An Organization is a Principal (a DID), not a Realm. Multi-org governance is expressed via cx.realm.organization relations; organization directory and moderation policy live independently of any single Realm."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Owning organizations" }
-                        span { title: "cx.space.organization", "Organization link" }
-                        div { class: "muted", "Declares the organization(s) this Space belongs to" }
+                        span { title: "cx.realm.organization", "Organization link" }
+                        div { class: "muted", "Declares the organization(s) this Realm belongs to" }
                     }
                     div { class: "metric",
                         strong { "Org directory listing" }
@@ -2983,9 +2983,11 @@ mod move_flow_tests {
         }
     }
 
-    /// "Save Metadata (Move)" wiring: produces a cx.space.update Move
-    /// targeting the cx.component.space.organization.v1 cas-register cell
+    /// "Save Metadata (Move)" wiring: produces a cx.realm.update Move
+    /// targeting the cx.component.realm.organization.v1 cas-register cell
     /// with the form values folded into the cell's value object.
+    // TODO(realm-rework): switch the Move SpaceId argument to a cx:realm:
+    // id once contrix-sdk's identifier validator accepts the new prefix.
     #[test]
     fn build_signed_space_organization_update_targets_organization_cell() {
         let space = "cx:space:0196419b-0000-7000-8000-000000000000";
@@ -3005,8 +3007,8 @@ mod move_flow_tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.space.organization.v1:"),
-            "space organization update must target the organization cell family"
+                .starts_with("cx:cell:cx.component.realm.organization.v1:"),
+            "realm organization update must target the organization cell family"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set op carries value");
