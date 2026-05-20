@@ -26,11 +26,20 @@ pub mod event_signer;
 pub mod federation;
 pub mod hlc;
 pub mod i18n;
+/// Round 4 (spec a77b995) — invite-claim flow (subject_proof +
+/// binding_proof transcript + 5 terminal states UI).
+pub mod invite_claim;
 pub mod key_backup;
 pub mod key_store;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;
 pub mod local_state;
+/// Round 4 (spec a77b995) — mention_redirect plaintext routing
+/// consumer. Receivers consult
+/// `mention_redirect_target_actor_ids` before decrypting the message
+/// body; if the local actor is not in the list, the body MUST NOT be
+/// decrypted at the push layer.
+pub mod mention_redirect;
 pub mod media;
 pub mod mimi_client;
 pub mod mls_governance;

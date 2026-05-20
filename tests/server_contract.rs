@@ -380,23 +380,23 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     );
 
     let frames = parse_events_subscribe_ndjson_text(
-        r#"{"kind":"heartbeat"}
-{"kind":"frontier","cursor":"sx:2"}
-{"kind":"catchup_complete","cursor":"sx:3"}
+        r#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
+{"kind":"frontier","frontier":{"cx:space:demo":["cx:event:01"]}}
+{"kind":"catchup_complete"}
 "#,
     )
     .unwrap();
     assert!(matches!(
         frames[0],
-        contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+        contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
     ));
     assert!(matches!(
         &frames[1],
-        contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:2"
+        contrix_sdk::EventsSubscribeFrameBody::Frontier { .. }
     ));
     assert!(matches!(
         &frames[2],
-        contrix_sdk::EventsSubscribeFrame::CatchupComplete { cursor } if cursor.as_deref() == Some("sx:3")
+        contrix_sdk::EventsSubscribeFrameBody::CatchupComplete
     ));
 }
 

@@ -1021,6 +1021,37 @@ pub mod cx_ops {
             }))
     }
 
+    /// Round 4 (spec a77b995) — validate an `applet_id` against the
+    /// canonical [`contrix_sdk::AppletIdentifier`] shape (DID *or*
+    /// `cx:applet:<uuidv7>`). Returns the typed identifier so callers
+    /// can stash it without re-parsing. Wire-breaking: plain strings
+    /// outside these two forms are rejected.
+    pub fn parse_applet_identifier(
+        applet_id: &str,
+    ) -> Result<contrix_sdk::AppletIdentifier, String> {
+        if applet_id.starts_with("did:") {
+            contrix_sdk::Did::new(applet_id)
+                .map(contrix_sdk::AppletIdentifier::Did)
+                .map_err(|e| format!("invalid applet DID: {e}"))
+        } else if applet_id.starts_with("cx:applet:") {
+            contrix_sdk::AppletId::new(applet_id)
+                .map(contrix_sdk::AppletIdentifier::Cx)
+                .map_err(|e| format!("invalid cx:applet:<uuidv7>: {e}"))
+        } else {
+            Err(format!(
+                "applet_id {applet_id:?} is neither a DID nor cx:applet:<uuidv7> \
+                 (round 4 schema_violation)"
+            ))
+        }
+    }
+
+    /// Round 4 — validate an `agent_id` against the canonical
+    /// [`contrix_sdk::AgentId`] shape (strict DID). Wire-breaking: the
+    /// pre-round-4 permissive plain-string form is rejected.
+    pub fn parse_agent_identifier(agent_id: &str) -> Result<contrix_sdk::AgentId, String> {
+        contrix_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
+    }
+
     /// `cx.applet.protocol_session.start` — open a per-session channel
     /// between a Space member and an applet (used for portal-style RPC
     /// + agent invocation).

@@ -204,9 +204,14 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
     let Some(id) = parts.next() else {
         return false;
     };
+    // Round 4 (spec a77b995) — tightened method regex to
+    // `^did:[a-z0-9]+:[^\s]+$`. The method segment MUST be lowercase
+    // ASCII alphanumeric (no `.`/`-`/`_`/`:`); the method-specific id
+    // MUST NOT contain whitespace.
     if method.is_empty()
-        || !method.chars().all(|c| c.is_ascii_alphanumeric())
+        || !method.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         || id.trim().is_empty()
+        || id.chars().any(char::is_whitespace)
     {
         return false;
     }
@@ -2713,7 +2718,19 @@ mod tests {
         assert!(!is_likely_valid_did("did:web:   "));
         // Non-alphanumeric method.
         assert!(!is_likely_valid_did("did:we b:alice"));
-        assert!(!is_likely_valid_did("did:web-x:alice"));
+        assert!(!is_likely_valid_did("did:web-x:alice")); // ROUND4-ALLOW: negative test
+        // Round 4 (spec a77b995) — `.`/`-`/`_`/`:` are forbidden in
+        // the method segment; method MUST be lowercase ASCII alphanum.
+        assert!(!is_likely_valid_did("did:web.x:alice")); // ROUND4-ALLOW: negative test
+        assert!(!is_likely_valid_did("did:web_x:alice")); // ROUND4-ALLOW: negative test
+        assert!(!is_likely_valid_did("did:WEB:alice"));
+        // Whitespace inside method-specific id is rejected (round-4
+        // regex `^did:[a-z0-9]+:[^\s]+$`).
+        assert!(!is_likely_valid_did("did:web:alice example"));
+        // The method-specific id may still contain `:` (the splitn(2)
+        // keeps everything after the second `:`) — e.g. did:webvh nested
+        // delegations.
+        assert!(is_likely_valid_did("did:webvh:authority.example:zKey"));
     }
 
     /// The canonical `cx.read_receipt.preferences` body shape other devices

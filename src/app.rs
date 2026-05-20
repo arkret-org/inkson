@@ -7061,6 +7061,23 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             "server describe loaded: {} / {}",
                             description.service_type, description.protocol_version
                         ));
+                        // Round 4 — cache the advertised trust_domain so
+                        // downstream signing flows (cross_signing.publish
+                        // v2, S2S transcripts) can pull a canonical
+                        // value off local state without an extra round
+                        // trip. Cleared when describe fails so a stale
+                        // domain can't leak into the next flow.
+                        {
+                            let mut store = state_store.write();
+                            let mut snapshot = store.load();
+                            snapshot.server_trust_domain = if description.trust_domain.is_empty()
+                            {
+                                None
+                            } else {
+                                Some(description.trust_domain.clone())
+                            };
+                            store.save(snapshot);
+                        }
                         server_description.set(Some(description.clone()));
                         Some(description)
                     }

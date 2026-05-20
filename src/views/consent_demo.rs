@@ -31,7 +31,7 @@ use crate::{
     models::SubmitMoveResponse,
     move_builder::{
         UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
-        did_key_verification_method, sign_unsigned_move,
+        build_consent_revoke_move_v2, did_key_verification_method, sign_unsigned_move,
     },
     views::helpers::with_authed_api,
 };
@@ -112,6 +112,38 @@ pub(crate) fn build_signed_consent_revoke(
     let vm = did_key_verification_method(&identity.signing_key.verifying_key());
     let unsigned: UnsignedMove =
         build_consent_revoke_move(did, space_id, consent_id, tag, reason, anchor_ref, hlc)?;
+    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
+}
+
+/// Round 4 (spec a77b995) — sign a `cx.consent.revoke` Move that
+/// carries the REQUIRED `observed_dots` list. The list tells the
+/// reducer which `(actor_id, actor_seq)` tuples the local view is
+/// cascading the revoke through; without this list the reducer rejects
+/// with `schema_violation` (it would otherwise enable implicit
+/// cascade). The renderer obtains the dots from the local consent
+/// observation cache.
+pub(crate) fn build_signed_consent_revoke_v2(
+    identity: &LocalIdentity,
+    space_id: &str,
+    consent_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    observed_dots: &[contrix_sdk::Dot],
+    anchor_ref: &str,
+    hlc: &str,
+) -> anyhow::Result<contrix_sdk::Move> {
+    let did = identity.device_did.as_str();
+    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
+    let unsigned: UnsignedMove = build_consent_revoke_move_v2(
+        did,
+        space_id,
+        consent_id,
+        tag,
+        reason,
+        observed_dots,
+        anchor_ref,
+        hlc,
+    )?;
     Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
 }
 
@@ -311,6 +343,46 @@ pub fn ConsentGrantDemoCard(
     }
 }
 
+/// Round 4 (spec a77b995) — parse `observed_dots` from a textarea
+/// (one `<actor_did>:<actor_seq>` per line). Lines where the suffix
+/// after the last `:` does not parse as a `u64` are skipped. Returns
+/// an empty Vec when the input has no parseable lines — the caller
+/// MUST refuse to submit a cascade revoke in that case.
+pub fn parse_observed_dots(raw: &str) -> Vec<contrix_sdk::Dot> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Split from the right because DIDs themselves contain `:`.
+        let Some((did_part, seq_part)) = line.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(actor_seq) = seq_part.trim().parse::<u64>() else {
+            continue;
+        };
+        let Ok(actor_id) = contrix_sdk::Did::new(did_part.trim()) else {
+            continue;
+        };
+        out.push(contrix_sdk::Dot {
+            actor_id,
+            actor_seq,
+        });
+    }
+    out
+}
+
+/// Convenience: count of parseable observed_dots for the UI badge.
+/// Returns `None` when the input is empty so the caller can hide the
+/// count chip.
+pub fn parse_observed_dots_count(raw: &str) -> Option<usize> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    Some(parse_observed_dots(raw).len())
+}
+
 /// Round R2/R3 (T17) — known top-level consent subscopes the
 /// `scope=any` revoke MUST cascade through. The list mirrors the
 /// `consent_scope_registry.json` enum from the spec (Round R2/R3 add);
@@ -343,6 +415,12 @@ pub fn RevokeAllConsentCard(
     let mut status = use_signal(String::new);
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
     let mut space_id = use_signal(String::new);
+    // Round 4 (spec a77b995) — observed_dots input. The user pastes
+    // `actor_id:actor_seq` lines (one per dot) so the cascade revoke
+    // tells the reducer exactly which observations it covers. Without
+    // a populated list the reducer rejects the envelope with
+    // `schema_violation`.
+    let mut observed_dots_raw = use_signal(String::new);
 
     rsx! {
         div { class: "event", "data-testid": "revoke-all-consent-card",
@@ -372,6 +450,25 @@ pub fn RevokeAllConsentCard(
                     for scope in CONSENT_REVOKE_CASCADE_SUBSCOPES {
                         li { "{scope}" }
                     }
+                }
+            }
+            // Round 4 — observed_dots input. The reducer rejects an
+            // empty list with `schema_violation` so the user MUST
+            // surface the observations they are revoking. One
+            // `actor_id:actor_seq` per line; rendered straight into the
+            // wire payload by `build_signed_consent_revoke_v2`.
+            label {
+                {crate::i18n::tr("consent.revoke.dot_list_header")}
+            }
+            textarea {
+                "data-testid": "revoke-all-observed-dots",
+                placeholder: "did:web:peer.example:42",
+                value: "{observed_dots_raw}",
+                oninput: move |evt| observed_dots_raw.set(evt.value()),
+            }
+            if let Some(parsed_count) = parse_observed_dots_count(&observed_dots_raw()) {
+                div { class: "muted", "data-testid": "revoke-all-observed-dots-count",
+                    "{parsed_count} observed dot(s) parsed"
                 }
             }
             if confirming() {
@@ -424,16 +521,27 @@ pub fn RevokeAllConsentCard(
                                     .map(|s| (*s).to_owned())
                                     .collect();
                                 let scope_count = scopes.len();
+                                let observed_dots = parse_observed_dots(&observed_dots_raw());
+                                if observed_dots.is_empty() {
+                                    status.set(
+                                        "Cascade revoke needs at least one observed dot \
+                                         (round 4 schema_violation if omitted)."
+                                            .to_owned(),
+                                    );
+                                    confirming.set(false);
+                                    return;
+                                }
                                 spawn(async move {
                                     let mut succeeded = 0usize;
                                     for scope in &scopes {
                                         let hlc = Hlc::now("yougen").to_string();
-                                        let signed = match build_signed_consent_revoke(
+                                        let signed = match build_signed_consent_revoke_v2(
                                             &identity,
                                             &space_val,
                                             &consent_val,
                                             scope,
                                             Some("scope=any cascade revoke"),
+                                            &observed_dots,
                                             &anchor_ref,
                                             &hlc,
                                         ) {

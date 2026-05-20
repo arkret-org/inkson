@@ -91,11 +91,51 @@ pub fn build_consent_revoke_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
+    build_consent_revoke_move_v2(
+        issuer,
+        space_id,
+        consent_id,
+        tag,
+        reason,
+        &[],
+        anchor_ref,
+        hlc,
+    )
+}
+
+/// Round 4 (spec a77b995) — `cx.consent.revoke` v2 with REQUIRED
+/// `observed_dots` carried in the op payload. The receiver MUST NOT
+/// silently cascade revoke to dots not explicitly observed; an empty
+/// list is accepted only for non-causal revoke (which yougen's UI no
+/// longer surfaces directly — every cascade flow MUST pass the dot
+/// list).
+///
+/// `observed_dots` is the list of `(actor_id, actor_seq)` tuples per
+/// [`contrix_sdk::Dot`] that the local view has observed and is
+/// explicitly revoking. The wire field maps to
+/// [`contrix_sdk::ConsentRevokePayload::observed_dots`].
+pub fn build_consent_revoke_move_v2(
+    issuer: &str,
+    space_id: &str,
+    consent_id: &str,
+    tag: &str,
+    reason: Option<&str>,
+    observed_dots: &[contrix_sdk::Dot],
+    anchor_ref: &str,
+    hlc: &str,
+) -> Result<UnsignedMove> {
     let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
     let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
     }
+    // Round 4 — emit the canonical observed_dots array even when empty
+    // so the receiver-side schema_violation guard has the field to look
+    // at. The SDK validator distinguishes "missing" from "empty"; the
+    // op payload always sets the key.
+    op["observed_dots"] = serde_json::to_value(observed_dots).unwrap_or_else(|_| {
+        serde_json::Value::Array(Vec::new())
+    });
     let effect = serde_json::json!({ "cell": cell_id, "op": op });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }

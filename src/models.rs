@@ -153,6 +153,14 @@ pub struct SignAnchorResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServerDescription {
     pub service_did: String,
+    /// Round 4 (spec a77b995) — REQUIRED `trust_domain` advertised by
+    /// the service. Receivers MUST refuse to register as a candidate
+    /// `plaintext_visible_services` peer when the trust domain
+    /// disagrees with the local deployment scope. Defaulted to empty
+    /// only to keep deserialisation from legacy fixtures non-fatal;
+    /// [`Self::missing_v2_requirements`] flags the empty case.
+    #[serde(default)]
+    pub trust_domain: String,
     pub service_type: String,
     pub protocol_version: String,
     #[serde(default)]
@@ -173,8 +181,37 @@ pub struct ServerDescription {
     pub limits: Value,
     #[serde(default)]
     pub rate_limit_policy: Value,
+    /// Round 4 — receivers MUST treat a missing / null
+    /// `plaintext_visibility` value as `untrusted` (fail-closed for the
+    /// mention-redirect / late-recovery paths). See
+    /// [`Self::is_plaintext_visibility_untrusted`].
     #[serde(default)]
     pub plaintext_visibility: Value,
+    /// Round 4 — features the service has actually implemented (subset
+    /// of `supported_features`). Required field on v2.
+    #[serde(default)]
+    pub implemented_features: Vec<String>,
+    /// Round 4 — profiles the service self-declares conformance to.
+    #[serde(default)]
+    pub claimed_profiles: Vec<String>,
+    /// Round 4 — profiles a third party has verified the service
+    /// against. MUST be empty when `development_mode == true`.
+    #[serde(default)]
+    pub verified_profiles: Vec<String>,
+    /// Round 4 — non-final extension features.
+    #[serde(default)]
+    pub experimental_features: Vec<String>,
+    /// Round 4 — back-compat shims this service implements.
+    #[serde(default)]
+    pub compat_surfaces: Vec<String>,
+    /// Round 4 — when `true`, the service is in development mode.
+    #[serde(default)]
+    pub development_mode: bool,
+    /// Round 4 — `oneOf` rate-limit declaration (windowed / token /
+    /// adaptive). Left untyped here so the SDK doesn't pin to one
+    /// variant.
+    #[serde(default)]
+    pub rate_limit: Value,
 }
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "cx.profile.core_event_store.v1";
@@ -237,6 +274,77 @@ impl ServerDescription {
 
     pub fn is_v1_principal_server_ready(&self) -> bool {
         self.missing_v1_principal_server_requirements().is_empty()
+    }
+
+    /// Round 4 (spec a77b995) — list the v2-required fields the
+    /// describe response failed to advertise. The 17-field set is
+    /// `service_did`, `trust_domain`, `service_type`, `protocol_version`,
+    /// `supported_profiles`, `supported_operations`, `supported_bindings`,
+    /// `supported_features`, `auth_metadata`, `limits`,
+    /// `plaintext_visibility`, `implemented_features`, `claimed_profiles`,
+    /// `verified_profiles`, `experimental_features`, `compat_surfaces`,
+    /// `development_mode`. The check uses presence-as-default sentinels
+    /// (empty strings / null values) so the local model can deserialise
+    /// legacy fixtures but [`is_v2_ready`] only returns true once a
+    /// real v2 producer is on the wire.
+    pub fn missing_v2_requirements(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if self.service_did.trim().is_empty() {
+            missing.push("service_did");
+        }
+        if self.trust_domain.trim().is_empty() {
+            missing.push("trust_domain");
+        }
+        if self.service_type.trim().is_empty() {
+            missing.push("service_type");
+        }
+        if self.protocol_version.trim().is_empty() {
+            missing.push("protocol_version");
+        }
+        if self.auth_metadata.is_null() {
+            missing.push("auth_metadata");
+        }
+        if self.limits.is_null() {
+            missing.push("limits");
+        }
+        if self.plaintext_visibility.is_null() {
+            missing.push("plaintext_visibility");
+        }
+        missing
+    }
+
+    /// Round 4 — true iff the describe response carries the v2 17-field
+    /// shape. Producers MUST gate on this before treating the service
+    /// as a candidate `plaintext_visible_services` peer.
+    pub fn is_v2_ready(&self) -> bool {
+        self.missing_v2_requirements().is_empty()
+    }
+
+    /// Round 4 — cross-field invariant: `verified_profiles` MUST be
+    /// empty when `development_mode == true`.
+    pub fn validate_v2(&self) -> Result<(), String> {
+        if self.development_mode && !self.verified_profiles.is_empty() {
+            return Err(format!(
+                "ServiceDescribe v2: development_mode=true forbids non-empty verified_profiles \
+                 (schema_violation)"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Round 4 — true iff the declared trust domain matches `expected`.
+    /// Used when registering a remote service as a candidate
+    /// `plaintext_visible_services` peer; trust-domain mismatch MUST
+    /// fail registration.
+    pub fn trust_domain_matches(&self, expected: &str) -> bool {
+        !self.trust_domain.trim().is_empty()
+            && self.trust_domain.trim() == expected.trim()
+    }
+
+    /// Round 4 — treat a missing / null `plaintext_visibility` as
+    /// `untrusted` (fail-closed for mention-redirect / late-recovery).
+    pub fn is_plaintext_visibility_untrusted(&self) -> bool {
+        self.plaintext_visibility.is_null()
     }
 }
 

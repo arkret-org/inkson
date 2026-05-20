@@ -1086,6 +1086,20 @@ impl ContrixApi {
 
     /// Stream the canonical `/api/v1/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
+    ///
+    /// Round 4 (spec a77b995) — the parser is now typed against
+    /// [`contrix_sdk::EventsSubscribeFrameBody`] (the `tag = "kind"`,
+    /// snake_case-discriminated frame body). Callers MUST route on the
+    /// canonical variants: `Dropped { cursor }` → resume from `cursor`,
+    /// `ResyncRequired` → full resync, `EpochRotation { epoch }` →
+    /// refresh session keys. The pre-round-4 untyped string-line
+    /// parser is wire-broken.
+    ///
+    /// Native-only: reqwest's wasm32 backend goes through the browser fetch
+    /// API and does not expose `Response::chunk()` / `bytes_stream()`. A wasm
+    /// subscription path needs a separate web-sys ReadableStream-based
+    /// implementation (not wired up yet — no callers).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn events_subscribe_ndjson<F>(
         &self,
         space_id: &str,
@@ -1094,7 +1108,7 @@ impl ContrixApi {
         mut on_frame: F,
     ) -> anyhow::Result<()>
     where
-        F: FnMut(contrix_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
+        F: FnMut(contrix_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
     {
         let request = self
             .http
@@ -1432,6 +1446,32 @@ impl ContrixApi {
             .delete(self.endpoint(&format!("api/v1/keys/backups/{backup_id}"))?);
         self.send_json(self.prepare_request(request), Method::DELETE)
             .await
+    }
+
+    /// Round 4 (spec a77b995) — request a presigned blob upload URL
+    /// scoped to a Realm. The pre-round-4 omission of `realm_id` is
+    /// wire-broken: Realm-owned blobs MUST carry `realm_id` so the
+    /// server can bind the resulting blob_ref into the originating
+    /// Realm's resource quota / legal-hold scope. Returns the
+    /// server-issued envelope verbatim (URL, blob_ref, expires_at,
+    /// headers) for the caller to PUT against.
+    pub async fn blob_presign(
+        &self,
+        realm_id: &str,
+        content_type: &str,
+        content_length: u64,
+    ) -> anyhow::Result<Value> {
+        let realm = contrix_sdk::RealmId::new(realm_id)
+            .map_err(|err| anyhow::anyhow!("invalid realm_id for /blob/presign: {err}"))?;
+        self.post_json(
+            "api/v1/blob/presign",
+            json!({
+                "realm_id": realm.as_str(),
+                "content_type": content_type,
+                "content_length": content_length,
+            }),
+        )
+        .await
     }
 
     pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResBody> {
@@ -2218,6 +2258,40 @@ impl ContrixApi {
         .await
     }
 
+    /// Round 4 (spec a77b995) — `GET /api/v1/events/frontier` as the
+    /// `account_client` variant. Wire-breaking: the round-4
+    /// `account_client` variant carries `peer_role`, `frontier`,
+    /// `actor_seq_upper_bounds` ONLY — it does NOT include
+    /// `frontier_root`, transport signatures, or receipts. Those moved
+    /// to the `federation_peer` variant which is S2S-only and clients
+    /// MUST NEVER consume.
+    ///
+    /// The caller MUST pre-confirm that the route is signed-in (the
+    /// account-client variant is gated on the principal session token).
+    /// Anonymous-health probes go through a separate route.
+    pub async fn events_frontier_account_client(
+        &self,
+    ) -> anyhow::Result<contrix_sdk::EventsFrontierAccountClientResponse> {
+        let body: Value = self.get_json("api/v1/events/frontier").await?;
+        let frontier: contrix_sdk::EventsFrontierAccountClientResponse =
+            serde_json::from_value(body).map_err(|err| {
+                anyhow::anyhow!(
+                    "events/frontier account_client decode failed (round 4 wire shape): {err}"
+                )
+            })?;
+        if !matches!(
+            frontier.peer_role,
+            contrix_sdk::FrontierPeerRole::AccountClient
+        ) {
+            anyhow::bail!(
+                "events/frontier peer_role {:?} is not account_client (federation_peer / \
+                 anonymous_health are off-limits to clients)",
+                frontier.peer_role
+            );
+        }
+        Ok(frontier)
+    }
+
     pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResBody> {
         self.get_json("api/v1/events/describe").await
     }
@@ -2280,6 +2354,34 @@ impl ContrixApi {
     ) -> anyhow::Result<SubmitEventResponse> {
         let event = EventEnvelope::from_legacy_operation(operation)?;
         self.submit_event_envelope(&event).await
+    }
+
+    /// Round 4 (spec a77b995) — `POST /api/v1/events/submit` carrying
+    /// the batch shape ([`contrix_sdk::EventsSubmitBatchRequest`]).
+    /// Clients pick this when they have multiple ready envelopes (e.g.
+    /// composer sends a draft + a read receipt at once); the federation
+    /// shape ([`contrix_sdk::EventsSubmitFederationRequest`]) is S2S
+    /// only and yougen MUST NEVER serialise it.
+    pub async fn submit_events_batch(
+        &self,
+        envelopes: &[Value],
+        idempotency_key: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let body = contrix_sdk::EventsSubmitBatchRequest {
+            envelopes: envelopes.to_vec(),
+            idempotency_key: idempotency_key.map(ToOwned::to_owned),
+        };
+        let value = serde_json::to_value(&body)?;
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/events/submit")?)
+            .json(&value);
+        let idem = idempotency_key
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(uuid_v7);
+        let request = self.with_write_request_headers(request, &idem);
+        self.send_json_retryable(self.prepare_request(request), Method::POST)
+            .await
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
@@ -2662,16 +2764,32 @@ pub fn build_presence_envelope(
     .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
 }
 
-/// Round R2/R3 (T02) — build a `cx.call.signal` `EphemeralEnvelope` for
-/// SDP/ICE exchange. `call_id` identifies the WebRTC peer connection;
-/// `signal_kind` is one of `sdp_offer`/`sdp_answer`/`ice_candidate`/`hangup`.
-pub fn build_call_signal_envelope(
+/// Round 4 (spec a77b995) — build a `cx.call.signal` v2 `EphemeralEnvelope`.
+///
+/// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
+/// `{call_id, kind, payload}` to the canonical
+/// [`contrix_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
+/// where `signal_type` MUST be one of [`contrix_sdk::CALL_SIGNAL_TYPES`]
+/// (13 values: `invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
+/// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
+/// `focus_leave`, `error`). `device_id` + `proof` are REQUIRED on the
+/// envelope; `seq` is strictly monotonic per
+/// `(realm_id, call_id, actor, device)` (callers manage the counter via
+/// [`contrix_sdk::CallSignalState`]).
+///
+/// The caller MUST attach a device-signed proof via the active
+/// [`crate::event_signer`] before submit — the bare envelope returned
+/// here carries `proof = None` and the submit guard / receiver will
+/// reject it. See [`super::ContrixApi::submit_call_signal_v2`] for the
+/// signing + submit path.
+pub fn build_call_signal_envelope_v2(
     realm_id: &str,
     actor_did: &str,
-    device_id: Option<&str>,
+    device_id: &str,
     call_id: &str,
-    signal_kind: &str,
-    payload: Value,
+    signal_type: &str,
+    seq: u64,
+    data: Value,
 ) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
@@ -2679,13 +2797,31 @@ pub fn build_call_signal_envelope(
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.call.signal: {err}"))?;
     let actor = contrix_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.call.signal: {err}"))?;
-    let device = device_id
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| {
-            contrix_sdk::DeviceId::new(s)
-                .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))
-        })
-        .transpose()?;
+    if device_id.trim().is_empty() {
+        anyhow::bail!(
+            "cx.call.signal v2 requires non-empty device_id (round 4 schema_violation)"
+        );
+    }
+    let device = Some(
+        contrix_sdk::DeviceId::new(device_id)
+            .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))?,
+    );
+    if !contrix_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
+        anyhow::bail!(
+            "cx.call.signal signal_type {signal_type:?} not in canonical 13-value enum"
+        );
+    }
+    let call = contrix_sdk::CallId::new(call_id)
+        .map_err(|err| anyhow::anyhow!("invalid call_id for cx.call.signal: {err}"))?;
+    let payload = contrix_sdk::CallSignalPayload {
+        call_id: call,
+        signal_type: signal_type.to_owned(),
+        seq,
+        data,
+    };
+    payload
+        .validate_signal_type()
+        .map_err(|err| anyhow::anyhow!("cx.call.signal payload rejected: {err}"))?;
     contrix_sdk::EphemeralEnvelope::new(
         "cx.call.signal",
         realm,
@@ -2693,11 +2829,7 @@ pub fn build_call_signal_envelope(
         device,
         now,
         expires_at,
-        json!({
-            "call_id": call_id,
-            "kind": signal_kind,
-            "payload": payload,
-        }),
+        serde_json::to_value(payload)?,
         None,
     )
     .map_err(|err| anyhow::anyhow!("call signal envelope rejected: {err}"))
@@ -3335,9 +3467,14 @@ fn events_subscribe_path(
     url
 }
 
+/// Round 4 (spec a77b995) — parse the round-4 typed
+/// `/events/subscribe` NDJSON stream. The frame body is
+/// [`contrix_sdk::EventsSubscribeFrameBody`] (tag = "kind",
+/// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
+/// string-line parser is deleted.
 pub fn parse_events_subscribe_ndjson_text(
     input: &str,
-) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrame>> {
+) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrameBody>> {
     let mut frames = Vec::new();
     for line in input.lines() {
         if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
@@ -3352,7 +3489,7 @@ fn drain_events_subscribe_ndjson_lines<F>(
     on_frame: &mut F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(contrix_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
+    F: FnMut(contrix_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
 {
     while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
         let mut line: Vec<u8> = pending.drain(..=newline).collect();
@@ -3371,7 +3508,7 @@ where
 
 fn parse_events_subscribe_ndjson_line(
     line: &[u8],
-) -> anyhow::Result<Option<contrix_sdk::EventsSubscribeFrame>> {
+) -> anyhow::Result<Option<contrix_sdk::EventsSubscribeFrameBody>> {
     let trimmed = trim_ascii(line);
     if trimmed.is_empty() {
         return Ok(None);
@@ -3583,33 +3720,36 @@ mod tests {
 
     #[test]
     fn parses_events_subscribe_ndjson_frames() {
+        // Round 4 typed frames carry the discriminator-required fields:
+        // `heartbeat` requires `emitted_at`; `frontier` requires a nested
+        // `frontier` value; `catchup_complete` is a unit variant.
         let frames = parse_events_subscribe_ndjson_text(
             r#"
-{"kind":"heartbeat"}
-{"kind":"frontier","cursor":"sx:2"}
-{"kind":"catchup_complete","cursor":"sx:3"}
+{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
+{"kind":"frontier","frontier":{"cx:space:demo":["cx:event:01"]}}
+{"kind":"catchup_complete"}
 "#,
         )
         .unwrap();
 
         assert!(matches!(
             frames[0],
-            contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+            contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
         ));
         assert!(matches!(
             &frames[1],
-            contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:2"
+            contrix_sdk::EventsSubscribeFrameBody::Frontier { .. }
         ));
         assert!(matches!(
             &frames[2],
-            contrix_sdk::EventsSubscribeFrame::CatchupComplete { cursor } if cursor.as_deref() == Some("sx:3")
+            contrix_sdk::EventsSubscribeFrameBody::CatchupComplete
         ));
     }
 
     #[test]
     fn drains_split_events_subscribe_ndjson_chunks() {
-        let mut pending = br#"{"kind":"heartbeat"}
-{"kind":"frontier""#
+        let mut pending = br#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
+{"kind":"resync_required""#
             .to_vec();
         let mut frames = Vec::new();
         drain_events_subscribe_ndjson_lines(&mut pending, &mut |frame| {
@@ -3620,11 +3760,11 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert!(matches!(
             frames[0],
-            contrix_sdk::EventsSubscribeFrame::Heartbeat { .. }
+            contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
         ));
 
         pending.extend_from_slice(
-            br#","cursor":"sx:split"}
+            br#","reason":"server restart"}
 "#,
         );
         drain_events_subscribe_ndjson_lines(&mut pending, &mut |frame| {
@@ -3636,7 +3776,7 @@ mod tests {
         assert!(pending.is_empty());
         assert!(matches!(
             &frames[1],
-            contrix_sdk::EventsSubscribeFrame::Frontier { cursor } if cursor == "sx:split"
+            contrix_sdk::EventsSubscribeFrameBody::ResyncRequired { reason } if reason == "server restart"
         ));
     }
 

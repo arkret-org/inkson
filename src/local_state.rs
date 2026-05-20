@@ -821,6 +821,13 @@ pub struct ClientLocalState {
     /// straight from this `Vec`.
     #[serde(default)]
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
+    /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
+    /// connected principal server's `ServiceDescribe` v2 response.
+    /// Threaded through to flows that need to canonicalise into
+    /// transport / signing transcripts (e.g. `cx.cross_signing.publish`).
+    /// `None` until the first successful `/server/describe` lands.
+    #[serde(default)]
+    pub server_trust_domain: Option<String>,
 }
 
 /// Hard cap on the number of buffered telemetry entries kept in
@@ -957,6 +964,7 @@ impl Default for ClientLocalState {
             space_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
+            server_trust_domain: None,
         }
     }
 }

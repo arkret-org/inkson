@@ -6,6 +6,47 @@ Android / web).
 
 ## [Unreleased]
 
+### Round R4 — protocol review closures (2026-05-20, contrix-spec `2a4d39b..a77b995`)
+
+Closes the round-4 protocol-review commits on the client surfaces. See
+[`../_todos.md`](../_todos.md) for the workstream context.
+
+- **BREAKING** `cx.call.signal` v2 — all 13 `signal_type` values supported
+  (`offer` / `answer` / `ice` / `hangup` / `reject` / `mute_state` /
+  `media_state` / `speaking` / `focus_join` / `focus_leave` / `error` /
+  `device_change` / `renegotiate`). Outgoing signals MUST carry `proof`
+  (device signature) and a per-`(realm, call, actor, device)` monotonic
+  `seq`. Rollback → reject + hangup.
+- **BREAKING** `/events/subscribe` consumes typed `EventsSubscribeFrame`;
+  `dropped` resumes from the embedded cursor, `resync_required` triggers
+  full re-sync, `epoch_rotation` refreshes the session keys.
+- **BREAKING** `/events/frontier` for `peer_role=account_client` no longer
+  carries `frontier_root` / `signature`; the client no longer depends on
+  them.
+- **BREAKING** `/blob/presign` now sends `realm_id` for Realm-owned blobs.
+- **BREAKING** `/events/submit` chooses `single` or `batch` form; the
+  client never emits the `federation` form.
+- **Added** invite-claim now produces `subject_proof` (device signature)
+  plus the `binding_proof` transcript; the new 5 terminal states render
+  in the invite UI.
+- **BREAKING** `agent_id` / `applet_id` are constructed strictly as DIDs
+  (with `cx:applet:<uuidv7>` accepted for applet IDs).
+- **Added** `mention_redirect_target_actor_ids` consumed for plaintext
+  routing; targets outside the array do not decrypt content.
+- **Added** late-recovery banner is now sourced from
+  `late_recovery_original_event_id` on
+  `cx.audit.policy_access{access_kind=e2ee_late_recovery}`.
+- **BREAKING** `ServiceDescribe` consumer enforces 17 required fields;
+  `trust_domain` mismatch fails the registration handshake; missing
+  `plaintext_visibility` is treated as untrusted.
+- **Added** `consent_revoke` UI now shows the required `observed_dots[]`
+  list and lets the user revoke them as one action.
+- **Added** `SnapshotBootstrap` consumer wires the wire-shape pieces
+  (`signature` / `state_hash` / `snapshot_frontier` / `chunks[]`); full
+  chunk import is a `TODO(round4)` — failures fall back to full sync.
+- **Added** DID method-name regex sweep tightened to
+  `^did:[a-z0-9]+:[^\s]+$`.
+
 ### Round R2/R3 (2026-05-20) — spec close-out
 
 Closes 17 P0/P1 tasks from contrix-spec rounds R2 and R3. Wire-breaking

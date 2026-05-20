@@ -19,6 +19,15 @@
 //! 2. The banner message is i18n'd; the actual translation lives in
 //!    [`crate::i18n`] under `timeline.late_recovery.banner`. This module
 //!    only owns the projection + the minutes computation.
+//!
+//! Round 4 (spec a77b995) — the banner is now sourced from the
+//! `cx.audit.policy_access` event whose `access_kind ==
+//! e2ee_late_recovery` carries
+//! [`late_recovery_original_event_id`](contrix_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
+//! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
+//! construction path; the renderer prefers this entry point so the
+//! banner is bound to the audited recovery event id (and therefore
+//! auditable).
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -64,6 +73,46 @@ impl LateRecoveredEvent {
             let hours = mins / 60;
             format!("Older messages were just decrypted, about {hours} hour(s) after they arrived.")
         }
+    }
+}
+
+impl LateRecoveredEvent {
+    /// Round 4 — construct from a `cx.audit.policy_access` payload
+    /// whose `access_kind` is
+    /// [`AccessKind::E2EELateRecovery`](contrix_sdk::AccessKind::E2EELateRecovery).
+    /// Returns `None` if the access_kind is not e2ee_late_recovery or
+    /// the required `late_recovery_original_event_id` is missing — the
+    /// SDK validator already rejects malformed payloads so callers
+    /// receive a typed `payload.validate_minimal()` error before this
+    /// runs; this helper only does the typed lift.
+    ///
+    /// `original_received_at` is the wall-clock time the original
+    /// (undecryptable) event landed at the client — the caller provides
+    /// it from the local ingest cache because the SDK payload carries
+    /// only the recovery timestamp.
+    pub fn from_audit_policy_access(
+        payload: &contrix_sdk::AuditPolicyAccessPayload,
+        original_received_at: DateTime<Utc>,
+        actor_revoked_at_recovery: bool,
+    ) -> Option<Self> {
+        if !matches!(
+            payload.access_kind,
+            contrix_sdk::AccessKind::E2EELateRecovery
+        ) {
+            return None;
+        }
+        let event_id = payload
+            .late_recovery_original_event_id
+            .as_ref()?
+            .as_str()
+            .to_owned();
+        Some(Self {
+            event_id,
+            actor_did: payload.actor.as_str().to_owned(),
+            original_received_at,
+            recovered_at: payload.observed_at,
+            actor_revoked_at_recovery,
+        })
     }
 }
 
@@ -117,5 +166,41 @@ mod tests {
         let allowed = ev(0, 30, false);
         assert!(should_filter_recovered_event(&revoked));
         assert!(!should_filter_recovered_event(&allowed));
+    }
+
+    #[test]
+    fn from_audit_policy_access_carries_late_recovery_original_event_id() {
+        use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
+        let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let payload = AuditPolicyAccessPayload {
+            realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            actor: Did::new("did:web:alice.example").unwrap(),
+            access_kind: AccessKind::E2EELateRecovery,
+            late_recovery_original_event_id: Some(
+                EventId::new("cx:event:01904100-0000-7000-8000-000000000007").unwrap(),
+            ),
+            observed_at: base + Duration::minutes(30),
+        };
+        let ev = LateRecoveredEvent::from_audit_policy_access(&payload, base, false).unwrap();
+        assert_eq!(
+            ev.event_id,
+            "cx:event:01904100-0000-7000-8000-000000000007"
+        );
+        assert_eq!(ev.lag_minutes(), 30);
+        assert!(!should_filter_recovered_event(&ev));
+    }
+
+    #[test]
+    fn from_audit_policy_access_rejects_wrong_access_kind() {
+        use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
+        let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let payload = AuditPolicyAccessPayload {
+            realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            actor: Did::new("did:web:alice.example").unwrap(),
+            access_kind: AccessKind::Audit,
+            late_recovery_original_event_id: None,
+            observed_at: base,
+        };
+        assert!(LateRecoveredEvent::from_audit_policy_access(&payload, base, false).is_none());
     }
 }

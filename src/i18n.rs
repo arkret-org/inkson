@@ -1120,6 +1120,53 @@ pub fn english_translations() -> TranslationDict {
         "That code is invalid or expired.",
     );
 
+    // Round 4 (spec a77b995) — invite terminal-state labels surfaced
+    // by [`crate::invite_claim::InviteTerminalState`].
+    dict.set("invite.terminal.claimed", "Claimed");
+    dict.set(
+        "invite.terminal.send_failed",
+        "Could not deliver the invite (network or auth-server error).",
+    );
+    dict.set(
+        "invite.terminal.revoked_by_capability_loss",
+        "Revoked — the inviter no longer has permission to invite.",
+    );
+    dict.set(
+        "invite.terminal.revoked_by_inviter_left",
+        "Revoked — the inviter left the space.",
+    );
+    dict.set(
+        "invite.terminal.invalidated_by_rate_limit",
+        "Invalidated — too many failed attempts; the invite is now blocked.",
+    );
+
+    // Round 4 — mention-redirect plaintext routing banner.
+    dict.set(
+        "message.mention_redirect.banner",
+        "This message was redirected to: {targets}",
+    );
+    dict.set(
+        "message.mention_redirect.not_routed",
+        "(You are not in the redirect set; the body is hidden.)",
+    );
+
+    // Round 4 — e2ee_late_recovery banner sourced from
+    // `late_recovery_original_event_id`.
+    dict.set(
+        "timeline.e2ee_late_recovery.banner",
+        "Older messages were just decrypted, {minutes} minutes after they arrived.",
+    );
+
+    // Round 4 — observed_dots consent revoke UI.
+    dict.set(
+        "consent.revoke.dot_list_header",
+        "Observed dots that will cascade revoke:",
+    );
+    dict.set(
+        "consent.revoke.cascade_button",
+        "Revoke all observed dots",
+    );
+
     dict
 }
 

@@ -9,6 +9,84 @@
 
 use contrix_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 
+/// Round 4 (spec a77b995) — outcome of consuming a
+/// [`contrix_sdk::SnapshotBootstrap`] envelope carried alongside a
+/// `cx.events.query` response. The receiver validates the envelope's
+/// structural fields (`signature`, `state_hash`, `snapshot_frontier`,
+/// per-chunk digests) BEFORE applying any chunk bytes. Any failure
+/// returns [`SnapshotBootstrapOutcome::FallBackFullSync`] so the
+/// caller falls back to a full `/sync` rebuild rather than trust a
+/// partially-validated snapshot.
+///
+/// The internal chunked-import path is still
+/// `TODO(round4-snapshot-bootstrap-import)`. The wire shape MUST parse
+/// here so producer / consumer services can negotiate the new envelope
+/// shape; chunk-fetch + integrity-check + apply lives in the follow-up.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SnapshotBootstrapOutcome {
+    /// All envelope-level invariants held (signature present,
+    /// state_hash non-empty, snapshot_frontier non-empty, every chunk
+    /// has a digest + fetch_ref). The caller may proceed to the
+    /// per-chunk fetch + verify step.
+    AcceptedHeader {
+        chunk_count: usize,
+        state_hash: String,
+    },
+    /// Some structural invariant failed. The caller MUST drop the
+    /// bootstrap envelope and fall back to a full sync.
+    FallBackFullSync(String),
+}
+
+/// Round 4 — validate the structural fields of a
+/// [`contrix_sdk::SnapshotBootstrap`] envelope. Returns
+/// [`SnapshotBootstrapOutcome::AcceptedHeader`] only when every
+/// required field is populated; any miss → fall back to full sync.
+///
+/// TODO(round4-snapshot-bootstrap-import): once the receiver gains the
+/// chunked-import pipeline (per-chunk fetch + digest re-verify +
+/// reducer apply), call this helper from the import entry point and
+/// proceed to chunk fetching when accepted.
+pub fn consume_snapshot_bootstrap(
+    bootstrap: &contrix_sdk::SnapshotBootstrap,
+) -> SnapshotBootstrapOutcome {
+    if bootstrap.signature.is_null() {
+        return SnapshotBootstrapOutcome::FallBackFullSync(
+            "snapshot_bootstrap.signature is null".to_owned(),
+        );
+    }
+    if bootstrap.state_hash.as_str().trim().is_empty() {
+        return SnapshotBootstrapOutcome::FallBackFullSync(
+            "snapshot_bootstrap.state_hash is empty".to_owned(),
+        );
+    }
+    if bootstrap.snapshot_frontier.is_empty() {
+        return SnapshotBootstrapOutcome::FallBackFullSync(
+            "snapshot_bootstrap.snapshot_frontier is empty".to_owned(),
+        );
+    }
+    for (index, chunk) in bootstrap.chunks.iter().enumerate() {
+        if chunk.chunk_id.trim().is_empty() {
+            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
+                "snapshot_bootstrap.chunks[{index}].chunk_id is empty"
+            ));
+        }
+        if chunk.digest.as_str().trim().is_empty() {
+            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
+                "snapshot_bootstrap.chunks[{index}].digest is empty"
+            ));
+        }
+        if chunk.fetch_ref.trim().is_empty() {
+            return SnapshotBootstrapOutcome::FallBackFullSync(format!(
+                "snapshot_bootstrap.chunks[{index}].fetch_ref is empty"
+            ));
+        }
+    }
+    SnapshotBootstrapOutcome::AcceptedHeader {
+        chunk_count: bootstrap.chunks.len(),
+        state_hash: bootstrap.state_hash.as_str().to_owned(),
+    }
+}
+
 /// Outcome of a snapshot verification round.
 #[derive(Debug)]
 pub enum SnapshotVerifyResult {

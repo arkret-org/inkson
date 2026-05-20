@@ -27,7 +27,7 @@ use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
 use chrono::Utc;
 use contrix_sdk::{
     CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
-    SignedCrossSigningKey,
+    SignedCrossSigningKey, TypedTrustDomainId,
 };
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
@@ -422,6 +422,11 @@ impl CrossSigningTrustState {
 pub struct CrossSigningExecutor {
     plan: CrossSigningSetupPlan,
     principal_did: Did,
+    /// Round 4 (spec a77b995) — REQUIRED deployment-scope trust domain
+    /// mixed into the canonical `cx-cross-signing-bind-v1` signing input
+    /// so a publish from deployment A cannot be replayed into deployment
+    /// B. Threaded from the caller's `/server/describe` response.
+    trust_domain: TypedTrustDomainId,
 }
 
 /// Materials produced by [`CrossSigningExecutor::run`]. The PSK / SSK /
@@ -594,10 +599,15 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 }
 
 impl CrossSigningExecutor {
-    pub fn new(plan: CrossSigningSetupPlan, principal_did: Did) -> Self {
+    pub fn new(
+        plan: CrossSigningSetupPlan,
+        principal_did: Did,
+        trust_domain: TypedTrustDomainId,
+    ) -> Self {
         Self {
             plan,
             principal_did,
+            trust_domain,
         }
     }
 
@@ -652,6 +662,9 @@ impl CrossSigningExecutor {
         // bytes the server will compare against.
         let draft = CrossSigningPublishContent {
             principal_id: self.principal_did.clone(),
+            // Round 4 — REQUIRED trust domain mixed into the canonical
+            // bind input; threaded from the caller's describe response.
+            trust_domain: self.trust_domain.clone(),
             principal_signing_key: psk_record.clone(),
             self_signing_key: SignedCrossSigningKey {
                 key: ssk_record.clone(),
@@ -669,6 +682,10 @@ impl CrossSigningExecutor {
                     signature: String::new(),
                 },
             },
+            // Round 4 — CAS guard: prior accepted generation (0 on the
+            // very first publish). `previous_generation` is `None` for
+            // `InitialSetup` and `Some(prev)` for `Reset`.
+            expected_previous_generation: self.plan.previous_generation.unwrap_or(0),
             generation: self.plan.new_generation,
             issued_at: Utc::now(),
         };
@@ -684,6 +701,7 @@ impl CrossSigningExecutor {
 
         let publish_content = CrossSigningPublishContent {
             principal_id: draft.principal_id,
+            trust_domain: draft.trust_domain,
             principal_signing_key: draft.principal_signing_key,
             self_signing_key: SignedCrossSigningKey {
                 key: draft.self_signing_key.key,
@@ -701,6 +719,7 @@ impl CrossSigningExecutor {
                     signature: B64.encode(usk_sig.to_bytes()),
                 },
             },
+            expected_previous_generation: draft.expected_previous_generation,
             generation: draft.generation,
             issued_at: draft.issued_at,
         };
@@ -728,6 +747,12 @@ fn generate_ed25519_signing_key() -> anyhow::Result<SigningKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Round 4 — every executor test thread needs a TypedTrustDomainId
+    /// for the v2 `cx.cross_signing.publish` shape.
+    fn test_trust_domain() -> TypedTrustDomainId {
+        TypedTrustDomainId::new("cx:trust_domain:example.net").unwrap()
+    }
 
     #[test]
     fn initial_plan_has_seven_steps_and_emits_publish_event() {
@@ -842,7 +867,7 @@ mod tests {
 
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
         let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
-        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().expect("local steps must succeed");
 
         // SDK validation runs inside `run()`; reaching here means the
@@ -882,7 +907,7 @@ mod tests {
     fn executor_picks_distinct_keys_on_every_run() {
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
         let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
-        let executor = CrossSigningExecutor::new(plan, principal);
+        let executor = CrossSigningExecutor::new(plan, principal, test_trust_domain());
         let a = executor.run().unwrap();
         let b = executor.run().unwrap();
         // Re-runs MUST mint fresh randomness for all three keys; reusing
@@ -901,7 +926,7 @@ mod tests {
 
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
         let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
-        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().unwrap();
 
         let store = MemorySecureKeyStore::new();
@@ -958,7 +983,7 @@ mod tests {
     fn publish_envelope_carries_validated_publish_content() {
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
         let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
-        let executor = CrossSigningExecutor::new(plan, principal.clone());
+        let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().unwrap();
 
         let envelope = out

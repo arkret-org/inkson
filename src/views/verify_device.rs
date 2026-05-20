@@ -1007,9 +1007,39 @@ pub fn VerifyDevicePanel(
                                         // 1. Run the executor: generate
                                         //    PSK/SSK/USK + sign bindings +
                                         //    validate the publish content.
+                                        //
+                                        // Round 4 — `cx.cross_signing.publish` v2
+                                        // requires `trust_domain` in the
+                                        // canonical bind input. We thread the
+                                        // active deployment's trust domain from
+                                        // the local-state cache populated by
+                                        // /server/describe. Until the cache is
+                                        // populated we fall back to the public
+                                        // sentinel so the local executor stays
+                                        // testable without a live connect; the
+                                        // submit path will be rejected by the
+                                        // server if the value disagrees with
+                                        // the deployment.
+                                        // TODO(round4-cross-signing-trust-domain):
+                                        // surface a clear "connect required"
+                                        // error before the run begins instead
+                                        // of relying on server-side rejection.
+                                        let trust_domain = state_store
+                                            .read()
+                                            .load()
+                                            .server_trust_domain
+                                            .clone()
+                                            .and_then(|s| contrix_sdk::TypedTrustDomainId::new(s).ok())
+                                            .unwrap_or_else(|| {
+                                                contrix_sdk::TypedTrustDomainId::new(
+                                                    "cx:trust_domain:unknown.local",
+                                                )
+                                                .expect("sentinel trust domain")
+                                            });
                                         let executor = CrossSigningExecutor::new(
                                             plan,
                                             principal.clone(),
+                                            trust_domain,
                                         );
                                         let output = match executor.run() {
                                             Ok(out) => out,

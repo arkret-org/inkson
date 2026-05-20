@@ -15,6 +15,32 @@ The friendly UI strings live under the `friendly.realm.*` / `friendly.space.*`
 i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
 **Show technical details** on every actor / object surface.
 
+## Round R4 (protocol review closures)
+
+Spec round 4 (`contrix-spec` range `2a4d39b..a77b995`, 8 commits) brings
+several client-visible changes. See [`CHANGELOG.md`](CHANGELOG.md)
+`[Unreleased]` and [`../_todos.md`](../_todos.md) for the canonical
+wire-breaking list.
+
+- **`cx.call.signal` v2** — 13 signal types, required device `proof`,
+  per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
+  aborts the call.
+- **Typed `EventsSubscribe` frames** — NDJSON parser switched to
+  `EventsSubscribeFrame`; `dropped` resumes from the embedded cursor,
+  `resync_required` triggers full re-sync, `epoch_rotation` refreshes
+  session keys.
+- **`ServiceDescribe` v2 consumer** — registration requires 17 fields;
+  `trust_domain` mismatch fails the handshake; missing
+  `plaintext_visibility` is treated as untrusted.
+- **`observed_dots` consent revoke UI** — the dot list is rendered;
+  revoking is an explicit user action (no implicit cascade).
+- **`SnapshotBootstrap`** — query response with snapshot hint is
+  accepted; full chunked import is staged.
+- **`mention_redirect_target_actor_ids` routing** — devices outside the
+  list never decrypt the redirected content.
+- **Late-recovery banner** — sourced from
+  `late_recovery_original_event_id`.
+
 ## Round R2/R3 user-facing surfaces
 
 Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
