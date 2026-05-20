@@ -819,16 +819,32 @@ impl ContrixApi {
         self.post_json("api/v1/auth/logout", json!({})).await
     }
 
-    /// Build + submit the canonical `cx.realm.create` event bundle.
+    /// Bootstrap a new Realm via soland's canonical `cx.spaces.create`
+    /// endpoint (`POST /api/v1/spaces`).
     ///
-    /// Per spec `models/realm-and-space.md §2.3`, the create event locks
-    /// in `encryption_profile` (`none` / `mls_rfc9420` / `external`),
-    /// `security_class` (`standard` / `high_assurance`),
-    /// `federation_policy` (`open` / `restricted` / `closed` /
-    /// `quarantine`), `anchor_profile` (`single_did` / `threshold` /
-    /// `open_set` / `mixed`) and `hash_profile` (`sha256` / `sha512` /
-    /// `sha3_256` / `blake3`). The caller MUST surface these as user
-    /// choices because none of them can be changed after create.
+    /// soland's authz layer requires the actor to be a member of the
+    /// Realm before accepting any event into it, including the
+    /// per-facet `cx.realm.join_rule` / `cx.realm.history_visibility`
+    /// /etc state events. Submitting raw events from yougen can't
+    /// solve that chicken-and-egg problem because the actor isn't a
+    /// member until soland's reducer commits a `cx.member.state(join)`
+    /// — and the reducer rejects that with `capability_denied: actor
+    /// is not a member of the event Space` when fired on its own.
+    ///
+    /// The dedicated POST endpoint does the bootstrap atomically:
+    /// allocates the realm id, inserts the creator into `space.members`
+    /// (route handler line ~155), persists the SpaceMetaRecord, fans
+    /// out invitee records, and emits the canonical lifecycle event.
+    ///
+    /// Per spec `models/realm-and-space.md §2.3` the create event also
+    /// locks in `security_class`, `federation_policy`,
+    /// `anchor_profile` and `hash_profile`. soland's
+    /// `CreateSpaceRequest` doesn't yet accept those — they're
+    /// captured by the yougen UI but currently dropped at the wire
+    /// (TODO(server): widen `CreateSpaceRequest`). `encryption_profile`
+    /// is bridged: spec's `none` maps to soland's `plaintext`, spec's
+    /// `external` falls back to `mls_rfc9420` because soland doesn't
+    /// implement external providers yet.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_realm(
         &self,
@@ -839,10 +855,10 @@ impl ContrixApi {
         join_rule: &str,
         history_visibility: &str,
         encryption_profile: &str,
-        security_class: &str,
-        federation_policy: &str,
-        anchor_profile: &str,
-        hash_profile: &str,
+        _security_class: &str,
+        _federation_policy: &str,
+        _anchor_profile: &str,
+        _hash_profile: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
@@ -856,50 +872,23 @@ impl ContrixApi {
         if title.is_empty() {
             return Err(anyhow::anyhow!("title is required for cx.realm.create"));
         }
-
-        // R1.7: the security boundary (formerly Space) is now Realm.
-        // TODO(realm-rework): switch local prefix to `cx:realm:` once
-        // contrix-sdk's SpaceId validator and soland accept the new shape.
-        let space_id = format!("cx:space:{}", uuid_v7());
-        let join_rule = canonical_space_join_rule_v1(join_rule);
-        let events = build_realm_bootstrap_events(
-            &space_id,
-            actor_id,
-            title,
-            summary,
-            discoverability,
-            join_rule,
-            history_visibility,
-            encryption_profile,
-            security_class,
-            federation_policy,
-            anchor_profile,
-            hash_profile,
-            &invitees,
-            &plaintext_visible_services,
-        )?;
-        for event in events {
-            self.submit_event(&event).await?;
-        }
-
-        let mut members = Vec::new();
-        if !actor_id.is_empty() {
-            members.push(actor_id.to_owned());
-        }
-        for invitee in invitees {
-            let invitee = invitee.trim();
-            if !invitee.is_empty() && !members.iter().any(|member| member == invitee) {
-                members.push(invitee.to_owned());
-            }
-        }
-
-        Ok(SpaceLifecycleResponse {
-            ok: true,
-            space_id,
-            owner: actor_id.to_owned(),
-            members,
-            deleted: false,
-        })
+        let _ = canonical_space_join_rule_v1(join_rule); // validation side-effect
+        let wire_encryption_profile = match encryption_profile {
+            "none" => "plaintext",
+            "mls_rfc9420" | "external" | "" => "mls_rfc9420",
+            other => other,
+        };
+        let body = json!({
+            "title": title,
+            "summary": summary.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            "public": discoverability == "public",
+            "discoverability": discoverability,
+            "history_visibility": history_visibility,
+            "encryption_profile": wire_encryption_profile,
+            "plaintext_visible_services": plaintext_visible_services,
+            "invitees": invitees,
+        });
+        self.post_json("api/v1/spaces", body).await
     }
 
     /// Create a Space (product-structure container) inside an existing
