@@ -226,7 +226,12 @@ enum SetupSection {
 impl SetupSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
-            "spaces" => Self::Spaces,
+            // Canonical slug for the Realm bootstrap surface — the
+            // form actually creates a Realm (cx.realm.create), so the
+            // URL should say "realms". `spaces` is kept as a legacy
+            // alias for any bookmark / external link that was minted
+            // before the rename and would otherwise 404.
+            "realms" | "spaces" => Self::Spaces,
             "new-space" => Self::NewSpace,
             _ => Self::Overview,
         }
@@ -235,7 +240,7 @@ impl SetupSection {
     fn slug(self) -> &'static str {
         match self {
             Self::Overview => "",
-            Self::Spaces => "spaces",
+            Self::Spaces => "realms",
             Self::NewSpace => "new-space",
         }
     }
@@ -1043,6 +1048,26 @@ pub fn SetupPanel(
                                                                     description.service_did.as_str().to_owned(),
                                                                 );
                                                             }
+                                                            // Spec realm.schema.json requires
+                                                            // trust_domain on the create event.
+                                                            // sync_engine caches the server's
+                                                            // advertised value in
+                                                            // state_store.server_trust_domain
+                                                            // after describe; if it isn't set
+                                                            // yet we ask the API to fall back
+                                                            // to the describe response.
+                                                            let cached_trust_domain = state_store
+                                                                .read()
+                                                                .load()
+                                                                .server_trust_domain
+                                                                .clone();
+                                                            let trust_domain = match cached_trust_domain {
+                                                                Some(value) if !value.trim().is_empty() => value,
+                                                                _ => match api.describe().await {
+                                                                    Ok(desc) => desc.trust_domain.as_str().to_owned(),
+                                                                    Err(_) => String::new(),
+                                                                },
+                                                            };
                                                             match api.create_realm(
                                                                 &actor,
                                                                 &title,
@@ -1055,6 +1080,7 @@ pub fn SetupPanel(
                                                                 &federation_policy,
                                                                 &anchor_profile,
                                                                 &hash_profile,
+                                                                &trust_domain,
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),
                                                             ).await {

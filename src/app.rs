@@ -5430,7 +5430,7 @@ pub fn RouterView() -> Element {
                             "data-testid": "sidebar-new-realm-cta",
                             title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click the + on that row.",
                             "aria-label": "Create a new Realm",
-                            to: Route::SetupSection { section: "spaces".to_owned() },
+                            to: Route::SetupSection { section: "realms".to_owned() },
                             UiIcon { name: "plus" }
                         }
                     }

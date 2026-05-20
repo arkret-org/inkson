@@ -851,6 +851,7 @@ impl ContrixApi {
         federation_policy: &str,
         anchor_profile: &str,
         hash_profile: &str,
+        trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
@@ -883,6 +884,7 @@ impl ContrixApi {
             federation_policy,
             anchor_profile,
             hash_profile,
+            trust_domain,
             &invitees,
             &plaintext_visible_services,
         )?;
@@ -3040,6 +3042,7 @@ pub fn build_realm_bootstrap_events(
     federation_policy: &str,
     anchor_profile: &str,
     hash_profile: &str,
+    trust_domain: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<Value>> {
@@ -3064,6 +3067,7 @@ pub fn build_realm_bootstrap_events(
         federation_policy,
         anchor_profile,
         hash_profile,
+        trust_domain,
     )?);
     events.push(build_member_state_event(
         space_id, actor_id, actor_id, "join",
@@ -3118,6 +3122,7 @@ pub fn build_realm_create_event(
     federation_policy: &str,
     anchor_profile: &str,
     hash_profile: &str,
+    trust_domain: &str,
 ) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
     // Per spec realm-and-space.md §2.3: high_assurance security_class
@@ -3132,10 +3137,23 @@ pub fn build_realm_create_event(
     } else {
         federation_policy
     };
+    // Spec realm.schema.json — `id` MUST match `^cx:realm:UUID7`. The
+    // caller still passes the envelope-level `space_id` as `cx:space:`
+    // because that's what soland's wire-validator currently accepts;
+    // here we synthesise the matching `cx:realm:` form for the inner
+    // realm object id by stripping the legacy prefix. Once soland's
+    // validate_space_id accepts `cx:realm:` directly, callers can
+    // mint a single cx:realm: id and this rewrite becomes a no-op.
+    let realm_object_id = if let Some(suffix) = space_id.strip_prefix("cx:space:") {
+        format!("cx:realm:{suffix}")
+    } else {
+        space_id.to_owned()
+    };
     let mut object = json!({
-        "id": space_id,
+        "id": realm_object_id,
         "schema": "cx.schema.realm.v1",
         "title": title,
+        "trust_domain": trust_domain,
         "created_by_principal": actor_id,
         "schema_refs": ["cx.schema.realm.v1"],
         "default_discoverability": discoverability,
@@ -3354,16 +3372,28 @@ fn build_member_state_event(
     membership: &str,
 ) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
+    // Spec event-payload.schema.json `membership_payload`:
+    // `join` requires both `actor_id` AND `delivery_status`. If
+    // `delivery_status=routable` then `delivery_binding` is also
+    // required (full per-Realm member→server binding object). For
+    // the local-single-deployment dev path we declare "unroutable"
+    // — the creator's events are processed locally without needing
+    // a cross-server binding. Once federation lands, callers should
+    // pass a real `member_delivery_binding`.
+    let mut payload = json!({
+        "actor_id": member_actor_id,
+        "membership": membership,
+        "reason": "space_create",
+    });
+    if membership == "join" {
+        payload["delivery_status"] = json!("unroutable");
+    }
     build_reducer_event(
         "cx.member.state",
         space_id,
         actor_id,
         &created_at,
-        json!({
-            "actor_id": member_actor_id,
-            "membership": membership,
-            "reason": "space_create",
-        }),
+        payload,
         &format!(
             "{}:{}",
             space_cell("cx.component.member.state.v1", space_id),
@@ -3950,6 +3980,7 @@ mod tests {
             "restricted",
             "single_did",
             "sha256",
+            "cx:trust_domain:server.example",
             &["did:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
         )
@@ -4014,6 +4045,60 @@ mod tests {
             "did:web:server.example"
         );
         assert_eq!(events[6]["payload"]["membership"], "invite");
+    }
+
+    /// Contract test: every event produced by `build_realm_bootstrap_events`
+    /// MUST satisfy the spec payload-schema rule for its event kind, using
+    /// the same `contrix_sdk::schema::event_payload_validator_catalog` that
+    /// soland runs on the wire. Catches schema drift (missing required
+    /// fields, wrong patterns) at `cargo test` rather than user runtime.
+    #[test]
+    fn realm_bootstrap_payloads_match_spec_schema() {
+        let events = build_realm_bootstrap_events(
+            // Envelope-level space_id stays on the legacy `cx:space:`
+            // prefix because that's what soland's wire validator still
+            // requires; build_realm_create_event rewrites the inner
+            // payload.object.id to the spec-correct `cx:realm:` form.
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Engineering",
+            Some("Roadmap work"),
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "cx:trust_domain:server.example",
+            &["did:web:bob.example".to_owned()],
+            &["did:web:server.example".to_owned()],
+        )
+        .unwrap();
+
+        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        for event in &events {
+            let kind = event["kind"]
+                .as_str()
+                .expect("event kind is a string");
+            // Skip event kinds soland's spec-artifact catalog hasn't
+            // registered yet — for those soland uses lighter validation
+            // and there's nothing for us to assert.
+            if catalog
+                .missing_payload_validators_for(std::iter::once(kind))
+                .is_empty()
+            {
+                let payload = event.get("payload").expect("event has payload");
+                if let Err(error) = catalog.validate_payload(kind, payload) {
+                    panic!(
+                        "event kind `{kind}` payload violates spec schema: {error}\n\
+                         payload was: {}",
+                        serde_json::to_string_pretty(payload).unwrap_or_default()
+                    );
+                }
+            }
+        }
     }
 
     #[test]
