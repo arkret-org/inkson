@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_router::{Link, hooks::use_navigator};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     api::is_auth_expired_error,
@@ -437,6 +437,12 @@ pub fn SetupPanel(
     let mut new_space_title = use_signal(String::new);
     let mut new_space_summary = use_signal(String::new);
     let mut new_space_kind = use_signal(|| "space".to_owned());
+    // Phase 3+ (M-SPACE-PARENT-1) — `parent_ref` + `default_realm_ref`
+    // per spec realm-and-space.md §3.2. Empty string = root (omit
+    // parent_ref) for the parent picker; empty default_realm_ref means
+    // "inherit from parent / home Realm".
+    let mut new_space_parent_id = use_signal(String::new);
+    let mut new_space_default_realm_ref = use_signal(String::new);
     let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut new_space_created_id = use_signal(String::new);
     let mut space_state = use_signal(|| "Draft not created yet".to_owned());
@@ -460,25 +466,55 @@ pub fn SetupPanel(
     let new_space_title_value = new_space_title();
     let new_space_summary_value = new_space_summary();
     let new_space_kind_value = new_space_kind();
+    let new_space_parent_id_value = new_space_parent_id();
+    let new_space_default_realm_ref_value = new_space_default_realm_ref();
     let new_space_state_value = new_space_state();
     let new_space_created_id_value = new_space_created_id();
-    // Available Realms = every persisted projection. (Phase 3 ships
-    // the basic picker; richer filtering by `schema=cx.schema.realm.v1`
-    // can come once the projection store carries the schema field.)
-    let available_realms: Vec<(String, String)> = state_store
+    // Every persisted projection is either a Realm or a Space; the
+    // tag is recorded under `__kind` ("realm" | "space") when we
+    // save it. Legacy projections without the tag are treated as
+    // Realms (the only thing yougen used to create).
+    let projections_snapshot: Vec<(String, Value)> = state_store
         .read()
         .load()
         .space_projections
         .iter()
-        .map(|(id, body)| {
-            let title = body
-                .get("summary")
-                .and_then(|summary| summary.get("title"))
-                .and_then(|title| title.as_str())
-                .unwrap_or(id.as_str())
-                .to_owned();
-            (id.clone(), title)
+        .map(|(id, body)| (id.clone(), body.clone()))
+        .collect();
+    let projection_kind = |body: &Value| -> &'static str {
+        match body.get("__kind").and_then(|kind| kind.as_str()) {
+            Some("space") => "space",
+            _ => "realm",
+        }
+    };
+    let projection_realm_id = |id: &str, body: &Value| -> String {
+        body.get("realm_id")
+            .and_then(|realm_id| realm_id.as_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| id.to_owned())
+    };
+    let projection_title = |id: &str, body: &Value| -> String {
+        body.get("summary")
+            .and_then(|summary| summary.get("title"))
+            .and_then(|title| title.as_str())
+            .unwrap_or(id)
+            .to_owned()
+    };
+    let available_realms: Vec<(String, String)> = projections_snapshot
+        .iter()
+        .filter(|(_, body)| projection_kind(body) == "realm")
+        .map(|(id, body)| (id.clone(), projection_title(id, body)))
+        .collect();
+    // Parent picker = every Space already inside the selected Realm,
+    // plus a "(root)" sentinel. Realms themselves can't be parents
+    // per spec §2.1 (Realms don't have parent/child).
+    let parent_candidates: Vec<(String, String)> = projections_snapshot
+        .iter()
+        .filter(|(_, body)| {
+            projection_kind(body) == "space"
+                && projection_realm_id("", body) == new_space_realm_id_value
         })
+        .map(|(id, body)| (id.clone(), projection_title(id, body)))
         .collect();
     let new_space_ready = !new_space_title_value.trim().is_empty()
         && !new_space_realm_id_value.trim().is_empty();
@@ -1004,6 +1040,11 @@ pub fn SetupPanel(
                                                                 state_store.write().save_space_projection(
                                                                     space.space_id.clone(),
                                                                     json!({
+                                                                        // Yougen-local schema tag — used by the
+                                                                        // sidebar (M-SIDEBAR-TIER-1) to split
+                                                                        // Realms from Spaces. Legacy projections
+                                                                        // without the tag default to "realm".
+                                                                        "__kind": "realm",
                                                                         "owner": actor.clone(),
                                                                         "admins": projection_admins.clone(),
                                                                         "members": projection_members.clone(),
@@ -1270,6 +1311,69 @@ pub fn SetupPanel(
                                         oninput: move |event| new_space_summary.set(event.value())
                                     }
                                 }
+                                // Spec realm-and-space.md §3.2 — optional
+                                // parent. Picker is filtered by realm_id
+                                // (Realms aren't valid parents per §2.1;
+                                // cross-Realm parents are valid but live
+                                // under `default_realm_ref`).
+                                div { class: "setup-field setup-field-span-2",
+                                    label { "Parent Space (optional)" }
+                                    if new_space_realm_id_value.trim().is_empty() {
+                                        div { class: "muted", "Pick a Realm above to see candidate parents." }
+                                    } else if parent_candidates.is_empty() {
+                                        div { class: "muted", "No sibling Spaces in this Realm yet — leave at root." }
+                                    } else {
+                                        select {
+                                            "data-testid": "new-space-parent-input",
+                                            value: "{new_space_parent_id_value}",
+                                            onchange: move |event| new_space_parent_id.set(event.value()),
+                                            option { value: "", "(root — no parent)" }
+                                            for (id, title) in &parent_candidates {
+                                                option {
+                                                    value: "{id}",
+                                                    selected: new_space_parent_id_value == *id,
+                                                    "{title} ({id})"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Spec realm-and-space.md §3.2 — `default_realm_ref`
+                            // points new resources created from this Space at
+                            // a different Realm. Most users leave this empty
+                            // (= inherit home Realm). Folded as advanced.
+                            details { class: "setup-advanced",
+                                "data-testid": "new-space-advanced",
+                                summary { class: "setup-advanced-summary",
+                                    "Advanced (cross-Realm default for new resources)"
+                                }
+                                div { class: "workflow-form setup-form-grid",
+                                    div { class: "setup-field setup-field-span-2",
+                                        label { "default_realm_ref" }
+                                        if available_realms.is_empty() {
+                                            div { class: "muted", "Need at least one Realm to point at." }
+                                        } else {
+                                            select {
+                                                "data-testid": "new-space-default-realm-ref-input",
+                                                value: "{new_space_default_realm_ref_value}",
+                                                onchange: move |event| new_space_default_realm_ref.set(event.value()),
+                                                option { value: "", "(inherit — use home Realm)" }
+                                                for (id, title) in &available_realms {
+                                                    option {
+                                                        value: "{id}",
+                                                        selected: new_space_default_realm_ref_value == *id,
+                                                        "{title} ({id})"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        div { class: "muted",
+                                            "New Flows / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership."
+                                        }
+                                    }
+                                }
                             }
                             div { class: "actions setup-nav-actions",
                                 button {
@@ -1283,6 +1387,8 @@ pub fn SetupPanel(
                                         let title = new_space_title();
                                         let summary = new_space_summary();
                                         let kind = new_space_kind();
+                                        let parent_id = new_space_parent_id();
+                                        let default_realm_ref = new_space_default_realm_ref();
                                         let actor = account_did();
                                         new_space_state.set("Submitting cx.space.create...".to_owned());
                                         spawn(async move {
@@ -1293,20 +1399,62 @@ pub fn SetupPanel(
                                                     } else {
                                                         Some(summary.as_str())
                                                     };
+                                                    let parent_opt = if parent_id.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(parent_id.as_str())
+                                                    };
+                                                    let default_realm_opt = if default_realm_ref.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(default_realm_ref.as_str())
+                                                    };
                                                     match api.create_space_under_realm(
                                                         &realm_id,
                                                         &actor,
                                                         &title,
                                                         summary_opt,
                                                         &kind,
-                                                        None, // parent_space_id — Phase 3 minimal: root only
-                                                        None, // default_realm_ref — inherits home Realm
+                                                        parent_opt,
+                                                        default_realm_opt,
                                                     ).await {
                                                         Ok(space) => {
+                                                            // Persist a tagged Space projection so
+                                                            // the sidebar (M-SIDEBAR-TIER-1) can
+                                                            // classify it without re-fetching.
+                                                            // `__kind` is yougen-local metadata —
+                                                            // server-projected entries use the
+                                                            // canonical `schema` field, but for the
+                                                            // optimistic local write here we use the
+                                                            // simpler marker.
+                                                            let mut projection_body = json!({
+                                                                "__kind": "space",
+                                                                "realm_id": realm_id.clone(),
+                                                                "kind": kind.clone(),
+                                                                "summary": {
+                                                                    "title": title.clone(),
+                                                                    "summary": summary.clone(),
+                                                                    "kind": kind.clone(),
+                                                                },
+                                                                "timeline": { "events": [] }
+                                                            });
+                                                            if let Some(parent) = parent_opt {
+                                                                projection_body["parent_ref"] = json!(parent);
+                                                            }
+                                                            if let Some(default_realm) = default_realm_opt {
+                                                                projection_body["default_realm_ref"] = json!(default_realm);
+                                                            }
+                                                            state_store.write().save_space_projection(
+                                                                space.space_id.clone(),
+                                                                projection_body,
+                                                            );
                                                             new_space_created_id.set(space.space_id.clone());
                                                             new_space_state.set(format!(
-                                                                "Created Space {} (kind={}) inside {}",
-                                                                space.space_id, kind, realm_id
+                                                                "Created Space {} (kind={}) inside {}{}",
+                                                                space.space_id,
+                                                                kind,
+                                                                realm_id,
+                                                                parent_opt.map(|p| format!(" under {p}")).unwrap_or_default(),
                                                             ));
                                                         }
                                                         Err(error) => {
