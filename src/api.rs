@@ -3037,6 +3037,13 @@ pub fn build_realm_bootstrap_events(
     invitees: &[String],
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<Value>> {
+    // Order matters — soland's authz layer requires the actor to
+    // be a member of the Realm before it accepts any per-facet state
+    // event (join_rule / history_visibility / discovery / ...). The
+    // creator-join `cx.member.state` MUST come right after the
+    // `cx.realm.create` event and before any facet write, otherwise
+    // every facet event 403s with `capability_denied: actor is not
+    // a member of the event Space`.
     let mut events = Vec::new();
     events.push(build_realm_create_event(
         space_id,
@@ -3051,6 +3058,9 @@ pub fn build_realm_bootstrap_events(
         federation_policy,
         anchor_profile,
         hash_profile,
+    )?);
+    events.push(build_member_state_event(
+        space_id, actor_id, actor_id, "join",
     )?);
     events.push(build_space_state_event(
         space_id,
@@ -3077,9 +3087,6 @@ pub fn build_realm_bootstrap_events(
         events.push(event);
     }
 
-    events.push(build_member_state_event(
-        space_id, actor_id, actor_id, "join",
-    )?);
     for invitee in invitees {
         let invitee = invitee.trim();
         if !invitee.is_empty() && invitee != actor_id {
@@ -3945,15 +3952,20 @@ mod tests {
             .iter()
             .map(|event| event["kind"].as_str().unwrap())
             .collect::<Vec<_>>();
+        // Creator-join `cx.member.state` MUST come right after
+        // `cx.realm.create` and BEFORE any facet event, otherwise
+        // soland's authz layer 403s the facets with
+        // `capability_denied: actor is not a member of the event
+        // Space`. See build_realm_bootstrap_events comment.
         assert_eq!(
             kinds,
             vec![
                 "cx.realm.create",
+                "cx.member.state",
                 "cx.realm.join_rule",
                 "cx.realm.history_visibility",
                 "cx.realm.discovery",
                 "cx.realm.plaintext_visible_services",
-                "cx.member.state",
                 "cx.member.state",
             ]
         );
@@ -3983,14 +3995,18 @@ mod tests {
                 .starts_with("sha256:")
         );
 
-        assert_eq!(events[1]["payload"]["value"], "invite");
-        assert_eq!(events[2]["payload"]["value"], "shared");
-        assert_eq!(events[3]["payload"]["value"], "listed");
+        // Indices reflect the bootstrap order after the
+        // capability_denied fix: create, member-join (creator),
+        // join_rule, history_visibility, discovery, plaintext_visible,
+        // member-invite.
+        assert_eq!(events[1]["payload"]["membership"], "join");
+        assert_eq!(events[2]["payload"]["value"], "invite");
+        assert_eq!(events[3]["payload"]["value"], "shared");
+        assert_eq!(events[4]["payload"]["value"], "listed");
         assert_eq!(
-            events[4]["payload"]["services"][0]["service_did"],
+            events[5]["payload"]["services"][0]["service_did"],
             "did:web:server.example"
         );
-        assert_eq!(events[5]["payload"]["membership"], "join");
         assert_eq!(events[6]["payload"]["membership"], "invite");
     }
 
