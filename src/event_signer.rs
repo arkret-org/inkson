@@ -237,7 +237,10 @@ impl YougenEventSigner {
             verification_method: self.verification_method.clone(),
             payload_hash,
             jws,
-            created_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            // Canonical RFC3339 UTC (no fractional seconds) per
+            // spec encoding.md §3.5 / soland validator
+            // `canonical::validate_timestamp_canonical`.
+            created_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         }];
         if event.actor_id.is_empty() {
             event.actor_id = self.signer_did.clone();

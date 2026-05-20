@@ -316,7 +316,7 @@ impl OperationBuilder {
             actor_id: self.actor,
             actor_seq,
             space_id: self.space_id,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             hlc: hlc.encode(),
             prev_refs: deps,
             refs: Vec::new(),
@@ -381,7 +381,7 @@ impl EventEnvelope {
             actor_id: operation.actor.clone(),
             actor_seq: operation.causal.actor_seq,
             space_id: operation.space_id.clone(),
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             hlc: operation.causal.hlc.clone(),
             prev_refs: operation.causal.deps.clone(),
             refs: Vec::new(),
@@ -436,7 +436,7 @@ impl EventEnvelope {
                 alg: "EdDSA".to_owned(),
                 verification_method: format!("{}#yougen", self.actor_id),
                 payload_hash: String::new(),
-                created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 jws: "a..b".to_owned(),
             });
         }
@@ -847,7 +847,7 @@ pub mod cx_ops {
             "fields": { "document": document_body.clone() },
             "created_by": actor,
             "created_at": chrono::Utc::now()
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(space_id)

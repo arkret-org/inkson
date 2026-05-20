@@ -3418,8 +3418,16 @@ fn build_reducer_event(
     Ok(event)
 }
 
+/// RFC3339 timestamp in the canonical wire form soland's
+/// `canonical::validate_timestamp_canonical` accepts: exactly
+/// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
+/// seconds — spec encoding.md §3.5). Producing `SecondsFormat::Millis`
+/// here was a long-standing yougen bug — the trailing `.NNNZ` made
+/// every event submission fail with `invalid_param: created_at must
+/// use canonical RFC3339 UTC form` once soland's R3 canonical
+/// validator landed.
 fn event_timestamp() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
@@ -3497,7 +3505,7 @@ pub fn build_signed_device_verification_proof(
         "from_device": from_device,
         "target_device": target_device,
         "method": method,
-        "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "created_at": event_timestamp(),
     });
     if let Some(sas_decimal) = sas_decimal {
         body["sas_decimal"] = json!(sas_decimal);
