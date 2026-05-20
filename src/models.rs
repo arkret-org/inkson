@@ -109,16 +109,6 @@ pub struct RejectedMoveEntry {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitAnchorResponse {
-    pub anchor_id: String,
-    #[serde(default)]
-    pub accepted_move_ids: Vec<String>,
-    #[serde(default)]
-    pub rejected_moves: Vec<RejectedMoveEntry>,
-    pub post_state_root: String,
-}
-
 /// Outcome of [`crate::api::ContrixApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
 /// soland's `account_data` PUT is being rolled out incrementally and the
@@ -133,20 +123,6 @@ pub enum AccountDataSetOutcome {
     /// client logged a `tracing::warn` and the local state remains the
     /// authoritative copy.
     Unsupported { status: reqwest::StatusCode },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SignAnchorResponse {
-    /// `true` if an Anchor was published; `false` if no pending Moves.
-    pub published: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchor_id: Option<String>,
-    #[serde(default)]
-    pub accepted_move_ids: Vec<String>,
-    #[serde(default)]
-    pub rejected_moves: Vec<RejectedMoveEntry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub post_state_root: Option<String>,
 }
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "cx.profile.core_event_store.v1";
@@ -472,49 +448,10 @@ pub struct ModerationReportResBody {
 // ── Authentication ──────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PasskeyChallengeResponse {
-    pub challenge: String,
-    pub rp_id: String,
-    pub user_did: String,
-    pub expires_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PasskeyVerifyResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub actor: String,
-    pub device_id: String,
-    pub expires_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OidcAuthorizeResponse {
-    pub redirect_url: String,
-    pub state: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OidcCallbackResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub actor: String,
-    pub device_id: String,
-    pub expires_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TokenRefreshResponse {
     pub access_token: String,
     pub token_type: String,
     pub expires_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AccountRecoveryResponse {
-    pub ok: bool,
-    pub recovery_method: String,
-    pub challenge: Option<String>,
 }
 
 // ── Directory ───────────────────────────────────────────────────
@@ -640,12 +577,6 @@ pub struct RevokeDeviceResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RotateKeysResponse {
-    pub one_time_key_counts: Value,
-    pub fallback_keys: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceTrustResponse {
     pub devices: Vec<DeviceTrustEntry>,
 }
@@ -666,72 +597,10 @@ pub struct VerifyDeviceResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MlsEpochResponse {
-    pub epoch: u64,
-    pub group_id: String,
-    pub member_count: usize,
-    pub last_rotation: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MlsRotateResponse {
     pub ok: bool,
     pub epoch: u64,
     pub group_id: String,
-}
-
-// ── Moderation & Policy ─────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ModerationReportsResponse {
-    pub reports: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ModerationResolveResponse {
-    pub ok: bool,
-    pub report_id: String,
-    pub resolution: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PolicyResponse {
-    pub resource: String,
-    pub policy: Value,
-}
-
-// ── Federation ───────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationTransactionResBody {
-    pub ok: bool,
-    pub txn_id: String,
-    #[serde(default)]
-    pub accepted: Vec<String>,
-    #[serde(default)]
-    pub rejected: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationOperationsResponse {
-    #[serde(default)]
-    pub operations: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationSpaceMembersResBody {
-    #[serde(default)]
-    pub members: Vec<Value>,
-    pub frontier: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FederationVerifyActorResBody {
-    pub verified: bool,
-    pub actor: String,
-    pub evidence: Value,
 }
 
 // ── Policy Check ─────────────────────────────────────────────────
@@ -746,76 +615,7 @@ pub struct PolicyCheckResBody {
     pub signed_decision: Option<Value>,
 }
 
-// ── Applet ───────────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletPingResBody {
-    pub ok: bool,
-    pub latency_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletDescribeResBody {
-    pub applet_did: String,
-    pub name: String,
-    pub version: String,
-    #[serde(default)]
-    pub capabilities: Vec<String>,
-    #[serde(default)]
-    pub namespaces: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletTransactionResBody {
-    pub ok: bool,
-    pub txn_id: String,
-    #[serde(default)]
-    pub results: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletQueryActorResponse {
-    pub actor: Value,
-    #[serde(default)]
-    pub spaces: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletQuerySpaceResponse {
-    pub space: Value,
-    #[serde(default)]
-    pub members: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppletProtocolMetadataResponse {
-    pub protocol_version: String,
-    #[serde(default)]
-    pub supported_operations: Vec<String>,
-    #[serde(default)]
-    pub supported_schemas: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ThirdPartyUsersResponse {
-    #[serde(default)]
-    pub users: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ThirdPartyLocationsResponse {
-    #[serde(default)]
-    pub locations: Vec<Value>,
-}
-
 // ── Identity (extended) ──────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityLogResBody {
-    #[serde(default)]
-    pub entries: Vec<Value>,
-    pub next_cursor: Option<String>,
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitDidOperationResBody {
@@ -868,12 +668,6 @@ pub struct EphemeralSubmitResponse {
     pub dispatched_to: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_received_at: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityReceiptsResBody {
-    #[serde(default)]
-    pub receipts: Vec<Value>,
 }
 
 // ── Media ────────────────────────────────────────────────────────

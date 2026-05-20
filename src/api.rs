@@ -75,92 +75,6 @@ pub struct SessionGrantIntrospectionProof {
     pub proof_jwt: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct PrincipalIntegrationManifestResponse {
-    pub contract: String,
-    pub version: String,
-    pub service: String,
-    pub service_kind: String,
-    pub api_base_path: String,
-    pub describe_path: String,
-    #[serde(default)]
-    pub dependencies: Vec<PrincipalIntegrationDependency>,
-    #[serde(default)]
-    pub surfaces: Vec<PrincipalIntegrationSurface>,
-    #[serde(default)]
-    pub examples: Value,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct PrincipalIntegrationDependency {
-    pub service: String,
-    pub purpose: String,
-    pub required_contract: String,
-    pub discovery_path: String,
-    pub mode: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct PrincipalIntegrationSurface {
-    pub name: String,
-    pub method: String,
-    pub path: String,
-    pub contract: String,
-    pub stability: String,
-    pub todo: String,
-}
-
-pub fn summarize_principal_integration_manifest(
-    manifest: &PrincipalIntegrationManifestResponse,
-) -> String {
-    let dependencies = if manifest.dependencies.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .dependencies
-            .iter()
-            .map(|dependency| {
-                format!(
-                    "{}:{}@{}",
-                    dependency.service, dependency.purpose, dependency.discovery_path
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let surfaces = if manifest.surfaces.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .surfaces
-            .iter()
-            .map(|surface| {
-                format!(
-                    "{} {} {} [{}]",
-                    surface.method, surface.path, surface.contract, surface.stability
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-    format!(
-        "contract={} version={} service={} kind={} dependencies={} surfaces={} todos={}",
-        manifest.contract,
-        manifest.version,
-        manifest.service,
-        manifest.service_kind,
-        dependencies,
-        surfaces,
-        if manifest.todos.is_empty() {
-            "none".to_owned()
-        } else {
-            manifest.todos.join(" | ")
-        },
-    )
-}
-
 impl CancellationToken {
     pub fn new() -> Self {
         Self {
@@ -187,30 +101,22 @@ impl Default for CancellationToken {
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetOutcome, AccountRecoveryResponse, AccountResponse, AppletDescribeResBody,
-    AppletPingResBody, AppletProtocolMetadataResponse, AppletQueryActorResponse,
-    AppletQuerySpaceResponse, AppletTransactionResBody, ArchiveSpaceResponse, AuthzCheckResBody,
+    AccountDataSetOutcome, AccountResponse, ArchiveSpaceResponse, AuthzCheckResBody,
     BackfillResBody, BanMemberResponse, BlobUploadResBody, ClientSyncResponse, ContactResponse,
     ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
     DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
-    EventsDescribeResBody, FederationOperationsResponse, FederationSpaceMembersResBody,
-    FederationTransactionResBody, FederationVerifyActorResBody, HealthResponse, IceConfigRequest,
-    IceConfigResponse, IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody,
-    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
-    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody,
-    MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
+    EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
+    IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
+    KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
+    MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
-    MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsEpochResponse, MlsRotateResponse,
-    ModerationReportResBody, ModerationReportsResponse, ModerationResolveResponse,
-    OidcAuthorizeResponse, OidcCallbackResponse, OkResBody, PasskeyChallengeResponse,
-    PasskeyVerifyResponse, PolicyCheckResBody, PolicyResponse, PushRegisterResponse,
-    ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
-    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription,
-    SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
-    SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResBody,
-    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResBody, ThirdPartyLocationsResponse,
-    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateProfileResponse,
-    UpdateSpaceResponse, VerifyDeviceResponse,
+    MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
+    OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
+    ResolveSpaceResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
+    ServerDescription, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
+    SpaceLifecycleResponse, SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse,
+    SubmitMoveResponse, SyncDescribeResBody, TokenRefreshResponse, TypingResponse,
+    UpdateProfileResponse, UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::{
     EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode, uuid_v7,
@@ -653,28 +559,6 @@ impl ContrixApi {
         self.get_json("api/v1/auth/bridge/describe").await
     }
 
-    pub async fn integration_describe(
-        &self,
-    ) -> anyhow::Result<PrincipalIntegrationManifestResponse> {
-        self.get_json("api/v1/integration/describe").await
-    }
-
-    pub async fn authz_describe(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/authz/describe").await
-    }
-
-    pub async fn policies_describe(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/policies/describe").await
-    }
-
-    pub async fn device_messages_describe(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/device_messages/describe").await
-    }
-
-    pub async fn key_backups_describe(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups/describe").await
-    }
-
     pub async fn dev_login(
         &self,
         actor: &str,
@@ -994,18 +878,6 @@ impl ContrixApi {
         self.get_json(&format!("api/v1/spaces/{space_id}")).await
     }
 
-    pub async fn add_space_member(
-        &self,
-        space_id: &str,
-        member: &str,
-    ) -> anyhow::Result<SpaceLifecycleResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/members"),
-            json!({"member": member}),
-        )
-        .await
-    }
-
     pub async fn remove_space_member(
         &self,
         space_id: &str,
@@ -1037,18 +909,6 @@ impl ContrixApi {
         self.post_json("api/v1/moves", body).await
     }
 
-    /// Submit a signed [`contrix_sdk::Anchor`]. Most clients should NOT
-    /// call this — the server's anchorer signs Anchors locally. Use this
-    /// only when implementing a separate anchorer node or replaying
-    /// federation-received Anchors.
-    pub async fn submit_anchor(
-        &self,
-        anchor: &contrix_sdk::Anchor,
-    ) -> anyhow::Result<SubmitAnchorResponse> {
-        let body = serde_json::to_value(anchor)?;
-        self.post_json("api/v1/anchors", body).await
-    }
-
     /// Read the current anchorer cell value for a Space (admin-only).
     /// Returns the raw JSON shape the server publishes — typically
     /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
@@ -1062,21 +922,6 @@ impl ContrixApi {
     ) -> anyhow::Result<serde_json::Value> {
         self.get_json(&format!("api/admin/v1/spaces/{space_id}/anchorer"))
             .await
-    }
-
-    /// Trigger one anchorer signing pass for `space_id`. Admin-only.
-    /// Useful for tests + ops; production deploys typically rely on the
-    /// server-side periodic ticker (when wired) instead.
-    pub async fn admin_anchors_sign(
-        &self,
-        space_id: &str,
-        max_moves: Option<usize>,
-    ) -> anyhow::Result<SignAnchorResponse> {
-        let mut body = json!({ "space_id": space_id });
-        if let Some(max) = max_moves {
-            body["max_moves"] = json!(max);
-        }
-        self.post_json("api/v1/admin/anchors/sign", body).await
     }
 
     /// PUT a per-account `cx.account_data.set` entry. Thin wrapper around
@@ -1198,7 +1043,7 @@ impl ContrixApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-spaces", body).await
+        self.post_json("api/v1/directory/search-realms", body).await
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResBody> {
@@ -1207,7 +1052,7 @@ impl ContrixApi {
 
     pub async fn resolve_space(&self, space_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
         self.post_json(
-            "api/v1/directory/resolve-space",
+            "api/v1/directory/resolve-realm",
             json!({"space_id": space_id}),
         )
         .await
@@ -1274,7 +1119,7 @@ impl ContrixApi {
     }
 
     pub async fn snapshot_head(&self, space_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
-        self.get_json(&format!("api/v1/sync/snapshot-head?space_id={space_id}"))
+        self.get_json(&format!("api/v1/sync/snapshot-head?realm_id={space_id}"))
             .await
     }
 
@@ -1302,11 +1147,6 @@ impl ContrixApi {
 
     pub async fn invites(&self) -> anyhow::Result<InvitesResponse> {
         self.get_json("api/v1/authz/invites").await
-    }
-
-    pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
-        self.get_json(&format!("api/v1/profile/presence?did={did}"))
-            .await
     }
 
     pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterResponse> {
@@ -1704,76 +1544,6 @@ impl ContrixApi {
         Err(AuditPostError::Other(format!("HTTP {status}")))
     }
 
-    // ── Authentication ──────────────────────────────────────────────
-
-    pub async fn passkey_challenge(
-        &self,
-        user_did: &str,
-    ) -> anyhow::Result<PasskeyChallengeResponse> {
-        self.post_json(
-            "api/v1/auth/passkey/challenge",
-            json!({"user_did": user_did}),
-        )
-        .await
-    }
-
-    pub async fn passkey_verify(
-        &self,
-        user_did: &str,
-        credential: Value,
-    ) -> anyhow::Result<PasskeyVerifyResponse> {
-        self.post_json(
-            "api/v1/auth/passkey/verify",
-            json!({"user_did": user_did, "credential": credential}),
-        )
-        .await
-    }
-
-    pub async fn oidc_authorize(
-        &self,
-        provider: &str,
-        redirect_uri: &str,
-    ) -> anyhow::Result<OidcAuthorizeResponse> {
-        self.post_json(
-            "api/v1/auth/oidc/authorize",
-            json!({"provider": provider, "redirect_uri": redirect_uri}),
-        )
-        .await
-    }
-
-    pub async fn oidc_callback(
-        &self,
-        code: &str,
-        state: &str,
-    ) -> anyhow::Result<OidcCallbackResponse> {
-        self.post_json(
-            "api/v1/auth/oidc/callback",
-            json!({"code": code, "state": state}),
-        )
-        .await
-    }
-
-    pub async fn token_refresh(&self, refresh_token: &str) -> anyhow::Result<TokenRefreshResponse> {
-        self.post_json(
-            "api/v1/auth/token/refresh",
-            json!({"refresh_token": refresh_token}),
-        )
-        .await
-    }
-
-    pub async fn account_recovery(
-        &self,
-        did: &str,
-        method: &str,
-        proof: Value,
-    ) -> anyhow::Result<AccountRecoveryResponse> {
-        self.post_json(
-            "api/v1/account/recovery",
-            json!({"did": did, "method": method, "proof": proof}),
-        )
-        .await
-    }
-
     // ── Identity & Directory ────────────────────────────────────────
 
     pub async fn search_organizations(
@@ -1831,7 +1601,7 @@ impl ContrixApi {
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
-        self.post_json("api/v1/identity/resolve-handle", json!({"handle": handle}))
+        self.post_json("api/v1/directory/resolve-handle", json!({"handle": handle}))
             .await
     }
 
@@ -2040,26 +1810,14 @@ impl ContrixApi {
         self.get_json(&path).await
     }
 
-    /// Parity with `list_place_projections` / `list_flow_projections`
-    /// for the morphs read-side endpoint, so future morph-aware views can
-    /// hydrate post-refresh state.
-    pub async fn list_morph_projections(
-        &self,
-        space_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionResponse<MorphProjectionView>> {
-        let path = format!("api/v1/projection/morphs?space_id={space_id}");
-        self.get_json(&path).await
-    }
-
     // ── Device & Crypto ─────────────────────────────────────────────
 
+    /// User-driven device revoke. Hits soland's deployment-local
+    /// `cx.devices.revoke` (`POST /api/v1/devices/{device_id}/revoke`) —
+    /// NOT spec's `cx.admin.revoke_device` (`POST /admin/devices/{id}/revoke`),
+    /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
         self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
-            .await
-    }
-
-    pub async fn rotate_keys(&self, device_id: &str) -> anyhow::Result<RotateKeysResponse> {
-        self.post_json("api/v1/keys/rotate", json!({"device_id": device_id}))
             .await
     }
 
@@ -2081,117 +1839,9 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn get_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsEpochResponse> {
-        self.get_json(&format!("api/v1/mls/epoch?group_id={group_id}"))
-            .await
-    }
-
     pub async fn rotate_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsRotateResponse> {
         self.post_json("api/v1/mls/rotate", json!({"group_id": group_id}))
             .await
-    }
-
-    // ── Moderation & Policy ─────────────────────────────────────────
-
-    pub async fn get_moderation_reports(
-        &self,
-        space_id: Option<&str>,
-    ) -> anyhow::Result<ModerationReportsResponse> {
-        match space_id {
-            Some(sid) => {
-                self.get_json(&format!("api/v1/moderation/reports?space_id={sid}"))
-                    .await
-            }
-            None => self.get_json("api/v1/moderation/reports").await,
-        }
-    }
-
-    pub async fn resolve_moderation_report(
-        &self,
-        report_id: &str,
-        resolution: &str,
-        notes: Option<&str>,
-    ) -> anyhow::Result<ModerationResolveResponse> {
-        self.post_json(
-            &format!("api/v1/moderation/reports/{report_id}/resolve"),
-            json!({"resolution": resolution, "notes": notes}),
-        )
-        .await
-    }
-
-    pub async fn get_policy(&self, resource: &str) -> anyhow::Result<PolicyResponse> {
-        self.get_json(&format!("api/v1/policy/{resource}")).await
-    }
-
-    // ── Federation ──────────────────────────────────────────────────
-
-    pub async fn federation_submit_transaction(
-        &self,
-        txn_id: &str,
-        origin: &str,
-        destination: &str,
-        operations: Vec<Value>,
-    ) -> anyhow::Result<FederationTransactionResBody> {
-        self.put_json(
-            &format!("api/v1/federation/transactions/{txn_id}"),
-            json!({
-                "origin": origin,
-                "destination": destination,
-                "operations": operations
-            }),
-        )
-        .await
-    }
-
-    pub async fn federation_push_operations(
-        &self,
-        space_id: &str,
-        operations: Vec<Value>,
-    ) -> anyhow::Result<FederationTransactionResBody> {
-        self.post_json(
-            "api/v1/federation/push-operations",
-            json!({"space_id": space_id, "operations": operations}),
-        )
-        .await
-    }
-
-    pub async fn federation_pull_operations(
-        &self,
-        space_id: &str,
-        since: Option<&str>,
-        limit: Option<usize>,
-    ) -> anyhow::Result<FederationOperationsResponse> {
-        self.post_json(
-            "api/v1/federation/pull-operations",
-            json!({
-                "space_id": space_id,
-                "since": since,
-                "limit": limit.unwrap_or(100)
-            }),
-        )
-        .await
-    }
-
-    pub async fn federation_space_members(
-        &self,
-        space_id: &str,
-    ) -> anyhow::Result<FederationSpaceMembersResBody> {
-        self.get_json(&format!(
-            "api/v1/federation/space-members?space_id={space_id}"
-        ))
-        .await
-    }
-
-    pub async fn federation_verify_actor(
-        &self,
-        actor: &str,
-        space_id: &str,
-    ) -> anyhow::Result<FederationVerifyActorResBody> {
-        self.post_json(
-            "api/v1/federation/verify-actor",
-            json!({"actor": actor, "space_id": space_id}),
-        )
-        .await
     }
 
     // ── Policy (signed decisions) ───────────────────────────────────
@@ -2284,101 +1934,7 @@ impl ContrixApi {
         self.post_json("api/v1/mimi/proxy-download", request).await
     }
 
-    // ── Applet ──────────────────────────────────────────────────────
-
-    pub async fn applet_ping(&self, applet_did: &str) -> anyhow::Result<AppletPingResBody> {
-        self.post_json("api/v1/applet/ping", json!({"applet_did": applet_did}))
-            .await
-    }
-
-    pub async fn applet_describe(&self, applet_did: &str) -> anyhow::Result<AppletDescribeResBody> {
-        self.get_json(&format!("api/v1/applet/describe?applet_did={applet_did}"))
-            .await
-    }
-
-    pub async fn applet_transaction(
-        &self,
-        applet_did: &str,
-        operations: Vec<Value>,
-    ) -> anyhow::Result<AppletTransactionResBody> {
-        self.post_json(
-            "api/v1/applet/transaction",
-            json!({"applet_did": applet_did, "operations": operations}),
-        )
-        .await
-    }
-
-    pub async fn applet_query_actor(
-        &self,
-        applet_did: &str,
-        actor: &str,
-    ) -> anyhow::Result<AppletQueryActorResponse> {
-        self.post_json(
-            "api/v1/applet/query_actor",
-            json!({"applet_did": applet_did, "actor": actor}),
-        )
-        .await
-    }
-
-    pub async fn applet_query_space(
-        &self,
-        applet_did: &str,
-        space_id: &str,
-    ) -> anyhow::Result<AppletQuerySpaceResponse> {
-        self.post_json(
-            "api/v1/applet/query_space",
-            json!({"applet_did": applet_did, "space_id": space_id}),
-        )
-        .await
-    }
-
-    pub async fn applet_protocol_metadata(
-        &self,
-        applet_did: &str,
-    ) -> anyhow::Result<AppletProtocolMetadataResponse> {
-        self.get_json(&format!(
-            "api/v1/applet/protocol_metadata?applet_did={applet_did}"
-        ))
-        .await
-    }
-
-    pub async fn applet_third_party_users(
-        &self,
-        applet_did: &str,
-        location: &str,
-    ) -> anyhow::Result<ThirdPartyUsersResponse> {
-        self.post_json(
-            "api/v1/applet/third_party_users",
-            json!({"applet_did": applet_did, "location": location}),
-        )
-        .await
-    }
-
-    pub async fn applet_third_party_locations(
-        &self,
-        applet_did: &str,
-        user_id: &str,
-    ) -> anyhow::Result<ThirdPartyLocationsResponse> {
-        self.post_json(
-            "api/v1/applet/third_party_locations",
-            json!({"applet_did": applet_did, "user_id": user_id}),
-        )
-        .await
-    }
-
     // ── Identity (extended) ─────────────────────────────────────────
-
-    pub async fn identity_log(
-        &self,
-        did: &str,
-        limit: Option<usize>,
-    ) -> anyhow::Result<IdentityLogResBody> {
-        self.post_json(
-            "api/v1/identity/log",
-            json!({"did": did, "limit": limit.unwrap_or(50)}),
-        )
-        .await
-    }
 
     pub async fn submit_did_operation(
         &self,
@@ -2490,12 +2046,12 @@ impl ContrixApi {
         self.submit_event_envelope(&event).await
     }
 
-    /// Round 4 (spec a77b995) — `POST /api/v1/events/submit` carrying
-    /// the batch shape ([`contrix_sdk::EventsSubmitBatchRequest`]).
-    /// Clients pick this when they have multiple ready envelopes (e.g.
-    /// composer sends a draft + a read receipt at once); the federation
-    /// shape ([`contrix_sdk::EventsSubmitFederationRequest`]) is S2S
-    /// only and yougen MUST NEVER serialise it.
+    /// `cx.events.submit` in batch form. Spec binds events.submit to
+    /// `POST /api/v1/events` and distinguishes the three accepted body
+    /// shapes (single envelope, [`contrix_sdk::EventsSubmitBatchRequest`],
+    /// [`contrix_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
+    /// by URL suffix. The federation shape is S2S only and yougen MUST
+    /// NEVER serialise it.
     pub async fn submit_events_batch(
         &self,
         envelopes: &[Value],
@@ -2508,7 +2064,7 @@ impl ContrixApi {
         let value = serde_json::to_value(&body)?;
         let request = self
             .http
-            .post(self.endpoint("api/v1/events/submit")?)
+            .post(self.endpoint("api/v1/events")?)
             .json(&value);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
@@ -2596,11 +2152,6 @@ impl ContrixApi {
             content,
         )
         .await
-    }
-
-    pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResBody> {
-        self.post_json("api/v1/identity/receipts", json!({"did": did}))
-            .await
     }
 
     // ── Media ───────────────────────────────────────────────────────
@@ -3207,10 +2758,23 @@ pub fn build_space_create_event(
     default_realm_ref: Option<&str>,
 ) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
+    // Spec space.schema.json — `realm_id` and `default_realm_ref`
+    // MUST match `^cx:realm:UUID7`. The Realm form still mints
+    // `cx:space:` envelope ids during the Realm/Space inversion
+    // migration window, so callers hand us the legacy form and we
+    // rewrite for the inner Space-object payload here. Once the
+    // envelope migrates to `cx:realm:` this rewrite becomes a no-op.
+    let normalize_realm = |value: &str| -> String {
+        if let Some(rest) = value.strip_prefix("cx:space:") {
+            format!("cx:realm:{rest}")
+        } else {
+            value.to_owned()
+        }
+    };
     let mut object = json!({
         "id": space_id,
         "schema": "cx.schema.space.v1",
-        "realm_id": realm_id,
+        "realm_id": normalize_realm(realm_id),
         "kind": kind,
         "title": title,
         "state": "active",
@@ -3225,12 +2789,14 @@ pub fn build_space_create_event(
     if let Some(parent) = parent_space_id
         && !parent.trim().is_empty()
     {
+        // parent_ref stays on the `cx:space:` prefix per spec — Space
+        // parents are themselves Spaces, not Realms.
         object["parent_ref"] = Value::String(parent.trim().to_owned());
     }
     if let Some(default_realm) = default_realm_ref
         && !default_realm.trim().is_empty()
     {
-        object["default_realm_ref"] = Value::String(default_realm.trim().to_owned());
+        object["default_realm_ref"] = Value::String(normalize_realm(default_realm.trim()));
     }
 
     // The Space `create` event is authorized + written to the home
@@ -3414,7 +2980,18 @@ fn build_reducer_event(
     op_kind: &str,
     op_value: Value,
 ) -> anyhow::Result<Value> {
-    let event_id = format!("cx:event:{}", uuid_v7());
+    let event_uuid = uuid_v7();
+    let event_id = format!("cx:event:{event_uuid}");
+    // `local_operation_idempotency_alias` carries an Operation id (the
+    // projection-side dedupe key), not an Event id. Soland's
+    // `OperationId::new` validates the `cx:operation:` prefix — passing an
+    // `cx:event:` alias here silently disables projection (the event lands
+    // in the canonical store with 200 OK but `cx.member.state` / etc.
+    // never reaches `project_accepted_operations`, so seed-member invites
+    // and other projection writes get dropped). Reuse the event's UUID v7
+    // for the alias so the event_id and operation_id share the same
+    // identity suffix (and idempotency replays still collapse).
+    let operation_alias = format!("cx:operation:{event_uuid}");
     let mut op = json!({ "kind": op_kind });
     match op_value {
         Value::Object(map) => {
@@ -3446,7 +3023,7 @@ fn build_reducer_event(
         "anchor_ref": ZERO_ANCHOR_REF,
         "payload": payload,
         "unsigned": {
-            "local_operation_idempotency_alias": event_id,
+            "local_operation_idempotency_alias": operation_alias,
         },
         "proofs": [{
             "kind": "detached_jws",
@@ -3752,7 +3329,7 @@ fn query_component(value: &str) -> String {
 }
 
 fn events_query_path(space_id: &str) -> String {
-    format!("api/v1/events?spaces={}", query_component(space_id))
+    format!("api/v1/events?realms={}", query_component(space_id))
 }
 
 fn events_subscribe_path(
@@ -3761,7 +3338,7 @@ fn events_subscribe_path(
     include_history: Option<bool>,
 ) -> String {
     let mut url = format!(
-        "api/v1/events/subscribe?spaces={}",
+        "api/v1/events/subscribe?realms={}",
         query_component(space_id)
     );
     if let Some(after) = after {
@@ -3945,13 +3522,13 @@ mod tests {
     #[test]
     fn event_paths_use_v1_query_parameters() {
         let backfill = events_query_path("cx:space:demo");
-        assert_eq!(backfill, "api/v1/events?spaces=cx%3Aspace%3Ademo");
+        assert_eq!(backfill, "api/v1/events?realms=cx%3Aspace%3Ademo");
         assert!(!backfill.contains("direction="));
 
         let subscribe = events_subscribe_path("cx:space:demo", Some("sx:1"), Some(true));
         assert_eq!(
             subscribe,
-            "api/v1/events/subscribe?spaces=cx%3Aspace%3Ademo&after=sx%3A1&include_history=true"
+            "api/v1/events/subscribe?realms=cx%3Aspace%3Ademo&after=sx%3A1&include_history=true"
         );
         assert!(!subscribe.contains("&from="));
     }
@@ -4045,6 +3622,41 @@ mod tests {
             "did:web:server.example"
         );
         assert_eq!(events[6]["payload"]["membership"], "invite");
+    }
+
+    /// Contract test: cx.space.create payload must satisfy spec
+    /// space.schema.json — same validator soland runs on the wire.
+    #[test]
+    fn space_create_payload_matches_spec_schema() {
+        // Spec requires payload.object.realm_id to match the
+        // `^cx:realm:UUID7` pattern. Caller (yougen UI) holds the home
+        // Realm under its legacy cx:space: envelope id; the builder
+        // must rewrite for the inner reference.
+        let event = build_space_create_event(
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Roadmap",
+            Some("Q3 planning"),
+            "board",
+            None,
+            None,
+        )
+        .unwrap();
+        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        let kind = event["kind"].as_str().unwrap();
+        if catalog
+            .missing_payload_validators_for(std::iter::once(kind))
+            .is_empty()
+        {
+            let payload = event.get("payload").unwrap();
+            if let Err(error) = catalog.validate_payload(kind, payload) {
+                panic!(
+                    "cx.space.create payload violates spec: {error}\npayload: {}",
+                    serde_json::to_string_pretty(payload).unwrap_or_default()
+                );
+            }
+        }
     }
 
     /// Contract test: every event produced by `build_realm_bootstrap_events`

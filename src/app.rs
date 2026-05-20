@@ -6934,7 +6934,11 @@ fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
-        Route::Space { .. } => "Space",
+        // Route::Space resolves either a Realm or a Space projection
+        // depending on the id prefix — see the sidebar two-tier
+        // classification. "Workspace" is the neutral umbrella label
+        // for the breadcrumb until a separate Realm view splits off.
+        Route::Space { .. } => "Workspace",
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }

@@ -1105,21 +1105,29 @@ pub mod cx_ops {
     }
 
     /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
-    /// and `common-fields.md §5.1`. Reducer rejects with `flow_not_active`
-    /// when source state is not `active`.
+    /// and `common-fields.md §5.1`; payload shape is the
+    /// `object_lifecycle_payload` from
+    /// `artifacts/schemas/event-payload.schema.json`, which requires one of
+    /// `target_ref` / `object_ref` / `status`. SDK reducer rejects with
+    /// `flow_not_active` when source state is not `active`.
     pub fn flow_archive(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.flow.archive")
             .target_ref(flow_id)
-            .body(json!({ "flow_id": flow_id }))
+            // Spec-canonical payload field is `target_ref`. `flow_id` is
+            // retained as a non-normative alias for in-flight servers that
+            // still read it; remove once soland's `apply_flow_lifecycle`
+            // and `FLOW_LIFECYCLE_REQUIREMENTS` stop accepting it.
+            .body(json!({ "target_ref": flow_id, "flow_id": flow_id }))
     }
 
     /// Build a `cx.flow.restore` operation. Reverses [`flow_archive`]
     /// (`archived -> active`). SDK reducer rejects with `flow_not_archived`
-    /// when source state is not `archived`.
+    /// when source state is not `archived`. Payload shape mirrors the
+    /// archive op (spec `object_lifecycle_payload`).
     pub fn flow_restore(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.flow.restore")
             .target_ref(flow_id)
-            .body(json!({ "flow_id": flow_id }))
+            .body(json!({ "target_ref": flow_id, "flow_id": flow_id }))
     }
 
     // ── Applet protocol family ────────────────────────────────────────

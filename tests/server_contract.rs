@@ -631,62 +631,6 @@ fn yougen_parses_submit_move_rejected_response() {
     assert!(parsed.reason.unwrap().contains("replay_window"));
 }
 
-#[test]
-fn yougen_parses_sign_anchor_published_response() {
-    let body = json!({
-        "published": true,
-        "anchor_id": "cx:anchor:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "accepted_move_ids": [
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ],
-        "rejected_moves": [],
-        "post_state_root": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-    });
-    let parsed: yougen::models::SignAnchorResponse = serde_json::from_value(body).unwrap();
-    assert!(parsed.published);
-    assert_eq!(parsed.accepted_move_ids.len(), 1);
-    assert!(parsed.rejected_moves.is_empty());
-    assert!(
-        parsed
-            .post_state_root
-            .as_deref()
-            .unwrap()
-            .starts_with("sha256:")
-    );
-}
-
-#[test]
-fn yougen_parses_sign_anchor_unpublished_response() {
-    // No pending Moves → server returns `published=false` with no
-    // anchor fields. Optional fields must deserialize as None.
-    let body = json!({"published": false});
-    let parsed: yougen::models::SignAnchorResponse = serde_json::from_value(body).unwrap();
-    assert!(!parsed.published);
-    assert!(parsed.anchor_id.is_none());
-    assert!(parsed.accepted_move_ids.is_empty());
-    assert!(parsed.post_state_root.is_none());
-}
-
-#[test]
-fn yougen_parses_submit_anchor_response_with_rejected_moves() {
-    let body = json!({
-        "anchor_id": "cx:anchor:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "accepted_move_ids": [
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ],
-        "rejected_moves": [
-            {
-                "move_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-                "reason": "FSM invalid transition: from=invited, to=ban"
-            }
-        ],
-        "post_state_root": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-    });
-    let parsed: yougen::models::SubmitAnchorResponse = serde_json::from_value(body).unwrap();
-    assert_eq!(parsed.accepted_move_ids.len(), 1);
-    assert_eq!(parsed.rejected_moves.len(), 1);
-    assert!(parsed.rejected_moves[0].reason.contains("FSM"));
-}
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
 /// (server returned 401 with no parseable error envelope, e.g. a

@@ -201,8 +201,16 @@ impl TimelineEvent {
 }
 
 fn text_content(body: &str) -> serde_json::Value {
+    // Spec `event-payload.schema.json` `content_block` requires `kind` (a
+    // `content_kind` string matching `^cx\.content\.[a-z0-9_]+...` or a
+    // reverse-domain id) and `body` (string). Plain timeline text uses
+    // `cx.content.text`. `blocks[]` is optional and, when present, MUST
+    // be an array of `content_block` items — the older yougen shape
+    // (`[{kind: "text", text: ...}]`) failed both the `content_kind`
+    // pattern (`text` has no dot) and the `body` requirement, so it is
+    // dropped here; downstream renderers should read `body` directly.
     json!({
-        "blocks": [{"kind": "text", "text": body}],
+        "kind": "cx.content.text",
         "body": body,
     })
 }
@@ -213,7 +221,19 @@ pub(crate) fn message_create_operation(
     thread_id: Option<&str>,
     body: &str,
 ) -> EventEnvelope {
+    // Spec `event-payload.schema.json` `message_create_payload` requires
+    // `flow_id` and `track` (`flow-and-message.md` §2). The default Flow
+    // for a Space is `cx:flow:<space_uuid>` (re-tag of the Space id —
+    // matches soland's `flow_id_from_space_id`); the default track is
+    // "discussion" (the only v1-interop track per the schema's
+    // `$defs/track` description).
+    let flow_id = space_id
+        .strip_prefix("cx:space:")
+        .map(|suffix| format!("cx:flow:{suffix}"))
+        .unwrap_or_else(|| space_id.to_owned());
     let mut payload = json!({
+        "flow_id": flow_id,
+        "track": "discussion",
         "body": body,
         "content": text_content(body),
         "encrypted": false,
