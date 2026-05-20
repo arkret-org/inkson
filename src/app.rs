@@ -2162,6 +2162,44 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--nav-text);
 }
 
+/* Prominent CTA for "create a new Realm" in the Realms & Spaces
+ * sidebar header. The tiny 16px `.add` button blended into the
+ * label and most users never noticed it; this variant matches the
+ * brand-yellow primary button styling so it reads as the primary
+ * call to action for the whole section. SVG icon (UiIcon "plus")
+ * keeps the affordance crisp at all DPRs.
+ */
+.sidebar-nav-group-title .add-realm-cta {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  color: #1a1a1a;
+  background: linear-gradient(135deg, #ffb547 0%, #ff8a3d 100%);
+  border: 1px solid color-mix(in srgb, #ff8a3d 60%, transparent);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(255, 138, 61, 0.18);
+  text-decoration: none;
+  transition: transform 80ms ease, box-shadow 80ms ease, filter 80ms ease;
+}
+.sidebar-nav-group-title .add-realm-cta svg {
+  width: 16px;
+  height: 16px;
+}
+.sidebar-nav-group-title .add-realm-cta:hover,
+.sidebar-nav-group-title .add-realm-cta:focus-visible {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2), 0 6px 14px rgba(255, 138, 61, 0.28);
+  outline: none;
+}
+.sidebar-nav-group-title .add-realm-cta:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+}
+
 .sidebar-nav-item {
   width: 100%;
   min-height: 40px;
@@ -2257,17 +2295,26 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  margin: 2px 4px 2px 0;
-  border-radius: 4px;
-  color: var(--muted, #6b7280);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
+  margin: 6px 6px 6px 0;
+  border-radius: 6px;
+  /* Resting state uses a translucent brand tint so the affordance
+   * is discoverable but not loud — at full opacity on hover the
+   * button promotes to the same yellow CTA as the header "+R". */
+  background: color-mix(in srgb, #ff8a3d 18%, transparent);
+  border: 1px solid color-mix(in srgb, #ff8a3d 32%, transparent);
+  color: #ffb547;
   text-decoration: none;
   opacity: 0;
-  transition: opacity 80ms ease, background-color 80ms ease;
+  transition: opacity 80ms ease, background-color 80ms ease,
+              color 80ms ease, transform 80ms ease,
+              box-shadow 80ms ease, filter 80ms ease;
+}
+.sidebar-row-add-action svg {
+  width: 14px;
+  height: 14px;
 }
 .sidebar-row:hover .sidebar-row-add-action,
 .sidebar-row:focus-within .sidebar-row-add-action {
@@ -2275,9 +2322,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 .sidebar-row-add-action:hover,
 .sidebar-row-add-action:focus-visible {
-  background: var(--surface-elevated, rgba(255, 255, 255, 0.08));
-  color: var(--text-strong, #fff);
+  background: linear-gradient(135deg, #ffb547 0%, #ff8a3d 100%);
+  border-color: color-mix(in srgb, #ff8a3d 70%, transparent);
+  color: #1a1a1a;
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(255, 138, 61, 0.22);
   outline: none;
+}
+.sidebar-row-add-action:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .sidebar-nav-icon,
@@ -5372,10 +5426,12 @@ pub fn RouterView() -> Element {
                         // instead of dumping the user on a form with
                         // no idea where the Space will land.
                         Link {
-                            class: "add",
-                            title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click + on that row.",
+                            class: "add-realm-cta",
+                            "data-testid": "sidebar-new-realm-cta",
+                            title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click the + on that row.",
+                            "aria-label": "Create a new Realm",
                             to: Route::SetupSection { section: "spaces".to_owned() },
-                            "+"
+                            UiIcon { name: "plus" }
                         }
                     }
                     if !loaded_spaces.is_empty() && !sidebar_is_collapsed {
@@ -5550,7 +5606,7 @@ pub fn RouterView() -> Element {
                                     let id = item_space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
                                 },
-                                "+"
+                                UiIcon { name: "plus" }
                             }
                             }
                                 }
