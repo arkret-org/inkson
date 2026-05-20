@@ -551,82 +551,30 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
         .unwrap_or(true)
 }
 
+/// Diff a profile's `required_operations` (per the SDK's canonical
+/// `profile_requirements` table — itself generated from
+/// `contrix-spec/artifacts/profiles/`) against what the server
+/// advertises in `supported_operations`. Profiles unknown to the SDK
+/// table return a single sentinel so the UI surfaces "this profile id
+/// isn't in the spec" rather than silently passing.
+///
+/// `required_event_kinds` / `required_schemas` are intentionally NOT
+/// checked here — those describe what the *client* must implement,
+/// not what the server has to expose. The server-side gate is about
+/// "can I call the endpoints I'd need" only.
 fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<String> {
-    let mut missing = Vec::new();
-    match profile_id {
-        PROFILE_MINIMAL_CLIENT => {
-            require_feature_or_operation(server, "sync.account", "cx.sync.account", &mut missing);
-            require_feature_or_operation(
-                server,
-                "directory.search_spaces",
-                "cx.directory.search_spaces",
-                &mut missing,
-            );
-        }
-        PROFILE_CHAT_MVP => {
-            require_feature_or_operation(server, "sync.account", "cx.sync.account", &mut missing);
-            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
-        }
-        PROFILE_KANBAN_MVP => {
-            require_feature_or_operation(server, "index.query", "cx.index.query", &mut missing);
-            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
-        }
-        PROFILE_FULL_CLIENT => {
-            for (feature, operation) in [
-                ("sync.account", "cx.sync.account"),
-                ("directory.search_spaces", "cx.directory.search_spaces"),
-                ("index.query", "cx.index.query"),
-                ("events.submit", "cx.events.submit"),
-                ("authz.check", "cx.authz.check"),
-                ("space.create", "cx.spaces.create"),
-            ] {
-                require_feature_or_operation(server, feature, operation, &mut missing);
-            }
-        }
-        PROFILE_E2EE_CLIENT => {
-            for (feature, operation) in [
-                ("keys.upload", "cx.keys.upload"),
-                ("keys.query", "cx.keys.query"),
-                ("keys.claim", "cx.keys.claim"),
-                ("device_messages.receive", "cx.device_messages.receive"),
-            ] {
-                require_feature_or_operation(server, feature, operation, &mut missing);
-            }
-        }
-        PROFILE_FEDERATION_MINIMAL => {
-            require_feature_or_operation(
-                server,
-                "federation.transaction",
-                "cx.federation.transaction",
-                &mut missing,
-            );
-        }
-        PROFILE_MLS_GOVERNANCE_BINDING_FULL => {
-            // Hardening profile on top of e2ee_client. Server MUST advertise
-            // the MLS commit submission path AND accept covered_frontier
-            // cell additions; the SDK already validates the cell shape, but
-            // the wire route is fronted by events.submit.
-            require_feature_or_operation(server, "events.submit", "cx.events.submit", &mut missing);
-            require_feature_or_operation(server, "keys.upload", "cx.keys.upload", &mut missing);
-        }
-        // T0.3: yougen does not claim to *implement* the push_gateway role,
-        // but it MUST still check whether the server advertises a push
-        // registration endpoint before exposing the registration UI. This
-        // arm exists to support that capability check; it intentionally
-        // has no client_profile_declarations() entry.
-        PROFILE_PUSH_GATEWAY => {
-            require_feature_or_operation(
-                server,
-                "push.register_device",
-                "cx.push.register_device",
-                &mut missing,
-            );
-        }
-        _ => missing.push(format!("unknown profile {profile_id}")),
-    }
-    missing
+    let Some(req) = contrix_sdk::generated::profile_requirements::requirements_for(profile_id)
+    else {
+        return vec![format!("unknown profile {profile_id}")];
+    };
+    req.required_operations
+        .iter()
+        .filter(|operation| !server.supports_operation(operation))
+        .map(|operation| (*operation).to_owned())
+        .collect()
 }
 
+#[allow(dead_code)]
 fn require_feature_or_operation(
     server: &ServerDescription,
     feature: &str,
@@ -847,14 +795,23 @@ mod tests {
 
     #[test]
     fn profile_readiness_reports_server_gaps() {
+        // Server advertises exactly the operations SDK's
+        // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
+        // client should be ready. `chat_mvp` additionally requires
+        // `cx.sync.account` which the fixture intentionally omits, so
+        // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
             "trust_domain": "cx:trust_domain:server.example",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
-            "supported_features": ["sync.account", "directory.search_spaces"],
-            "supported_operations": ["cx.sync.account", "cx.directory.search_spaces"],
+            "supported_features": [],
+            "supported_operations": [
+                "cx.events.get",
+                "cx.events.query",
+                "cx.server.describe",
+            ],
             "supported_bindings": [],
             "auth_metadata": {},
             "limits": {},
@@ -873,7 +830,7 @@ mod tests {
             .iter()
             .find(|profile| profile.profile_id == PROFILE_MINIMAL_CLIENT)
             .unwrap();
-        assert!(minimal.ready);
+        assert!(minimal.ready, "missing: {:?}", minimal.missing);
         assert!(minimal.server_declared);
 
         let chat = readiness
@@ -884,7 +841,9 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("events.submit"))
+                .any(|missing| missing.contains("cx.sync.account")),
+            "expected chat_mvp to flag missing cx.sync.account, got {:?}",
+            chat.missing
         );
     }
 
