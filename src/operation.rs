@@ -901,6 +901,153 @@ pub mod cx_ops {
             }))
     }
 
+    /// Build a `cx.morph.update` patch operation. Mirrors
+    /// [`flow_update_patch`] for Morph objects; soland's
+    /// `apply_morph_update` reducer accepts `payload.patch` with the
+    /// standard `cx.schema.patch.v1` shape.
+    pub fn morph_update_patch(
+        space_id: &str,
+        actor: &str,
+        morph_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.morph.update")
+            .target_ref(morph_id)
+            .body(json!({
+                "morph_id": morph_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Build a `cx.policy.update` patch operation. The reducer-side
+    /// integration for cx.policy.* events is not yet wired in soland;
+    /// in the meantime clients can apply policy patches via the
+    /// `PATCH /api/v1/policies/{policy_id}` admin endpoint (`patch`
+    /// body field). This builder is the future-proof event-stream
+    /// form so clients don't have to wait for that wiring.
+    pub fn policy_update_patch(
+        space_id: &str,
+        actor: &str,
+        policy_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.policy.update")
+            .target_ref(policy_id)
+            .body(json!({
+                "policy_id": policy_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Build a `cx.actor_profile.update` patch operation. Same
+    /// caveat as [`policy_update_patch`]: the reducer-side wiring is
+    /// deferred; the builder keeps client code spec-shape correct.
+    pub fn actor_profile_update_patch(
+        space_id: &str,
+        actor: &str,
+        actor_profile_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.actor_profile.update")
+            .target_ref(actor_profile_id)
+            .body(json!({
+                "actor_profile_id": actor_profile_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Build a `cx.message.revise` patch operation. Spec: revise is
+    /// supposed to carry `payload.patch` like the other `*.update`
+    /// events. Soland today accepts both the legacy full-content
+    /// shape and the new patch shape (additive). New clients SHOULD
+    /// emit patches; legacy clients sending `{content: <full body>}`
+    /// keep working.
+    pub fn message_revise_patch(
+        space_id: &str,
+        actor: &str,
+        message_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.message.revise")
+            .target_ref(message_id)
+            .body(json!({
+                "message_id": message_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Build a `cx.realm.update` patch operation. The reducer accepts
+    /// both flat fields (action/owner/title/security_class) and
+    /// `payload.patch`; the patch shape is preferred for non-lifecycle
+    /// edits (title / description).
+    pub fn realm_update_patch(
+        space_id: &str,
+        actor: &str,
+        realm_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.realm.update")
+            .target_ref(realm_id)
+            .body(json!({
+                "realm_id": realm_id,
+                "patch": patch,
+            }))
+    }
+
+    /// Build a `cx.moderation.report.submit` operation. Note: this is
+    /// the event-stream form; today yougen also has a direct HTTP
+    /// path via `api::Client::report_moderation`. Keep both — the
+    /// HTTP path goes through `/api/v1/moderation/report` and is
+    /// validated/authorised inline; the event-stream form rides on
+    /// the standard operation submit pipeline.
+    pub fn moderation_report_submit(
+        space_id: &str,
+        actor: &str,
+        report_id: &str,
+        target_ref: &str,
+        reason: &str,
+        description: Option<&str>,
+        evidence_refs: Vec<String>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.moderation.report.submit")
+            .target_ref(report_id)
+            .body(json!({
+                "report_id": report_id,
+                "target_ref": target_ref,
+                "reason": reason,
+                "description": description,
+                "evidence_refs": evidence_refs,
+            }))
+    }
+
+    /// Build a `cx.moderation.appeal.submit` operation. Mirrors the
+    /// 4-state moderation appeal FSM (see
+    /// `contrix_sdk::round23::AppealSubmitPayload`).
+    pub fn moderation_appeal_submit(
+        space_id: &str,
+        actor: &str,
+        appeal_id: &str,
+        realm_id: &str,
+        decision_ref: &str,
+        target_ref: &str,
+        reason_text_ref: &str,
+        evidence_refs: Vec<String>,
+        evidence_visibility: Option<&str>,
+    ) -> OperationBuilder {
+        OperationBuilder::new(space_id, actor, "cx.moderation.appeal.submit")
+            .target_ref(appeal_id)
+            .body(json!({
+                "appeal_id": appeal_id,
+                "realm_id": realm_id,
+                "decision_ref": decision_ref,
+                "target_ref": target_ref,
+                "appellant": actor,
+                "reason_text_ref": reason_text_ref,
+                "evidence_refs": evidence_refs,
+                "evidence_visibility": evidence_visibility,
+            }))
+    }
+
     pub fn invite_create_structured(
         space_id: &str,
         actor: &str,

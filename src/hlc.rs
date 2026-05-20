@@ -3,13 +3,22 @@
 //! Format: `<physical_hex_12>-<logical_hex_8>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)
 //! - 32-bit logical counter (8 hex chars)
-//! - 32-bit node hash (8 hex chars)
+//! - 32-bit node hash (8 hex chars; SHA-256 prefix, see [`hash_node_id`])
+//!
+//! The node-id derivation MUST stay byte-compatible with the SDK's
+//! `contrix_sdk::hlc::HlcGenerator::compute_node_id` (SHA-256 of the node
+//! identifier string, big-endian first 4 bytes encoded as 8 lowercase
+//! hex chars). The cross-impl test `hash_node_id_matches_sdk_compute_node_id`
+//! at the bottom of this file pins both implementations against each
+//! other; if it ever drifts, downstream HLCs become wire-incompatible
+//! with anything the SDK produced from the same DID.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// A Hybrid Logical Clock timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -139,14 +148,18 @@ impl fmt::Display for Hlc {
     }
 }
 
-/// Hash a node ID string to a 32-bit value (FNV-1a).
+/// Hash a node identifier string to the 32-bit value used by [`Hlc`]'s
+/// `node_id` segment.
+///
+/// Algorithm: SHA-256(`node_id`), interpret the first 4 bytes as a
+/// big-endian `u32`. When encoded via `{:08x}` this yields the same
+/// 8-hex-char string as `contrix_sdk::hlc::HlcGenerator::compute_node_id`
+/// for the same input — so HLCs minted by yougen and by the SDK for the
+/// same DID share identical node segments and can be merged/compared
+/// across the wire.
 pub fn hash_node_id(node_id: &str) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for byte in node_id.bytes() {
-        hash ^= byte as u32;
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
+    let digest = Sha256::digest(node_id.as_bytes());
+    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
 }
 
 /// A global monotonic sequence counter for operation ordering.
@@ -250,6 +263,32 @@ mod tests {
     fn hash_node_id_is_deterministic() {
         assert_eq!(hash_node_id("device_1"), hash_node_id("device_1"));
         assert_ne!(hash_node_id("device_1"), hash_node_id("device_2"));
+    }
+
+    /// Pin yougen's `hash_node_id` to the same byte output as the SDK's
+    /// `HlcGenerator::compute_node_id`. The SDK's helper produces the
+    /// 8-hex-char node segment by SHA-256(input)[..4] formatted as
+    /// `{:02x}{:02x}{:02x}{:02x}`. Encoding our `u32` as `{:08x}` must
+    /// produce the same 8 chars; otherwise HLCs minted by yougen and
+    /// the SDK for the same DID disagree on the node segment.
+    #[test]
+    fn hash_node_id_matches_sdk_compute_node_id() {
+        use sha2::{Digest, Sha256};
+        for input in [
+            "did:web:alice.example.com",
+            "did:web:bob.example.com",
+            "yougen",
+            "",
+            "01970e589d21-00000001-a13f9c2e",
+        ] {
+            let digest = Sha256::digest(input.as_bytes());
+            let sdk_node: String = digest[0..4].iter().map(|b| format!("{:02x}", b)).collect();
+            let yougen_node = format!("{:08x}", hash_node_id(input));
+            assert_eq!(
+                yougen_node, sdk_node,
+                "node-id encoding diverged from SDK for {input:?}",
+            );
+        }
     }
 
     #[test]
