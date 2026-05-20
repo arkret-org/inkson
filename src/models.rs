@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 pub use contrix_sdk::{ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -282,145 +280,14 @@ pub struct SyncDescribeResBody {
     pub frontier: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ClientSyncResponse {
-    pub cursor: String,
-    pub spaces: BTreeMap<String, Value>,
-    /// Spaces the viewer no longer has access to since the last sync —
-    /// left rooms, kicks, bans, server-side deletions. The client uses
-    /// this to remove the space from `space_projections` and every
-    /// per-space cache (drafts, anchor views, read markers, remarks…)
-    /// so the sidebar reconciles with the server view on incremental syncs
-    /// the same way a `since=None` full sync would.
-    pub left_spaces: Vec<String>,
-    pub to_device: Vec<Value>,
-    pub account_data: Vec<Value>,
-    pub device_lists: Value,
-    pub notifications: Value,
-    pub presence: Value,
-}
-
-impl<'de> Deserialize<'de> for ClientSyncResponse {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        let cursor = value
-            .get("cursor")
-            .and_then(Value::as_str)
-            .ok_or_else(|| serde::de::Error::custom("sync response missing required cursor"))?
-            .to_owned();
-
-        let mut spaces = BTreeMap::new();
-        let mut left_spaces = Vec::new();
-        if let Some(spaces_value) = value.get("spaces") {
-            flatten_sync_spaces(spaces_value, &mut spaces, &mut left_spaces)
-                .map_err(serde::de::Error::custom)?;
-        }
-        left_spaces.sort();
-        left_spaces.dedup();
-
-        Ok(Self {
-            cursor,
-            spaces,
-            left_spaces,
-            to_device: sync_event_array(value.get("to_device"), "to_device")
-                .map_err(serde::de::Error::custom)?,
-            account_data: sync_event_array(value.get("account_data"), "account_data")
-                .map_err(serde::de::Error::custom)?,
-            device_lists: value
-                .get("device_lists")
-                .cloned()
-                .unwrap_or_else(empty_json_object),
-            notifications: value
-                .get("notifications")
-                .cloned()
-                .unwrap_or_else(empty_json_object),
-            presence: value
-                .get("presence")
-                .cloned()
-                .unwrap_or_else(empty_json_object),
-        })
-    }
-}
-
-fn empty_json_object() -> Value {
-    Value::Object(Default::default())
-}
-
-fn flatten_sync_spaces(
-    value: &Value,
-    spaces: &mut BTreeMap<String, Value>,
-    left_spaces: &mut Vec<String>,
-) -> Result<(), String> {
-    let map = value
-        .as_object()
-        .ok_or_else(|| "sync spaces must be an object".to_owned())?;
-    for bucket in map.keys() {
-        if !matches!(bucket.as_str(), "join" | "invite" | "knock" | "leave") {
-            return Err(format!("unexpected sync spaces bucket `{bucket}`"));
-        }
-    }
-
-    for bucket in ["join", "invite", "knock"] {
-        collect_space_bucket(map.get(bucket), spaces, bucket)?;
-    }
-    collect_leave_bucket(map.get("leave"), left_spaces)?;
-    Ok(())
-}
-
-fn collect_space_bucket(
-    value: Option<&Value>,
-    spaces: &mut BTreeMap<String, Value>,
-    bucket: &str,
-) -> Result<(), String> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-    let map = value
-        .as_object()
-        .ok_or_else(|| format!("sync spaces.{bucket} must be an object"))?;
-    for (space_id, body) in map {
-        if !space_id.starts_with("cx:space:") {
-            return Err(format!(
-                "sync spaces.{bucket} key `{space_id}` is not a Space id"
-            ));
-        }
-        spaces.insert(space_id.clone(), body.clone());
-    }
-    Ok(())
-}
-
-fn collect_leave_bucket(value: Option<&Value>, ids: &mut Vec<String>) -> Result<(), String> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-    let map = value
-        .as_object()
-        .ok_or_else(|| "sync spaces.leave must be an object".to_owned())?;
-    for id in map.keys() {
-        if !id.starts_with("cx:space:") {
-            return Err(format!("sync spaces.leave key `{id}` is not a Space id"));
-        }
-        ids.push(id.clone());
-    }
-    Ok(())
-}
-
-fn sync_event_array(value: Option<&Value>, field: &str) -> Result<Vec<Value>, String> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| format!("sync {field} must be an event container object"))?;
-    match object.get("events") {
-        Some(Value::Array(items)) => Ok(items.clone()),
-        Some(_) => Err(format!("sync {field}.events must be an array")),
-        None => Err(format!("sync {field} missing events array")),
-    }
-}
+/// Wire-shape sync response — re-exports the SDK's canonical
+/// [`contrix_sdk::model::SyncResBody`] so client + server can never
+/// drift on field names / per-realm body shape. Spec source of truth
+/// at `contrix-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
+/// own a custom `ClientSyncResponse` with a bucketed-`spaces`
+/// deserializer; that was an older Matrix-style transcript that
+/// disagreed with what soland actually emits.
+pub use contrix_sdk::model::SyncResBody as ClientSyncResponse;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SearchSpacesResponse {

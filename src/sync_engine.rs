@@ -42,7 +42,10 @@ use contrix_sdk::EncryptedPayload;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::{ContrixApi, is_auth_expired_error, is_invalid_cursor_error, sleep_for};
+use crate::api::{
+    ContrixApi, is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after,
+    sleep_for,
+};
 use crate::local_state::{LocalAnchorView, LocalStateStore};
 use crate::models::{ClientSyncResponse, SpacePreview};
 
@@ -58,6 +61,15 @@ const MAX_BACKOFF_SECS: u64 = 60;
 
 /// Floor for the first backoff sleep. Doubles up to `MAX_BACKOFF_SECS`.
 const MIN_BACKOFF_SECS: u64 = 1;
+
+/// Minimum pause between successful iterations. Insurance against
+/// servers that don't actually long-poll on `/sync` (e.g. soland's
+/// current handler returns immediately regardless of `timeout_ms`) —
+/// without this, an `Ok → loop → Ok → loop` cycle spins at network
+/// RTT and burns the per-minute rate-limit quota in a few seconds.
+/// 250 ms = 4 req/s = 240/min, comfortably below the 600/min the
+/// reference server advertises.
+const MIN_INTER_ITERATION_MS: u64 = 250;
 
 /// Bundle of signals + state-store the engine needs to apply a response.
 /// `Copy` because Dioxus signals already are; the struct is just a
@@ -101,6 +113,12 @@ enum IterationOutcome {
     AuthExpired,
     /// Transient network / 5xx error. Backoff and retry.
     Transient(String),
+    /// Server explicitly said "slow down" (HTTP 429 / `rate_limited`).
+    /// Sleep for the server-advertised `retry_after_ms` (0 ⇒ default
+    /// floor) before the next iteration instead of the generic
+    /// exponential backoff. Avoids spamming on top of a rate-limited
+    /// server.
+    RateLimited { retry_after_ms: u64, reason: String },
     /// Configuration is incomplete (empty base URL or token). Engine
     /// exits — caller will respawn when the missing piece arrives.
     NotReady,
@@ -132,13 +150,19 @@ pub async fn run_sync_engine(
         match run_iteration(start_generation, generation, &ctx).await {
             IterationOutcome::Ok => {
                 backoff_secs = MIN_BACKOFF_SECS;
-                // Tight loop: long-poll already absorbed the idle
-                // wait, no extra sleep needed.
+                // Server-side long-poll is supposed to absorb the
+                // idle wait, but soland's current handler returns
+                // immediately. Pause MIN_INTER_ITERATION_MS so we
+                // don't spin at network RTT and burn the rate-limit
+                // budget. Once soland implements real long-polling
+                // this floor becomes effectively free.
+                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::InvalidCursor => {
                 // Demote to full sync next iteration. The persisted
                 // cursor was already cleared inside the iteration.
                 backoff_secs = MIN_BACKOFF_SECS;
+                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
                 // Hand off to the refresh poller / login flow. The
@@ -149,6 +173,21 @@ pub async fn run_sync_engine(
                 // Nothing to do until base_url / token are populated.
                 // Caller's `use_effect` will respawn when they are.
                 return;
+            }
+            IterationOutcome::RateLimited { retry_after_ms, reason } => {
+                {
+                    let mut last_error = ctx.last_error;
+                    last_error.set(Some(reason));
+                }
+                // Honour the server's hint with a floor of
+                // `MIN_BACKOFF_SECS` so a buggy server that returns
+                // `retry_after_ms = 0` still gives us a beat.
+                let wait_ms = retry_after_ms.max(MIN_BACKOFF_SECS.saturating_mul(1000));
+                sleep_for(Duration::from_millis(wait_ms)).await;
+                // Don't escalate `backoff_secs` — the server told us
+                // exactly how long to wait, so the next iteration
+                // restarts the generic backoff ladder from the floor.
+                backoff_secs = MIN_BACKOFF_SECS;
             }
             IterationOutcome::Transient(reason) => {
                 {
@@ -208,6 +247,12 @@ async fn run_iteration(
             IterationOutcome::Ok
         }
         Err(error) if is_auth_expired_error(&error) => IterationOutcome::AuthExpired,
+        Err(error) if let Some(retry_after_ms) = rate_limited_retry_after(&error) => {
+            IterationOutcome::RateLimited {
+                retry_after_ms,
+                reason: format!("sync_engine: {error}"),
+            }
+        }
         Err(error) if is_invalid_cursor_error(&error) => {
             let _ = error;
             // Signals are Copy — take local mutable handles so the
@@ -436,8 +481,9 @@ mod tests {
             to_device: Vec::new(),
             account_data: Vec::new(),
             device_lists: json!({}),
-            notifications: json!({}),
-            presence: json!({}),
+            presence: Vec::new(),
+            notifications: serde_json::Value::Null,
+            partial: false,
         }
     }
 

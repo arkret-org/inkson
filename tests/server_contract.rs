@@ -116,26 +116,22 @@ fn yougen_accepts_server_contract_payloads() {
     let sync = parse_sync(json!({
         "cursor": "cx:cursor:contract-sync",
         "spaces": {
-            "join": {
-                "cx:space:0196419b-0000-7000-8000-000000000000": {
-                    "summary": {
-                        "title": "Contrix Demo Space",
-                        "summary": "Shared demo Space served by server",
-                        "tags": ["demo"],
-                        "category": "collaboration"
-                    },
-                    "timeline": {"events": [], "limited": false},
-                    "state": {"events": []},
-                    "ephemeral": {"events": []},
-                    "unread": {"notification_count": 0, "highlight_count": 0}
-                }
-            },
-            "invite": {},
-            "knock": {},
-            "leave": {}
+            "cx:space:0196419b-0000-7000-8000-000000000000": {
+                "summary": {
+                    "title": "Contrix Demo Space",
+                    "summary": "Shared demo Space served by server",
+                    "tags": ["demo"],
+                    "category": "collaboration"
+                },
+                "timeline": {"events": [], "limited": false},
+                "state": [],
+                "ephemeral": [],
+                "unread": {"notification_count": 0, "highlight_count": 0}
+            }
         },
-        "to_device": {"events": []},
-        "account_data": {"events": []},
+        "left_spaces": [],
+        "to_device": [],
+        "account_data": [],
         "device_lists": {"changed": [], "left": []}
     }))
     .unwrap();
@@ -390,30 +386,31 @@ fn server_description_gates_event_envelope_write_plane() {
 
 #[test]
 fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
+    // Spec-aligned wire shape per `contrix-spec/.../client-sync.md §2`:
+    // flat `spaces` keyed by realm id, explicit top-level
+    // `left_spaces`, flat arrays for `to_device` / `account_data` /
+    // `presence`. The SDK's `SyncResBody` is the single source of
+    // truth; yougen no longer owns a custom deserializer.
     let sync = parse_sync(json!({
         "cursor": "sx:v1-bucket",
         "spaces": {
-            "join": {
-                "cx:space:joined": {
-                    "summary": {"title": "Joined Space"},
-                    "timeline": {"events": [], "limited": false},
-                    "state": [],
-                    "ephemeral": [],
-                    "unread": {"notification_count": 0, "highlight_count": 0}
-                }
-            },
-            "leave": {
-                "cx:space:left": {"reason": "left"}
+            "cx:space:joined": {
+                "summary": {"title": "Joined Space"},
+                "timeline": {"events": [], "limited": false},
+                "state": [],
+                "ephemeral": [],
+                "unread": {"notification_count": 0, "highlight_count": 0}
             }
         },
-        "to_device": {"events": [{"type": "cx.mls.welcome"}]},
-        "account_data": {"events": [{
+        "left_spaces": ["cx:space:left"],
+        "to_device": [{"type": "cx.mls.welcome"}],
+        "account_data": [{
             "data_type": "cx.push_rules",
             "content": {"global": {"enabled": true}}
-        }]},
+        }],
         "device_lists": {"changed": [], "left": []},
         "notifications": {"rooms": {"cx:space:joined": {"count": 1}}},
-        "presence": {"events": [{"sender": "did:web:alice.example"}]}
+        "presence": [{"sender": "did:web:alice.example"}]
     }))
     .unwrap();
     assert_eq!(sync.cursor, "sx:v1-bucket");
@@ -422,10 +419,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert_eq!(sync.to_device.len(), 1);
     assert_eq!(sync.account_data.len(), 1);
     assert_eq!(sync.notifications["rooms"]["cx:space:joined"]["count"], 1);
-    assert_eq!(
-        sync.presence["events"][0]["sender"],
-        "did:web:alice.example"
-    );
+    assert_eq!(sync.presence[0]["sender"], "did:web:alice.example");
 
     let frames = parse_events_subscribe_ndjson_text(
         r#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}

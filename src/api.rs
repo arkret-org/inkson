@@ -418,6 +418,23 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
         })
 }
 
+/// Recognise a `rate_limited` (HTTP 429) error envelope from the
+/// server and return its advertised `retry_after_ms` so callers can
+/// sleep for the server-suggested duration instead of the generic
+/// exponential backoff. Wire constant is pulled from `contrix_sdk`
+/// so a spec rename can't silently de-recognise the code.
+///
+/// Returns `Some(retry_after_ms)` on match (with 0 when the server
+/// omitted the hint), `None` otherwise.
+pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
+    use contrix_sdk::error::ERROR_CODE_RATE_LIMITED;
+    let api_error = error.downcast_ref::<ContrixApiError>()?;
+    if api_error.error.code() != ERROR_CODE_RATE_LIMITED {
+        return None;
+    }
+    Some(api_error.error.retry_after_ms().unwrap_or(0))
+}
+
 /// `true` when `/sync` rejected the cursor — either expired, invalid,
 /// or with an integrity mismatch — so the SyncEngine knows to demote to
 /// a `since=None` full sync instead of looping on the same broken cursor.
@@ -3593,40 +3610,35 @@ mod tests {
         let sync = parse_sync(json!({
             "cursor": "cx:cursor:test-1",
             "spaces": {
-                "join": {
-                    "cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
-                },
-                "invite": {},
-                "knock": {},
-                "leave": {}
+                "cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
             },
-            "to_device": {"events": []},
-            "account_data": {"events": []},
+            "to_device": [],
+            "account_data": [],
             "device_lists": {"changed": [], "left": []}
         }))
         .unwrap();
         assert_eq!(sync.spaces.len(), 1);
         assert_eq!(sync.cursor, "cx:cursor:test-1");
 
+        // Spec-aligned wire shape per `client-sync.md §2`: flat
+        // `spaces` keyed by realm id, explicit `left_spaces`,
+        // flat arrays for top-level streams. The SDK's
+        // `SyncResBody` accepts `next_batch` as a serde alias so
+        // pre-spec-rename payloads still decode during the
+        // migration window.
         let sync_v1 = parse_sync(json!({
             "cursor": "cx:cursor:v1",
             "spaces": {
-                "join": {
-                    "cx:space:joined": {
-                        "summary": {"title": "Joined"}
-                    }
-                },
-                "leave": {
-                    "cx:space:left": {
-                        "reason": "left"
-                    }
+                "cx:space:joined": {
+                    "summary": {"title": "Joined"}
                 }
             },
-            "to_device": {"events": [{"type": "cx.mls.welcome"}]},
-            "account_data": {"events": [{"data_type": "client.ui", "content": {"theme": "system"}}]},
+            "left_spaces": ["cx:space:left"],
+            "to_device": [{"type": "cx.mls.welcome"}],
+            "account_data": [{"data_type": "client.ui", "content": {"theme": "system"}}],
             "device_lists": {"changed": [], "left": []},
             "notifications": {"events": []},
-            "presence": {"events": []}
+            "presence": []
         }))
         .unwrap();
         assert_eq!(sync_v1.cursor, "cx:cursor:v1");
@@ -3635,7 +3647,7 @@ mod tests {
         assert_eq!(sync_v1.to_device.len(), 1);
         assert_eq!(sync_v1.account_data.len(), 1);
         assert!(sync_v1.notifications.is_object());
-        assert!(sync_v1.presence.is_object());
+        assert!(sync_v1.presence.is_empty());
 
         let directory = parse_directory_describe(json!({
             "service_did": "did:web:server.local",
