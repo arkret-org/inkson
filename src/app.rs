@@ -14,7 +14,7 @@ use crate::{
     },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
-    models::{ServerDescription, SpacePreview},
+    models::{ServerDescription, ServerDescriptionExt, SpacePreview},
     routes::Route,
     views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
 };
@@ -4775,7 +4775,7 @@ pub fn RouterView() -> Element {
     let active_server_description = server_description();
     let active_service_did = active_server_description
         .as_ref()
-        .map(|description| description.service_did.clone())
+        .map(|description| description.service_did.as_str().to_owned())
         .unwrap_or_default();
     let has_session = !token().trim().is_empty();
     let active_server_label = normalize_server_url(&base_url());
@@ -7070,12 +7070,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         {
                             let mut store = state_store.write();
                             let mut snapshot = store.load();
-                            snapshot.server_trust_domain = if description.trust_domain.is_empty()
-                            {
-                                None
-                            } else {
-                                Some(description.trust_domain.clone())
-                            };
+                            // `TypedTrustDomainId` enforces a non-empty
+                            // `cx:trust_domain:<scope>` shape at deserialize
+                            // time, so the previous "is_empty" guard is
+                            // structurally impossible. Always cache.
+                            snapshot.server_trust_domain =
+                                Some(description.trust_domain.as_str().to_owned());
                             store.save(snapshot);
                         }
                         server_description.set(Some(description.clone()));

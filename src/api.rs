@@ -421,21 +421,29 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// `true` when `/sync` rejected the cursor — either expired, invalid,
 /// or with an integrity mismatch — so the SyncEngine knows to demote to
 /// a `since=None` full sync instead of looping on the same broken cursor.
+///
+/// Wire constants are pulled from `contrix_sdk` so renames in the spec
+/// layer (e.g. round 4's `sync_token_expired` → `cursor_expired`) can't
+/// silently de-recognise an error and surface a 410 to the UI.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
+    use contrix_sdk::{
+        ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM, ERROR_CODE_SYNC_TOKEN_EXPIRED,
+    };
+    use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
     error
         .downcast_ref::<ContrixApiError>()
         .is_some_and(|api_error| {
+            let code = api_error.error.code();
+            // `invalid_param` only counts when the message mentions the
+            // cursor — soland uses it for generic schema rejections too.
+            let cursor_message = api_error.error.message().to_lowercase().contains("cursor");
             matches!(
-                api_error.error.code(),
-                "sync_token_expired"
-                    | "invalid_cursor"
-                    | "cursor_integrity_invalid"
-                    | "invalid_param"
-            ) && api_error.error.message().to_lowercase().contains("cursor")
-                || matches!(
-                    api_error.error.code(),
-                    "sync_token_expired" | "cursor_integrity_invalid"
-                )
+                code,
+                code if code == ERROR_CODE_CURSOR_EXPIRED
+                    || code == ERROR_CODE_SYNC_TOKEN_EXPIRED
+                    || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
+            ) || (cursor_message
+                && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == "invalid_cursor"))
         })
 }
 
@@ -3562,11 +3570,22 @@ mod tests {
     fn parses_server_and_sync_payloads() {
         let description = parse_server_description(json!({
             "service_did": "did:web:server.local",
+            "trust_domain": "cx:trust_domain:server.local",
             "service_type": "principal_server",
             "protocol_version": "1.0",
+            "supported_profiles": [],
             "supported_features": ["sync.account"],
             "supported_operations": ["cx.sync.account"],
-            "limits": {"storage": "memory"}
+            "supported_bindings": [{"kind": "http_json"}],
+            "auth_metadata": {},
+            "limits": {"storage": "memory"},
+            "plaintext_visibility": {"default": "encrypted"},
+            "implemented_features": [],
+            "claimed_profiles": [],
+            "verified_profiles": [],
+            "experimental_features": [],
+            "compat_surfaces": [],
+            "development_mode": true,
         }))
         .unwrap();
         assert_eq!(description.protocol_version, "1.0");

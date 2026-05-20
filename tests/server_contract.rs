@@ -13,6 +13,7 @@ use yougen::{
         parse_sync, parse_sync_describe,
     },
     config::{ClientConfig, LocalConfigStore},
+    models::ServerDescriptionExt,
     operation::OperationBuilder,
     push::validate_blind_wakeup_payload,
     telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line},
@@ -22,6 +23,7 @@ use yougen::{
 fn yougen_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_did": "did:web:server.local",
+        "trust_domain": "cx:trust_domain:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["cx.schema.core.v1"],
@@ -57,7 +59,14 @@ fn yougen_accepts_server_contract_payloads() {
         "supported_reducer_profiles": ["cx.reducer.v1"],
         "supported_schema_profiles": ["cx.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
-        "limits": {"storage": "memory", "max_limit": 100}
+        "limits": {"storage": "memory", "max_limit": 100},
+        "plaintext_visibility": {"default": "encrypted"},
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": true,
     }))
     .unwrap();
     assert_eq!(describe.service_type, "principal_server");
@@ -287,6 +296,7 @@ fn yougen_accepts_server_contract_payloads() {
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
         "service_did": "did:web:soland.local",
+        "trust_domain": "cx:trust_domain:soland.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
@@ -298,9 +308,17 @@ fn server_description_gates_event_envelope_write_plane() {
             "cx.events.submit",
             "cx.sync.account"
         ],
+        "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "sync.account"],
+        "auth_metadata": {},
+        "limits": {},
         "plaintext_visibility": {"default": "e2ee", "allowed_services": []},
-        "rate_limit_policy": {"writes_per_minute": 120}
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": true,
     }))
     .unwrap();
     assert!(events_ready.supports_event_envelope_write_plane());
@@ -311,13 +329,42 @@ fn server_description_gates_event_envelope_write_plane() {
             .is_empty()
     );
 
+    // A partial / pre-v2 describe payload now fails to deserialize at all —
+    // the SDK type is strict per `service-describe.schema.json`, so yougen
+    // can no longer accept a stripped-down describe and flag it post-hoc.
+    // This is the spec-correct fail-closed behaviour for v2.
+    assert!(
+        parse_server_description(json!({
+            "service_did": "did:web:minimal.local",
+            "service_type": "principal_server",
+            "protocol_version": "1.0",
+            "supported_profiles": [],
+            "supported_operations": ["cx.sync.account"],
+            "supported_features": ["sync.account"]
+        }))
+        .is_err()
+    );
+
+    // A v2-shaped payload that still omits the event write requirements is
+    // accepted by the SDK parser but flagged by the yougen helpers.
     let events_missing = parse_server_description(json!({
         "service_did": "did:web:minimal.local",
+        "trust_domain": "cx:trust_domain:minimal.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
         "supported_operations": ["cx.sync.account"],
-        "supported_features": ["sync.account"]
+        "supported_bindings": [{"kind": "http_json"}],
+        "supported_features": ["sync.account"],
+        "auth_metadata": {},
+        "limits": {},
+        "plaintext_visibility": {"default": "encrypted"},
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": true,
     }))
     .unwrap();
     assert!(!events_missing.supports_event_envelope_write_plane());
@@ -329,13 +376,14 @@ fn server_description_gates_event_envelope_write_plane() {
             "cx.events.submit"
         ]
     );
+    // `plaintext_visibility` is now present + non-null, so it falls out of
+    // the missing list; only the event write requirements remain.
     assert_eq!(
         events_missing.missing_v1_principal_server_requirements(),
         vec![
             "cx.profile.core_event_store.v1",
             "cx.events.describe",
             "cx.events.submit",
-            "plaintext_visibility"
         ]
     );
 }

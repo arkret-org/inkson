@@ -1806,9 +1806,8 @@ async fn submit_chat_operation_with_plaintext_retry(
             let mut services = plaintext_visible_services.to_vec();
             if services.is_empty()
                 && let Ok(description) = api.describe().await
-                && !description.service_did.trim().is_empty()
             {
-                services.push(description.service_did);
+                services.push(description.service_did.as_str().to_owned());
             }
             if services.is_empty() {
                 return Err(error);

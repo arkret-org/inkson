@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::ServerDescription;
+use crate::models::{ServerDescription, ServerDescriptionExt};
 
 pub const PROFILE_MINIMAL_CLIENT: &str = "cx.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
@@ -849,11 +849,22 @@ mod tests {
     fn profile_readiness_reports_server_gaps() {
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
+            "trust_domain": "cx:trust_domain:server.example",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
             "supported_features": ["sync.account", "directory.search_spaces"],
-            "supported_operations": ["cx.sync.account", "cx.directory.search_spaces"]
+            "supported_operations": ["cx.sync.account", "cx.directory.search_spaces"],
+            "supported_bindings": [],
+            "auth_metadata": {},
+            "limits": {},
+            "plaintext_visibility": {"default": "encrypted"},
+            "implemented_features": [],
+            "claimed_profiles": [],
+            "verified_profiles": [],
+            "experimental_features": [],
+            "compat_surfaces": [],
+            "development_mode": false,
         }))
         .unwrap();
 

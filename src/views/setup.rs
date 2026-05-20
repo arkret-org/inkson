@@ -598,9 +598,10 @@ pub fn SetupPanel(
                                                             );
                                                             if plaintext_services.is_empty()
                                                                 && let Ok(description) = api.describe().await
-                                                                && !description.service_did.trim().is_empty()
                                                             {
-                                                                plaintext_services.push(description.service_did);
+                                                                plaintext_services.push(
+                                                                    description.service_did.as_str().to_owned(),
+                                                                );
                                                             }
                                                             match api.create_space(
                                                                 &actor,
