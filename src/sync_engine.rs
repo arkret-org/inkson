@@ -150,18 +150,24 @@ pub async fn run_sync_engine(
         match run_iteration(start_generation, generation, &ctx).await {
             IterationOutcome::Ok => {
                 backoff_secs = MIN_BACKOFF_SECS;
-                // Server-side long-poll is supposed to absorb the
-                // idle wait, but soland's current handler returns
-                // immediately. Pause MIN_INTER_ITERATION_MS so we
-                // don't spin at network RTT and burn the rate-limit
-                // budget. Once soland implements real long-polling
-                // this floor becomes effectively free.
+                // Recovery: clear any stale error the user has been
+                // staring at. Without this, a single Transient or
+                // RateLimited blip sticks in the status bar forever
+                // because apply_response doesn't touch last_error.
+                ctx.last_error.clone().set(None);
+                // Server-side long-poll absorbs the idle wait on a
+                // spec-compliant server; if the server returns
+                // immediately (older soland), MIN_INTER_ITERATION_MS
+                // keeps the loop from spinning at network RTT.
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::InvalidCursor => {
                 // Demote to full sync next iteration. The persisted
                 // cursor was already cleared inside the iteration.
+                // Also clear the visible error so the UI doesn't
+                // show the cursor-rejection that just got handled.
                 backoff_secs = MIN_BACKOFF_SECS;
+                ctx.last_error.clone().set(None);
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
