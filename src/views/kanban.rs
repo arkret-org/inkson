@@ -6,11 +6,7 @@ use crate::{
     components::HelpTip,
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
-    move_builder::{
-        FlowPositionEffect, FlowPositionExpectation, UnsignedMove, build_flow_position_cas_move,
-        build_flow_position_move, did_key_verification_method, flow_position_cell_id,
-        sign_unsigned_move,
-    },
+    move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
     routes::Route,
@@ -1423,7 +1419,7 @@ pub fn KanbanPanel(
                                                     external_visibility: "Not shared externally".to_owned(),
                                                     history_visibility: "board default".to_owned(),
                                                     activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
-                                                    audit_hint: "Move record queued locally until submit_move succeeds.".to_owned(),
+                                                    audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
                                                     state: CardState::Queued,
                                                     lifecycle: FlowLifecycleState::Active,
                                                 };
@@ -2283,11 +2279,11 @@ fn submit_kanban_operation_event(
     });
 }
 
-/// Build + sign + submit a `cx.component.flow.position.v1` Move via
-/// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
-/// queue regardless of submit outcome. Used by card create and flow-position
-/// paths - `subject` is the cell subject (Flow id), `kind` is the classifier
-/// the MoveSubmissionState tracker uses to decorate state pills.
+/// Build + submit a `cx.flow.update` event carrying the new position
+/// for the `cx.component.flow.position.v1` cell. Records a
+/// [`BoardWriteRecord`] regardless of outcome. `subject` is the Flow id;
+/// `kind` is the classifier the MoveSubmissionState tracker uses to
+/// decorate state pills.
 fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -2301,108 +2297,92 @@ fn submit_kanban_move(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
-    let identity = match state_store.write().ensure_local_identity() {
-        Ok(id) => id,
+    let actor_did = match state_store.write().ensure_local_identity() {
+        Ok(id) => id.device_did.as_str().to_owned(),
         Err(err) => {
             board_status.set(format!("identity unavailable: {err}"));
             return;
         }
     };
-    let did = identity.device_did.clone();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        match build_flow_position_move(&did, &space_id, &subject, value.clone(), &anchor_ref, &hlc)
-        {
-            Ok(u) => u,
-            Err(err) => {
-                board_status.set(format!("build {kind} Move failed: {err}"));
-                return;
-            }
-        };
-    let signed = sign_unsigned_move(unsigned, &identity.signing_key, &vm);
-    let move_id = signed.id.as_str().to_owned();
+    let envelope = crate::operation::cx_ops::flow_position_update(
+        &space_id,
+        &actor_did,
+        &subject,
+        value.clone(),
+    )
+    .build("yougen");
+    let op_id = envelope.local_operation_id().to_owned();
     let cell_id = format!("cx:cell:cx.component.flow.position.v1:{subject}");
     let effect_summary = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned());
-    let signed_move_json = serde_json::to_value(&signed).ok();
     let record = BoardWriteRecord {
         state: CardState::Queued,
-        move_id: move_id.clone(),
+        move_id: op_id.clone(),
         kind: kind.to_owned(),
         cell_id: cell_id.clone(),
         effect_summary: effect_summary.clone(),
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
-        note: "submitting Move via api.submit_move".to_owned(),
-        signed_move_json,
+        note: "submitting cx.flow.update event via cx.events.submit".to_owned(),
+        signed_move_json: None,
         rebase_attempts: 0,
     };
     write_records.write().push(record);
     state_store.write().append_raw_operation(
-        move_id.clone(),
+        op_id.clone(),
         Some(space_id.clone()),
         json!({
             "kind": kind,
-            "move_id": move_id,
+            "operation_id": op_id,
             "cell": cell_id,
             "effect": value,
             "write_state": "queued",
         }),
     );
-    board_status.set(format!("submitting {kind} Move {move_id}"));
+    board_status.set(format!("submitting {kind} event {op_id}"));
     let api_token = token();
     let space_for_record = space_id.clone();
     let anchor_for_record = anchor_ref.clone();
     let kind_for_record = kind.to_owned();
-    let move_for_track = move_id.clone();
+    let op_for_track = op_id.clone();
     spawn(async move {
-        let signed_clone = signed.clone();
         match with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_move(&signed_clone).await
+            api.submit_event_envelope(&envelope).await
         })
         .await
         {
             Ok(resp) => {
-                let state = MoveSubmissionState::from_submit_state(
-                    resp.state.as_str(),
-                    resp.reason.as_deref(),
-                );
+                let state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission(
-                    resp.move_id.clone(),
+                    op_for_track.clone(),
                     space_for_record,
                     kind_for_record.clone(),
                     state,
-                    resp.reason.clone(),
+                    None,
                     Some(anchor_for_record),
                 );
-                let card_state = if state.is_failed() {
-                    CardState::SoftFailed
-                } else {
-                    CardState::Accepted
-                };
                 if let Some(record) = write_records
                     .write()
                     .iter_mut()
-                    .find(|r| r.move_id == move_for_track)
+                    .find(|r| r.move_id == op_for_track)
                 {
-                    record.state = card_state;
-                    record.note =
-                        format!("submit_move state={} reason={:?}", resp.state, resp.reason);
+                    record.state = CardState::Accepted;
+                    record.note = format!("event accepted event_id={}", resp.event_id);
                 }
                 board_status.set(format!(
-                    "{kind_for_record} Move {} state={}",
-                    resp.move_id, resp.state
+                    "{kind_for_record} event {op_for_track} accepted (event_id={})",
+                    resp.event_id
                 ));
             }
             Err(err) => {
                 if let Some(record) = write_records
                     .write()
                     .iter_mut()
-                    .find(|r| r.move_id == move_for_track)
+                    .find(|r| r.move_id == op_for_track)
                 {
                     record.state = CardState::Quarantined;
-                    record.note = format!("submit_move failed: {}", err.display());
+                    record.note = format!("submit failed: {}", err.display());
                 }
-                board_status.set(format!("quarantined Move: {}", err.display()));
+                board_status.set(format!("quarantined event: {}", err.display()));
             }
         }
     });
@@ -2896,33 +2876,35 @@ fn submit_flow_position_cas_move_with_attempt(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
-    let identity = match state_store.write().ensure_local_identity() {
-        Ok(id) => id,
+    let actor_did = match state_store.write().ensure_local_identity() {
+        Ok(id) => id.device_did.as_str().to_owned(),
         Err(err) => {
             board_status.set(format!("identity unavailable: {err}"));
             return;
         }
     };
-    let did = identity.device_did.clone();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = match build_flow_position_cas_move(
-        &did,
-        &space_id,
-        &board_place_id,
-        &flow_id,
-        &expected,
-        &effect,
-        &anchor_ref,
-        &hlc,
-    ) {
-        Ok(u) => u,
-        Err(err) => {
-            board_status.set(format!("build {kind} Move failed: {err}"));
-            return;
+    let expected_json = match &expected {
+        FlowPositionExpectation::Initial => serde_json::Value::Null,
+        FlowPositionExpectation::At { list_place_id, rank } => {
+            json!({"list_place_id": list_place_id, "rank": rank})
         }
     };
-    let signed = sign_unsigned_move(unsigned, &identity.signing_key, &vm);
-    let move_id = signed.id.as_str().to_owned();
+    let effect_json = match &effect {
+        FlowPositionEffect::Place { list_place_id, rank } => {
+            json!({"list_place_id": list_place_id, "rank": rank})
+        }
+        FlowPositionEffect::Remove => serde_json::Value::Null,
+    };
+    let envelope = crate::operation::cx_ops::flow_position_cas_update(
+        &space_id,
+        &actor_did,
+        &board_place_id,
+        &flow_id,
+        expected_json.clone(),
+        effect_json.clone(),
+    )
+    .build("yougen");
+    let move_id = envelope.local_operation_id().to_owned();
     let cell_id = flow_position_cell_id(&board_place_id, &flow_id);
     let effect_summary = match &effect {
         FlowPositionEffect::Place {
@@ -2931,7 +2913,6 @@ fn submit_flow_position_cas_move_with_attempt(
         } => format!("set {{list_place_id={list_place_id}, rank={rank}}}"),
         FlowPositionEffect::Remove => "set null (remove)".to_owned(),
     };
-    let signed_move_json = serde_json::to_value(&signed).ok();
     let record = BoardWriteRecord {
         state: CardState::Submitted,
         move_id: move_id.clone(),
@@ -2941,11 +2922,11 @@ fn submit_flow_position_cas_move_with_attempt(
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
         note: if attempt == 0 {
-            format!("submitting {kind} via api.submit_move")
+            format!("submitting {kind} via cx.events.submit")
         } else {
             format!("rebase attempt {attempt} of {kind}")
         },
-        signed_move_json,
+        signed_move_json: None,
         rebase_attempts: attempt,
     };
     write_records.write().push(record);
@@ -2973,7 +2954,7 @@ fn submit_flow_position_cas_move_with_attempt(
             "write_state": "submitted",
         }),
     );
-    board_status.set(format!("submitting {kind} Move {move_id}"));
+    board_status.set(format!("submitting {kind} event {move_id}"));
     let api_token = token();
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
@@ -2986,33 +2967,45 @@ fn submit_flow_position_cas_move_with_attempt(
     let flow_for_rebase = flow_id.clone();
     let effect_for_rebase = effect.clone();
     spawn(async move {
-        let signed_for_submit = signed.clone();
         let submit_result = with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_move(&signed_for_submit).await
+            api.submit_event_envelope(&envelope).await
         })
         .await;
         match submit_result {
             Ok(resp) => {
-                let submission_state = MoveSubmissionState::from_submit_state(
-                    resp.state.as_str(),
-                    resp.reason.as_deref(),
-                );
+                // events.submit accepted path: the server has folded the
+                // CAS update into the cell. cas_conflict surfaces as an
+                // Err arm because the envelope was rejected with a
+                // non-200 status — that branch is handled below.
+                let submission_state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission(
-                    resp.move_id.clone(),
+                    move_for_track.clone(),
                     space_for_record,
                     kind_for_record.clone(),
                     submission_state,
-                    resp.reason.clone(),
+                    None,
                     Some(anchor_for_record),
                 );
-                let card_state = match submission_state {
-                    MoveSubmissionState::Effective | MoveSubmissionState::PendingAnchor => {
-                        CardState::Accepted
-                    }
-                    MoveSubmissionState::FailedPrecondition | MoveSubmissionState::FailedBottom => {
-                        CardState::Conflict
-                    }
-                    _ => CardState::SoftFailed,
+                if let Some(record) = write_records
+                    .write()
+                    .iter_mut()
+                    .find(|r| r.move_id == move_for_track)
+                {
+                    record.state = CardState::Accepted;
+                    record.note = format!("event accepted event_id={}", resp.event_id);
+                }
+                board_status.set(format!(
+                    "{kind_for_record} event {move_for_track} accepted (event_id={})",
+                    resp.event_id
+                ));
+            }
+            Err(err) => {
+                let err_text = err.display();
+                let cas_conflict = err_text.contains("cas_conflict");
+                let card_state = if cas_conflict {
+                    CardState::Conflict
+                } else {
+                    CardState::SoftFailed
                 };
                 if let Some(record) = write_records
                     .write()
@@ -3020,17 +3013,12 @@ fn submit_flow_position_cas_move_with_attempt(
                     .find(|r| r.move_id == move_for_track)
                 {
                     record.state = card_state.clone();
-                    record.note =
-                        format!("submit_move state={} reason={:?}", resp.state, resp.reason);
+                    record.note = format!("events.submit failed: {err_text}");
                 }
-                board_status.set(format!(
-                    "{kind_for_record} Move {} state={}",
-                    resp.move_id, resp.state
-                ));
-                // Auto-rebase the CAS Move after a conflict: re-fetch
+                board_status.set(format!("{kind_for_record} event {err_text}"));
+                // Auto-rebase the CAS event after a cas_conflict: re-fetch
                 // the cell's current head via the projection endpoint,
-                // build a fresh `expected_position`, and re-submit
-                // (with the same target effect) up to
+                // build a fresh `expected_position`, and re-submit up to
                 // MAX_CONFLICT_REBASE_ATTEMPTS times.
                 if matches!(card_state, CardState::Conflict)
                     && attempt + 1 < MAX_CONFLICT_REBASE_ATTEMPTS
@@ -3050,7 +3038,6 @@ fn submit_flow_position_cas_move_with_attempt(
                         board_status,
                     );
                 } else if matches!(card_state, CardState::Conflict) {
-                    // Out of attempts → quarantine for manual review.
                     if let Some(record) = write_records
                         .write()
                         .iter_mut()
@@ -3058,26 +3045,13 @@ fn submit_flow_position_cas_move_with_attempt(
                     {
                         record.state = CardState::Quarantined;
                         record.note = format!(
-                            "CAS conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts; \
-                             reason={:?}",
-                            resp.reason
+                            "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                         );
                     }
                     board_status.set(format!(
                         "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                     ));
                 }
-            }
-            Err(err) => {
-                if let Some(record) = write_records
-                    .write()
-                    .iter_mut()
-                    .find(|r| r.move_id == move_for_track)
-                {
-                    record.state = CardState::Quarantined;
-                    record.note = format!("submit_move failed: {}", err.display());
-                }
-                board_status.set(format!("quarantined Move: {}", err.display()));
             }
         }
     });
@@ -3192,12 +3166,15 @@ fn locate_flow_position_in_projection(
     FlowPositionExpectation::Initial
 }
 
-/// Replay the first queued / soft-failed Move by re-posting the stored
-/// signed payload verbatim. Server-side dedup is content-addressed on
-/// `move_id`, so the replay is idempotent.
+/// Marks the first queued / soft-failed write as Quarantined. The
+/// legacy Move replay path (which re-POSTed a signed Move blob to
+/// `/api/v1/moves`) is gone — events.submit is the only write surface
+/// now, and a failed event needs the UI to reconstruct the equivalent
+/// envelope (TODO: wire that through cx_ops::flow_position_*) rather
+/// than replay the original bytes.
 fn replay_first_move(
-    base_url: String,
-    token: Signal<String>,
+    _base_url: String,
+    _token: Signal<String>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -3206,73 +3183,18 @@ fn replay_first_move(
             || record.state == CardState::SoftFailed
             || record.state == CardState::Conflict
     }) else {
-        board_status.set("no queued Move to replay".to_owned());
+        board_status.set("no queued write to replay".to_owned());
         return;
     };
-    let queued = write_records.read()[idx].clone();
-
-    if let Some(signed_value) = queued.signed_move_json.clone() {
-        let signed: contrix_sdk::Move = match serde_json::from_value(signed_value) {
-            Ok(m) => m,
-            Err(error) => {
-                board_status.set(format!("queued record has malformed Move: {error}"));
-                return;
-            }
-        };
-        let api_token = token();
-        let base = base_url.clone();
-        let move_for_track = queued.move_id.clone();
-        let kind_for_record = queued.kind.clone();
-        spawn(async move {
-            let signed_clone = signed.clone();
-            match with_authed_api(&base, api_token, |api| async move {
-                api.submit_move(&signed_clone).await
-            })
-            .await
-            {
-                Ok(resp) => {
-                    if let Some(record) = write_records
-                        .write()
-                        .iter_mut()
-                        .find(|r| r.move_id == move_for_track)
-                    {
-                        record.state = if MoveSubmissionState::from_submit_state(
-                            resp.state.as_str(),
-                            resp.reason.as_deref(),
-                        )
-                        .is_failed()
-                        {
-                            CardState::SoftFailed
-                        } else {
-                            CardState::Accepted
-                        };
-                        record.note =
-                            format!("replay state={} reason={:?}", resp.state, resp.reason);
-                    }
-                    board_status.set(format!("{kind_for_record} replay state={}", resp.state));
-                }
-                Err(err) => {
-                    if let Some(record) = write_records
-                        .write()
-                        .iter_mut()
-                        .find(|r| r.move_id == move_for_track)
-                    {
-                        record.state = CardState::Quarantined;
-                        record.note = format!("replay failed: {}", err.display());
-                    }
-                    board_status.set(format!("replay quarantined: {}", err.display()));
-                }
-            }
-        });
-        return;
-    }
-
     if let Some(record) = write_records.write().get_mut(idx) {
         record.state = CardState::Quarantined;
-        record.note = "queued record has no signed Move payload".to_owned();
+        record.note =
+            "replay via cx.events.submit not yet wired; quarantining for manual review".to_owned();
     }
-    let _ = (base_url, token);
-    board_status.set("queued record has no signed Move payload".to_owned());
+    board_status.set(
+        "replay not available — write quarantined (TODO: rebuild cx.flow.update envelope)"
+            .to_owned(),
+    );
 }
 
 fn write_state_samples() -> Vec<CardState> {

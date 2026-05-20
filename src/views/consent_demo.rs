@@ -22,143 +22,15 @@
 //! organization / capability / etc. UIs to the same pattern.
 
 use dioxus::prelude::*;
-#[cfg(test)]
-use ed25519_dalek::SigningKey;
 
-use crate::{
-    hlc::Hlc,
-    local_state::{LocalIdentity, LocalStateStore},
-    models::SubmitMoveResponse,
-    move_builder::{
-        UnsignedMove, build_consent_grant_move, build_consent_revoke_move,
-        build_consent_revoke_move_v2, did_key_verification_method, sign_unsigned_move,
-    },
-    views::helpers::with_authed_api,
-};
+use crate::{local_state::LocalStateStore, views::helpers::with_authed_api};
 
-/// Sentinel anchor reference used when the local store hasn't seen any
-/// Anchor view yet (`/sync` projection didn't carry an `anchor_view`
-/// field). SHA-256 of empty bytes — soland's MoveStore accepts this as
-/// the "no predecessor" tag for tests / first-Move-in-Space scenarios.
-///
-/// Kept as a public constant for tests; production UI callers now pull the
-/// resolved anchor_ref from [`LocalStateStore::anchor_ref_for_move`], which
-/// threads in the latest frontier head when sync has surfaced one.
-#[cfg(test)]
-pub(crate) const PLACEHOLDER_ANCHOR_REF: &str =
-    "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
-/// Test-only deterministic signing key used by unit tests so vectors stay
-/// reproducible across runs. UI builders load the persisted
-/// [`LocalIdentity`] from the local state store instead; tests still want
-/// a stable key so per-content-address assertions don't depend on
-/// `getrandom`.
-#[cfg(test)]
-pub(crate) fn demo_signing_key() -> SigningKey {
-    SigningKey::from_bytes(&[42u8; 32])
-}
-
-/// Adapter for tests: build an in-memory [`LocalIdentity`] from a fixed
-/// signing key. Production UI uses
-/// [`LocalStateStore::ensure_local_identity`] to load+persist the
-/// per-device key; this helper centralises the verifying-key → did:key
-/// derivation so callers don't have to reach back into `move_builder`.
-#[cfg(test)]
-fn identity_from_signing_key(signing_key: SigningKey) -> LocalIdentity {
-    let verifying = signing_key.verifying_key();
-    let device_did = crate::move_builder::did_key_from_verifying_key(&verifying);
-    LocalIdentity {
-        device_did,
-        signing_key,
-    }
-}
-
-/// Pure helper: turn the form values into a signed `Move` ready for
-/// submission. Splitting this out keeps the Dioxus closure tiny and
-/// — crucially — makes it unit-testable without spawning an event loop
-/// or HTTP client.
-///
-/// Takes a [`LocalIdentity`] borrow. UI callers thread in the result of
-/// `state_store.write().ensure_local_identity()`; tests pass an
-/// `identity_from_signing_key(demo_signing_key())` so vectors stay stable.
-pub(crate) fn build_signed_consent_grant(
-    identity: &LocalIdentity,
-    space_id: &str,
-    consent_id: &str,
-    tag: &str,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        build_consent_grant_move(did, space_id, consent_id, tag, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: build + sign a `cx.consent.revoke` Move (OrSet remove).
-/// Mirror of [`build_signed_consent_grant`] for the revoke path. Splitting
-/// it out keeps the Dioxus closure tiny and unit-testable.
-pub(crate) fn build_signed_consent_revoke(
-    identity: &LocalIdentity,
-    space_id: &str,
-    consent_id: &str,
-    tag: &str,
-    reason: Option<&str>,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        build_consent_revoke_move(did, space_id, consent_id, tag, reason, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Round 4 (spec a77b995) — sign a `cx.consent.revoke` Move that
-/// carries the REQUIRED `observed_dots` list. The list tells the
-/// reducer which `(actor_id, actor_seq)` tuples the local view is
-/// cascading the revoke through; without this list the reducer rejects
-/// with `schema_violation` (it would otherwise enable implicit
-/// cascade). The renderer obtains the dots from the local consent
-/// observation cache.
-pub(crate) fn build_signed_consent_revoke_v2(
-    identity: &LocalIdentity,
-    space_id: &str,
-    consent_id: &str,
-    tag: &str,
-    reason: Option<&str>,
-    observed_dots: &[contrix_sdk::Dot],
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = build_consent_revoke_move_v2(
-        did,
-        space_id,
-        consent_id,
-        tag,
-        reason,
-        observed_dots,
-        anchor_ref,
-        hlc,
-    )?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: format a `SubmitMoveResponse` for the status-line UI.
-/// Tested independently so we can lock the wording without booting
-/// Dioxus.
-pub(crate) fn format_submit_response(response: &SubmitMoveResponse) -> String {
-    match response.reason.as_deref() {
-        Some(reason) if !reason.is_empty() => format!(
-            "Move {}: state={} reason={}",
-            response.move_id, response.state, reason
-        ),
-        _ => format!("Move {}: state={}", response.move_id, response.state),
-    }
-}
+// NOTE: build_signed_consent_grant / build_signed_consent_revoke /
+// build_signed_consent_revoke_v2 / format_submit_response and their
+// helpers have been removed — the consent demo card now builds
+// cx.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
+// and submits them through cx.events.submit. The original Move-based
+// helpers + their wire-shape tests are preserved in git history.
 
 /// The consent-grant demo card. Rendered inside the Privacy section of
 /// the SettingsPanel. Self-contained: owns its own form state + status
@@ -182,7 +54,7 @@ pub fn ConsentGrantDemoCard(
                 span { "cx.consent.grant · cell-driven" }
             }
             div { class: "muted",
-                "Constructs a cx.consent.grant Move on the cx.component.consent.grant.v1 OrSet cell, signs it with a deterministic demo ed25519 key (TODO real-key-management), and POSTs /api/v1/moves. Non-cell writes such as messages and reactions use /api/v1/events."
+                "Submits a cx.consent.grant event via cx.events.submit; soland's reducer folds the OrSet add into the cx.component.consent.grant.v1 cell."
             }
             label { "Space ID" }
             input {
@@ -219,40 +91,33 @@ pub fn ConsentGrantDemoCard(
                             );
                             return;
                         }
-                        let hlc = Hlc::now("yougen").to_string();
-                        let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
-                        let identity = match state_store.write().ensure_local_identity() {
-                            Ok(id) => id,
+                        let actor_did = match state_store.write().ensure_local_identity() {
+                            Ok(id) => id.device_did.as_str().to_owned(),
                             Err(err) => {
                                 status.set(format!("Identity unavailable: {err}"));
                                 return;
                             }
                         };
-                        let signed = match build_signed_consent_grant(
-                            &identity,
+                        let envelope = crate::operation::cx_ops::consent_grant(
                             &space_val,
+                            &actor_did,
                             &consent_val,
                             &tag_val,
-                            &anchor_ref,
-                            &hlc,
-                        ) {
-                            Ok(m) => m,
-                            Err(error) => {
-                                status.set(format!("Build move failed: {error}"));
-                                return;
-                            }
-                        };
-                        let move_id = signed.id.as_str().to_owned();
-                        last_move_id.set(move_id.clone());
+                        )
+                        .build("yougen");
+                        let op_id = envelope.local_operation_id().to_owned();
+                        last_move_id.set(op_id.clone());
                         spawn(async move {
                             match with_authed_api(&base, api_token, |api| async move {
-                                api.submit_move(&signed).await
+                                api.submit_event_envelope(&envelope).await
                             })
                             .await
                             {
-                                Ok(response) => status.set(format_submit_response(&response)),
+                                Ok(response) => status.set(format!(
+                                    "cx.consent.grant event {} state=accepted", response.event_id
+                                )),
                                 Err(err) => status
-                                    .set(format!("submit_move {move_id}: {}", err.display())),
+                                    .set(format!("submit {op_id}: {}", err.display())),
                             }
                         });
                     },
@@ -273,41 +138,35 @@ pub fn ConsentGrantDemoCard(
                             );
                             return;
                         }
-                        let hlc = Hlc::now("yougen").to_string();
-                        let anchor_ref = state_store.read().anchor_ref_for_move(&space_val);
-                        let identity = match state_store.write().ensure_local_identity() {
-                            Ok(id) => id,
+                        let actor_did = match state_store.write().ensure_local_identity() {
+                            Ok(id) => id.device_did.as_str().to_owned(),
                             Err(err) => {
                                 status.set(format!("Identity unavailable: {err}"));
                                 return;
                             }
                         };
-                        let signed = match build_signed_consent_revoke(
-                            &identity,
+                        let envelope = crate::operation::cx_ops::consent_revoke(
                             &space_val,
+                            &actor_did,
                             &consent_val,
                             &tag_val,
                             Some("user revoked from settings UI"),
-                            &anchor_ref,
-                            &hlc,
-                        ) {
-                            Ok(m) => m,
-                            Err(error) => {
-                                status.set(format!("Build revoke move failed: {error}"));
-                                return;
-                            }
-                        };
-                        let move_id = signed.id.as_str().to_owned();
-                        last_move_id.set(move_id.clone());
+                            &[],
+                        )
+                        .build("yougen");
+                        let op_id = envelope.local_operation_id().to_owned();
+                        last_move_id.set(op_id.clone());
                         spawn(async move {
                             match with_authed_api(&base, api_token, |api| async move {
-                                api.submit_move(&signed).await
+                                api.submit_event_envelope(&envelope).await
                             })
                             .await
                             {
-                                Ok(response) => status.set(format_submit_response(&response)),
+                                Ok(response) => status.set(format!(
+                                    "cx.consent.revoke event {} state=accepted", response.event_id
+                                )),
                                 Err(err) => status.set(format!(
-                                    "submit_move (revoke) {move_id}: {}",
+                                    "submit revoke {op_id}: {}",
                                     err.display()
                                 )),
                             }
@@ -429,7 +288,7 @@ pub fn RevokeAllConsentCard(
                 span { class: "badge red", title: "cx.consent.revoke", "scope=any" }
             }
             div { class: "muted",
-                "Revoking with scope=any clears every subscope below in a single fanout. The Move is signed locally and posted to the cell-driven /api/v1/moves endpoint. This is irreversible — the recipient must re-issue consent if you change your mind."
+                "Revoking with scope=any submits one cx.consent.revoke event per subscope; soland's reducer collapses them into a single OrSet remove fanout. This is irreversible — the recipient must re-issue consent if you change your mind."
             }
             label { "Space ID" }
             input {
@@ -501,21 +360,19 @@ pub fn RevokeAllConsentCard(
                                     status.set("Fill space_id and consent_id first".to_owned());
                                     return;
                                 }
-                                let identity = match state_store.write().ensure_local_identity() {
-                                    Ok(id) => id,
+                                let actor_did = match state_store.write().ensure_local_identity() {
+                                    Ok(id) => id.device_did.as_str().to_owned(),
                                     Err(err) => {
                                         status.set(format!("Identity unavailable: {err}"));
                                         return;
                                     }
                                 };
-                                let anchor_ref =
-                                    state_store.read().anchor_ref_for_move(&space_val);
-                                // Build one Move per subscope. The server-side
-                                // reducer collapses these into a single OrSet
-                                // fanout under scope=any. TODO(round23-T17):
-                                // once the SDK exposes a single scope=any
-                                // revoke builder, collapse the per-scope loop
-                                // into a single Move.
+                                // Build one cx.consent.revoke event per
+                                // subscope. The server-side reducer collapses
+                                // these into a single OrSet fanout under
+                                // scope=any. TODO(round23-T17): once the SDK
+                                // exposes a single scope=any revoke event,
+                                // collapse the per-scope loop into one event.
                                 let scopes: Vec<String> = CONSENT_REVOKE_CASCADE_SUBSCOPES
                                     .iter()
                                     .map(|s| (*s).to_owned())
@@ -534,31 +391,23 @@ pub fn RevokeAllConsentCard(
                                 spawn(async move {
                                     let mut succeeded = 0usize;
                                     for scope in &scopes {
-                                        let hlc = Hlc::now("yougen").to_string();
-                                        let signed = match build_signed_consent_revoke_v2(
-                                            &identity,
+                                        let envelope = crate::operation::cx_ops::consent_revoke(
                                             &space_val,
+                                            &actor_did,
                                             &consent_val,
                                             scope,
                                             Some("scope=any cascade revoke"),
                                             &observed_dots,
-                                            &anchor_ref,
-                                            &hlc,
-                                        ) {
-                                            Ok(m) => m,
-                                            Err(error) => {
-                                                status.set(format!(
-                                                    "build revoke {scope} failed: {error}"
-                                                ));
-                                                continue;
-                                            }
-                                        };
+                                        )
+                                        .build("yougen");
                                         let base = base.clone();
                                         let api_token = api_token.clone();
                                         let outcome = with_authed_api(
                                             &base,
                                             api_token,
-                                            |api| async move { api.submit_move(&signed).await },
+                                            |api| async move {
+                                                api.submit_event_envelope(&envelope).await
+                                            },
                                         )
                                         .await;
                                         if outcome.is_ok() {
@@ -598,258 +447,4 @@ pub fn RevokeAllConsentCard(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::move_builder::did_key_from_verifying_key;
-    use contrix_sdk::LatticeOpType;
-
-    fn fixed_anchor_ref() -> &'static str {
-        PLACEHOLDER_ANCHOR_REF
-    }
-
-    fn fixed_hlc() -> &'static str {
-        "0189c4d2af00-00000000-aabbccdd"
-    }
-
-    /// Test-only stable identity built from `demo_signing_key()`. Used by
-    /// per-content-address assertions that need bit-identical move ids
-    /// across runs — production callers thread in
-    /// `state_store.write().ensure_local_identity()` instead.
-    fn fixed_identity() -> LocalIdentity {
-        identity_from_signing_key(demo_signing_key())
-    }
-
-    /// The form-to-Move helper builds a Move with exactly the consent
-    /// OrSet add effect the spec requires: cell prefix
-    /// `cx:cell:cx.component.consent.grant.v1:`, op type `add`, op tag
-    /// matching the form's tag input.
-    #[test]
-    fn build_signed_consent_grant_produces_consent_or_set_add() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let identity = fixed_identity();
-        let signed = build_signed_consent_grant(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_eq!(signed.space_id.as_str(), space);
-        assert_eq!(signed.effects.len(), 1);
-        let effect = &signed.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.consent.grant.v1:"),
-            "consent grant must target the consent.grant.v1 cell family"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Add);
-        assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
-        // Issuer DID matches the identity's device_did (round-tripped from
-        // the verifying key).
-        let expected_did = did_key_from_verifying_key(&identity.signing_key.verifying_key());
-        assert_eq!(signed.issuer.as_str(), expected_did);
-        assert_eq!(signed.issuer.as_str(), identity.device_did);
-    }
-
-    /// The signed Move's `sig.jws` is a non-empty detached JWS with the
-    /// expected three-segment shape (`<header>..<sig>` with empty
-    /// payload), and the verification_method points at the demo did:key.
-    #[test]
-    fn build_signed_consent_grant_attaches_detached_jws_with_demo_did_key() {
-        let identity = fixed_identity();
-        let signed = build_signed_consent_grant(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let jws = &signed.sig.jws;
-        assert!(!jws.is_empty(), "sign_unsigned_move must populate jws");
-        let parts: Vec<&str> = jws.split('.').collect();
-        assert_eq!(parts.len(), 3, "detached JWS has 3 segments");
-        assert!(
-            parts[1].is_empty(),
-            "middle (payload) segment must be empty for detached JWS"
-        );
-        let expected_vm = did_key_verification_method(&identity.signing_key.verifying_key());
-        assert_eq!(signed.sig.verification_method, expected_vm);
-        assert_eq!(signed.sig.alg, "EdDSA");
-    }
-
-    /// Status-line formatter: bare state when no reason, state + reason
-    /// when soland rejected the Move with a structural reason.
-    #[test]
-    fn format_submit_response_renders_state_and_optional_reason() {
-        let pending = SubmitMoveResponse {
-            move_id: "sha256:abc".to_owned(),
-            state: "pending".to_owned(),
-            reason: None,
-        };
-        assert_eq!(
-            format_submit_response(&pending),
-            "Move sha256:abc: state=pending"
-        );
-        let rejected = SubmitMoveResponse {
-            move_id: "sha256:def".to_owned(),
-            state: "rejected".to_owned(),
-            reason: Some("anchor_ref unknown".to_owned()),
-        };
-        assert_eq!(
-            format_submit_response(&rejected),
-            "Move sha256:def: state=rejected reason=anchor_ref unknown"
-        );
-        // Empty-string reason should be treated as None — soland's DTO
-        // skips serializing None but a defensive client must still cope
-        // if a deployment emits "" for "no reason".
-        let rejected_blank = SubmitMoveResponse {
-            move_id: "sha256:ghi".to_owned(),
-            state: "rejected".to_owned(),
-            reason: Some(String::new()),
-        };
-        assert_eq!(
-            format_submit_response(&rejected_blank),
-            "Move sha256:ghi: state=rejected"
-        );
-    }
-
-    /// Revoke helper builds a `cx.consent.revoke`-shaped Move on the
-    /// SAME OrSet cell as the grant, with op_type=Remove and the given
-    /// reason. This is the second user-facing button on the Move/Anchor
-    /// pipeline — a counterpart to the grant button so users can drop a
-    /// consent without touching server admin UIs.
-    #[test]
-    fn build_signed_consent_revoke_produces_consent_or_set_remove() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let identity = fixed_identity();
-        let signed = build_signed_consent_revoke(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            Some("user revoked from settings UI"),
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_eq!(signed.space_id.as_str(), space);
-        assert_eq!(signed.effects.len(), 1);
-        let effect = &signed.effects[0];
-        // Same cell family / subject as the grant — OrSet causal remove
-        // requires it.
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.consent.grant.v1:"),
-            "consent revoke targets the same OrSet cell as the grant"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
-        assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
-        assert_eq!(
-            effect.op.reason.as_deref(),
-            Some("user revoked from settings UI")
-        );
-        // Issuer matches the identity's device_did.
-        assert_eq!(signed.issuer.as_str(), identity.device_did);
-    }
-
-    /// Grant + revoke on the same form values produce DIFFERENT move ids
-    /// (the canonical effect op_type differs). This is the property soland
-    /// uses to distinguish OrSet add from OrSet remove on the same tag.
-    #[test]
-    fn grant_and_revoke_have_distinct_content_addresses() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let identity = fixed_identity();
-        let granted = build_signed_consent_grant(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let revoked = build_signed_consent_revoke(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            None,
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_ne!(granted.id.as_str(), revoked.id.as_str());
-    }
-
-    /// Move id is content-addressed: building twice with the same form
-    /// values + anchor_ref + hlc yields the same `sha256:...`
-    /// id. This is the property soland's idempotency relies on.
-    #[test]
-    fn build_signed_consent_grant_is_content_addressed_by_canonical_bytes() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let identity = fixed_identity();
-        let one = build_signed_consent_grant(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let two = build_signed_consent_grant(
-            &identity,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_eq!(one.id.as_str(), two.id.as_str());
-        assert!(one.id.as_str().starts_with("sha256:"));
-    }
-
-    /// Two freshly-generated identities sign the same form values and the
-    /// resulting Move ids differ — proves the per-device key actually
-    /// participates in the canonical hash (round-trip via `getrandom::fill`).
-    /// This is the property a real key store needs to preserve: rotating a
-    /// device's key changes the issuer, which changes the content address.
-    #[test]
-    fn distinct_identities_produce_distinct_move_ids() {
-        let id_a = LocalIdentity::generate().unwrap();
-        let id_b = LocalIdentity::generate().unwrap();
-        assert_ne!(id_a.device_did, id_b.device_did);
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let move_a = build_signed_consent_grant(
-            &id_a,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let move_b = build_signed_consent_grant(
-            &id_b,
-            space,
-            "cnt.demo-01",
-            "scope:contacts",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_ne!(move_a.id.as_str(), move_b.id.as_str());
-        assert_eq!(move_a.issuer.as_str(), id_a.device_did);
-        assert_eq!(move_b.issuer.as_str(), id_b.device_did);
-    }
-}
+// (Move-flow test module removed; the OrSet/CAS wire shapes are now covered by soland's events.submit handler tests and the contrix-spec fixtures.)

@@ -10,7 +10,6 @@ use crate::{
     hlc::{Hlc, observe_seq},
     local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
     models::SubmitEventResponse,
-    move_builder::{did_key_verification_method, sign_unsigned_move},
     operation::{EventEnvelope, OperationBuilder, cx_ops, uuid_v7},
     routes::Route,
     views::helpers::{
@@ -1797,6 +1796,7 @@ fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>
 async fn submit_chat_operation_with_plaintext_retry(
     api: &ContrixApi,
     space_id: &str,
+    actor_did: &str,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
 ) -> anyhow::Result<SubmitEventResponse> {
@@ -1814,6 +1814,7 @@ async fn submit_chat_operation_with_plaintext_retry(
             }
             api.update_space(
                 space_id,
+                actor_did,
                 json!({"plaintext_visible_services": services}),
             )
             .await
@@ -3348,11 +3349,13 @@ pub fn ChatPanel(
                                                     );
                                                     let mention_values_for_store = mentions_to_json(&mentions);
                                                     let space_for_record = space.clone();
+                                                    let actor_for_retry = actor.clone();
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => match submit_chat_operation_with_plaintext_retry(
                                                                 &api,
                                                                 &space,
+                                                                &actor_for_retry,
                                                                 &plaintext_services,
                                                                 &op,
                                                             ).await {
@@ -4122,11 +4125,13 @@ pub fn ChatPanel(
                                 let plaintext_services =
                                     plaintext_services_for_policy(projection.as_ref(), &service_did);
                                 let wait_for = active_sync_token(&sync_cursor());
+                                let actor_for_retry = actor.clone();
                                 spawn(async move {
                                     match authed_api_with_sync(&base, api_token, wait_for) {
                                         Ok(api) => match submit_chat_operation_with_plaintext_retry(
                                             &api,
                                             &space,
+                                            &actor_for_retry,
                                             &plaintext_services,
                                             &op,
                                         ).await {
@@ -4416,7 +4421,7 @@ pub fn ChatPanel(
                                 let actor = actor.clone();
                                 let api_token = token();
                                 let wait_for = active_sync_token(&sync_cursor());
-                                let hlc = Hlc::now("yougen").to_string();
+                                let _hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
                                 let covered_frontier = anchor_view
@@ -4442,9 +4447,7 @@ pub fn ChatPanel(
                                         }
                                     };
                                 let did = identity.device_did.clone();
-                                let vm =
-                                    did_key_verification_method(&identity.signing_key.verifying_key());
-                                // 1) MLS commit Move bumps the epoch +
+                                // 1) MLS commit event bumps the epoch +
                                 //    records covered_frontier.
                                 // Real MLS encrypt path. When the user has entered a
                                 // passphrase for this Space, hydrate /
@@ -4546,25 +4549,36 @@ pub fn ChatPanel(
                                     );
                                     return;
                                 };
-                                let commit_unsigned_result =
-                                    crate::move_builder::build_mls_commit_move_with_governance_binding(
-                                        &did,
-                                        &space,
-                                        binding,
-                                        &anchor_ref,
-                                        &hlc,
-                                    );
-                                let commit_unsigned = match commit_unsigned_result {
-                                    Ok(u) => u,
+                                // Spec-canonical write path: cx.mls.commit event via cx.events.submit.
+                                let preconditions: Vec<serde_json::Value> = binding
+                                    .preconditions
+                                    .iter()
+                                    .filter_map(|p| serde_json::to_value(p).ok())
+                                    .collect();
+                                let effects: Vec<serde_json::Value> = binding
+                                    .effects
+                                    .iter()
+                                    .filter_map(|e| serde_json::to_value(e).ok())
+                                    .collect();
+                                let binding_hash = match binding.canonical_hash() {
+                                    Ok(h) => h,
                                     Err(err) => {
                                         status_msg.set(format!(
-                                            "mls commit move build failed: {err}"
+                                            "mls governance binding hash failed: {err}"
                                         ));
                                         return;
                                     }
                                 };
-                                let commit_signed =
-                                    sign_unsigned_move(commit_unsigned, &identity.signing_key, &vm);
+                                let commit_envelope =
+                                    crate::operation::cx_ops::mls_commit_with_governance(
+                                        &space,
+                                        &actor,
+                                        &space,
+                                        preconditions,
+                                        effects,
+                                        &binding_hash,
+                                    )
+                                    .build("yougen");
                                 let encrypted_epoch = mls_commit_epoch;
                                 let msg_op = OperationBuilder::new(
                                     &space,
@@ -4593,36 +4607,27 @@ pub fn ChatPanel(
                                     .iter()
                                     .map(|did| did.as_str().to_owned())
                                     .collect();
+                                let commit_op_id = commit_envelope.local_operation_id().to_owned();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                        // Submit MLS commit first; if
-                                        // it fails, abort message send
-                                        // (covered_frontier won't bind).
-                                        match api.submit_move(&commit_signed).await {
-                                            Ok(resp) => {
-                                                let state = MoveSubmissionState::from_submit_state(
-                                                    resp.state.as_str(),
-                                                    resp.reason.as_deref(),
-                                                );
+                                        // Submit MLS commit event first; if it fails,
+                                        // abort message send (covered_frontier won't bind).
+                                        match api.submit_event_envelope(&commit_envelope).await {
+                                            Ok(_resp) => {
                                                 state_store.write().record_move_submission(
-                                                    resp.move_id.clone(),
+                                                    commit_op_id.clone(),
                                                     space_for_record.clone(),
                                                     "mls_commit".to_owned(),
-                                                    state,
-                                                    resp.reason.clone(),
+                                                    MoveSubmissionState::from_submit_state(
+                                                        "accepted", None,
+                                                    ),
+                                                    None,
                                                     Some(anchor_for_record.clone()),
                                                 );
-                                                if state.is_failed() {
-                                                    status_msg.set(format!(
-                                                        "MLS commit Move failed: {} reason={:?}",
-                                                        resp.move_id, resp.reason
-                                                    ));
-                                                    return;
-                                                }
                                             }
                                             Err(err) => {
                                                 status_msg.set(format!(
-                                                    "MLS commit Move submit failed: {err}"
+                                                    "MLS commit event submit failed: {err}"
                                                 ));
                                                 return;
                                             }

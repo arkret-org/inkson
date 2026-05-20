@@ -603,34 +603,9 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     assert_eq!(plaintext, br#"{"msgtype":"m.text","body":"hello via MLS"}"#);
 }
 
-// Move/Anchor wire-shape contract tests. These mirror soland's
-// `routing::move_anchor` response shapes so a breaking change there is
-// caught immediately at the yougen test layer.
-
-#[test]
-fn yougen_parses_submit_move_pending_response() {
-    let body = json!({
-        "move_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "state": "pending"
-    });
-    let parsed: yougen::models::SubmitMoveResponse = serde_json::from_value(body).unwrap();
-    assert!(parsed.move_id.starts_with("sha256:"));
-    assert_eq!(parsed.state, "pending");
-    assert!(parsed.reason.is_none());
-}
-
-#[test]
-fn yougen_parses_submit_move_rejected_response() {
-    let body = json!({
-        "move_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "state": "rejected",
-        "reason": "replay_window: HLC signed at 2024-... is too old"
-    });
-    let parsed: yougen::models::SubmitMoveResponse = serde_json::from_value(body).unwrap();
-    assert_eq!(parsed.state, "rejected");
-    assert!(parsed.reason.unwrap().contains("replay_window"));
-}
-
+// (Move/Anchor pipeline tests removed — all writes now go through
+// cx.events.submit; the SubmitEventResponse wire shape is exercised by
+// soland's own integration tests and the contrix-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
 /// (server returned 401 with no parseable error envelope, e.g. a

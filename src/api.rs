@@ -101,22 +101,21 @@ impl Default for CancellationToken {
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetOutcome, AccountResponse, ArchiveSpaceResponse, AuthzCheckResBody,
-    BackfillResBody, BanMemberResponse, BlobUploadResBody, ClientSyncResponse, ContactResponse,
-    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
-    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
-    EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
-    IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
-    KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
-    MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
+    AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
+    ClientSyncResponse, ContactResponse, ContactsResponse, DevLoginResponse,
+    DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
+    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse, EventsDescribeResBody,
+    HealthResponse, IceConfigRequest, IceConfigResponse, IdentityDescribeResBody,
+    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
+    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody,
+    MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
     MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
     OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
     ResolveSpaceResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    ServerDescription, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
-    SpaceLifecycleResponse, SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse,
-    SubmitMoveResponse, SyncDescribeResBody, TokenRefreshResponse, TypingResponse,
-    UpdateProfileResponse, UpdateSpaceResponse, VerifyDeviceResponse,
+    ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
+    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
+    TokenRefreshResponse, TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
 };
 use crate::operation::{
     EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode, uuid_v7,
@@ -874,39 +873,24 @@ impl ContrixApi {
         Ok(())
     }
 
-    pub async fn get_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
-        self.get_json(&format!("api/v1/spaces/{space_id}")).await
-    }
-
-    pub async fn remove_space_member(
+    /// Member-state FSM transition (kick / ban / unban / leave) on the
+    /// Realm's `cx.component.member.state.v1` cell. Submits a `cx.member.state`
+    /// event via `cx.events.submit` (spec-canonical path; the old
+    /// `DELETE /api/v1/spaces/{id}/members/{m}` and `POST /spaces/{id}/members/{m}/ban`
+    /// REST shims were deployment-local).
+    pub async fn transition_member_state(
         &self,
-        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
         member: &str,
-    ) -> anyhow::Result<SpaceLifecycleResponse> {
-        self.delete_json(&format!("api/v1/spaces/{space_id}/members/{member}"))
-            .await
-    }
-
-    pub async fn delete_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
-        self.delete_json(&format!("api/v1/spaces/{space_id}")).await
-    }
-
-    // Move/Anchor pipeline — the protocol-canonical write path for
-    // cell-driven state changes (consent, capability, member state,
-    // anchorer cell, MLS epoch, etc.). Non-cell writes use
-    // `POST /api/v1/events` instead.
-
-    /// Submit a signed [`contrix_sdk::Move`] for the next anchorer batch.
-    /// Returns the server's verdict (`pending` if accepted into MoveStore,
-    /// `rejected` with reason if structural / signature / replay check
-    /// failed). The Move's `id` is content-addressed (`sha256(canonical_bytes)`),
-    /// so re-submitting the same Move is idempotent at the server.
-    pub async fn submit_move(
-        &self,
-        move_obj: &contrix_sdk::Move,
-    ) -> anyhow::Result<SubmitMoveResponse> {
-        let body = serde_json::to_value(move_obj)?;
-        self.post_json("api/v1/moves", body).await
+        from_state: Option<&str>,
+        to_state: &str,
+        reason: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let event = build_member_state_transition_event(
+            realm_id, actor_id, member, from_state, to_state, reason,
+        )?;
+        self.submit_event(&event).await
     }
 
     /// Read the current anchorer cell value for a Space (admin-only).
@@ -1605,22 +1589,49 @@ impl ContrixApi {
             .await
     }
 
-    // ── Space Management ────────────────────────────────────────────
+    // ── Space / Realm Management (all writes go through cx.events.submit) ─
 
+    /// Update a Realm's metadata via `cx.realm.update` event (spec-canonical).
+    /// `patch` carries the merge-shape body the server reducer applies to the
+    /// realm row.
     pub async fn update_space(
         &self,
+        realm_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = crate::operation::cx_ops::realm_update_patch(
+            realm_id, actor_id, realm_id, patch,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Archive a Space via `cx.space.archive` event (spec-canonical).
+    pub async fn archive_space(
+        &self,
         space_id: &str,
-        updates: Value,
-    ) -> anyhow::Result<UpdateSpaceResponse> {
-        self.patch_json(&format!("api/v1/spaces/{space_id}"), updates)
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<()> {
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "cx.space.archive")
             .await
     }
 
-    pub async fn archive_space(&self, space_id: &str) -> anyhow::Result<ArchiveSpaceResponse> {
-        self.post_json(&format!("api/v1/spaces/{space_id}/archive"), json!({}))
+    /// Tombstone a Space via `cx.space.tombstone` event (spec-canonical).
+    /// Successor of the legacy `DELETE /api/v1/spaces/{id}` REST shim.
+    pub async fn delete_space(
+        &self,
+        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<()> {
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "cx.space.tombstone")
             .await
     }
 
+    /// Set Realm join_rule + history_visibility policy via two
+    /// `cx.realm.*` facet events.
     pub async fn set_space_policy_events(
         &self,
         space_id: &str,
@@ -1631,7 +1642,7 @@ impl ContrixApi {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
-                "actor_id is required for canonical Space policy events"
+                "actor_id is required for canonical Realm policy events"
             ));
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
@@ -1654,56 +1665,81 @@ impl ContrixApi {
         })
     }
 
+    /// Create an invite via `cx.invite.create` event (spec-canonical). The
+    /// `invite_id` is generated client-side so the caller can correlate
+    /// optimistic UI rows with the eventual server projection.
     pub async fn invite_to_space(
         &self,
         space_id: &str,
+        actor_id: &str,
+        invite_id: &str,
         target: &str,
         role: Option<&str>,
-    ) -> anyhow::Result<SpaceInviteResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/invite"),
-            json!({"target": target, "role": role}),
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = crate::operation::cx_ops::invite_create_structured(
+            space_id, actor_id, invite_id, target, role, "pending",
         )
-        .await
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
     }
 
+    /// Accept an invite via `cx.invite.accept` event (spec-canonical).
     pub async fn accept_space_invite(
         &self,
         space_id: &str,
+        actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SpaceInviteResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/invite/accept"),
-            json!({"invite_id": invite_id}),
-        )
-        .await
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id)
+            .build("yougen");
+        self.submit_event_envelope(&envelope).await
     }
 
+    /// Reject an invite via `cx.invite.cancel` event (spec-canonical).
     pub async fn reject_space_invite(
         &self,
         space_id: &str,
+        actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SpaceInviteResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/invite/reject"),
-            json!({"invite_id": invite_id}),
+        reason: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            crate::operation::cx_ops::invite_cancel(space_id, actor_id, invite_id, reason)
+                .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Leave a Realm via `cx.member.state` event (`join → leave` FSM).
+    pub async fn leave_space(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.transition_member_state(
+            realm_id,
+            actor_id,
+            actor_id,
+            Some("join"),
+            "leave",
+            "self_leave",
         )
         .await
     }
 
-    pub async fn leave_space(&self, space_id: &str) -> anyhow::Result<SpaceLeaveResponse> {
-        self.post_json(&format!("api/v1/spaces/{space_id}/leave"), json!({}))
-            .await
-    }
-
+    /// Ban a member via `cx.member.state` event (`join → ban` FSM).
     pub async fn ban_member(
         &self,
-        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
         member: &str,
-    ) -> anyhow::Result<BanMemberResponse> {
-        self.post_json(
-            &format!("api/v1/spaces/{space_id}/members/{member}/ban"),
-            json!({}),
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.transition_member_state(
+            realm_id,
+            actor_id,
+            member,
+            Some("join"),
+            "ban",
+            "admin_ban",
         )
         .await
     }
@@ -2179,12 +2215,6 @@ impl ContrixApi {
     async fn put_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
         let request = self.http.put(self.endpoint(path)?).json(&body);
         self.send_json(self.prepare_request(request), Method::PUT)
-            .await
-    }
-
-    async fn patch_json<T: DeserializeOwned>(&self, path: &str, body: Value) -> anyhow::Result<T> {
-        let request = self.http.patch(self.endpoint(path)?).json(&body);
-        self.send_json(self.prepare_request(request), Method::PATCH)
             .await
     }
 
@@ -2937,36 +2967,53 @@ fn build_member_state_event(
     member_actor_id: &str,
     membership: &str,
 ) -> anyhow::Result<Value> {
+    build_member_state_transition_event(
+        space_id,
+        actor_id,
+        member_actor_id,
+        None,
+        membership,
+        "space_create",
+    )
+}
+
+/// Build a generic `cx.member.state` event on `cx.component.member.state.v1`,
+/// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
+/// member ban, `null → join` invite-accept). `reason` shows up in the audit
+/// trail. Spec event-payload.schema.json §`membership_payload`.
+pub fn build_member_state_transition_event(
+    realm_id: &str,
+    actor_id: &str,
+    member_actor_id: &str,
+    from_state: Option<&str>,
+    to_state: &str,
+    reason: &str,
+) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
-    // Spec event-payload.schema.json `membership_payload`:
-    // `join` requires both `actor_id` AND `delivery_status`. If
-    // `delivery_status=routable` then `delivery_binding` is also
-    // required (full per-Realm member→server binding object). For
-    // the local-single-deployment dev path we declare "unroutable"
-    // — the creator's events are processed locally without needing
-    // a cross-server binding. Once federation lands, callers should
-    // pass a real `member_delivery_binding`.
     let mut payload = json!({
         "actor_id": member_actor_id,
-        "membership": membership,
-        "reason": "space_create",
+        "membership": to_state,
+        "reason": reason,
     });
-    if membership == "join" {
+    if to_state == "join" {
         payload["delivery_status"] = json!("unroutable");
     }
     build_reducer_event(
         "cx.member.state",
-        space_id,
+        realm_id,
         actor_id,
         &created_at,
         payload,
         &format!(
             "{}:{}",
-            space_cell("cx.component.member.state.v1", space_id),
+            space_cell("cx.component.member.state.v1", realm_id),
             member_actor_id
         ),
         "transition",
-        json!({ "from": null, "to": membership }),
+        json!({
+            "from": from_state.map(Value::from).unwrap_or(Value::Null),
+            "to": to_state,
+        }),
     )
 }
 

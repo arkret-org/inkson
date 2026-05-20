@@ -636,7 +636,7 @@ fn rand_u64() -> u64 {
 /// Canonical helper constructors used by the current UI.
 pub mod cx_ops {
     use super::OperationBuilder;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     /// Build a canonical `cx.flow.create` discussion operation with the full
     /// typed Flow payload expected by the current reducers.
@@ -1128,6 +1128,228 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.flow.restore")
             .target_ref(flow_id)
             .body(json!({ "target_ref": flow_id, "flow_id": flow_id }))
+    }
+
+    // ── Consent (OrSet cell `cx.component.consent.grant.v1`) ─────────
+
+    /// `cx.consent.grant` event. Spec: events.submit applies this to the
+    /// `cx.component.consent.grant.v1` OrSet cell as an add op with `tag`.
+    pub fn consent_grant(
+        realm_id: &str,
+        actor: &str,
+        consent_id: &str,
+        tag: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.consent.grant")
+            .target_ref(consent_id)
+            .body(json!({
+                "consent_id": consent_id,
+                "tag": tag,
+            }))
+    }
+
+    /// `cx.consent.revoke` event with required `observed_dots` (round 4
+    /// wire). Pass an empty slice only for non-causal revoke.
+    pub fn consent_revoke(
+        realm_id: &str,
+        actor: &str,
+        consent_id: &str,
+        tag: &str,
+        reason: Option<&str>,
+        observed_dots: &[contrix_sdk::Dot],
+    ) -> OperationBuilder {
+        let mut body = json!({
+            "consent_id": consent_id,
+            "tag": tag,
+            "observed_dots": serde_json::to_value(observed_dots)
+                .unwrap_or(json!([])),
+        });
+        if let Some(reason) = reason {
+            body["reason"] = json!(reason);
+        }
+        OperationBuilder::new(realm_id, actor, "cx.consent.revoke")
+            .target_ref(consent_id)
+            .body(body)
+    }
+
+    // ── Capability (OrSet cell `cx.component.capability.grant.v1`) ───
+
+    /// `cx.capability.grant` event with optional structured constraints
+    /// (e.g. `temporal.window`). `tag` is the capability action the grant
+    /// authorises (e.g. `discussion.message.create`).
+    pub fn capability_grant(
+        realm_id: &str,
+        actor: &str,
+        grant_id: &str,
+        tag: &str,
+        constraints: Value,
+    ) -> OperationBuilder {
+        let mut body = json!({
+            "grant_id": grant_id,
+            "tag": tag,
+        });
+        if !constraints.is_null() {
+            body["constraints"] = constraints;
+        }
+        OperationBuilder::new(realm_id, actor, "cx.capability.grant")
+            .target_ref(grant_id)
+            .body(body)
+    }
+
+    /// `cx.capability.revoke` event. `reason` shows up in the audit
+    /// trail and lets the UI explain why the capability was dropped.
+    pub fn capability_revoke(
+        realm_id: &str,
+        actor: &str,
+        grant_id: &str,
+        tag: &str,
+        reason: Option<&str>,
+    ) -> OperationBuilder {
+        let mut body = json!({
+            "grant_id": grant_id,
+            "tag": tag,
+        });
+        if let Some(reason) = reason {
+            body["reason"] = json!(reason);
+        }
+        OperationBuilder::new(realm_id, actor, "cx.capability.revoke")
+            .target_ref(grant_id)
+            .body(body)
+    }
+
+    // ── Member state FSM (Realm `cx.component.member.state.v1`) ─────
+
+    /// `cx.member.state` FSM transition (kick / ban / unban / leave).
+    /// Pass `from_state` to express an explicit FSM precondition (the
+    /// server reducer rejects with `state_mismatch` if the current
+    /// state doesn't match).
+    pub fn member_state_transition(
+        realm_id: &str,
+        actor: &str,
+        member: &str,
+        from_state: Option<&str>,
+        to_state: &str,
+        reason: &str,
+    ) -> OperationBuilder {
+        let mut body = json!({
+            "actor_id": member,
+            "membership": to_state,
+            "reason": reason,
+        });
+        if to_state == "join" {
+            body["delivery_status"] = json!("unroutable");
+        }
+        if let Some(from_state) = from_state {
+            body["from"] = json!(from_state);
+        }
+        OperationBuilder::new(realm_id, actor, "cx.member.state")
+            .target_ref(member)
+            .body(body)
+    }
+
+    // ── MLS epoch (per-Realm group ratchet) ─────────────────────────
+
+    /// `cx.mls.commit` event carrying the canonical
+    /// `mls_governance_binding.full.v1` preconditions + effects from the
+    /// SDK governance binding payload. The server reducer enforces the
+    /// binding by matching the precondition / effect tuples and the
+    /// referenced binding hash against the spec shape.
+    pub fn mls_commit_with_governance(
+        realm_id: &str,
+        actor: &str,
+        group_id: &str,
+        preconditions: Vec<Value>,
+        effects: Vec<Value>,
+        binding_hash: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.mls.commit")
+            .target_ref(group_id)
+            .body(json!({
+                "group_id": group_id,
+                "preconditions": preconditions,
+                "effects": effects,
+                "binding_hash": binding_hash,
+            }))
+    }
+
+    // ── Conflict repair (admin-only) ────────────────────────────────
+
+    /// `cx.conflict.repair` event for bottom=expose cells. Admin / moderator
+    /// only — soland's authz reducer rejects submissions without a valid
+    /// `recovery_capability_ref` in the actor's grants.
+    pub fn conflict_repair(
+        realm_id: &str,
+        actor: &str,
+        cell_id: &str,
+        conflict_heads: &[String],
+        recovery_capability_ref: &str,
+        winner_value: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.conflict.repair")
+            .target_ref(cell_id)
+            .body(json!({
+                "cell_id": cell_id,
+                "conflict_heads": conflict_heads,
+                "recovery_capability_ref": recovery_capability_ref,
+                "winner_value": winner_value,
+            }))
+    }
+
+    /// `cx.realm.update` patch event on the organization cell. Mirrors the
+    /// legacy `build_signed_space_organization_update` Move shape (name /
+    /// topic / description / etc.). Pass the merge patch as `value`.
+    pub fn realm_organization_update(
+        realm_id: &str,
+        actor: &str,
+        value: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.realm.update")
+            .target_ref(realm_id)
+            .body(json!({
+                "realm_id": realm_id,
+                "patch": value,
+            }))
+    }
+
+    /// Flow position update (kanban card position). Spec event kind is
+    /// `cx.flow.update` carrying a `position` field; the server reducer
+    /// folds the value into the `cx.component.flow.position.v1` cas-register
+    /// cell.
+    pub fn flow_position_update(
+        realm_id: &str,
+        actor: &str,
+        flow_id: &str,
+        position_value: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.flow.update")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "position": position_value,
+            }))
+    }
+
+    /// Flow position CAS update — same cell as
+    /// [`flow_position_update`] but carries an `expected_position`
+    /// the server reducer compares to the cell's current value; on
+    /// mismatch the response is `cas_conflict` and the client should
+    /// rebase against the new head.
+    pub fn flow_position_cas_update(
+        realm_id: &str,
+        actor: &str,
+        board_place_id: &str,
+        flow_id: &str,
+        expected_position: Value,
+        effect_position: Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.flow.update")
+            .target_ref(flow_id)
+            .body(json!({
+                "flow_id": flow_id,
+                "board_place_id": board_place_id,
+                "expected_position": expected_position,
+                "position": effect_position,
+            }))
     }
 
     // ── Applet protocol family ────────────────────────────────────────

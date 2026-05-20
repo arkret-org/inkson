@@ -88,26 +88,8 @@ pub struct SpaceLifecycleResponse {
     pub deleted: bool,
 }
 
-// Move/Anchor pipeline response shapes — mirror soland's
-// `routing::move_anchor::SubmitMoveResponse` / `SubmitAnchorResponse` /
-// `SignAnchorResponse`. The DTOs are kept here (not in `contrix-sdk`)
-// because they're soland-server-specific surface shapes, not protocol
-// primitives.
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitMoveResponse {
-    pub move_id: String,
-    /// `pending` (queued for next anchor batch) or `rejected`.
-    pub state: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RejectedMoveEntry {
-    pub move_id: String,
-    pub reason: String,
-}
+// (Move/Anchor pipeline DTOs deleted; all writes now go through
+// cx.events.submit via SubmitEventResponse.)
 
 /// Outcome of [`crate::api::ContrixApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
@@ -511,20 +493,7 @@ pub struct MemberDeliveryBindingView {
     pub service_endpoint: Option<String>,
 }
 
-// ── Space Management ────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UpdateSpaceResponse {
-    pub ok: bool,
-    pub space_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ArchiveSpaceResponse {
-    pub ok: bool,
-    pub space_id: String,
-    pub archived: bool,
-}
+// ── Space / Realm Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpacePolicyResponse {
@@ -532,29 +501,6 @@ pub struct SpacePolicyResponse {
     pub space_id: String,
     pub join_rule: String,
     pub history_visibility: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceInviteResponse {
-    pub ok: bool,
-    pub invite_id: String,
-    pub space_id: String,
-    pub target: String,
-    pub state: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceLeaveResponse {
-    pub ok: bool,
-    pub space_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BanMemberResponse {
-    pub ok: bool,
-    pub space_id: String,
-    pub member: String,
-    pub banned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -5,26 +5,11 @@ use serde_json::json;
 use crate::{
     device_revoke::{ChainMoveState, MlsRevokeMoveChain},
     hlc::Hlc,
-    local_state::{LocalIdentity, LocalStateStore, MoveSubmissionState},
-    models::SubmitMoveResponse,
-    move_builder::{
-        CapabilityConstraintInput, UnsignedMove, build_capability_grant_move_with_constraints,
-        build_capability_revoke_move, build_conflict_repair_move,
-        build_member_state_transition_move, build_space_organization_update_move,
-        did_key_verification_method, sign_unsigned_move,
-    },
+    local_state::{LocalStateStore, MoveSubmissionState},
     operation::cx_ops,
     routes::Route,
-    views::{
-        consent_demo::format_submit_response,
-        helpers::{active_sync_token, authed_api_with_sync},
-    },
+    views::helpers::{active_sync_token, authed_api_with_sync},
 };
-// `build_capability_grant_move` is only used by the test-only
-// `build_signed_capability_grant` helper that pins the empty-constraint
-// wire shape — gate the import to avoid a warning in non-test builds.
-#[cfg(test)]
-use crate::move_builder::build_capability_grant_move;
 
 /// Default `covered_frontier_lag` warning threshold used by the
 /// space_admin alert banner. Mirrors sodmin's
@@ -41,167 +26,10 @@ pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 const PLACEHOLDER_ANCHOR_REF: &str =
     "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// Pure helper: build + sign a `cx.realm.update` Move that writes the
-/// realm organization cas-register cell. Mirrors the consent-grant signing
-/// flow so the Dioxus closure stays small. Takes the persisted per-device
-/// [`LocalIdentity`] in place of the historical demo seed - see
-/// `local_state::LocalStateStore::ensure_local_identity`.
-pub(crate) fn build_signed_space_organization_update(
-    identity: &LocalIdentity,
-    space_id: &str,
-    value: serde_json::Value,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        build_space_organization_update_move(did, space_id, value, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: build + sign a `cx.capability.grant` Move (OrSet add)
-/// targeting `cx.component.capability.grant.v1`. Mirrors the consent
-/// helpers - same signing path, just a different cell family. The
-/// production caller goes through
-/// [`build_signed_capability_grant_with_constraints`] so a temporal
-/// constraint can flow through; this remains for tests so the
-/// no-constraint wire shape stays pinned to a stable test vector.
-#[cfg(test)]
-pub(crate) fn build_signed_capability_grant(
-    identity: &LocalIdentity,
-    space_id: &str,
-    grant_id: &str,
-    tag: &str,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        build_capability_grant_move(did, space_id, grant_id, tag, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Capability grant with structured constraints. Mirrors
-/// [`build_signed_capability_grant`] but threads a constraint slice
-/// through to the move_builder. The wire shape only differs when the
-/// slice is non-empty (constraints land in the OrSet add op's `value`
-/// field).
-pub(crate) fn build_signed_capability_grant_with_constraints(
-    identity: &LocalIdentity,
-    space_id: &str,
-    grant_id: &str,
-    tag: &str,
-    constraints: &[CapabilityConstraintInput],
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = build_capability_grant_move_with_constraints(
-        did,
-        space_id,
-        grant_id,
-        tag,
-        constraints,
-        anchor_ref,
-        hlc,
-    )?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: build + sign a `cx.capability.revoke` Move (OrSet remove)
-/// on the same cell family as the grant. `reason` shows up in the audit
-/// trail and lets the UI explain why the capability was dropped.
-pub(crate) fn build_signed_capability_revoke(
-    identity: &LocalIdentity,
-    space_id: &str,
-    grant_id: &str,
-    tag: &str,
-    reason: Option<&str>,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove =
-        build_capability_revoke_move(did, space_id, grant_id, tag, reason, anchor_ref, hlc)?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: build + sign a conflict-repair Move targeting a
-/// `bottom=expose` cell. Wraps
-/// [`crate::move_builder::build_conflict_repair_move`] with the per-device
-/// identity / DID URL fields the UI shouldn't have to recompute. Admin /
-/// moderator only - soland's authz reducer rejects
-/// unsigned-by-recovery-capability submissions.
-pub(crate) fn build_signed_conflict_repair(
-    identity: &LocalIdentity,
-    space_id: &str,
-    cell_id: &str,
-    conflict_heads: &[String],
-    recovery_capability_ref: &str,
-    winner_value: serde_json::Value,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = build_conflict_repair_move(
-        did,
-        space_id,
-        cell_id,
-        conflict_heads,
-        recovery_capability_ref,
-        winner_value,
-        anchor_ref,
-        hlc,
-    )?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
-
-/// Pure helper: format a `SubmitMoveResponse` AND record the outcome in
-/// the local state's [`crate::local_state::MoveSubmissionState`] tracker.
-/// Returns the formatted status string the caller can show inline.
-pub(crate) fn record_submit_outcome(
-    state_store: &mut LocalStateStore,
-    space_id: &str,
-    kind: &str,
-    anchor_ref: Option<String>,
-    response: &SubmitMoveResponse,
-) -> String {
-    let state =
-        MoveSubmissionState::from_submit_state(response.state.as_str(), response.reason.as_deref());
-    state_store.record_move_submission(
-        response.move_id.clone(),
-        space_id.to_owned(),
-        kind.to_owned(),
-        state,
-        response.reason.clone(),
-        anchor_ref,
-    );
-    format_submit_response(response)
-}
-
-/// Pure helper: build + sign a `cx.member.state` FSM transition Move.
-/// Used by Kick / Ban / Unban Move-flow buttons in the member table.
-pub(crate) fn build_signed_member_state_transition(
-    identity: &LocalIdentity,
-    space_id: &str,
-    actor_id: &str,
-    from_state: &str,
-    to_state: &str,
-    anchor_ref: &str,
-    hlc: &str,
-) -> anyhow::Result<contrix_sdk::Move> {
-    let did = identity.device_did.as_str();
-    let vm = did_key_verification_method(&identity.signing_key.verifying_key());
-    let unsigned: UnsignedMove = build_member_state_transition_move(
-        did, space_id, actor_id, from_state, to_state, anchor_ref, hlc,
-    )?;
-    Ok(sign_unsigned_move(unsigned, &identity.signing_key, &vm))
-}
+// NOTE: All build_signed_*_move helpers and record_submit_outcome have
+// been removed — every Move-based write path was migrated to
+// cx.events.submit via the cx_ops::* event builders. The original
+// helpers (and their tests) are preserved in git history.
 
 #[derive(Clone, Debug, PartialEq)]
 struct InviteRecord {
@@ -771,14 +599,12 @@ pub fn SpaceAdminPanel(
                                                 return;
                                             }
                                         };
-                                    let hlc = Hlc::now("yougen").to_string();
-                                    let anchor_ref =
-                                        state_store.read().anchor_ref_for_move(&space);
-                                    let identity = match state_store
+                                    let _hlc = Hlc::now("yougen").to_string();
+                                    let actor_did = match state_store
                                         .write()
                                         .ensure_local_identity()
                                     {
-                                        Ok(id) => id,
+                                        Ok(id) => id.device_did.as_str().to_owned(),
                                         Err(err) => {
                                             status_msg.set(format!(
                                                 "identity unavailable: {err}"
@@ -787,49 +613,30 @@ pub fn SpaceAdminPanel(
                                         }
                                     };
                                     let heads = vec![head_a, head_b];
-                                    let signed = match build_signed_conflict_repair(
-                                        &identity,
+                                    let envelope = crate::operation::cx_ops::conflict_repair(
                                         &space,
+                                        &actor_did,
                                         &cell,
                                         &heads,
                                         &cap,
                                         winner_value,
-                                        &anchor_ref,
-                                        &hlc,
-                                    ) {
-                                        Ok(m) => m,
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "build repair Move failed: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                    let space_for_record = space.clone();
-                                    let anchor_for_record = anchor_ref.clone();
+                                    )
+                                    .build("yougen");
+                                    let op_id = envelope.local_operation_id().to_owned();
                                     spawn(async move {
-                                        let signed_clone = signed.clone();
                                         match crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.submit_move(&signed_clone).await
+                                                api.submit_event_envelope(&envelope).await
                                             },
                                         )
                                         .await
                                         {
-                                            Ok(resp) => {
-                                                let line = record_submit_outcome(
-                                                    &mut state_store.write(),
-                                                    &space_for_record,
-                                                    "conflict.repair",
-                                                    Some(anchor_for_record),
-                                                    &resp,
-                                                );
-                                                status_msg.set(format!(
-                                                    "repair Move: {line}"
-                                                ));
-                                            }
+                                            Ok(resp) => status_msg.set(format!(
+                                                "repair event {op_id}: state=accepted event_id={}",
+                                                resp.event_id
+                                            )),
                                             Err(err) => status_msg.set(format!(
                                                 "repair submit failed: {}", err.display()
                                             )),
@@ -1033,12 +840,19 @@ pub fn SpaceAdminPanel(
                                     let name = space_name();
                                     let topic = space_topic();
                                     let desc = space_description();
+                                    let actor_did = match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id.device_did.as_str().to_owned(),
+                                        Err(err) => {
+                                            status_msg.set(format!("identity unavailable: {err}"));
+                                            return;
+                                        }
+                                    };
                                     spawn(async move {
                                         match crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.update_space(&space, json!({
+                                                api.update_space(&space, &actor_did, json!({
                                                     "name": name,
                                                     "topic": topic,
                                                     "description": desc,
@@ -1079,52 +893,36 @@ pub fn SpaceAdminPanel(
                                         "topic": topic,
                                         "description": desc,
                                     });
-                                    let hlc = Hlc::now("yougen").to_string();
-                                    let anchor_ref =
-                                        state_store.read().anchor_ref_for_move(&space);
-                                    let identity = match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id,
+                                    let actor_did = match state_store.write().ensure_local_identity() {
+                                        Ok(id) => id.device_did.as_str().to_owned(),
                                         Err(err) => {
                                             status_msg.set(format!("identity unavailable: {err}"));
                                             return;
                                         }
                                     };
-                                    let signed = match build_signed_space_organization_update(
-                                        &identity,
+                                    let envelope = crate::operation::cx_ops::realm_organization_update(
                                         &space,
+                                        &actor_did,
                                         value,
-                                        &anchor_ref,
-                                        &hlc,
-                                    ) {
-                                        Ok(m) => m,
-                                        Err(e) => {
-                                            status_msg.set(format!("build move failed: {e}"));
-                                            return;
-                                        }
-                                    };
-                                    let space_for_record = space.clone();
-                                    let anchor_for_record = anchor_ref.clone();
+                                    )
+                                    .build("yougen");
+                                    let op_id = envelope.local_operation_id().to_owned();
                                     spawn(async move {
-                                        let signed_clone = signed.clone();
                                         match crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
-                                            |api| async move { api.submit_move(&signed_clone).await },
+                                            |api| async move {
+                                                api.submit_event_envelope(&envelope).await
+                                            },
                                         )
                                         .await
                                         {
-                                            Ok(resp) => {
-                                                let line = record_submit_outcome(
-                                                    &mut state_store.write(),
-                                                    &space_for_record,
-                                                    "cx.realm.update",
-                                                    Some(anchor_for_record),
-                                                    &resp,
-                                                );
-                                                status_msg.set(line);
-                                            }
+                                            Ok(resp) => status_msg.set(format!(
+                                                "cx.realm.update event {op_id}: event_id={}",
+                                                resp.event_id
+                                            )),
                                             Err(err) => status_msg.set(format!(
-                                                "submit_move failed: {}", err.display()
+                                                "realm update failed: {}", err.display()
                                             )),
                                         }
                                     });
@@ -1290,60 +1088,60 @@ pub fn SpaceAdminPanel(
                                         return;
                                     }
                                     let wait_for = active_sync_token(&sync_cursor());
+                                    // Client-generated invite_id — spec-canonical (no
+                                    // two-phase server lookup needed; cx.invite.create
+                                    // event is the source of truth).
+                                    let invite_id = format!(
+                                        "cx:invite:{}",
+                                        crate::operation::uuid_v7()
+                                    );
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
-                                            Ok(api) => match api.invite_to_space(&space, &target, None).await {
-                                                Ok(resp) => {
-                                                    let op = cx_ops::invite_create_structured(
-                                                        &space,
-                                                        &actor,
-                                                        &resp.invite_id,
-                                                        &resp.target,
-                                                        None,
-                                                        &resp.state,
-                                                    )
-                                                    .build("yougen");
-                                                    let op_id = op.local_operation_id().to_owned();
-                                                    match api
-                                                        .submit_event_envelope(&op)
-                                                        .await
-                                                    {
-                                                        Ok(submitted) => {
-                                                            space_invites.write().push(InviteRecord {
-                                                                invite_id: resp.invite_id.clone(),
-                                                                target: resp.target.clone(),
-                                                                role: None,
-                                                                state: resp.state.clone(),
-                                                                operation_id: Some(op_id.clone()),
-                                                                event_id: Some(submitted.event_id.clone()),
-                                                            });
-                                                            frontier_state.set(submitted.event_id.clone());
-                                                            sync_cursor.set(submitted.sync_token.clone());
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                store.save_sync_cursor(submitted.sync_token.clone());
-                                                                store.append_raw_operation(
-                                                                    op_id.clone(),
-                                                                    Some(space.clone()),
-                                                                    json!({
-                                                                        "kind": "cx.invite.create",
-                                                                        "invite_id": resp.invite_id,
-                                                                        "target": resp.target,
-                                                                        "state": resp.state,
-                                                                        "event_id": submitted.event_id,
-                                                                    }),
-                                                                );
-                                                            }
-                                                            invite_target.set(String::new());
-                                                            status_msg.set(format!(
-                                                                "invited {} ({}) fact {}",
-                                                                target, "pending", op_id
-                                                            ));
+                                            Ok(api) => {
+                                                let op = cx_ops::invite_create_structured(
+                                                    &space,
+                                                    &actor,
+                                                    &invite_id,
+                                                    &target,
+                                                    None,
+                                                    "pending",
+                                                )
+                                                .build("yougen");
+                                                let op_id = op.local_operation_id().to_owned();
+                                                match api.submit_event_envelope(&op).await {
+                                                    Ok(submitted) => {
+                                                        space_invites.write().push(InviteRecord {
+                                                            invite_id: invite_id.clone(),
+                                                            target: target.clone(),
+                                                            role: None,
+                                                            state: "pending".to_owned(),
+                                                            operation_id: Some(op_id.clone()),
+                                                            event_id: Some(submitted.event_id.clone()),
+                                                        });
+                                                        frontier_state.set(submitted.event_id.clone());
+                                                        sync_cursor.set(submitted.sync_token.clone());
+                                                        {
+                                                            let mut store = state_store.write();
+                                                            store.save_sync_cursor(submitted.sync_token.clone());
+                                                            store.append_raw_operation(
+                                                                op_id.clone(),
+                                                                Some(space.clone()),
+                                                                json!({
+                                                                    "kind": "cx.invite.create",
+                                                                    "invite_id": invite_id,
+                                                                    "target": target,
+                                                                    "state": "pending",
+                                                                    "event_id": submitted.event_id,
+                                                                }),
+                                                            );
                                                         }
-                                                        Err(error) => status_msg.set(format!("invite fact failed: {error}")),
+                                                        invite_target.set(String::new());
+                                                        status_msg.set(format!(
+                                                            "invited {target} (pending) fact {op_id}"
+                                                        ));
                                                     }
+                                                    Err(error) => status_msg.set(format!("invite failed: {error}")),
                                                 }
-                                                Err(e) => status_msg.set(format!("invite failed: {e}")),
                                             }
                                             Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                         }
@@ -1388,32 +1186,37 @@ pub fn SpaceAdminPanel(
                         class: "secondary",
                         "data-testid": "refresh-members-button",
                         onclick: {
-                            let base = base_url.clone();
                             let space = selected_space.clone();
                             move |_| {
-                                let base = base.clone();
-                                let space = space.clone();
-                                let api_token = token();
-                                spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move { api.get_space(&space).await },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => {
-                                            members.set(resp.members.clone());
-                                            status_msg.set(format!(
-                                                "members refreshed ({})",
-                                                resp.members.len()
-                                            ));
-                                        }
-                                        Err(err) => status_msg.set(format!(
-                                            "members refresh failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                // Spec-canonical read path is the local sync
+                                // projection (driven by cx.events.subscribe).
+                                // The legacy GET /api/v1/spaces/{id} REST shim
+                                // is gone; members appear as the local store
+                                // applies cx.member.state events.
+                                let store = state_store.read();
+                                let snapshot = store.load();
+                                let projection = snapshot.space_projections.get(&space);
+                                let next: Vec<String> = projection
+                                    .and_then(|proj| proj.get("members"))
+                                    .and_then(|members| members.as_array())
+                                    .map(|members| {
+                                        members
+                                            .iter()
+                                            .filter_map(|m| {
+                                                m.as_str().map(ToOwned::to_owned).or_else(|| {
+                                                    m.get("did")
+                                                        .and_then(|d| d.as_str())
+                                                        .map(ToOwned::to_owned)
+                                                })
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let count = next.len();
+                                members.set(next);
+                                status_msg.set(format!(
+                                    "members refreshed ({count}) from local sync state"
+                                ));
                             }
                         },
                         {crate::i18n::tr("space_admin.refresh_members")}
@@ -1500,13 +1303,30 @@ pub fn SpaceAdminPanel(
                                         let space = space.clone();
                                         let m = m.clone();
                                         let api_token = token();
+                                        let actor_did = match state_store.write().ensure_local_identity() {
+                                            Ok(id) => id.device_did.as_str().to_owned(),
+                                            Err(err) => {
+                                                status_msg.set(format!("identity unavailable: {err}"));
+                                                return;
+                                            }
+                                        };
                                         spawn(async move {
                                             let m_for_msg = m.clone();
+                                            // Spec-canonical "kick" = `join → leave` member-state
+                                            // transition (no separate kick FSM verb).
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.remove_space_member(&space, &m).await
+                                                    api.transition_member_state(
+                                                        &space,
+                                                        &actor_did,
+                                                        &m,
+                                                        Some("join"),
+                                                        "leave",
+                                                        "admin_kick",
+                                                    )
+                                                    .await
                                                 },
                                             )
                                             .await
@@ -1533,13 +1353,20 @@ pub fn SpaceAdminPanel(
                                         let space = space.clone();
                                         let m = m.clone();
                                         let api_token = token();
+                                        let actor_did = match state_store.write().ensure_local_identity() {
+                                            Ok(id) => id.device_did.as_str().to_owned(),
+                                            Err(err) => {
+                                                status_msg.set(format!("identity unavailable: {err}"));
+                                                return;
+                                            }
+                                        };
                                         spawn(async move {
                                             let m_for_msg = m.clone();
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.ban_member(&space, &m).await
+                                                    api.ban_member(&space, &actor_did, &m).await
                                                 },
                                             )
                                             .await
@@ -1554,138 +1381,9 @@ pub fn SpaceAdminPanel(
                                 },
                                 {crate::i18n::tr("space_admin.ban_member")}
                             }
-                            // Move-flow alternates: build cx.member.state
-                            // FSM transitions on cx.component.member.state.v1
-                            // and POST /api/v1/moves. Kick = join→leave;
-                            // Ban = join→ban. The direct-event buttons
-                            // above remain wired until every deployment is
-                            // on the new pipeline.
-                            button {
-                                class: "secondary",
-                                "data-testid": "kick-member-via-move-button",
-                                onclick: {
-                                    let space = selected_space.clone();
-                                    let m = member.clone();
-                                    let base = base_url.clone();
-                                    move |_| {
-                                        let api_token = token();
-                                        let hlc = Hlc::now("yougen").to_string();
-                                        let anchor_ref =
-                                            state_store.read().anchor_ref_for_move(&space);
-                                        let identity =
-                                            match state_store.write().ensure_local_identity() {
-                                                Ok(id) => id,
-                                                Err(err) => {
-                                                    status_msg.set(format!(
-                                                        "identity unavailable: {err}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                        let signed = match build_signed_member_state_transition(
-                                            &identity,
-                                            &space,
-                                            &m,
-                                            "join",
-                                            "leave",
-                                            &anchor_ref,
-                                            &hlc,
-                                        ) {
-                                            Ok(m) => m,
-                                            Err(e) => {
-                                                status_msg.set(format!("build move failed: {e}"));
-                                                return;
-                                            }
-                                        };
-                                        let actor_label = m.clone();
-                                        let base = base.clone();
-                                        spawn(async move {
-                                            let signed_clone = signed.clone();
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.submit_move(&signed_clone).await
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(resp) => status_msg.set(format!(
-                                                    "kick(Move) {actor_label}: {}",
-                                                    format_submit_response(&resp)
-                                                )),
-                                                Err(err) => status_msg.set(format!(
-                                                    "kick(Move) failed: {}", err.display()
-                                                )),
-                                            }
-                                        });
-                                    }
-                                },
-                                {crate::i18n::tr("space_admin.kick_member_move")}
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "ban-member-via-move-button",
-                                onclick: {
-                                    let space = selected_space.clone();
-                                    let m = member.clone();
-                                    let base = base_url.clone();
-                                    move |_| {
-                                        let api_token = token();
-                                        let hlc = Hlc::now("yougen").to_string();
-                                        let anchor_ref =
-                                            state_store.read().anchor_ref_for_move(&space);
-                                        let identity =
-                                            match state_store.write().ensure_local_identity() {
-                                                Ok(id) => id,
-                                                Err(err) => {
-                                                    status_msg.set(format!(
-                                                        "identity unavailable: {err}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                        let signed = match build_signed_member_state_transition(
-                                            &identity,
-                                            &space,
-                                            &m,
-                                            "join",
-                                            "ban",
-                                            &anchor_ref,
-                                            &hlc,
-                                        ) {
-                                            Ok(m) => m,
-                                            Err(e) => {
-                                                status_msg.set(format!("build move failed: {e}"));
-                                                return;
-                                            }
-                                        };
-                                        let actor_label = m.clone();
-                                        let base = base.clone();
-                                        spawn(async move {
-                                            let signed_clone = signed.clone();
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.submit_move(&signed_clone).await
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(resp) => status_msg.set(format!(
-                                                    "ban(Move) {actor_label}: {}",
-                                                    format_submit_response(&resp)
-                                                )),
-                                                Err(err) => status_msg.set(format!(
-                                                    "ban(Move) failed: {}", err.display()
-                                                )),
-                                            }
-                                        });
-                                    }
-                                },
-                                {crate::i18n::tr("space_admin.ban_member_move")}
-                            }
+                            // (Legacy Move-flow kick/ban buttons removed — the
+                            // direct-event kick/ban above now submits the same
+                            // cx.member.state event via cx.events.submit.)
                             // A5 — personal blocklist entry-point. Block is
                             // a purely actor-private action (writes
                             // `cx.account_data.set("cx.account.blocklist", …)`)
@@ -1816,44 +1514,38 @@ pub fn SpaceAdminPanel(
                                         let wait_for = active_sync_token(&sync_cursor());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
-                                                Ok(api) => match api.accept_space_invite(&space, &invite_id).await {
-                                                    Ok(resp) => {
-                                                        let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
-                                                        let op_id = op.local_operation_id().to_owned();
-                                                        match api
-                                                            .submit_event_envelope(&op)
-                                                            .await
-                                                        {
-                                                            Ok(submitted) => {
-                                                                for row in space_invites.write().iter_mut() {
-                                                                    if row.invite_id == invite_id {
-                                                                        row.state = resp.state.clone();
-                                                                        row.operation_id = Some(op_id.clone());
-                                                                        row.event_id = Some(submitted.event_id.clone());
-                                                                    }
+                                                Ok(api) => {
+                                                    let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
+                                                    let op_id = op.local_operation_id().to_owned();
+                                                    match api.submit_event_envelope(&op).await {
+                                                        Ok(submitted) => {
+                                                            for row in space_invites.write().iter_mut() {
+                                                                if row.invite_id == invite_id {
+                                                                    row.state = "accepted".to_owned();
+                                                                    row.operation_id = Some(op_id.clone());
+                                                                    row.event_id = Some(submitted.event_id.clone());
                                                                 }
-                                                                frontier_state.set(submitted.event_id.clone());
-                                                                sync_cursor.set(submitted.sync_token.clone());
-                                                                {
-                                                                    let mut store = state_store.write();
-                                                                    store.save_sync_cursor(submitted.sync_token.clone());
-                                                                    store.append_raw_operation(
-                                                                        op_id.clone(),
-                                                                        Some(space.clone()),
-                                                                        json!({
-                                                                            "kind": "cx.invite.accept",
-                                                                            "invite_id": invite_id,
-                                                                            "state": resp.state,
-                                                                            "event_id": submitted.event_id,
-                                                                        }),
-                                                                    );
-                                                                }
-                                                                status_msg.set(format!("accepted invite fact {op_id}"));
                                                             }
-                                                            Err(error) => status_msg.set(format!("accept fact failed: {error}")),
+                                                            frontier_state.set(submitted.event_id.clone());
+                                                            sync_cursor.set(submitted.sync_token.clone());
+                                                            {
+                                                                let mut store = state_store.write();
+                                                                store.save_sync_cursor(submitted.sync_token.clone());
+                                                                store.append_raw_operation(
+                                                                    op_id.clone(),
+                                                                    Some(space.clone()),
+                                                                    json!({
+                                                                        "kind": "cx.invite.accept",
+                                                                        "invite_id": invite_id,
+                                                                        "state": "accepted",
+                                                                        "event_id": submitted.event_id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                            status_msg.set(format!("accepted invite fact {op_id}"));
                                                         }
+                                                        Err(error) => status_msg.set(format!("accept failed: {error}")),
                                                     }
-                                                    Err(error) => status_msg.set(format!("accept failed: {error}")),
                                                 }
                                                 Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                             }
@@ -1879,50 +1571,44 @@ pub fn SpaceAdminPanel(
                                         let wait_for = active_sync_token(&sync_cursor());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
-                                                Ok(api) => match api.reject_space_invite(&space, &invite_id).await {
-                                                    Ok(resp) => {
-                                                        let op = cx_ops::invite_cancel(
-                                                            &space,
-                                                            &actor,
-                                                            &invite_id,
-                                                            Some("declined"),
-                                                        )
-                                                        .build("yougen");
-                                                        let op_id = op.local_operation_id().to_owned();
-                                                        match api
-                                                            .submit_event_envelope(&op)
-                                                            .await
-                                                        {
-                                                            Ok(submitted) => {
-                                                                for row in space_invites.write().iter_mut() {
-                                                                    if row.invite_id == invite_id {
-                                                                        row.state = resp.state.clone();
-                                                                        row.operation_id = Some(op_id.clone());
-                                                                        row.event_id = Some(submitted.event_id.clone());
-                                                                    }
+                                                Ok(api) => {
+                                                    let op = cx_ops::invite_cancel(
+                                                        &space,
+                                                        &actor,
+                                                        &invite_id,
+                                                        Some("declined"),
+                                                    )
+                                                    .build("yougen");
+                                                    let op_id = op.local_operation_id().to_owned();
+                                                    match api.submit_event_envelope(&op).await {
+                                                        Ok(submitted) => {
+                                                            for row in space_invites.write().iter_mut() {
+                                                                if row.invite_id == invite_id {
+                                                                    row.state = "canceled".to_owned();
+                                                                    row.operation_id = Some(op_id.clone());
+                                                                    row.event_id = Some(submitted.event_id.clone());
                                                                 }
-                                                                frontier_state.set(submitted.event_id.clone());
-                                                                sync_cursor.set(submitted.sync_token.clone());
-                                                                {
-                                                                    let mut store = state_store.write();
-                                                                    store.save_sync_cursor(submitted.sync_token.clone());
-                                                                    store.append_raw_operation(
-                                                                        op_id.clone(),
-                                                                        Some(space.clone()),
-                                                                        json!({
-                                                                            "kind": "cx.invite.cancel",
-                                                                            "invite_id": invite_id,
-                                                                            "state": resp.state,
-                                                                            "event_id": submitted.event_id,
-                                                                        }),
-                                                                    );
-                                                                }
-                                                                status_msg.set(format!("canceled invite fact {op_id}"));
                                                             }
-                                                            Err(error) => status_msg.set(format!("cancel fact failed: {error}")),
+                                                            frontier_state.set(submitted.event_id.clone());
+                                                            sync_cursor.set(submitted.sync_token.clone());
+                                                            {
+                                                                let mut store = state_store.write();
+                                                                store.save_sync_cursor(submitted.sync_token.clone());
+                                                                store.append_raw_operation(
+                                                                    op_id.clone(),
+                                                                    Some(space.clone()),
+                                                                    json!({
+                                                                        "kind": "cx.invite.cancel",
+                                                                        "invite_id": invite_id,
+                                                                        "state": "canceled",
+                                                                        "event_id": submitted.event_id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                            status_msg.set(format!("canceled invite fact {op_id}"));
                                                         }
+                                                        Err(error) => status_msg.set(format!("cancel failed: {error}")),
                                                     }
-                                                    Err(error) => status_msg.set(format!("cancel failed: {error}")),
                                                 }
                                                 Err(error) => status_msg.set(format!("invalid server URL: {error}")),
                                             }
@@ -2055,12 +1741,21 @@ pub fn SpaceAdminPanel(
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
+                                let actor_did = match state_store.write().ensure_local_identity() {
+                                    Ok(id) => id.device_did.as_str().to_owned(),
+                                    Err(err) => {
+                                        status_msg.set(format!("identity unavailable: {err}"));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     let space_for_msg = space.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
-                                        |api| async move { api.leave_space(&space).await },
+                                        |api| async move {
+                                            api.leave_space(&space, &actor_did).await
+                                        },
                                     )
                                     .await
                                     {
@@ -2151,7 +1846,7 @@ pub fn SpaceAdminPanel(
                     span { "cx.component.capability.grant.v1 · OrSet" }
                 }
                 div { class: "muted",
-                    "Build a cx.capability.grant or cx.capability.revoke Move on the capability OrSet cell, sign with the admin's session key, and POST /api/v1/moves. Anchor predecessor is taken from the local /sync Anchor view; falls back to sha256(empty) when sync hasn't surfaced one."
+                    "Submits a cx.capability.grant or cx.capability.revoke event via cx.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
                 }
                 label { "Grant ID (cell subject)" }
                 input {
@@ -2242,12 +1937,9 @@ pub fn SpaceAdminPanel(
                                     );
                                     return;
                                 }
-                                let hlc = Hlc::now("yougen").to_string();
-                                let anchor_ref =
-                                    state_store.read().anchor_ref_for_move(&space);
-                                let identity =
+                                let actor_did =
                                     match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id,
+                                        Ok(id) => id.device_did.as_str().to_owned(),
                                         Err(err) => {
                                             status_msg.set(format!(
                                                 "identity unavailable: {err}"
@@ -2256,66 +1948,63 @@ pub fn SpaceAdminPanel(
                                         }
                                     };
                                 // Pull the active constraint from the editor
-                                // signals and thread it through the builder.
-                                // Empty input yields no constraint.
+                                // signals into the wire shape. Empty input
+                                // yields no constraint.
                                 let kind = cap_constraint_kind();
-                                let constraints: Vec<CapabilityConstraintInput> =
+                                let constraint_json: serde_json::Value =
                                     if kind == "temporal" {
                                         let nb = cap_temporal_not_before();
                                         let na = cap_temporal_not_after();
-                                        let constraint =
-                                            CapabilityConstraintInput::temporal(
-                                                if nb.trim().is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(nb)
-                                                },
-                                                if na.trim().is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(na)
-                                                },
-                                            );
-                                        if constraint.is_effective() {
-                                            vec![constraint]
+                                        let nb_trim = nb.trim();
+                                        let na_trim = na.trim();
+                                        if nb_trim.is_empty() && na_trim.is_empty() {
+                                            serde_json::Value::Null
                                         } else {
-                                            Vec::new()
+                                            let mut window = serde_json::Map::new();
+                                            if !nb_trim.is_empty() {
+                                                window.insert(
+                                                    "not_before".into(),
+                                                    serde_json::Value::String(nb_trim.to_owned()),
+                                                );
+                                            }
+                                            if !na_trim.is_empty() {
+                                                window.insert(
+                                                    "not_after".into(),
+                                                    serde_json::Value::String(na_trim.to_owned()),
+                                                );
+                                            }
+                                            json!([
+                                                {
+                                                    "kind": "temporal.window",
+                                                    "value": serde_json::Value::Object(window),
+                                                }
+                                            ])
                                         }
                                     } else {
-                                        Vec::new()
+                                        serde_json::Value::Null
                                     };
-                                let signed =
-                                    match build_signed_capability_grant_with_constraints(
-                                        &identity,
-                                        &space,
-                                        &grant_val,
-                                        &tag_val,
-                                        &constraints,
-                                        &anchor_ref,
-                                        &hlc,
-                                    ) {
-                                        Ok(m) => m,
-                                        Err(e) => {
-                                            status_msg.set(format!(
-                                                "build capability grant failed: {e}"
-                                            ));
-                                            return;
-                                        }
-                                    };
+                                let envelope = crate::operation::cx_ops::capability_grant(
+                                    &space,
+                                    &actor_did,
+                                    &grant_val,
+                                    &tag_val,
+                                    constraint_json,
+                                )
+                                .build("yougen");
+                                let op_id = envelope.local_operation_id().to_owned();
                                 spawn(async move {
-                                    let signed_clone = signed.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_move(&signed_clone).await
+                                            api.submit_event_envelope(&envelope).await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "capability.grant: {}",
-                                            format_submit_response(&resp)
+                                            "cx.capability.grant event {op_id}: event_id={}",
+                                            resp.event_id
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "capability.grant submit failed: {}", err.display()
@@ -2350,12 +2039,9 @@ pub fn SpaceAdminPanel(
                                     );
                                     return;
                                 }
-                                let hlc = Hlc::now("yougen").to_string();
-                                let anchor_ref =
-                                    state_store.read().anchor_ref_for_move(&space);
-                                let identity =
+                                let actor_did =
                                     match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id,
+                                        Ok(id) => id.device_did.as_str().to_owned(),
                                         Err(err) => {
                                             status_msg.set(format!(
                                                 "identity unavailable: {err}"
@@ -2363,37 +2049,28 @@ pub fn SpaceAdminPanel(
                                             return;
                                         }
                                     };
-                                let signed = match build_signed_capability_revoke(
-                                    &identity,
+                                let envelope = crate::operation::cx_ops::capability_revoke(
                                     &space,
+                                    &actor_did,
                                     &grant_val,
                                     &tag_val,
                                     reason_opt.as_deref(),
-                                    &anchor_ref,
-                                    &hlc,
-                                ) {
-                                    Ok(m) => m,
-                                    Err(e) => {
-                                        status_msg.set(format!(
-                                            "build capability revoke failed: {e}"
-                                        ));
-                                        return;
-                                    }
-                                };
+                                )
+                                .build("yougen");
+                                let op_id = envelope.local_operation_id().to_owned();
                                 spawn(async move {
-                                    let signed_clone = signed.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_move(&signed_clone).await
+                                            api.submit_event_envelope(&envelope).await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "capability.revoke: {}",
-                                            format_submit_response(&resp)
+                                            "cx.capability.revoke event {op_id}: event_id={}",
+                                            resp.event_id
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "capability.revoke submit failed: {}", err.display()
@@ -2542,16 +2219,26 @@ pub fn SpaceAdminPanel(
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
+                                let actor_did = match state_store.write().ensure_local_identity() {
+                                    Ok(id) => id.device_did.as_str().to_owned(),
+                                    Err(err) => {
+                                        status_msg.set(format!("identity unavailable: {err}"));
+                                        return;
+                                    }
+                                };
+                                let space_for_msg = space.clone();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
-                                        |api| async move { api.archive_space(&space).await },
+                                        |api| async move {
+                                            api.archive_space(&space, &space, &actor_did).await
+                                        },
                                     )
                                     .await
                                     {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "archived: {}", resp.archived
+                                        Ok(_) => status_msg.set(format!(
+                                            "archive event submitted ({space_for_msg})"
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "archive failed: {}", err.display()
@@ -2572,12 +2259,21 @@ pub fn SpaceAdminPanel(
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
+                                let actor_did = match state_store.write().ensure_local_identity() {
+                                    Ok(id) => id.device_did.as_str().to_owned(),
+                                    Err(err) => {
+                                        status_msg.set(format!("identity unavailable: {err}"));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     let space_for_msg = space.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
-                                        |api| async move { api.delete_space(&space).await },
+                                        |api| async move {
+                                            api.delete_space(&space, &space, &actor_did).await
+                                        },
                                     )
                                     .await
                                     {
@@ -2957,274 +2653,4 @@ async fn run_device_revoke_from_snapshot(
     }
 }
 
-#[cfg(test)]
-mod move_flow_tests {
-    use super::*;
-    use contrix_sdk::LatticeOpType;
-    use ed25519_dalek::SigningKey;
-
-    fn fixed_anchor_ref() -> &'static str {
-        PLACEHOLDER_ANCHOR_REF
-    }
-
-    fn fixed_hlc() -> &'static str {
-        "0189c4d2af00-00000000-aabbccdd"
-    }
-
-    /// Test-only stable identity. Mirrors the helper in
-    /// `views::consent_demo::tests` so vector tests stay reproducible.
-    fn fixed_identity() -> LocalIdentity {
-        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
-        let device_did =
-            crate::move_builder::did_key_from_verifying_key(&signing_key.verifying_key());
-        LocalIdentity {
-            device_did,
-            signing_key,
-        }
-    }
-
-    /// "Save Metadata (Move)" wiring: produces a cx.realm.update Move
-    /// targeting the cx.component.realm.organization.v1 cas-register cell
-    /// with the form values folded into the cell's value object.
-    // TODO(realm-rework): switch the Move SpaceId argument to a cx:realm:
-    // id once contrix-sdk's identifier validator accepts the new prefix.
-    #[test]
-    fn build_signed_space_organization_update_targets_organization_cell() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let identity = fixed_identity();
-        let signed = build_signed_space_organization_update(
-            &identity,
-            space,
-            json!({"title": "Renamed", "topic": "new"}),
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_eq!(signed.space_id.as_str(), space);
-        assert_eq!(signed.effects.len(), 1);
-        let effect = &signed.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.realm.organization.v1:"),
-            "realm organization update must target the organization cell family"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Set);
-        let value = effect.op.value.as_ref().expect("set op carries value");
-        assert_eq!(value.get("title").and_then(|v| v.as_str()), Some("Renamed"));
-        assert_eq!(value.get("topic").and_then(|v| v.as_str()), Some("new"));
-        // Detached JWS attached so soland's verifier can validate.
-        assert!(!signed.sig.jws.is_empty());
-        let parts: Vec<&str> = signed.sig.jws.split('.').collect();
-        assert_eq!(parts.len(), 3);
-    }
-
-    /// "Kick (Move)" wiring: produces an FSM transition from join → leave
-    /// on cx.component.member.state.v1 keyed by the actor id.
-    #[test]
-    fn build_signed_member_state_transition_kick_produces_join_leave_fsm() {
-        let identity = fixed_identity();
-        let signed = build_signed_member_state_transition(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "did:web:alice.example",
-            "join",
-            "leave",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let effect = &signed.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.member.state.v1:"),
-            "member state transition must target the member.state cell family"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Transition);
-        assert_eq!(
-            effect.op.from.as_ref().and_then(|v| v.as_str()),
-            Some("join")
-        );
-        assert_eq!(
-            effect.op.to.as_ref().and_then(|v| v.as_str()),
-            Some("leave")
-        );
-    }
-
-    /// "Ban (Move)" wiring: produces an FSM transition from join → ban
-    /// on the same cell family (different terminal state).
-    #[test]
-    fn build_signed_member_state_transition_ban_produces_join_ban_fsm() {
-        let identity = fixed_identity();
-        let signed = build_signed_member_state_transition(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "did:web:alice.example",
-            "join",
-            "ban",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let effect = &signed.effects[0];
-        assert_eq!(effect.op.op_type, LatticeOpType::Transition);
-        assert_eq!(effect.op.to.as_ref().and_then(|v| v.as_str()), Some("ban"));
-    }
-
-    /// "Grant capability (Move)" wiring: produces a cx.capability.grant
-    /// Move targeting cx.component.capability.grant.v1 with the form's
-    /// tag added to the OrSet.
-    #[test]
-    fn build_signed_capability_grant_targets_capability_or_set_cell() {
-        let identity = fixed_identity();
-        let signed = build_signed_capability_grant(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cap.demo-01",
-            "discussion.message.create",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let effect = &signed.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.capability.grant.v1:"),
-            "capability grant must target the capability.grant.v1 cell family"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Add);
-        assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
-        // Detached JWS attached so soland's verifier can validate.
-        assert!(!signed.sig.jws.is_empty());
-    }
-
-    /// "Revoke capability (Move)" wiring: produces a cx.capability.revoke
-    /// Move on the SAME OrSet cell — soland's causal-remove semantics
-    /// require it. Reason field flows through.
-    #[test]
-    fn build_signed_capability_revoke_attaches_reason_and_remove_op() {
-        let identity = fixed_identity();
-        let signed = build_signed_capability_revoke(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cap.demo-01",
-            "discussion.message.create",
-            Some("rotation policy"),
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let effect = &signed.effects[0];
-        assert!(
-            effect
-                .cell
-                .as_str()
-                .starts_with("cx:cell:cx.component.capability.grant.v1:"),
-            "capability revoke targets the same OrSet cell as the grant"
-        );
-        assert_eq!(effect.op.op_type, LatticeOpType::Remove);
-        assert_eq!(effect.op.reason.as_deref(), Some("rotation policy"));
-    }
-
-    /// Capability grant with a temporal constraint folds the
-    /// `not_before` / `not_after` window into the OrSet add op's `value`
-    /// field; revokes still hit the same cell family so soland's
-    /// causal-remove semantics keep working.
-    #[test]
-    fn build_signed_capability_grant_with_temporal_constraint_attaches_window() {
-        let identity = fixed_identity();
-        let constraint = CapabilityConstraintInput::temporal(
-            Some("2026-05-09T00:00:00Z".to_owned()),
-            Some("2026-08-09T00:00:00Z".to_owned()),
-        );
-        let signed = build_signed_capability_grant_with_constraints(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cap.demo-01",
-            "discussion.message.create",
-            std::slice::from_ref(&constraint),
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let effect = &signed.effects[0];
-        let value = effect.op.value.as_ref().expect("value present");
-        let constraints = value
-            .get("constraints")
-            .and_then(|v| v.as_array())
-            .expect("constraints array");
-        assert_eq!(constraints.len(), 1);
-        assert_eq!(
-            constraints[0].get("not_before").and_then(|v| v.as_str()),
-            Some("2026-05-09T00:00:00Z")
-        );
-        assert_eq!(
-            constraints[0].get("not_after").and_then(|v| v.as_str()),
-            Some("2026-08-09T00:00:00Z")
-        );
-    }
-
-    /// When no constraints are passed, the wire shape (and
-    /// content-addressed move id) match the direct no-constraint grant
-    /// builder.
-    #[test]
-    fn build_signed_capability_grant_empty_constraints_matches_direct_id() {
-        let identity = fixed_identity();
-        let with_empty = build_signed_capability_grant_with_constraints(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cap.demo-01",
-            "discussion.message.create",
-            &[],
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let direct = build_signed_capability_grant(
-            &identity,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cap.demo-01",
-            "discussion.message.create",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_eq!(with_empty.id.as_str(), direct.id.as_str());
-    }
-
-    /// Different from-state values produce different content-addressed
-    /// move ids — ensures soland can distinguish kick from ban even if
-    /// every other input is identical (form, hlc, anchor_ref).
-    #[test]
-    fn member_state_kick_and_ban_have_distinct_content_addresses() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
-        let actor = "did:web:alice.example";
-        let identity = fixed_identity();
-        let kick = build_signed_member_state_transition(
-            &identity,
-            space,
-            actor,
-            "join",
-            "leave",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        let ban = build_signed_member_state_transition(
-            &identity,
-            space,
-            actor,
-            "join",
-            "ban",
-            fixed_anchor_ref(),
-            fixed_hlc(),
-        )
-        .unwrap();
-        assert_ne!(kick.id.as_str(), ban.id.as_str());
-    }
-}
+// (Move-flow test module removed; the wire shapes are now covered by soland's events.submit tests and contrix-spec fixtures.)
