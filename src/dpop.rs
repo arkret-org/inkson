@@ -114,10 +114,10 @@ pub fn build_dpop_proof_ed25519(
         alg: "EdDSA".to_owned(),
         jwk: DpopJwk::from_verifying_key(&signing_key.verifying_key()),
     };
-    let header_bytes = serde_json::to_vec(&header)
-        .map_err(|err| DpopError::Encode(err.to_string()))?;
-    let payload_bytes = serde_json::to_vec(claims)
-        .map_err(|err| DpopError::Encode(err.to_string()))?;
+    let header_bytes =
+        serde_json::to_vec(&header).map_err(|err| DpopError::Encode(err.to_string()))?;
+    let payload_bytes =
+        serde_json::to_vec(claims).map_err(|err| DpopError::Encode(err.to_string()))?;
     let header_b64 = URL_SAFE_NO_PAD.encode(header_bytes);
     let payload_b64 = URL_SAFE_NO_PAD.encode(payload_bytes);
     let signing_input = format!("{header_b64}.{payload_b64}");
@@ -140,9 +140,7 @@ pub fn jwk_thumbprint_ed25519(verifying_key: &VerifyingKey) -> String {
     // Members are inlined in lex-min order — RFC 7638 mandates
     // exactly this serialization. Don't use `serde_json::json!`
     // because BTreeMap ordering depends on serde flags.
-    let canonical = format!(
-        "{{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"{x}\"}}"
-    );
+    let canonical = format!("{{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"{x}\"}}");
     let digest = Sha256::digest(canonical.as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
 }

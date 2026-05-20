@@ -122,8 +122,10 @@ pub fn NotificationsPanel(
     let mut visible_limit = use_signal(|| 50usize);
     let visible_total = visible_notifications.len();
     let visible_window: usize = visible_total.min(visible_limit());
-    let visible_notifications: Vec<_> =
-        visible_notifications.into_iter().take(visible_window).collect();
+    let visible_notifications: Vec<_> = visible_notifications
+        .into_iter()
+        .take(visible_window)
+        .collect();
     let has_more_to_load = visible_total > visible_window;
 
     rsx! {
@@ -547,12 +549,10 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
     // the user observed.
     match (decision, reason) {
         (ShouldNotify::DontNotify, push_rule_reason_code::NOT_MENTIONED) => {
-            "You're not getting notifications for this discussion — change watch level"
-                .to_owned()
+            "You're not getting notifications for this discussion — change watch level".to_owned()
         }
         (ShouldNotify::DontNotify, push_rule_reason_code::NOT_PARTICIPATING) => {
-            "You're only being notified about threads you've joined — change watch level"
-                .to_owned()
+            "You're only being notified about threads you've joined — change watch level".to_owned()
         }
         _ => "Notifications for this discussion are limited by your watch level".to_owned(),
     }

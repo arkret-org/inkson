@@ -10,48 +10,17 @@
 //! - `cx.call.state` — durable call state transitions (start / answer / end).
 //! - `cx.call.recording.start` — durable opt-in recording marker.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::operation::OperationBuilder;
 
-/// Canonical call signaling envelope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CallSignalKind {
-    SdpOffer,
-    SdpAnswer,
-    IceCandidate,
-    Hangup,
-}
-
-impl CallSignalKind {
-    pub fn as_wire(self) -> &'static str {
-        match self {
-            Self::SdpOffer => "sdp_offer",
-            Self::SdpAnswer => "sdp_answer",
-            Self::IceCandidate => "ice_candidate",
-            Self::Hangup => "hangup",
-        }
-    }
-}
-
-/// Build a `cx.call.signal` (ephemeral) event for SDP / ICE exchange. The
-/// payload is opaque to the reducer; the receiver consumes it directly for
-/// the local WebRTC peer connection.
-pub fn build_call_signal(
-    space_id: &str,
-    actor: &str,
-    call_id: &str,
-    kind: CallSignalKind,
-    payload: Value,
-) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.call.signal")
-        .target_ref(call_id)
-        .body(json!({
-            "call_id": call_id,
-            "kind": kind.as_wire(),
-            "payload": payload,
-        }))
-}
+// NOTE: `cx.call.signal` is an ephemeral kind and MUST route through
+// `EphemeralEnvelope` (`cx.schema.ephemeral_envelope.v1`), NOT through
+// `cx.events.submit`. The canonical builder lives in
+// `crate::api::build_call_signal_envelope` and accepts the wire string
+// directly (`sdp_offer` / `sdp_answer` / `ice_candidate` / `hangup`). Do
+// NOT re-introduce a durable `OperationBuilder`-based helper or a parallel
+// `CallSignalKind` enum here — it would violate the wire spec.
 
 /// Call lifecycle state for `cx.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,21 +90,6 @@ mod tests {
             event_kind_wire_scope("cx.call.signal"),
             Some(EventKindWireScope::Ephemeral)
         );
-    }
-
-    #[test]
-    fn call_signal_emits_canonical_kind() {
-        let op = build_call_signal(
-            "cx:space:s1",
-            "did:web:alice",
-            "cx:call:c1",
-            CallSignalKind::SdpOffer,
-            json!({"sdp": "v=0\n..."}),
-        )
-        .build("node");
-        assert_eq!(op.kind, "cx.call.signal");
-        assert_eq!(op.payload["kind"], "sdp_offer");
-        assert!(op.payload["payload"]["sdp"].is_string());
     }
 
     #[test]

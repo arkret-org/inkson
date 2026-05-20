@@ -99,21 +99,25 @@ pub struct ReadMarkerEvent {
 /// receiver-side schema drift is visible rather than swallowed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PresenceRxError {
-    MissingField { event_kind: &'static str, field: &'static str },
-    WrongKind { expected: &'static str, actual: String },
+    MissingField {
+        event_kind: &'static str,
+        field: &'static str,
+    },
+    WrongKind {
+        expected: &'static str,
+        actual: String,
+    },
 }
 
 impl std::fmt::Display for PresenceRxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingField { event_kind, field } => write!(
-                f,
-                "{event_kind} payload missing required field `{field}`"
-            ),
-            Self::WrongKind { expected, actual } => write!(
-                f,
-                "expected event kind `{expected}` but got `{actual}`"
-            ),
+            Self::MissingField { event_kind, field } => {
+                write!(f, "{event_kind} payload missing required field `{field}`")
+            }
+            Self::WrongKind { expected, actual } => {
+                write!(f, "expected event kind `{expected}` but got `{actual}`")
+            }
         }
     }
 }
@@ -121,7 +125,9 @@ impl std::fmt::Display for PresenceRxError {
 impl std::error::Error for PresenceRxError {}
 
 /// Parse a `cx.typing` envelope's payload into a [`TypingEvent`].
-pub fn parse_typing(envelope: &crate::operation::EventEnvelope) -> Result<TypingEvent, PresenceRxError> {
+pub fn parse_typing(
+    envelope: &crate::operation::EventEnvelope,
+) -> Result<TypingEvent, PresenceRxError> {
     require_kind(&envelope.kind, "cx.typing")?;
     let payload = &envelope.payload;
     Ok(TypingEvent {
@@ -132,7 +138,9 @@ pub fn parse_typing(envelope: &crate::operation::EventEnvelope) -> Result<Typing
 }
 
 /// Parse a `cx.presence` envelope's payload into a [`PresenceEvent`].
-pub fn parse_presence(envelope: &crate::operation::EventEnvelope) -> Result<PresenceEvent, PresenceRxError> {
+pub fn parse_presence(
+    envelope: &crate::operation::EventEnvelope,
+) -> Result<PresenceEvent, PresenceRxError> {
     require_kind(&envelope.kind, "cx.presence")?;
     let payload = &envelope.payload;
     let status_str = required_str(payload, "cx.presence", "status")?;
@@ -152,7 +160,8 @@ pub fn parse_read_marker(
     Ok(ReadMarkerEvent {
         space_id: required_str(payload, "cx.read.marker", "space_id")?.to_owned(),
         actor_did: required_str(payload, "cx.read.marker", "actor_did")?.to_owned(),
-        last_read_event_id: required_str(payload, "cx.read.marker", "last_read_event_id")?.to_owned(),
+        last_read_event_id: required_str(payload, "cx.read.marker", "last_read_event_id")?
+            .to_owned(),
         last_read_hlc: required_str(payload, "cx.read.marker", "last_read_hlc")?.to_owned(),
     })
 }

@@ -1082,8 +1082,7 @@ fn classify_watcher_entry(
         // If candidate matches a known participant, prefer that exact DID.
         let known = participants.iter().find(|p| {
             p.did.eq_ignore_ascii_case(&candidate)
-                || p.did.ends_with(&format!(":{local}"))
-                    && p.did.contains(host)
+                || p.did.ends_with(&format!(":{local}")) && p.did.contains(host)
         });
         match known {
             Some(p) => p.did.clone(),
@@ -1092,7 +1091,9 @@ fn classify_watcher_entry(
     } else {
         // Bare token: resolve against participant display names / DIDs.
         let lower = stripped.to_ascii_lowercase();
-        let direct = participants.iter().find(|p| p.did.eq_ignore_ascii_case(stripped));
+        let direct = participants
+            .iter()
+            .find(|p| p.did.eq_ignore_ascii_case(stripped));
         if let Some(p) = direct {
             p.did.clone()
         } else {
@@ -1113,7 +1114,10 @@ fn classify_watcher_entry(
         }
     };
 
-    if already_added.iter().any(|d| d.eq_ignore_ascii_case(&canonical)) {
+    if already_added
+        .iter()
+        .any(|d| d.eq_ignore_ascii_case(&canonical))
+    {
         return WatcherEntryKind::Duplicate(canonical);
     }
     WatcherEntryKind::Valid(canonical)

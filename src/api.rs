@@ -192,29 +192,28 @@ use crate::models::{
     AppletQuerySpaceResponse, AppletTransactionResBody, ArchiveSpaceResponse, AuthzCheckResBody,
     BackfillResBody, BanMemberResponse, BlobUploadResBody, ClientSyncResponse, ContactResponse,
     ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
-    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EventsDescribeResBody,
-    FederationOperationsResponse, FederationSpaceMembersResBody, FederationTransactionResBody,
-    FederationVerifyActorResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
-    IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody, IdentityResolveResBody,
-    IndexSearchResponse, InvitesResponse, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody,
-    LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody, MimiIdentifierQueryResBody,
-    MimiKeyMaterialResBody, MimiNotifyResBody, MimiProviderDirectoryResBody,
-    MimiProxyDownloadResBody, MimiReportAbuseResBody, MimiRoomUpdateResBody,
-    MimiSubmitMessageResBody, MlsEpochResponse, MlsRotateResponse, ModerationReportResBody,
-    ModerationReportsResponse, ModerationResolveResponse, OidcAuthorizeResponse,
-    OidcCallbackResponse, OkResBody, PasskeyChallengeResponse, PasskeyVerifyResponse,
-    PolicyCheckResBody, PolicyResponse, PushRegisterResponse, ReceiptResponse,
-    ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse, SearchActorsResponse,
-    SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SignAnchorResponse,
-    SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse, SpaceLifecycleResponse,
-    SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResBody, SubmitEventResponse,
-    SubmitMoveResponse, SyncDescribeResBody, ThirdPartyLocationsResponse, ThirdPartyUsersResponse,
-    TokenRefreshResponse, TypingResponse, UpdateProfileResponse, UpdateSpaceResponse,
-    VerifyDeviceResponse,
+    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
+    EventsDescribeResBody, FederationOperationsResponse, FederationSpaceMembersResBody,
+    FederationTransactionResBody, FederationVerifyActorResBody, HealthResponse, IceConfigRequest,
+    IceConfigResponse, IdentityDescribeResBody, IdentityLogResBody, IdentityReceiptsResBody,
+    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
+    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody,
+    MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
+    MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
+    MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsEpochResponse, MlsRotateResponse,
+    ModerationReportResBody, ModerationReportsResponse, ModerationResolveResponse,
+    OidcAuthorizeResponse, OidcCallbackResponse, OkResBody, PasskeyChallengeResponse,
+    PasskeyVerifyResponse, PolicyCheckResBody, PolicyResponse, PushRegisterResponse,
+    ReceiptResponse, ResolveHandleResponse, ResolveSpaceResponse, RotateKeysResponse,
+    SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription,
+    SignAnchorResponse, SnapshotHeadResponse, SpaceInviteResponse, SpaceLeaveResponse,
+    SpaceLifecycleResponse, SpacePolicyResponse, SubmitAnchorResponse, SubmitDidOperationResBody,
+    SubmitEventResponse, SubmitMoveResponse, SyncDescribeResBody, ThirdPartyLocationsResponse,
+    ThirdPartyUsersResponse, TokenRefreshResponse, TypingResponse, UpdateProfileResponse,
+    UpdateSpaceResponse, VerifyDeviceResponse,
 };
 use crate::operation::{
-    EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode,
-    uuid_v7,
+    EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode, uuid_v7,
 };
 
 /// T1.3 — pre-submit guard. Returns an error when the active
@@ -1765,24 +1764,67 @@ impl ContrixApi {
         .await
     }
 
+    /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
+    /// (`cx.typing`). They MUST flow through the broadcast ephemeral channel,
+    /// NOT through `cx.events.submit`. The REST `POST /api/v1/typing` shim
+    /// is retained for transports that don't yet expose the dedicated
+    /// ephemeral fanout (TODO(round23-T02): collapse to a single transport
+    /// once soland exposes it). The body is shaped as an
+    /// `EphemeralEnvelope` so the server can dispatch directly.
     pub async fn send_typing(
         &self,
         space_id: &str,
+        actor: &str,
+        device_id: Option<&str>,
         typing: bool,
     ) -> anyhow::Result<TypingResponse> {
-        self.post_json(
-            "api/v1/typing",
-            json!({"space_id": space_id, "typing": typing}),
-        )
-        .await
+        let envelope = build_typing_envelope(space_id, actor, device_id, typing)?;
+        // Best-effort: route via the broadcast ephemeral channel first.
+        // If the server does not yet expose that endpoint, fall through
+        // to the typing-specific shim — but never to `cx.events.submit`.
+        // TODO(round23-T02): drop the legacy shim once soland exposes the
+        // dedicated ephemeral channel on every deployment.
+        match self.submit_ephemeral_envelope(&envelope).await {
+            Ok(_) => Ok(TypingResponse { ok: true }),
+            Err(error) => {
+                tracing::debug!(
+                    target: "yougen::ephemeral",
+                    %error,
+                    "broadcast ephemeral channel unavailable for cx.typing; using transport shim"
+                );
+                self.post_json(
+                    "api/v1/typing",
+                    json!({"space_id": space_id, "typing": typing}),
+                )
+                .await
+            }
+        }
     }
 
+    /// Round R2/R3 (T02) — read receipts (`cx.receipt.read`) are wire-scope-
+    /// ephemeral. They MUST flow through the broadcast ephemeral channel.
+    /// The REST shim is retained as a transport fallback only; the
+    /// `cx.events.submit` durable path MUST NOT be used.
     pub async fn send_receipt(
         &self,
         space_id: &str,
         event_id: &str,
         receipt_type: &str,
     ) -> anyhow::Result<ReceiptResponse> {
+        // Only `cx.receipt.read` is an ephemeral receipt; other receipt
+        // types (delivered/franking/etc.) stay on their own paths. Guard
+        // the kind here so we don't accidentally widen the contract.
+        if receipt_type == "cx.receipt.read" {
+            let actor_did = event_id.to_owned(); // server fills the actor from the bearer token; payload only needs the event_id reference
+            let envelope = build_receipt_read_envelope(space_id, &actor_did, event_id)?;
+            if self.submit_ephemeral_envelope(&envelope).await.is_ok() {
+                return Ok(ReceiptResponse { ok: true });
+            }
+            tracing::debug!(
+                target: "yougen::ephemeral",
+                "broadcast ephemeral channel unavailable for cx.receipt.read; using transport shim"
+            );
+        }
         self.post_json(
             "api/v1/receipts",
             json!({"space_id": space_id, "event_id": event_id, "receipt_type": receipt_type}),
@@ -2240,6 +2282,86 @@ impl ContrixApi {
         self.submit_event_envelope(&event).await
     }
 
+    /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
+    /// dedicated ephemeral channel (`POST /api/v1/ephemeral`) instead of the
+    /// durable `/api/v1/events` endpoint. The envelope MUST validate against
+    /// `cx.schema.ephemeral_envelope.v1` (kind in
+    /// {`cx.call.signal`, `cx.presence`, `cx.typing`, `cx.receipt.read`}, and
+    /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
+    /// signal kinds MUST NOT travel via `cx.events.submit`; this method is
+    /// the single approved network path.
+    ///
+    /// TODO(round23-T02): once soland exposes a transport-specific ephemeral
+    /// channel (sync subscribe live stream / presence fanout), wire this to
+    /// that endpoint. For now we POST to `api/v1/ephemeral` and fail fast
+    /// rather than fall back to `cx.events.submit`.
+    pub async fn submit_ephemeral_envelope(
+        &self,
+        envelope: &contrix_sdk::EphemeralEnvelope,
+    ) -> anyhow::Result<EphemeralSubmitResponse> {
+        // Defensive re-validation. The constructor already enforced this,
+        // but a caller could mutate a raw envelope in place between build
+        // and submit. Fail fast with the canonical error code rather than
+        // shipping a non-conformant payload to the wire.
+        if !contrix_sdk::events::is_ephemeral_kind(&envelope.kind) {
+            anyhow::bail!(
+                "ephemeral submit: kind {:?} is not in the broadcast ephemeral allowlist",
+                envelope.kind
+            );
+        }
+        let window_ms = envelope
+            .expires_at
+            .signed_duration_since(envelope.sent_at)
+            .num_milliseconds();
+        if window_ms <= 0
+            || (window_ms as u64) > contrix_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
+        {
+            anyhow::bail!(
+                "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
+            );
+        }
+        // Wire schema id binding — soland's `/api/v1/ephemeral` handler
+        // expects an envelope tagged with the v1 schema id so it can
+        // dispatch to the right reducer-skipping channel.
+        let mut body = serde_json::to_value(envelope)?;
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "schema".to_owned(),
+                Value::String(contrix_sdk::EphemeralEnvelope::SCHEMA.to_owned()),
+            );
+        }
+        self.post_json("api/v1/ephemeral", body).await
+    }
+
+    /// Round R2/R3 (T02) — point-to-point to-device signals (the
+    /// `cx.key.verification.*` family) MUST travel on the device-message
+    /// channel, NOT through `cx.events.submit` or the broadcast ephemeral
+    /// channel. Thin convenience wrapper around
+    /// [`Self::send_device_message_envelope`] that asserts the kind belongs
+    /// to the to-device ephemeral family.
+    pub async fn submit_to_device_ephemeral(
+        &self,
+        txn_id: &str,
+        target_actor: &str,
+        target_device_id: &str,
+        message_type: &str,
+        content: Value,
+    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+        if !message_type.starts_with("cx.key.verification.") {
+            anyhow::bail!(
+                "to-device ephemeral submit: message_type {message_type:?} is not in the cx.key.verification.* family"
+            );
+        }
+        self.send_device_message_envelope(
+            txn_id,
+            target_actor,
+            target_device_id,
+            message_type,
+            content,
+        )
+        .await
+    }
+
     pub async fn identity_receipts(&self, did: &str) -> anyhow::Result<IdentityReceiptsResBody> {
         self.post_json("api/v1/identity/receipts", json!({"did": did}))
             .await
@@ -2441,6 +2563,189 @@ impl ContrixApi {
         request
             .header("x-contrix-request-id", request_id)
             .header("idempotency-key", request_id)
+    }
+}
+
+/// Round R2/R3 (T02) — default ephemeral TTL for `cx.typing` / `cx.presence`
+/// / `cx.receipt.read`. 30 seconds is comfortably below the 5-minute hard
+/// ceiling and matches the spec's recommended typing-fade window.
+const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
+
+/// Round R2/R3 (T02) — build a `cx.typing` `EphemeralEnvelope`. Enforces
+/// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
+pub fn build_typing_envelope(
+    realm_id: &str,
+    actor_did: &str,
+    device_id: Option<&str>,
+    typing: bool,
+) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
+    let realm = contrix_sdk::RealmId::new(realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.typing: {err}"))?;
+    let actor = contrix_sdk::Did::new(actor_did)
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.typing: {err}"))?;
+    let device = device_id
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| {
+            contrix_sdk::DeviceId::new(s)
+                .map_err(|err| anyhow::anyhow!("invalid device_id for cx.typing: {err}"))
+        })
+        .transpose()?;
+    contrix_sdk::EphemeralEnvelope::new(
+        "cx.typing",
+        realm,
+        actor,
+        device,
+        now,
+        expires_at,
+        json!({"actor_did": actor_did, "typing": typing}),
+        None,
+    )
+    .map_err(|err| anyhow::anyhow!("typing envelope rejected: {err}"))
+}
+
+/// Round R2/R3 (T02) — build a `cx.receipt.read` `EphemeralEnvelope`.
+pub fn build_receipt_read_envelope(
+    realm_id: &str,
+    actor_did: &str,
+    event_id: &str,
+) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
+    let realm = contrix_sdk::RealmId::new(realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.receipt.read: {err}"))?;
+    let actor = contrix_sdk::Did::new(actor_did)
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.receipt.read: {err}"))?;
+    contrix_sdk::EphemeralEnvelope::new(
+        "cx.receipt.read",
+        realm,
+        actor,
+        None,
+        now,
+        expires_at,
+        json!({"event_id": event_id}),
+        None,
+    )
+    .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))
+}
+
+/// Round R2/R3 (T02) — build a `cx.presence` `EphemeralEnvelope`.
+pub fn build_presence_envelope(
+    realm_id: &str,
+    actor_did: &str,
+    status: &str,
+    last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
+    let realm = contrix_sdk::RealmId::new(realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.presence: {err}"))?;
+    let actor = contrix_sdk::Did::new(actor_did)
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.presence: {err}"))?;
+    let mut payload = serde_json::Map::new();
+    payload.insert("actor_did".into(), Value::String(actor_did.to_owned()));
+    payload.insert("status".into(), Value::String(status.to_owned()));
+    if let Some(ts) = last_active_at {
+        payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
+    }
+    contrix_sdk::EphemeralEnvelope::new(
+        "cx.presence",
+        realm,
+        actor,
+        None,
+        now,
+        expires_at,
+        Value::Object(payload),
+        None,
+    )
+    .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
+}
+
+/// Round R2/R3 (T02) — build a `cx.call.signal` `EphemeralEnvelope` for
+/// SDP/ICE exchange. `call_id` identifies the WebRTC peer connection;
+/// `signal_kind` is one of `sdp_offer`/`sdp_answer`/`ice_candidate`/`hangup`.
+pub fn build_call_signal_envelope(
+    realm_id: &str,
+    actor_did: &str,
+    device_id: Option<&str>,
+    call_id: &str,
+    signal_kind: &str,
+    payload: Value,
+) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
+    let realm = contrix_sdk::RealmId::new(realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.call.signal: {err}"))?;
+    let actor = contrix_sdk::Did::new(actor_did)
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.call.signal: {err}"))?;
+    let device = device_id
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| {
+            contrix_sdk::DeviceId::new(s)
+                .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))
+        })
+        .transpose()?;
+    contrix_sdk::EphemeralEnvelope::new(
+        "cx.call.signal",
+        realm,
+        actor,
+        device,
+        now,
+        expires_at,
+        json!({
+            "call_id": call_id,
+            "kind": signal_kind,
+            "payload": payload,
+        }),
+        None,
+    )
+    .map_err(|err| anyhow::anyhow!("call signal envelope rejected: {err}"))
+}
+
+/// Round R2/R3 (T11) — classify a server error envelope into the four
+/// fail-closed presign blob error classes. The UI MUST surface a friendly
+/// (translated) message and MUST NOT retry / cache / log the presign URL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlobPresignError {
+    LegalHoldActive,
+    BlobRedacted,
+    MediaPlaintextServiceNotAuthorised,
+    NotAuthorised,
+}
+
+impl BlobPresignError {
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        let api_error = error.downcast_ref::<ContrixApiError>()?;
+        let code = api_error.error.code();
+        match code {
+            // Round R2/R3 wire codes from contrix_sdk::error.
+            "legal_hold_active" => Some(Self::LegalHoldActive),
+            "blob_redacted" => Some(Self::BlobRedacted),
+            "media_plaintext_service_not_authorised" => {
+                Some(Self::MediaPlaintextServiceNotAuthorised)
+            }
+            _ => {
+                if api_error.status == StatusCode::FORBIDDEN
+                    || api_error.status == StatusCode::UNAUTHORIZED
+                {
+                    Some(Self::NotAuthorised)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// i18n key for the user-facing error message. Translation values are
+    /// owned by [`crate::i18n`].
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            Self::LegalHoldActive => "blob.error.legal_hold_active",
+            Self::BlobRedacted => "blob.error.redacted",
+            Self::MediaPlaintextServiceNotAuthorised => "blob.error.plaintext_not_authorised",
+            Self::NotAuthorised => "blob.error.not_authorised",
+        }
     }
 }
 

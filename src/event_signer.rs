@@ -62,9 +62,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use contrix_sdk::signatures::proof::{
-    EventProofBuilder, EventSigner as SdkEventSigner, ProofType,
-};
+use contrix_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
 
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
 
@@ -297,8 +295,7 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
 // hardware-key unlock that happens after first paint) can call
 // [`replace_active_signer`]. Tests use the same swap path to reset
 // between cases.
-static ACTIVE_SIGNER: OnceLock<std::sync::RwLock<Option<Arc<YougenEventSigner>>>> =
-    OnceLock::new();
+static ACTIVE_SIGNER: OnceLock<std::sync::RwLock<Option<Arc<YougenEventSigner>>>> = OnceLock::new();
 
 fn active_slot() -> &'static std::sync::RwLock<Option<Arc<YougenEventSigner>>> {
     ACTIVE_SIGNER.get_or_init(|| std::sync::RwLock::new(None))
@@ -462,13 +459,10 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            "cx:space:t",
-            "did:web:bob.example",
-            "cx.message.create",
-        )
-        .body(json!({"body": "hi"}))
-        .build("test_node");
+        let mut event =
+            OperationBuilder::new("cx:space:t", "did:web:bob.example", "cx.message.create")
+                .body(json!({"body": "hi"}))
+                .build("test_node");
         set_proof_mode(prior_mode);
 
         // RealEd25519 mode skips placeholder attach.
@@ -493,8 +487,7 @@ mod tests {
     #[test]
     fn sign_envelope_round_trips_through_sdk_verifier() {
         use contrix_sdk::signatures::proof::{
-            Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier,
-            PublicKeyMaterial,
+            Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
         };
         let _g = reset();
         let seed = [5u8; 32];
@@ -508,13 +501,10 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            "cx:space:t",
-            "did:web:carol.example",
-            "cx.message.create",
-        )
-        .body(json!({"body": "verifiable"}))
-        .build("test_node");
+        let mut event =
+            OperationBuilder::new("cx:space:t", "did:web:carol.example", "cx.message.create")
+                .body(json!({"body": "verifiable"}))
+                .build("test_node");
         set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -567,13 +557,10 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            "cx:space:t",
-            "did:web:dave.example",
-            "cx.message.create",
-        )
-        .body(json!({"body": "auto"}))
-        .build("test_node");
+        let mut event =
+            OperationBuilder::new("cx:space:t", "did:web:dave.example", "cx.message.create")
+                .body(json!({"body": "auto"}))
+                .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
         set_proof_mode(prior_mode);
 
@@ -588,13 +575,10 @@ mod tests {
     #[test]
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
-        let mut event = OperationBuilder::new(
-            "cx:space:t",
-            "did:web:eve.example",
-            "cx.message.create",
-        )
-        .body(json!({"body": "no"}))
-        .build("test_node");
+        let mut event =
+            OperationBuilder::new("cx:space:t", "did:web:eve.example", "cx.message.create")
+                .body(json!({"body": "no"}))
+                .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();
         assert!(matches!(err, EventSignerError::MissingSigner { .. }));
     }

@@ -297,6 +297,195 @@ pub fn ConsentGrantDemoCard(
             div { class: "muted",
                 "Signing key is the per-device ed25519 key persisted in local_state (LocalIdentity). TODO(secure-key-store-handoff): production deploys must move this seed into OS keychain / WebAuthn / HSM. TODO(anchor-frontier-from-sync): plumb the latest Anchor head from sync.rs."
             }
+
+            // Round R2/R3 (T17) — one-click "Revoke all consent"
+            // (scope=any). Mounts a cascade view that enumerates every
+            // subscope that will be cleared and a confirmation modal
+            // that re-prints the cascade before the user commits.
+            RevokeAllConsentCard {
+                base_url: base_url,
+                token: token,
+                state_store: state_store,
+            }
+        }
+    }
+}
+
+/// Round R2/R3 (T17) — known top-level consent subscopes the
+/// `scope=any` revoke MUST cascade through. The list mirrors the
+/// `consent_scope_registry.json` enum from the spec (Round R2/R3 add);
+/// any subscope listed here is cleared in a single fanout when the
+/// user confirms.
+pub const CONSENT_REVOKE_CASCADE_SUBSCOPES: &[&str] = &[
+    "scope:contacts",
+    "scope:presence",
+    "scope:typing",
+    "scope:profile_public",
+    "scope:read_receipts",
+    "scope:media_thumbnails",
+    "scope:applets",
+    "scope:agents",
+    "scope:federation_out",
+    "scope:directory_listing",
+];
+
+/// Round R2/R3 (T17) — one-click "Revoke all consent" card with cascade
+/// preview + confirmation modal. The card is rendered inside the consent
+/// settings panel; activating the button shows the full subscope list
+/// before the user can commit.
+#[component]
+pub fn RevokeAllConsentCard(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
+    let mut confirming = use_signal(|| false);
+    let mut status = use_signal(String::new);
+    let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
+    let mut space_id = use_signal(String::new);
+
+    rsx! {
+        div { class: "event", "data-testid": "revoke-all-consent-card",
+            div { class: "event-head",
+                span { "Revoke all consent (scope=any)" }
+                span { class: "badge red", title: "cx.consent.revoke", "scope=any" }
+            }
+            div { class: "muted",
+                "Revoking with scope=any clears every subscope below in a single fanout. The Move is signed locally and posted to the cell-driven /api/v1/moves endpoint. This is irreversible — the recipient must re-issue consent if you change your mind."
+            }
+            label { "Space ID" }
+            input {
+                "data-testid": "revoke-all-space-id",
+                placeholder: "cx:space:...",
+                value: "{space_id}",
+                oninput: move |evt| space_id.set(evt.value()),
+            }
+            label { "Consent ID (cell subject)" }
+            input {
+                "data-testid": "revoke-all-consent-id",
+                value: "{consent_id}",
+                oninput: move |evt| consent_id.set(evt.value()),
+            }
+            div { class: "muted", "data-testid": "revoke-all-cascade-list",
+                strong { "Subscopes that will be cleared:" }
+                ul {
+                    for scope in CONSENT_REVOKE_CASCADE_SUBSCOPES {
+                        li { "{scope}" }
+                    }
+                }
+            }
+            if confirming() {
+                div {
+                    class: "event",
+                    "data-testid": "revoke-all-confirm-modal",
+                    role: "alertdialog",
+                    "aria-modal": "true",
+                    div { class: "event-head",
+                        span { "Confirm: revoke ALL consent" }
+                    }
+                    div { class: "muted",
+                        "The following subscopes will be cleared (irreversible):"
+                    }
+                    ul { "data-testid": "revoke-all-confirm-cascade",
+                        for scope in CONSENT_REVOKE_CASCADE_SUBSCOPES {
+                            li { "{scope}" }
+                        }
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "revoke-all-confirm-submit",
+                            onclick: move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let space_val = space_id().trim().to_owned();
+                                let consent_val = consent_id().trim().to_owned();
+                                if space_val.is_empty() || consent_val.is_empty() {
+                                    status.set("Fill space_id and consent_id first".to_owned());
+                                    return;
+                                }
+                                let identity = match state_store.write().ensure_local_identity() {
+                                    Ok(id) => id,
+                                    Err(err) => {
+                                        status.set(format!("Identity unavailable: {err}"));
+                                        return;
+                                    }
+                                };
+                                let anchor_ref =
+                                    state_store.read().anchor_ref_for_move(&space_val);
+                                // Build one Move per subscope. The server-side
+                                // reducer collapses these into a single OrSet
+                                // fanout under scope=any. TODO(round23-T17):
+                                // once the SDK exposes a single scope=any
+                                // revoke builder, collapse the per-scope loop
+                                // into a single Move.
+                                let scopes: Vec<String> = CONSENT_REVOKE_CASCADE_SUBSCOPES
+                                    .iter()
+                                    .map(|s| (*s).to_owned())
+                                    .collect();
+                                let scope_count = scopes.len();
+                                spawn(async move {
+                                    let mut succeeded = 0usize;
+                                    for scope in &scopes {
+                                        let hlc = Hlc::now("yougen").to_string();
+                                        let signed = match build_signed_consent_revoke(
+                                            &identity,
+                                            &space_val,
+                                            &consent_val,
+                                            scope,
+                                            Some("scope=any cascade revoke"),
+                                            &anchor_ref,
+                                            &hlc,
+                                        ) {
+                                            Ok(m) => m,
+                                            Err(error) => {
+                                                status.set(format!(
+                                                    "build revoke {scope} failed: {error}"
+                                                ));
+                                                continue;
+                                            }
+                                        };
+                                        let base = base.clone();
+                                        let api_token = api_token.clone();
+                                        let outcome = with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move { api.submit_move(&signed).await },
+                                        )
+                                        .await;
+                                        if outcome.is_ok() {
+                                            succeeded += 1;
+                                        }
+                                    }
+                                    status.set(format!(
+                                        "scope=any revoke submitted: {succeeded}/{scope_count} subscopes accepted"
+                                    ));
+                                });
+                                confirming.set(false);
+                            },
+                            "Yes, revoke everything"
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "revoke-all-confirm-cancel",
+                            onclick: move |_| confirming.set(false),
+                            "Cancel"
+                        }
+                    }
+                }
+            } else {
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "revoke-all-button",
+                        onclick: move |_| confirming.set(true),
+                        "Revoke ALL consent (scope=any)"
+                    }
+                }
+            }
+            if !status().is_empty() {
+                div { class: "muted", "data-testid": "revoke-all-status", "{status}" }
+            }
         }
     }
 }

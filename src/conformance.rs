@@ -749,7 +749,10 @@ pub enum ValidationError {
     UnknownSchema(String),
     ExpectedObject(String),
     MissingField(String),
-    InvalidValue { field: String, expected: String },
+    InvalidValue {
+        field: String,
+        expected: String,
+    },
     /// F-PROFILE-1: the event's `type` is not in the conformance profile
     /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
     /// rejection at event ingest so a profile-drift attack / spec bump
@@ -767,7 +770,10 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "invalid value for {field}, expected: {expected}")
             }
             Self::UnknownEventKind(kind) => {
-                write!(f, "event kind `{kind}` is outside yougen's conformance profile")
+                write!(
+                    f,
+                    "event kind `{kind}` is outside yougen's conformance profile"
+                )
             }
         }
     }
@@ -945,8 +951,7 @@ mod tests {
         assert!(require_known_event_kind("cx.message.create").is_ok());
         assert!(require_known_event_kind("cx.flow.update").is_ok());
         assert!(require_known_event_kind("cx.typing").is_ok());
-        let err = require_known_event_kind("cx.bogus.kind")
-            .expect_err("unknown kind must error");
+        let err = require_known_event_kind("cx.bogus.kind").expect_err("unknown kind must error");
         assert!(matches!(err, ValidationError::UnknownEventKind(_)));
     }
 

@@ -132,7 +132,10 @@ mod tests {
         // otherwise downstream signatures diverge.
         let a = json!({"flow_id": "cx:flow:1", "patch": {"title": "x"}});
         let b = json!({"patch": {"title": "x"}, "flow_id": "cx:flow:1"});
-        assert_eq!(canonical_move_bytes(&a).unwrap(), canonical_move_bytes(&b).unwrap());
+        assert_eq!(
+            canonical_move_bytes(&a).unwrap(),
+            canonical_move_bytes(&b).unwrap()
+        );
     }
 
     #[test]

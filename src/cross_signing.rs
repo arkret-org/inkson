@@ -186,7 +186,11 @@ impl CrossSigningSetupPlan {
                 hint: policy.enrollment_hint.clone(),
             });
         }
-        Ok(Self::build_reset(principal_id, device_id, previous_generation))
+        Ok(Self::build_reset(
+            principal_id,
+            device_id,
+            previous_generation,
+        ))
     }
 
     /// Build a reset plan; carries an extra `cx.cross_signing.reset`
@@ -757,12 +761,15 @@ mod tests {
             "enrolled_principals": ["did:web:alice", "did:web:bob"],
             "enrollment_hint": "Apply via /security/reset"
         });
-        let policy = ResetAuditPolicy::from_policy_set_payload(&payload)
-            .expect("recognised policy kind");
+        let policy =
+            ResetAuditPolicy::from_policy_set_payload(&payload).expect("recognised policy kind");
         assert!(policy.enrollment_required);
         assert!(policy.enrolled_principals.contains("did:web:alice"));
         assert!(policy.enrolled_principals.contains("did:web:bob"));
-        assert_eq!(policy.enrollment_hint.as_deref(), Some("Apply via /security/reset"));
+        assert_eq!(
+            policy.enrollment_hint.as_deref(),
+            Some("Apply via /security/reset")
+        );
     }
 
     #[test]
@@ -781,13 +788,9 @@ mod tests {
             enrolled_principals: ["did:web:bob".to_owned()].into_iter().collect(),
             enrollment_hint: Some("Apply via /security/reset".to_owned()),
         };
-        let err = CrossSigningSetupPlan::try_build_reset(
-            "did:web:alice",
-            "cx:device:01a",
-            2,
-            &policy,
-        )
-        .expect_err("alice is not enrolled");
+        let err =
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 2, &policy)
+                .expect_err("alice is not enrolled");
         assert_eq!(err.principal_did, "did:web:alice");
         assert_eq!(err.hint.as_deref(), Some("Apply via /security/reset"));
         assert!(format!("{err}").contains("not enrolled"));
@@ -800,13 +803,9 @@ mod tests {
             enrolled_principals: ["did:web:alice".to_owned()].into_iter().collect(),
             enrollment_hint: None,
         };
-        let plan = CrossSigningSetupPlan::try_build_reset(
-            "did:web:alice",
-            "cx:device:01a",
-            2,
-            &policy,
-        )
-        .expect("alice is enrolled");
+        let plan =
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 2, &policy)
+                .expect("alice is enrolled");
         assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
         assert_eq!(plan.new_generation, 3);
     }
@@ -816,13 +815,9 @@ mod tests {
         // PersonalNode-style deployment: the policy exists but doesn't
         // gate reset. Every caller is admitted.
         let policy = ResetAuditPolicy::default(); // enrollment_required = false
-        let plan = CrossSigningSetupPlan::try_build_reset(
-            "did:web:alice",
-            "cx:device:01a",
-            5,
-            &policy,
-        )
-        .expect("permissive policy admits everyone");
+        let plan =
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 5, &policy)
+                .expect("permissive policy admits everyone");
         assert_eq!(plan.previous_generation, Some(5));
     }
 

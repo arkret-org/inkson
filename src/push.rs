@@ -1,11 +1,11 @@
 use std::sync::{Arc, OnceLock};
 
 use chime::{
-    GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig, PushGatewayIntegrationDescribeResponse,
-    PushGatewayType, PushPreferences, PushRegistrationState, RegisterDeviceRequest,
-    RegisterDeviceResponse, UnregisterDeviceRequest, build_register_device_request,
-    build_registration_state, build_unregister_device_request, push_bridge_describe_url,
-    push_integration_describe_url,
+    GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig,
+    PushGatewayIntegrationDescribeResponse, PushGatewayType, PushPreferences,
+    PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse, UnregisterDeviceRequest,
+    build_register_device_request, build_registration_state, build_unregister_device_request,
+    push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
 use serde_json::Value;

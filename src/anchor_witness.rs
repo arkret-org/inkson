@@ -119,7 +119,10 @@ impl std::fmt::Display for WitnessError {
                 "anchor witness signer {signer_did} (domain {signer_domain}) is not pinned in the trust bundle"
             ),
             Self::SignatureInvalid { signer_did } => {
-                write!(f, "anchor witness signature from {signer_did} failed verification")
+                write!(
+                    f,
+                    "anchor witness signature from {signer_did} failed verification"
+                )
             }
             Self::ThresholdNotMet { required, present } => write!(
                 f,
@@ -287,9 +290,7 @@ mod tests {
         };
         let verifier = always_valid_verifier();
         match verify_witness_chain(&chain, &bundle, &verifier) {
-            Err(WitnessError::UnknownSigner {
-                signer_domain, ..
-            }) => {
+            Err(WitnessError::UnknownSigner { signer_domain, .. }) => {
                 assert_eq!(signer_domain, "carol.example");
             }
             other => panic!("expected UnknownSigner, got {other:?}"),

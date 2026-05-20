@@ -203,9 +203,7 @@ mod tests {
         store.forget(&secure, "cx:space:a").unwrap();
         assert!(store.get("cx:space:a").is_none());
         // Subsequent silent-unlock should find nothing.
-        let loaded = store
-            .load_from_store(&secure, "cx:space:a")
-            .expect("load");
+        let loaded = store.load_from_store(&secure, "cx:space:a").expect("load");
         assert!(!loaded);
     }
 

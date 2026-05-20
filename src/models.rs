@@ -948,6 +948,21 @@ pub struct SubmitEventResponse {
     pub receipt: Value,
 }
 
+/// Round R2/R3 (T02) — server response shape for the
+/// `POST /api/v1/ephemeral` channel. The endpoint is fire-and-forget — the
+/// server's only obligation is to return `accepted: true` (signal entered
+/// the broadcast fanout) or surface a structured rejection. No event id is
+/// minted because ephemeral signals are never durable.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EphemeralSubmitResponse {
+    #[serde(default)]
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched_to: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_received_at: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IdentityReceiptsResBody {
     #[serde(default)]

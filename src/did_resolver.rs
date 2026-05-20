@@ -195,13 +195,7 @@ impl DidResolutionCache {
     /// Evicts the least-recently-cached entry when the cache exceeds
     /// `max_entries` (a no-op when `max_entries == 0` since we never
     /// admit the new entry either — the lookup will always miss).
-    pub fn insert(
-        &mut self,
-        did: Did,
-        document: DidDocument,
-        now: DateTime<Utc>,
-        ttl: Duration,
-    ) {
+    pub fn insert(&mut self, did: Did, document: DidDocument, now: DateTime<Utc>, ttl: Duration) {
         if self.max_entries == 0 {
             return;
         }
@@ -345,9 +339,19 @@ mod tests {
 
         let t0 = Utc::now();
         cache.insert(did_a.clone(), doc_a, t0, Duration::seconds(600));
-        cache.insert(did_b.clone(), doc_b, t0 + Duration::seconds(1), Duration::seconds(600));
+        cache.insert(
+            did_b.clone(),
+            doc_b,
+            t0 + Duration::seconds(1),
+            Duration::seconds(600),
+        );
         // At capacity. Inserting C should evict the oldest by cached_at — A.
-        cache.insert(did_c.clone(), doc_c, t0 + Duration::seconds(2), Duration::seconds(600));
+        cache.insert(
+            did_c.clone(),
+            doc_c,
+            t0 + Duration::seconds(2),
+            Duration::seconds(600),
+        );
 
         assert_eq!(cache.len(), 2);
         assert!(cache.get(&did_a, t0 + Duration::seconds(3)).is_none());

@@ -1817,7 +1817,10 @@ pub fn load_signing_seed(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     let did = ed25519_seed_to_did_key(&seed);
-    Ok(Some(SigningSeedMaterial { seed, device_did: did }))
+    Ok(Some(SigningSeedMaterial {
+        seed,
+        device_did: did,
+    }))
 }
 
 /// Persist `seed` into the secure-key store under [`SIGNING_SEED_KEY`].

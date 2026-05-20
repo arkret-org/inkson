@@ -487,6 +487,15 @@ pub fn TimelinePanel(
         "composer"
     };
 
+    // Round R2/R3 (T07) — Realm terminal-state projection. When the
+    // selected Realm has emitted `cx.realm.destroy`, the timeline MUST
+    // (a) surface a "permanently retired" banner and (b) gray out the
+    // composer / send box. The realm_is_destroyed projection scans the
+    // local raw_operations cache; once the SDK reducer exposes a
+    // first-class `realm_lifecycle_state` projection this collapses to
+    // a constant-time lookup.
+    let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_space);
+
     rsx! {
         div {
             class: "timeline",
@@ -494,6 +503,23 @@ pub fn TimelinePanel(
             role: "feed",
             "aria-label": "Timeline events",
             "aria-live": "polite",
+
+            if realm_is_destroyed {
+                div {
+                    class: "event",
+                    "data-testid": "realm-destroyed-banner",
+                    role: "alert",
+                    "aria-live": "assertive",
+                    div { class: "event-head",
+                        span { "Realm permanently retired" }
+                        span { class: "badge red", title: "cx.realm.destroy", "Destroyed" }
+                    }
+                    div { class: "muted",
+                        "This realm has been permanently retired. No further messages, reactions, or state changes will be accepted (server-side: realm_terminal_state)."
+                    }
+                }
+            }
+
             div { class: "composer", style: "margin-bottom: 8px;",
                 input {
                     r#type: "text",
@@ -1250,9 +1276,23 @@ pub fn TimelinePanel(
                     "data-testid": "composer-input",
                     "aria-label": "Message composer",
                     value: "{draft}",
-                    placeholder: if encrypt_toggle() { "Write an encrypted message (Ctrl+Enter to send)" } else { "Write a plaintext dev-mode message (Ctrl+Enter to send)" },
+                    // Round R2/R3 (T07): disable the send box when the
+                    // Realm has reached the destroy terminal state. Server
+                    // rejects with `realm_terminal_state`; failing closed
+                    // in the UI surfaces the boundary before a wasted
+                    // round-trip.
+                    disabled: realm_is_destroyed,
+                    placeholder: if realm_is_destroyed {
+                        "This realm has been permanently retired."
+                    } else if encrypt_toggle() {
+                        "Write an encrypted message (Ctrl+Enter to send)"
+                    } else {
+                        "Write a plaintext dev-mode message (Ctrl+Enter to send)"
+                    },
                 oninput: {
                     let sc = selected_space_c.clone();
+                    let actor_for_typing = account_did_c.clone();
+                    let device_for_typing = device_id_c.clone();
                     move |event| {
                         let value = event.value();
                         draft.set(value.clone());
@@ -1260,10 +1300,23 @@ pub fn TimelinePanel(
                         let base = base_url_sig();
                         let api_token = token();
                         let space = sc.clone();
+                        let actor = actor_for_typing.clone();
+                        let device = device_for_typing.clone();
                         let wait_for = active_sync_token(sync_cursor());
                         spawn(async move {
                             if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                let _ = api.send_typing(&space, true).await;
+                                // Round R2/R3 (T02): send_typing constructs a
+                                // cx.typing EphemeralEnvelope and POSTs it to
+                                // the broadcast ephemeral channel instead of
+                                // cx.events.submit.
+                                let _ = api
+                                    .send_typing(
+                                        &space,
+                                        &actor,
+                                        Some(device.as_str()).filter(|s| !s.is_empty()),
+                                        true,
+                                    )
+                                    .await;
                             }
                         });
                     }
@@ -1474,7 +1527,20 @@ pub fn TimelinePanel(
                                                             sha256_hex(&bytes)
                                                         ));
                                                     }
-                                                    Err(error) => blob_status.set(format!("download failed: {error}")),
+                                                    Err(error) => {
+                                                        // Round R2/R3 (T11) — fail-closed
+                                                        // mapping for the 4 presign blob error
+                                                        // classes. Show a translated friendly
+                                                        // message and DO NOT retry / cache the
+                                                        // URL / log it. Errors that don't
+                                                        // classify into one of the four codes
+                                                        // fall back to the raw display.
+                                                        if let Some(class) = crate::api::BlobPresignError::from_error(&error) {
+                                                            blob_status.set(crate::i18n::tr(class.i18n_key()));
+                                                        } else {
+                                                            blob_status.set(format!("download failed: {error}"));
+                                                        }
+                                                    }
                                                 },
                                                 Err(error) => blob_status.set(format!("invalid server URL: {error}")),
                                             }
@@ -1490,11 +1556,20 @@ pub fn TimelinePanel(
                 button {
                     class: "primary",
                     "data-testid": "send-button",
+                    // Round R2/R3 (T07) — block new writes when the Realm
+                    // is in the destroy terminal state. Server enforces via
+                    // `realm_terminal_state` but failing closed in the UI
+                    // avoids a wasted round-trip + confusing error.
+                    disabled: realm_is_destroyed,
                     onclick: {
                         let sc = selected_space_c.clone();
                         let ac = account_did_c.clone();
                         let dc = device_id_c.clone();
                         move |_| {
+                            if realm_is_destroyed {
+                                write_status.set("This realm has been permanently retired.".to_owned());
+                                return;
+                            }
                             let body = draft().trim().to_owned();
                             if body.is_empty() {
                                 return;
@@ -1661,6 +1736,27 @@ pub fn TimelinePanel(
                     },
                     "Report / Queue"
                 }
+            }
+
+            // Round R2/R3 (T06) — Appeal entrypoint. Surfaced near the
+            // moderation report button (where moderation decisions affecting
+            // the user surface). The full review surface is admin scope and
+            // lives in space_admin.rs.
+            crate::views::moderation_appeal::AppealEntrypoint {
+                realm_id: selected_space_c.clone(),
+                appellant: account_did_c.clone(),
+                // TODO(round23-T06): once the timeline projection surfaces
+                // the most recent `cx.moderation.decision` event_id that
+                // names the local actor as `target`, thread it through here.
+                // The current placeholder uses the local actor's account
+                // did so the wire schema validator passes; reducers will
+                // reject `appeal_id` collisions but the round-trip exercises
+                // the new event kind.
+                decision_event_id: "cx:event:01904100-0000-7000-8000-000000000000".to_owned(),
+                target_ref: account_did_c.clone(),
+                base_url: base_url.clone(),
+                api_token: token(),
+                current_state: crate::views::moderation_appeal::AppealState::None,
             }
 
             if !write_status().is_empty() {

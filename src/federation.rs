@@ -159,7 +159,10 @@ impl TrustBundle {
                 .quarantine
                 .iter()
                 .any(|row| row.transaction_id == tx.transaction_id)
-                && matches!(self.verify_transaction(local_domain, tx), TrustCheck::Trusted)
+                && matches!(
+                    self.verify_transaction(local_domain, tx),
+                    TrustCheck::Trusted
+                )
             {
                 self.quarantine
                     .retain(|row| row.transaction_id != tx.transaction_id);
@@ -283,7 +286,10 @@ pub fn well_known_contrix_server_url(base_url: &str) -> Result<String, WellKnown
     let after_scheme = if let Some(rest) = trimmed.strip_prefix("https://") {
         ("https://", rest)
     } else {
-        ("http://", trimmed.strip_prefix("http://").unwrap_or(trimmed))
+        (
+            "http://",
+            trimmed.strip_prefix("http://").unwrap_or(trimmed),
+        )
     };
     let (scheme, rest) = after_scheme;
     let host_only = rest.split('/').next().unwrap_or(rest);
@@ -562,12 +568,8 @@ mod tests {
         // Build a signed transaction the SDK can verify.
         let mut sdk_mgr = FederationManager::new();
         sdk_mgr.add_trust_anchor(anchor("bob.example", "shared-key"));
-        let tx = sdk_mgr.create_transaction(
-            "bob.example",
-            "alice.example",
-            Vec::new(),
-            "shared-key",
-        );
+        let tx =
+            sdk_mgr.create_transaction("bob.example", "alice.example", Vec::new(), "shared-key");
 
         // Initially, bob.example isn't pinned → quarantine.
         bundle.quarantine_transaction(&tx, TrustCheck::UnknownDomain(tx.origin.clone()));

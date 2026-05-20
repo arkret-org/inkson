@@ -215,6 +215,110 @@ pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
     format!("sha256:{}", hex_lower(&digest))
 }
 
+/// Round R2/R3 (T15) — OOB code entry validation.
+///
+/// The OOB code-entry field MUST accept both wire forms (see
+/// `crypto-media/device-lifecycle.md §6.2`, Round R2/R3 close-out):
+///
+/// 1. **Direct-handle form** — ≥22 characters of base32 drawn from the
+///    Crockford-style alphabet (`0-9` + `A-Z` minus the look-alike
+///    pair `I/L/0/1/O`). This is what the device-handoff QR encodes.
+/// 2. **Lookup form** — shorter, server-determined opaque code (the
+///    server returns `oob_code_kind: "lookup"` and resolves it
+///    against a side table). Length / charset is server-defined; the
+///    client only normalises whitespace + uppercases A-Z so the user
+///    can paste the code with the casing they were emailed.
+///
+/// The validator returns the classification so the calling UI can
+/// dispatch to the right server endpoint. Per `oob_code_kind`, the
+/// client MUST NOT reveal *which* form failed — the rate-limited
+/// failure surface returns the generic
+/// `"code invalid or expired"` after 3 wrong attempts (see
+/// [`OobCodeAttemptTracker`] below).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OobCodeKind {
+    /// ≥22-char Crockford-base32 (excluding I/L/0/1/O).
+    DirectHandle,
+    /// Shorter opaque lookup code; server-resolved.
+    Lookup,
+}
+
+/// Crockford-base32 alphabet (Round R2/R3 OOB direct-handle form). 28
+/// glyphs after stripping the four ambiguous pairs `I`, `L`, `0`, `1`,
+/// `O`. Hex case A-Z accepted; the user may paste lowercase and the
+/// validator uppercases before checking.
+pub const OOB_DIRECT_HANDLE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/// Round R2/R3 (T15) — minimum length of the direct-handle form. 22
+/// characters of base32 ≈ 110 bits of entropy, matching the spec's
+/// device-handoff floor.
+pub const OOB_DIRECT_HANDLE_MIN_LEN: usize = 22;
+
+/// Classify an OOB code entry. Returns `None` when the input fails both
+/// forms (caller MUST surface a generic error per the
+/// 3-attempt-then-generic rule).
+pub fn classify_oob_code(input: &str) -> Option<OobCodeKind> {
+    let normalised: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if normalised.is_empty() {
+        return None;
+    }
+    if normalised.len() >= OOB_DIRECT_HANDLE_MIN_LEN
+        && normalised
+            .bytes()
+            .all(|b| OOB_DIRECT_HANDLE_ALPHABET.contains(&b))
+    {
+        return Some(OobCodeKind::DirectHandle);
+    }
+    // Lookup form: server decides validity. Locally we only require a
+    // non-empty token that doesn't contain control / whitespace
+    // characters. The bound (>=4 chars) prevents the dispatcher from
+    // sending obviously-junk single-character codes.
+    if normalised.len() >= 4 && normalised.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Some(OobCodeKind::Lookup);
+    }
+    None
+}
+
+/// Round R2/R3 (T15) — local 3-strike attempt tracker for the OOB lookup
+/// form. After the third wrong attempt, callers MUST surface the generic
+/// "code invalid or expired" message and refuse to reveal whether the
+/// code's form, length, or expiry was the cause. The tracker is intended
+/// to be embedded in a Dioxus signal so it survives across keystrokes
+/// without leaking attempt count into the wire payload.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OobCodeAttemptTracker {
+    pub wrong_attempts: u8,
+}
+
+impl OobCodeAttemptTracker {
+    pub const MAX_ATTEMPTS: u8 = 3;
+
+    /// Note a server-rejected attempt. Returns `true` once the tracker
+    /// reached the generic-error threshold so the UI knows to switch
+    /// messaging.
+    pub fn note_wrong(&mut self) -> bool {
+        self.wrong_attempts = self.wrong_attempts.saturating_add(1);
+        self.is_locked_to_generic_error()
+    }
+
+    /// True once the user has burned their 3 attempts on the lookup
+    /// form. Caller must show the generic message and stop dispatching
+    /// to the server until the user resets the field.
+    pub fn is_locked_to_generic_error(&self) -> bool {
+        self.wrong_attempts >= Self::MAX_ATTEMPTS
+    }
+
+    /// Reset after a successful exchange or when the user types a new
+    /// candidate.
+    pub fn reset(&mut self) {
+        self.wrong_attempts = 0;
+    }
+}
+
 /// Heuristic passphrase strength on a 0..=5 scale, mirroring the
 /// "Passphrase strength" tile in the Recovery view. Pure function so the
 /// UI can call it on every keystroke without touching state.
@@ -263,6 +367,53 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oob_direct_handle_form_accepts_22_plus_chars_no_lookalikes() {
+        // 22-char Crockford-base32 string with no I/L/0/1/O.
+        let candidate = "23456789ABCDEFGHJKMNPQ";
+        assert_eq!(candidate.len(), 22);
+        assert_eq!(
+            classify_oob_code(candidate),
+            Some(OobCodeKind::DirectHandle),
+        );
+    }
+
+    #[test]
+    fn oob_direct_handle_form_rejects_lookalikes() {
+        // Contains 'I' which is excluded from the Crockford alphabet.
+        let candidate = "234567I9ABCDEFGHJKMNPQ";
+        // Length is 22, but contains an excluded glyph — falls through
+        // to lookup form, which accepts shorter alphanumerics. The
+        // direct-handle form is NOT selected.
+        assert_ne!(
+            classify_oob_code(candidate),
+            Some(OobCodeKind::DirectHandle),
+        );
+    }
+
+    #[test]
+    fn oob_lookup_form_accepts_short_codes() {
+        assert_eq!(classify_oob_code("AB7K"), Some(OobCodeKind::Lookup));
+        assert_eq!(classify_oob_code("xyz789"), Some(OobCodeKind::Lookup));
+    }
+
+    #[test]
+    fn oob_rejects_empty_and_too_short() {
+        assert_eq!(classify_oob_code(""), None);
+        assert_eq!(classify_oob_code("AB"), None);
+    }
+
+    #[test]
+    fn oob_attempt_tracker_locks_after_three_strikes() {
+        let mut t = OobCodeAttemptTracker::default();
+        assert!(!t.note_wrong());
+        assert!(!t.note_wrong());
+        assert!(t.note_wrong());
+        assert!(t.is_locked_to_generic_error());
+        t.reset();
+        assert!(!t.is_locked_to_generic_error());
+    }
 
     #[test]
     fn argon2id_is_deterministic_under_fixed_salt() {

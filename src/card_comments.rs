@@ -174,10 +174,7 @@ mod tests {
         let mentions = extract_mentions(body);
         assert_eq!(
             mentions,
-            vec![
-                "did:web:alice".to_owned(),
-                "did:web:bob.example".to_owned(),
-            ]
+            vec!["did:web:alice".to_owned(), "did:web:bob.example".to_owned(),]
         );
     }
 

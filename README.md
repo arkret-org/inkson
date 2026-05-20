@@ -15,6 +15,37 @@ The friendly UI strings live under the `friendly.realm.*` / `friendly.space.*`
 i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
 **Show technical details** on every actor / object surface.
 
+## Round R2/R3 user-facing surfaces
+
+Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
+[`CHANGELOG.md`](CHANGELOG.md) `[Unreleased]` and
+[`../contrix-spec/CHANGELOG.md`](../contrix-spec/CHANGELOG.md) for the
+normative source.
+
+- **Ephemeral signal routing change** — typing / receipts / presence /
+  call-signal no longer travel through the durable `cx.events.submit`
+  path. They go through a dedicated `cx.schema.ephemeral_envelope.v1`
+  channel (broadcast) or `cx.schema.device_message.v1` (to-device key
+  verification). This is transparent to end users but is a
+  wire-breaking change for any third-party client built against the
+  old yougen behaviour.
+- **Moderation appeal flow** — when a moderation decision blocks a
+  member, they can now file an appeal directly from the timeline.
+  Status surfaces back to the appellant as `Submitted → UnderReview →
+  Decided → Closed`.
+- **Late-recovery banner** — when older messages are decrypted after
+  the fact (key shared by a recovering device, audit profile late
+  emission), the timeline renders an inline banner explaining the lag:
+  "Older messages were just decrypted, X minutes after they arrived."
+- **Realm destroyed banner** — destroyed Realms surface a permanent
+  "This realm has been permanently retired" banner; composer + Send
+  are disabled.
+
+## Cross-project task tracking
+
+Per-project task lists are consolidated upstream — see
+[`../_todos.md`](../_todos.md) for the active cross-project task plan.
+
 ## Targets
 
 - Web: `dx serve --platform web`

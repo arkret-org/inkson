@@ -1019,6 +1019,32 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
+    /// emitted a `cx.realm.destroy` event we've already received? The
+    /// timeline / chat UI MUST gray out the send box and surface the
+    /// "permanently retired" banner once this returns true.
+    ///
+    /// Implemented as a scan over `raw_operations` because yougen does not
+    /// yet maintain a dedicated `realm_lifecycle_state` projection; once
+    /// the SDK's reducer exposes that field, switch this to a constant-time
+    /// projection lookup.
+    // TODO(round23-T07): replace the linear scan with a cached
+    // `realm_lifecycle_state: BTreeMap<RealmId, RealmLifecycleState>` once
+    // the SDK reducer exposes the projection.
+    pub fn realm_is_destroyed(&self, realm_id: &str) -> bool {
+        if realm_id.is_empty() {
+            return false;
+        }
+        self.cached.raw_operations.iter().any(|record| {
+            record.space_id.as_deref() == Some(realm_id)
+                && record
+                    .payload
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|kind| kind == "cx.realm.destroy")
+        })
+    }
+
     pub fn save_space_projection(&mut self, space_id: impl Into<String>, projection: Value) {
         self.ensure_cached_loaded();
         self.cached

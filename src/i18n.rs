@@ -284,13 +284,13 @@ pub fn english_translations() -> TranslationDict {
         "settings.proof_mode.hint",
         "Determines what proof is attached when this device submits events.",
     );
-    dict.set("settings.proof_mode.placeholder_dev", "Development placeholder");
+    dict.set(
+        "settings.proof_mode.placeholder_dev",
+        "Development placeholder",
+    );
     dict.set("settings.proof_mode.real_ed25519", "real Ed25519");
     dict.set("settings.proof_mode.external_signer", "external signer");
-    dict.set(
-        "settings.proof_mode.production",
-        "no signer (production)",
-    );
+    dict.set("settings.proof_mode.production", "no signer (production)");
 
     // T5.2 — signer DID / key id / freshness panel under the proof
     // mode indicator. Exposed in the settings panel so the user can
@@ -400,7 +400,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.load_more", "Load more");
     dict.set("directory.loading_more", "Loading...");
     dict.set("directory.load_more_spaces", "Load More Spaces");
-    dict.set("directory.load_more_organizations", "Load More Organizations");
+    dict.set(
+        "directory.load_more_organizations",
+        "Load More Organizations",
+    );
     dict.set("directory.load_more_actors", "Load More Actors");
 
     dict.set("composer.send", "Send");
@@ -434,7 +437,10 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("chat.mls_passphrase_save", "Save passphrase");
     dict.set("chat.mls_publish_key_package", "Publish key package");
-    dict.set("chat.mls_invite_actor_placeholder", "alice@example.com or @alice");
+    dict.set(
+        "chat.mls_invite_actor_placeholder",
+        "alice@example.com or @alice",
+    );
     dict.set("chat.mls_invite_device_placeholder", "Device id");
     dict.set("chat.mls_invite_member", "Invite to encrypted group");
     dict.set("chat.send", "Send");
@@ -576,14 +582,20 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.remove", "Remove");
     // T7.2 watch level fast switcher.
     dict.set("chat.watch_level.prefix", "Watching");
-    dict.set("chat.watch_level.tooltip", "Choose how often this Flow notifies you.");
+    dict.set(
+        "chat.watch_level.tooltip",
+        "Choose how often this Flow notifies you.",
+    );
     dict.set("chat.watch_level.mentions_only", "Mentions only");
     dict.set("chat.watch_level.participating", "Participating");
     dict.set("chat.watch_level.all", "All");
     dict.set("chat.watch_level.muted", "Muted");
     dict.set("chat.watch_level.pending", "Updating watch level…");
     dict.set("chat.watch_level.saved", "Watch level updated.");
-    dict.set("chat.watch_level.failed", "Watch level update failed (rolled back).");
+    dict.set(
+        "chat.watch_level.failed",
+        "Watch level update failed (rolled back).",
+    );
     // T7.3 handle reassigned context.
     dict.set("chat.handle_reassigned.badge", "handle reassigned");
     dict.set(
@@ -601,7 +613,10 @@ pub fn english_translations() -> TranslationDict {
         "chat.crypto.key_missing_hint",
         "Waiting for a Welcome message from the Space admin or another device.",
     );
-    dict.set("chat.crypto.needs_verification", "Sender needs verification");
+    dict.set(
+        "chat.crypto.needs_verification",
+        "Sender needs verification",
+    );
     dict.set("chat.mls.epoch", "MLS epoch");
     dict.set("chat.mls.key_package", "Key package");
     dict.set("chat.mls.welcome", "Welcome");
@@ -953,8 +968,14 @@ pub fn english_translations() -> TranslationDict {
     // T7.1 — friendly product-language terms surfaced in the main flow.
     // Raw protocol identifiers (did:web:, cx.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
-    dict.set("friendly.identifier.placeholder", "john@example.com or @john");
-    dict.set("friendly.identifier.placeholder_multiline", "alice@example.com\nbob@example.com");
+    dict.set(
+        "friendly.identifier.placeholder",
+        "john@example.com or @john",
+    );
+    dict.set(
+        "friendly.identifier.placeholder_multiline",
+        "alice@example.com\nbob@example.com",
+    );
     dict.set("friendly.identifier.label", "Member identifier");
     dict.set(
         "friendly.identifier.hint",
@@ -966,8 +987,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("friendly.member.human", "Person");
     dict.set("friendly.member.agent_badge", "Bot");
     dict.set("friendly.identifier.technical", "Protocol identifier");
-    dict.set("friendly.identifier.show_technical", "Show technical details");
-    dict.set("friendly.identifier.hide_technical", "Hide technical details");
+    dict.set(
+        "friendly.identifier.show_technical",
+        "Show technical details",
+    );
+    dict.set(
+        "friendly.identifier.hide_technical",
+        "Hide technical details",
+    );
     dict.set("friendly.security.encrypted", "Encrypted");
     dict.set("friendly.security.encrypted_short", "Encrypted");
     dict.set("friendly.draft.label", "Draft");
@@ -982,20 +1009,38 @@ pub fn english_translations() -> TranslationDict {
     dict.set("friendly.realm.short", "Workspace");
     dict.set("friendly.realm.description", "Security boundary — membership, policy, federation, and encryption are governed at this level.");
     dict.set("friendly.realm.security_class", "Security boundary");
-    dict.set("friendly.realm.security_class.standard", "Standard security");
-    dict.set("friendly.realm.security_class.high_assurance", "High assurance");
+    dict.set(
+        "friendly.realm.security_class.standard",
+        "Standard security",
+    );
+    dict.set(
+        "friendly.realm.security_class.high_assurance",
+        "High assurance",
+    );
     dict.set("friendly.realm.settings", "Workspace settings");
-    dict.set("friendly.realm.settings.subtitle", "Policy, membership, federation, and E2EE");
+    dict.set(
+        "friendly.realm.settings.subtitle",
+        "Policy, membership, federation, and E2EE",
+    );
     dict.set("friendly.realm.switcher", "Switch workspace");
     dict.set("friendly.realm.ref_label", "Workspace");
     dict.set("friendly.space", "Space");
     dict.set("friendly.space.short", "Space");
-    dict.set("friendly.space.description", "Navigation container — boards, lists, and sections live inside a workspace.");
+    dict.set(
+        "friendly.space.description",
+        "Navigation container — boards, lists, and sections live inside a workspace.",
+    );
     dict.set("friendly.space.container_class", "Navigation container");
     dict.set("friendly.space.settings", "Space settings");
-    dict.set("friendly.space.settings.subtitle", "Navigation, sort, and display");
+    dict.set(
+        "friendly.space.settings.subtitle",
+        "Navigation, sort, and display",
+    );
     dict.set("friendly.discussion.realm_ref", "Workspace");
-    dict.set("friendly.discussion.realm_ref.hint", "Which workspace this discussion belongs to (security boundary).");
+    dict.set(
+        "friendly.discussion.realm_ref.hint",
+        "Which workspace this discussion belongs to (security boundary).",
+    );
 
     // Profile gate (friendly version of ProfileGateNotice).
     dict.set("profile_gate.title", "Feature not available on this server");
@@ -1028,6 +1073,52 @@ pub fn english_translations() -> TranslationDict {
     dict.set("developer.profile.advertised", "Server advertised");
     dict.set("developer.event.kind", "Event kind");
     dict.set("developer.schema.id", "Schema id");
+
+    // Round R2/R3 (T11) — fail-closed blob presign error strings.
+    dict.set(
+        "blob.error.legal_hold_active",
+        "This file can't be downloaded right now. A legal hold is in effect; the file will remain inaccessible until the hold is lifted.",
+    );
+    dict.set(
+        "blob.error.redacted",
+        "This file was redacted by an administrator and can no longer be downloaded.",
+    );
+    dict.set(
+        "blob.error.plaintext_not_authorised",
+        "This file can't be opened by the current service because plaintext access wasn't authorised.",
+    );
+    dict.set(
+        "blob.error.not_authorised",
+        "You don't have permission to download this file.",
+    );
+
+    // Round R2/R3 (T06) — moderation appeal state labels.
+    dict.set("moderation.appeal.state.none", "No appeal filed");
+    dict.set(
+        "moderation.appeal.state.submitted",
+        "Appeal submitted — awaiting review",
+    );
+    dict.set("moderation.appeal.state.under_review", "Under review");
+    dict.set("moderation.appeal.state.decided", "Decided");
+    dict.set("moderation.appeal.state.closed", "Closed");
+
+    // Round R2/R3 (T16) — late key recovery banner.
+    dict.set(
+        "timeline.late_recovery.banner",
+        "Older messages were just decrypted, {minutes} minutes after they arrived.",
+    );
+
+    // Round R2/R3 (T07) — Realm terminal-state banner.
+    dict.set(
+        "realm.destroyed.banner",
+        "This realm has been permanently retired.",
+    );
+
+    // Round R2/R3 (T15) — OOB lookup-form generic error string.
+    dict.set(
+        "oob.code.invalid_or_expired",
+        "That code is invalid or expired.",
+    );
 
     dict
 }
@@ -1194,7 +1285,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.mls_passphrase_placeholder", "加密口令（本 Space）");
     dict.set("chat.mls_passphrase_save", "保存口令");
     dict.set("chat.mls_publish_key_package", "发布 Key Package");
-    dict.set("chat.mls_invite_actor_placeholder", "alice@example.com 或 @alice");
+    dict.set(
+        "chat.mls_invite_actor_placeholder",
+        "alice@example.com 或 @alice",
+    );
     dict.set("chat.mls_invite_device_placeholder", "设备 id");
     dict.set("chat.mls_invite_member", "邀请加入加密群组");
     dict.set("chat.send", "发送");
@@ -1254,7 +1348,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.proof_mode.placeholder_dev", "开发占位");
     dict.set("settings.proof_mode.real_ed25519", "真实 Ed25519");
     dict.set("settings.proof_mode.external_signer", "外部 signer");
-    dict.set("settings.proof_mode.production", "未配置 signer（生产模式）");
+    dict.set(
+        "settings.proof_mode.production",
+        "未配置 signer（生产模式）",
+    );
 
     // T5.2 — signer DID / key id / freshness panel
     dict.set("settings.signer.label", "活跃签名者");
@@ -1335,7 +1432,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.watch_level.muted", "静音");
     dict.set("chat.watch_level.pending", "正在更新 watch level…");
     dict.set("chat.watch_level.saved", "watch level 已更新。");
-    dict.set("chat.watch_level.failed", "watch level 更新失败（已回滚）。");
+    dict.set(
+        "chat.watch_level.failed",
+        "watch level 更新失败（已回滚）。",
+    );
     // T7.3 handle 重新分配上下文
     dict.set("chat.handle_reassigned.badge", "handle 已被重新分配");
     dict.set(
@@ -1675,8 +1775,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("content.attachment.download", "下载");
 
     // T7.1 — 友好产品语言术语（中文）。
-    dict.set("friendly.identifier.placeholder", "john@example.com 或 @john");
-    dict.set("friendly.identifier.placeholder_multiline", "alice@example.com\nbob@example.com");
+    dict.set(
+        "friendly.identifier.placeholder",
+        "john@example.com 或 @john",
+    );
+    dict.set(
+        "friendly.identifier.placeholder_multiline",
+        "alice@example.com\nbob@example.com",
+    );
     dict.set("friendly.identifier.label", "成员标识");
     dict.set(
         "friendly.identifier.hint",
@@ -1701,22 +1807,34 @@ pub fn chinese_translations() -> TranslationDict {
     // R1.7：Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
     dict.set("friendly.realm", "工作区");
     dict.set("friendly.realm.short", "工作区");
-    dict.set("friendly.realm.description", "安全边界 — 成员、策略、联邦与加密都在这一层治理。");
+    dict.set(
+        "friendly.realm.description",
+        "安全边界 — 成员、策略、联邦与加密都在这一层治理。",
+    );
     dict.set("friendly.realm.security_class", "安全边界");
     dict.set("friendly.realm.security_class.standard", "标准安全");
     dict.set("friendly.realm.security_class.high_assurance", "高保障");
     dict.set("friendly.realm.settings", "工作区设置");
-    dict.set("friendly.realm.settings.subtitle", "策略、成员、联邦与端到端加密");
+    dict.set(
+        "friendly.realm.settings.subtitle",
+        "策略、成员、联邦与端到端加密",
+    );
     dict.set("friendly.realm.switcher", "切换工作区");
     dict.set("friendly.realm.ref_label", "工作区");
     dict.set("friendly.space", "空间");
     dict.set("friendly.space.short", "空间");
-    dict.set("friendly.space.description", "导航容器 — 看板、列表与分区都在工作区之内。");
+    dict.set(
+        "friendly.space.description",
+        "导航容器 — 看板、列表与分区都在工作区之内。",
+    );
     dict.set("friendly.space.container_class", "导航容器");
     dict.set("friendly.space.settings", "空间设置");
     dict.set("friendly.space.settings.subtitle", "导航、排序与展示");
     dict.set("friendly.discussion.realm_ref", "工作区");
-    dict.set("friendly.discussion.realm_ref.hint", "该讨论所属的工作区（安全边界）。");
+    dict.set(
+        "friendly.discussion.realm_ref.hint",
+        "该讨论所属的工作区（安全边界）。",
+    );
 
     dict.set("profile_gate.title", "此服务器暂不支持该功能");
     dict.set(

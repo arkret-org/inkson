@@ -62,6 +62,10 @@ pub mod global_search;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
+/// Round R2/R3 (T06) — moderation appeal user flow. Entrypoint button +
+/// `cx.moderation.appeal.submit` builder. Renders near user-facing
+/// moderation decisions; reviewer surface is admin-scope.
+pub mod moderation_appeal;
 pub mod notifications;
 pub mod onboarding;
 /// Invite-quarantine list + admin approve/reject buttons.

@@ -2696,7 +2696,9 @@ mod tests {
     #[test]
     fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
         assert!(is_likely_valid_did("did:web:alice.example"));
-        assert!(is_likely_valid_did("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"));
+        assert!(is_likely_valid_did(
+            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        ));
         assert!(is_likely_valid_did("did:plc:abc123"));
         assert!(is_likely_valid_did("  did:web:alice.example  "));
 

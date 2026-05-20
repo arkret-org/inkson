@@ -673,8 +673,7 @@ pub fn KanbanPanel(
             // Defer the first poll so the bootstrap fetch finishes
             // first and we don't double-fire on mount.
             #[cfg(not(target_arch = "wasm32"))]
-            tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
-                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS)).await;
             loop {
                 let api_token = live_token();
                 let view = live_board_view_id();
@@ -697,11 +696,10 @@ pub fn KanbanPanel(
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS)).await;
                 #[cfg(target_arch = "wasm32")]
                 break; // wasm has no tokio::time; bail after one
-                       // tick — the bootstrap fetch already ran.
+                // tick — the bootstrap fetch already ran.
             }
         }
     });

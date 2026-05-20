@@ -1222,7 +1222,9 @@ mod tests {
     /// placeholder attach so the production submit guard fires.
     #[test]
     fn build_skips_placeholder_in_production_mode() {
-        let _guard = PROOF_MODE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PROOF_MODE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prior = current_proof_mode();
         set_proof_mode(ProofMode::Production);
         let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
@@ -1239,7 +1241,9 @@ mod tests {
 
     #[test]
     fn build_attaches_placeholder_in_dev_mode() {
-        let _guard = PROOF_MODE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PROOF_MODE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prior = current_proof_mode();
         set_proof_mode(ProofMode::PlaceholderDev);
         let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
