@@ -822,9 +822,14 @@ impl ContrixApi {
     /// Build + submit the canonical `cx.realm.create` event bundle.
     ///
     /// Per spec `models/realm-and-space.md §2.3`, the create event locks
-    /// in `encryption_profile` (`none` / `mls_rfc9420` / `external`) and
-    /// `security_class` (`standard` / `high_assurance`) — the caller MUST
-    /// surface these as user choices instead of hardcoding them.
+    /// in `encryption_profile` (`none` / `mls_rfc9420` / `external`),
+    /// `security_class` (`standard` / `high_assurance`),
+    /// `federation_policy` (`open` / `restricted` / `closed` /
+    /// `quarantine`), `anchor_profile` (`single_did` / `threshold` /
+    /// `open_set` / `mixed`) and `hash_profile` (`sha256` / `sha512` /
+    /// `sha3_256` / `blake3`). The caller MUST surface these as user
+    /// choices because none of them can be changed after create.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_realm(
         &self,
         actor_id: &str,
@@ -835,6 +840,9 @@ impl ContrixApi {
         history_visibility: &str,
         encryption_profile: &str,
         security_class: &str,
+        federation_policy: &str,
+        anchor_profile: &str,
+        hash_profile: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
@@ -864,6 +872,9 @@ impl ContrixApi {
             history_visibility,
             encryption_profile,
             security_class,
+            federation_policy,
+            anchor_profile,
+            hash_profile,
             &invitees,
             &plaintext_visible_services,
         )?;
@@ -2929,6 +2940,7 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
 const ZERO_ANCHOR_REF: &str =
     "cx:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_realm_bootstrap_events(
     space_id: &str,
     actor_id: &str,
@@ -2939,6 +2951,9 @@ pub fn build_realm_bootstrap_events(
     history_visibility: &str,
     encryption_profile: &str,
     security_class: &str,
+    federation_policy: &str,
+    anchor_profile: &str,
+    hash_profile: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<Value>> {
@@ -2953,6 +2968,9 @@ pub fn build_realm_bootstrap_events(
         history_visibility,
         encryption_profile,
         security_class,
+        federation_policy,
+        anchor_profile,
+        hash_profile,
     )?);
     events.push(build_space_state_event(
         space_id,
@@ -2993,6 +3011,7 @@ pub fn build_realm_bootstrap_events(
     Ok(events)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_realm_create_event(
     space_id: &str,
     actor_id: &str,
@@ -3003,18 +3022,22 @@ pub fn build_realm_create_event(
     history_visibility: &str,
     encryption_profile: &str,
     security_class: &str,
+    federation_policy: &str,
+    anchor_profile: &str,
+    hash_profile: &str,
 ) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
-    // The legacy "public discoverability → open federation" rule still
-    // applies but is overridden by high_assurance for safety.
-    let federation_policy = if security_class == "high_assurance" {
+    // Fall back to "restricted" if the caller passed "open" together
+    // with high_assurance — the UI also disables the option but
+    // belt-and-suspenders here.
+    let effective_federation_policy = if security_class == "high_assurance"
+        && federation_policy == "open"
+    {
         "restricted"
-    } else if discoverability == "public" {
-        "open"
     } else {
-        "restricted"
+        federation_policy
     };
     let mut object = json!({
         "id": space_id,
@@ -3027,8 +3050,9 @@ pub fn build_realm_create_event(
         "history_visibility": history_visibility,
         "encryption_profile": encryption_profile,
         "security_class": security_class,
-        "federation_policy": federation_policy,
-        "anchor_profile": "single_did",
+        "federation_policy": effective_federation_policy,
+        "anchor_profile": anchor_profile,
+        "hash_profile": hash_profile,
         "anchorer": {
             "type": "single_did",
             "did": actor_id,
@@ -3717,6 +3741,9 @@ mod tests {
             "shared",
             "mls_rfc9420",
             "standard",
+            "restricted",
+            "single_did",
+            "sha256",
             &["did:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
         )

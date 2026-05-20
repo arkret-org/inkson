@@ -132,6 +132,84 @@ const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
     ),
 ];
 
+// Spec realm-and-space.md §2.3 — `federation_policy` reducer-derived
+// from `cx.realm.policy` events but seeded at create time. `open` is
+// forbidden when security_class=high_assurance.
+const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
+    (
+        "open",
+        "Open",
+        "Any peer can interact. Not allowed when security_class=high_assurance.",
+    ),
+    (
+        "restricted",
+        "Restricted",
+        "Allow-list of peers (governance / org-vetted). Default for high_assurance.",
+    ),
+    (
+        "closed",
+        "Closed",
+        "No federation at all. Use for fully internal Realms.",
+    ),
+    (
+        "quarantine",
+        "Quarantine",
+        "Inbound is accepted but held for review. Outbound is blocked.",
+    ),
+];
+
+// Spec realm-and-space.md §2.3 — `anchor_profile`. Create-locked.
+// `single_did` is the dev / single-operator default; the others are
+// for production deployments with multiple anchorer principals.
+const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
+    (
+        "single_did",
+        "Single DID",
+        "One principal signs anchors. Simplest setup; default.",
+    ),
+    (
+        "threshold",
+        "Threshold",
+        "k-of-n signature; configure the participating DIDs in policy.",
+    ),
+    (
+        "open_set",
+        "Open set",
+        "Any holder of the anchorer capability may sign.",
+    ),
+    (
+        "mixed",
+        "Mixed",
+        "Combination of the above — configure via policy.",
+    ),
+];
+
+// Spec realm-and-space.md §2.3 — `hash_profile`. Create-locked.
+// `sha256` is the universal default; other choices target hardened
+// or interop-with-other-hash-systems deployments.
+const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
+    (
+        "sha256",
+        "SHA-256",
+        "Default. Interoperable everywhere in Contrix v1.",
+    ),
+    (
+        "sha512",
+        "SHA-512",
+        "Wider digest. Choose only if your deployment policy requires it.",
+    ),
+    (
+        "sha3_256",
+        "SHA3-256",
+        "Keccak family. Use for FIPS-compatible deployments that mandate SHA-3.",
+    ),
+    (
+        "blake3",
+        "BLAKE3",
+        "Faster on modern CPUs. Use only when all peers support BLAKE3.",
+    ),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
@@ -306,6 +384,12 @@ pub fn SetupPanel(
     // after the Realm is created.
     let mut realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
     let mut realm_security_class = use_signal(|| "standard".to_owned());
+    // Spec realm-and-space.md §2.3 advanced create-locked fields. UI
+    // collapses these by default since they're hardly ever changed
+    // from the safe defaults (`restricted` / `single_did` / `sha256`).
+    let mut realm_federation_policy = use_signal(|| "restricted".to_owned());
+    let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
+    let mut realm_hash_profile = use_signal(|| "sha256".to_owned());
     let mut space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_space_id = use_signal(String::new);
 
@@ -319,6 +403,10 @@ pub fn SetupPanel(
     let history_visibility_value = space_policy_history_visibility();
     let encryption_profile_value = realm_encryption_profile();
     let security_class_value = realm_security_class();
+    let federation_policy_value = realm_federation_policy();
+    let anchor_profile_value = realm_anchor_profile();
+    let hash_profile_value = realm_hash_profile();
+    let federation_policy_open_forbidden = security_class_value == "high_assurance";
     let seed_members_value = seed_members();
     let space_state_value = space_state();
     let created_space_id_value = created_space_id();
@@ -600,6 +688,90 @@ pub fn SetupPanel(
                                     }
                                 }
 
+                                // Spec realm-and-space.md §2.3 advanced
+                                // fields — collapsed by default. All
+                                // three are create-locked. Defaults
+                                // (restricted / single_did / sha256)
+                                // suit the dev + small-deployment cases;
+                                // production operators tweak as needed.
+                                details { class: "setup-advanced",
+                                    "data-testid": "realm-advanced-config",
+                                    summary { class: "setup-advanced-summary",
+                                        "Advanced (federation policy / anchor profile / hash profile)"
+                                    }
+                                    div { class: "setup-axis-grid setup-advanced-grid",
+                                        div { class: "metric directory-axis-card",
+                                            strong { "Federation policy" }
+                                            div { class: "workflow-form setup-field",
+                                                label { "How does this Realm interoperate with other deployments?" }
+                                                select {
+                                                    "data-testid": "realm-federation-policy-input",
+                                                    value: "{federation_policy_value}",
+                                                    onchange: move |event| realm_federation_policy.set(event.value()),
+                                                    for (option_value, label, _) in FEDERATION_POLICY_OPTIONS {
+                                                        option {
+                                                            value: "{option_value}",
+                                                            selected: federation_policy_value == option_value,
+                                                            disabled: federation_policy_open_forbidden && option_value == "open",
+                                                            "{label}"
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "muted",
+                                                    "{FEDERATION_POLICY_OPTIONS.iter().find(|(value, _, _)| *value == federation_policy_value).map(|(_, _, hint)| *hint).unwrap_or(\"Federation policy is not set.\")}"
+                                                }
+                                                if federation_policy_open_forbidden {
+                                                    div { class: "muted",
+                                                        "high_assurance requires federation_policy ∈ {{restricted, closed, quarantine}} (spec realm-and-space.md §2.3)."
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        div { class: "metric directory-axis-card",
+                                            strong { "Anchor profile" }
+                                            div { class: "workflow-form setup-field",
+                                                label { "Who signs durable anchors for this Realm?" }
+                                                select {
+                                                    "data-testid": "realm-anchor-profile-input",
+                                                    value: "{anchor_profile_value}",
+                                                    onchange: move |event| realm_anchor_profile.set(event.value()),
+                                                    for (option_value, label, _) in ANCHOR_PROFILE_OPTIONS {
+                                                        option {
+                                                            value: "{option_value}",
+                                                            selected: anchor_profile_value == option_value,
+                                                            "{label}"
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "muted",
+                                                    "{ANCHOR_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == anchor_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Anchor profile is not set.\")}"
+                                                }
+                                            }
+                                        }
+                                        div { class: "metric directory-axis-card",
+                                            strong { "Hash profile" }
+                                            div { class: "workflow-form setup-field",
+                                                label { "Digest algorithm for canonical hashing." }
+                                                select {
+                                                    "data-testid": "realm-hash-profile-input",
+                                                    value: "{hash_profile_value}",
+                                                    onchange: move |event| realm_hash_profile.set(event.value()),
+                                                    for (option_value, label, _) in HASH_PROFILE_OPTIONS {
+                                                        option {
+                                                            value: "{option_value}",
+                                                            selected: hash_profile_value == option_value,
+                                                            "{label}"
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "muted",
+                                                    "{HASH_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == hash_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Hash profile is not set.\")}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 if let Some((tone, heading, body)) = current_visibility_hint {
                                     div { class: if tone == "error" { "inline-error" } else { "inline-warn" },
                                         span { class: "body",
@@ -682,6 +854,9 @@ pub fn SetupPanel(
                                                     let history_visibility = space_policy_history_visibility();
                                                     let encryption_profile = realm_encryption_profile();
                                                     let security_class = realm_security_class();
+                                                    let federation_policy = realm_federation_policy();
+                                                    let anchor_profile = realm_anchor_profile();
+                                                    let hash_profile = realm_hash_profile();
                                                     let seed_text = seed_members();
                                                     let actor = account_did();
                                                     let device = device_id();
@@ -710,6 +885,9 @@ pub fn SetupPanel(
                                                                 &history_visibility,
                                                                 &encryption_profile,
                                                                 &security_class,
+                                                                &federation_policy,
+                                                                &anchor_profile,
+                                                                &hash_profile,
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),
                                                             ).await {
