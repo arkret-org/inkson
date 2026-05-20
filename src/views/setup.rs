@@ -1478,7 +1478,7 @@ pub fn SetupPanel(
                         div { class: "event new-space-summary",
                             div { class: "event-head",
                                 span { "Outcome" }
-                                span { "Phase 3 (M-SPACE-CREATE-1) minimal" }
+                                span { "spec realm-and-space.md §3" }
                             }
                             div { class: "setup-summary-row",
                                 strong { "Created Space" }
@@ -1497,7 +1497,114 @@ pub fn SetupPanel(
                             div { class: "setup-summary-row setup-summary-row-stack",
                                 strong { "Wire shape" }
                                 span { class: "muted",
-                                    "Single cx.space.create event; spec realm-and-space.md §3.2. Parent picker / cross-Realm default lives in a future iteration."
+                                    "cx.space.create event + optional parent_ref / default_realm_ref. Lifecycle actions below dispatch cx.space.archive / restore / tombstone."
+                                }
+                            }
+                        }
+
+                        // Spec realm-and-space.md §3.4 — Space lifecycle
+                        // (archive / restore / tombstone). Disabled
+                        // until a Space has been created in this session;
+                        // server enforces the state-machine transitions.
+                        div { class: "event",
+                            "data-testid": "space-lifecycle-panel",
+                            div { class: "event-head",
+                                span { "Lifecycle actions" }
+                                span { "archive / restore / tombstone" }
+                            }
+                            if new_space_created_id_value.trim().is_empty() {
+                                div { class: "muted",
+                                    "Create a Space above to enable lifecycle actions on it."
+                                }
+                            } else {
+                                div { class: "actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "space-lifecycle-archive",
+                                        title: "Set state to archived; server doesn't cascade.",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let api_token = token();
+                                                let base = base.clone();
+                                                let actor = account_did();
+                                                let space_id = new_space_created_id();
+                                                let realm_id = new_space_realm_id();
+                                                new_space_state.set("Submitting cx.space.archive...".to_owned());
+                                                spawn(async move {
+                                                    match authed_api(&base, api_token) {
+                                                        Ok(api) => match api.change_space_lifecycle(
+                                                            &space_id, &realm_id, &actor, "cx.space.archive",
+                                                        ).await {
+                                                            Ok(()) => new_space_state.set(format!("Archived {space_id}")),
+                                                            Err(error) => new_space_state.set(format!("archive failed: {error}")),
+                                                        },
+                                                        Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Archive"
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "space-lifecycle-restore",
+                                        title: "Move archived → active; only valid from archived.",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let api_token = token();
+                                                let base = base.clone();
+                                                let actor = account_did();
+                                                let space_id = new_space_created_id();
+                                                let realm_id = new_space_realm_id();
+                                                new_space_state.set("Submitting cx.space.restore...".to_owned());
+                                                spawn(async move {
+                                                    match authed_api(&base, api_token) {
+                                                        Ok(api) => match api.change_space_lifecycle(
+                                                            &space_id, &realm_id, &actor, "cx.space.restore",
+                                                        ).await {
+                                                            Ok(()) => new_space_state.set(format!("Restored {space_id}")),
+                                                            Err(error) => new_space_state.set(format!("restore failed: {error}")),
+                                                        },
+                                                        Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Restore"
+                                    }
+                                    button {
+                                        class: "secondary danger",
+                                        "data-testid": "space-lifecycle-tombstone",
+                                        title: "Irreversible. Server rejects if live child Spaces / placement Flows exist.",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let api_token = token();
+                                                let base = base.clone();
+                                                let actor = account_did();
+                                                let space_id = new_space_created_id();
+                                                let realm_id = new_space_realm_id();
+                                                new_space_state.set("Submitting cx.space.tombstone...".to_owned());
+                                                spawn(async move {
+                                                    match authed_api(&base, api_token) {
+                                                        Ok(api) => match api.change_space_lifecycle(
+                                                            &space_id, &realm_id, &actor, "cx.space.tombstone",
+                                                        ).await {
+                                                            Ok(()) => new_space_state.set(format!("Tombstoned {space_id} (irreversible)")),
+                                                            Err(error) => new_space_state.set(format!("tombstone failed: {error}")),
+                                                        },
+                                                        Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Tombstone"
+                                    }
+                                }
+                                div { class: "muted",
+                                    "Tombstone is irreversible — server rejects with space_has_live_dependents if any child Space or placement Flow is still live (spec §3.4)."
                                 }
                             }
                         }

@@ -955,6 +955,33 @@ impl ContrixApi {
         })
     }
 
+    /// Send a Space lifecycle action (`archive` / `restore` /
+    /// `tombstone`) per spec realm-and-space.md §3.4. Caller MUST
+    /// pass the home Realm id — the event is authorized + written
+    /// inside that Realm. Server validates the state-machine
+    /// (active → archived → active, any → tombstoned) and rejects
+    /// invalid transitions with `space_not_active` /
+    /// `space_not_archived` / `space_already_terminal`.
+    pub async fn change_space_lifecycle(
+        &self,
+        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
+        kind: &str,
+    ) -> anyhow::Result<()> {
+        let actor_id = actor_id.trim();
+        let space_id = space_id.trim();
+        let realm_id = realm_id.trim();
+        if actor_id.is_empty() || space_id.is_empty() || realm_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id, space_id and realm_id are all required for {kind}"
+            ));
+        }
+        let event = build_space_lifecycle_event(space_id, realm_id, actor_id, kind)?;
+        self.submit_event(&event).await?;
+        Ok(())
+    }
+
     pub async fn get_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
         self.get_json(&format!("api/v1/spaces/{space_id}")).await
     }
@@ -3189,6 +3216,51 @@ pub fn build_space_create_event(
         &space_cell("cx.component.space.create.v1", space_id),
         "append",
         json!({ "space_id": space_id }),
+    )
+}
+
+/// Build a Space lifecycle event (`cx.space.archive` /
+/// `cx.space.restore` / `cx.space.tombstone`) per spec
+/// realm-and-space.md §3.4. All three write the new `state` value
+/// into the `cx.component.space.state.v1` cell on the home Realm.
+/// Server-side cascade rules:
+///
+/// - `archive` (active → archived): not cascaded to children.
+/// - `restore` (archived → active): not cascaded; only valid from
+///   `archived`.
+/// - `tombstone` (any → tombstoned): irreversible; server MUST
+///   `failed_precondition` when the Space still has live child
+///   Spaces or live `contains` placement Flows.
+pub fn build_space_lifecycle_event(
+    space_id: &str,
+    realm_id: &str,
+    actor_id: &str,
+    kind: &str,
+) -> anyhow::Result<Value> {
+    let next_state = match kind {
+        "cx.space.archive" => "archived",
+        "cx.space.restore" => "active",
+        "cx.space.tombstone" => "tombstoned",
+        other => {
+            return Err(anyhow::anyhow!(
+                "unsupported Space lifecycle event kind {other}"
+            ));
+        }
+    };
+    let created_at = event_timestamp();
+    build_reducer_event(
+        kind,
+        realm_id,
+        actor_id,
+        &created_at,
+        json!({
+            "space_id": space_id,
+            "state": next_state,
+            "state_changed_at": created_at,
+        }),
+        &space_cell("cx.component.space.state.v1", space_id),
+        "set",
+        json!({ "value": next_state }),
     )
 }
 
