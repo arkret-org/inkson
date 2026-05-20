@@ -307,7 +307,7 @@ impl NewSpaceStep {
             Self::Basics => "name and intent",
             Self::Boundary => "three policy axes",
             Self::Seed => "initial members and create",
-            Self::Done => "open created space",
+            Self::Done => "open created realm",
         }
     }
 
@@ -1206,7 +1206,7 @@ pub fn SetupPanel(
                                 if has_created_space {
                                     div { class: "setup-summary-list",
                                         div { class: "setup-summary-row",
-                                            strong { "Created Space" }
+                                            strong { "Created Realm" }
                                             span { class: "mono", "{created_space_id_value}" }
                                         }
                                         div { class: "setup-summary-row setup-summary-row-stack",
@@ -1224,16 +1224,16 @@ pub fn SetupPanel(
                                         Link {
                                             class: "primary",
                                             to: Route::Space { space_id: created_space_id_value.clone() },
-                                            "Open Space"
+                                            "Open Realm"
                                         }
                                         Link {
                                             class: "secondary",
                                             to: Route::SpaceAdmin { space_id: created_space_id_value.clone() },
-                                            "Open Space Admin"
+                                            "Open Realm Admin"
                                         }
                                     }
                                 } else {
-                                    div { class: "muted", "Create a Space before opening the next context." }
+                                    div { class: "muted", "Create a Realm before opening the next context." }
                                     div { class: "actions setup-nav-actions",
                                         button {
                                             class: "primary",
@@ -1271,7 +1271,7 @@ pub fn SetupPanel(
                                     span { "{seed_member_count}" }
                                 }
                                 div { class: "setup-summary-row",
-                                    strong { "Created Space" }
+                                    strong { "Created Realm" }
                                     span { class: "mono", "data-testid": "selected-space-id",
                                         if has_created_space { "{created_space_id_value}" } else { "not created yet" }
                                     }
