@@ -213,13 +213,21 @@ const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
+    /// Realm bootstrap flow (legacy slug `spaces` for URL stability —
+    /// the form actually creates a Realm; the wire event is
+    /// `cx.realm.create`).
     Spaces,
+    /// Phase 3 — `cx.space.create` form: pick a Realm, pick a kind,
+    /// optionally pick a parent Space. The Space lives inside the
+    /// Realm and inherits all security semantics from it.
+    NewSpace,
 }
 
 impl SetupSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
             "spaces" => Self::Spaces,
+            "new-space" => Self::NewSpace,
             _ => Self::Overview,
         }
     }
@@ -228,9 +236,41 @@ impl SetupSection {
         match self {
             Self::Overview => "",
             Self::Spaces => "spaces",
+            Self::NewSpace => "new-space",
         }
     }
 }
+
+// Spec realm-and-space.md §3.2 — `kind` enum for Space. v1 catalogue
+// is `space` (generic) / `project` / `folder` / `board` / `list`;
+// profiles may register additional kinds.
+const SPACE_KIND_OPTIONS: [(&str, &str, &str); 5] = [
+    (
+        "space",
+        "Space (generic)",
+        "Default. Use when no specific workflow shape applies.",
+    ),
+    (
+        "project",
+        "Project",
+        "Top-level scope for a piece of work; usually contains boards / lists.",
+    ),
+    (
+        "folder",
+        "Folder",
+        "Pure navigation container. Holds child Spaces / Flows but isn't a workflow.",
+    ),
+    (
+        "board",
+        "Board",
+        "Kanban / pipeline view. Cells track flow placement (rank cas-register).",
+    ),
+    (
+        "list",
+        "List",
+        "Ordered list view. Useful for backlog / triage / queue surfaces.",
+    ),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewSpaceStep {
@@ -390,6 +430,15 @@ pub fn SetupPanel(
     let mut realm_federation_policy = use_signal(|| "restricted".to_owned());
     let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
     let mut realm_hash_profile = use_signal(|| "sha256".to_owned());
+    // Phase 3 — `cx.space.create` form state. The Space inherits all
+    // security from its home Realm, so the only choices are which
+    // Realm to live in, the human-visible metadata, and `kind`.
+    let mut new_space_realm_id = use_signal(String::new);
+    let mut new_space_title = use_signal(String::new);
+    let mut new_space_summary = use_signal(String::new);
+    let mut new_space_kind = use_signal(|| "space".to_owned());
+    let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
+    let mut new_space_created_id = use_signal(String::new);
     let mut space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_space_id = use_signal(String::new);
 
@@ -407,6 +456,33 @@ pub fn SetupPanel(
     let anchor_profile_value = realm_anchor_profile();
     let hash_profile_value = realm_hash_profile();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
+    let new_space_realm_id_value = new_space_realm_id();
+    let new_space_title_value = new_space_title();
+    let new_space_summary_value = new_space_summary();
+    let new_space_kind_value = new_space_kind();
+    let new_space_state_value = new_space_state();
+    let new_space_created_id_value = new_space_created_id();
+    // Available Realms = every persisted projection. (Phase 3 ships
+    // the basic picker; richer filtering by `schema=cx.schema.realm.v1`
+    // can come once the projection store carries the schema field.)
+    let available_realms: Vec<(String, String)> = state_store
+        .read()
+        .load()
+        .space_projections
+        .iter()
+        .map(|(id, body)| {
+            let title = body
+                .get("summary")
+                .and_then(|summary| summary.get("title"))
+                .and_then(|title| title.as_str())
+                .unwrap_or(id.as_str())
+                .to_owned();
+            (id.clone(), title)
+        })
+        .collect();
+    let new_space_ready = !new_space_title_value.trim().is_empty()
+        && !new_space_realm_id_value.trim().is_empty();
+    let new_space_can_submit = has_session && new_space_ready;
     let seed_members_value = seed_members();
     let space_state_value = space_state();
     let created_space_id_value = created_space_id();
@@ -445,6 +521,15 @@ pub fn SetupPanel(
                                 class: "secondary",
                                 to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
                                 "Open New Realm"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "New Space" }
+                            span { "navigation container inside a Realm" }
+                            Link {
+                                class: "secondary",
+                                to: Route::SetupSection { section: SetupSection::NewSpace.slug().to_owned() },
+                                "Open New Space"
                             }
                         }
                         div { class: "metric",
@@ -1087,6 +1172,189 @@ pub fn SetupPanel(
                     }
                 }
 
+            }
+
+            if active_section == SetupSection::NewSpace {
+                div { class: "setup-shell new-space-shell", "data-testid": "space-create-flow",
+                    div { class: "setup-column",
+                        div { class: "event new-space-hero",
+                            div { class: "event-head",
+                                span { "New Space" }
+                                span { "navigation container" }
+                            }
+                            h2 { class: "settings-content-title", "Create a Space inside a Realm" }
+                            div { class: "muted",
+                                "A Space is a product-structure container (project / folder / board / list). It lives inside a Realm and inherits all security from it — no separate membership, encryption, or federation decisions."
+                            }
+                        }
+
+                        div { class: "event",
+                            div { class: "event-head",
+                                span { "Home Realm" }
+                                span { "required" }
+                            }
+                            div { class: "workflow-form setup-form-grid",
+                                div { class: "setup-field setup-field-span-2",
+                                    label { "Pick which Realm this Space lives in" }
+                                    if available_realms.is_empty() {
+                                        div { class: "inline-warn",
+                                            span { class: "body",
+                                                strong { "No Realms yet — create one first" }
+                                                " Use "
+                                                Link {
+                                                    to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
+                                                    "New Realm"
+                                                }
+                                                " then come back."
+                                            }
+                                        }
+                                    } else {
+                                        select {
+                                            "data-testid": "new-space-realm-input",
+                                            value: "{new_space_realm_id_value}",
+                                            onchange: move |event| new_space_realm_id.set(event.value()),
+                                            option { value: "", "— pick a Realm —" }
+                                            for (id, title) in &available_realms {
+                                                option {
+                                                    value: "{id}",
+                                                    selected: new_space_realm_id_value == *id,
+                                                    "{title} ({id})"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        div { class: "event",
+                            div { class: "event-head",
+                                span { "Basics" }
+                                span { "title + kind" }
+                            }
+                            div { class: "workflow-form setup-form-grid",
+                                div { class: "setup-field",
+                                    label { "Space title" }
+                                    input {
+                                        "data-testid": "new-space-title-input",
+                                        value: "{new_space_title_value}",
+                                        placeholder: "Backlog, Roadmap, Onboarding...",
+                                        oninput: move |event| new_space_title.set(event.value())
+                                    }
+                                }
+                                div { class: "setup-field",
+                                    label { "Kind" }
+                                    select {
+                                        "data-testid": "new-space-kind-input",
+                                        value: "{new_space_kind_value}",
+                                        onchange: move |event| new_space_kind.set(event.value()),
+                                        for (option_value, label, _) in SPACE_KIND_OPTIONS {
+                                            option {
+                                                value: "{option_value}",
+                                                selected: new_space_kind_value == option_value,
+                                                "{label}"
+                                            }
+                                        }
+                                    }
+                                    div { class: "muted",
+                                        "{SPACE_KIND_OPTIONS.iter().find(|(value, _, _)| *value == new_space_kind_value).map(|(_, _, hint)| *hint).unwrap_or(\"Kind is not set.\")}"
+                                    }
+                                }
+                                div { class: "setup-field setup-field-span-2",
+                                    label { "Summary" }
+                                    textarea {
+                                        "data-testid": "new-space-summary-input",
+                                        value: "{new_space_summary_value}",
+                                        rows: "3",
+                                        placeholder: "Optional description.",
+                                        oninput: move |event| new_space_summary.set(event.value())
+                                    }
+                                }
+                            }
+                            div { class: "actions setup-nav-actions",
+                                button {
+                                    class: "primary",
+                                    "data-testid": "new-space-submit-button",
+                                    disabled: !new_space_can_submit,
+                                    onclick: move |_| {
+                                        let api_token = token();
+                                        let base = base_url.clone();
+                                        let realm_id = new_space_realm_id();
+                                        let title = new_space_title();
+                                        let summary = new_space_summary();
+                                        let kind = new_space_kind();
+                                        let actor = account_did();
+                                        new_space_state.set("Submitting cx.space.create...".to_owned());
+                                        spawn(async move {
+                                            match authed_api(&base, api_token) {
+                                                Ok(api) => {
+                                                    let summary_opt = if summary.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(summary.as_str())
+                                                    };
+                                                    match api.create_space_under_realm(
+                                                        &realm_id,
+                                                        &actor,
+                                                        &title,
+                                                        summary_opt,
+                                                        &kind,
+                                                        None, // parent_space_id — Phase 3 minimal: root only
+                                                        None, // default_realm_ref — inherits home Realm
+                                                    ).await {
+                                                        Ok(space) => {
+                                                            new_space_created_id.set(space.space_id.clone());
+                                                            new_space_state.set(format!(
+                                                                "Created Space {} (kind={}) inside {}",
+                                                                space.space_id, kind, realm_id
+                                                            ));
+                                                        }
+                                                        Err(error) => {
+                                                            new_space_state.set(format!("create_space failed: {error}"));
+                                                        }
+                                                    }
+                                                }
+                                                Err(error) => {
+                                                    new_space_state.set(format!("invalid base URL: {error}"));
+                                                }
+                                            }
+                                        });
+                                    },
+                                    "Create Space"
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "setup-column setup-summary-column",
+                        div { class: "event new-space-summary",
+                            div { class: "event-head",
+                                span { "Outcome" }
+                                span { "Phase 3 (M-SPACE-CREATE-1) minimal" }
+                            }
+                            div { class: "setup-summary-row",
+                                strong { "Created Space" }
+                                span { class: "mono", "data-testid": "new-space-created-id",
+                                    if !new_space_created_id_value.trim().is_empty() {
+                                        "{new_space_created_id_value}"
+                                    } else {
+                                        "not created yet"
+                                    }
+                                }
+                            }
+                            div { class: "setup-summary-row setup-summary-row-stack",
+                                strong { "Status" }
+                                span { class: "muted", "{new_space_state_value}" }
+                            }
+                            div { class: "setup-summary-row setup-summary-row-stack",
+                                strong { "Wire shape" }
+                                span { class: "muted",
+                                    "Single cx.space.create event; spec realm-and-space.md §3.2. Parent picker / cross-Realm default lives in a future iteration."
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

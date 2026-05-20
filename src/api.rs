@@ -902,6 +902,59 @@ impl ContrixApi {
         })
     }
 
+    /// Create a Space (product-structure container) inside an existing
+    /// Realm. Emits `cx.space.create` per spec realm-and-space.md §3.
+    /// Unlike `create_realm`, this does NOT bootstrap MLS / membership
+    /// / federation — those live on the Realm and Space inherits them.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_space_under_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        title: &str,
+        summary: Option<&str>,
+        kind: &str,
+        parent_space_id: Option<&str>,
+        default_realm_ref: Option<&str>,
+    ) -> anyhow::Result<SpaceLifecycleResponse> {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for cx.space.create"
+            ));
+        }
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("title is required for cx.space.create"));
+        }
+        let realm_id = realm_id.trim();
+        if realm_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "realm_id is required for cx.space.create — Space must live inside a Realm"
+            ));
+        }
+        let space_id = format!("cx:space:{}", uuid_v7());
+        let event = build_space_create_event(
+            &space_id,
+            realm_id,
+            actor_id,
+            title,
+            summary,
+            kind,
+            parent_space_id,
+            default_realm_ref,
+        )?;
+        self.submit_event(&event).await?;
+
+        Ok(SpaceLifecycleResponse {
+            ok: true,
+            space_id,
+            owner: actor_id.to_owned(),
+            members: vec![actor_id.to_owned()],
+            deleted: false,
+        })
+    }
+
     pub async fn get_space(&self, space_id: &str) -> anyhow::Result<SpaceLifecycleResponse> {
         self.get_json(&format!("api/v1/spaces/{space_id}")).await
     }
@@ -3074,6 +3127,66 @@ pub fn build_realm_create_event(
         // TODO(realm-rework): cell family rename to cx.component.realm.create.v1
         // once contrix-spec publishes the renamed registry.
         &space_cell("cx.component.realm.create.v1", space_id),
+        "append",
+        json!({ "space_id": space_id }),
+    )
+}
+
+/// Build a `cx.space.create` event per spec realm-and-space.md §3.2.
+/// Space is the product-structure container (workspace / project /
+/// folder / board / list); it lives inside a Realm (`realm_id`) and
+/// has no membership / policy / E2EE of its own — all security
+/// semantics inherit from the home Realm.
+#[allow(clippy::too_many_arguments)]
+pub fn build_space_create_event(
+    space_id: &str,
+    realm_id: &str,
+    actor_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    kind: &str,
+    parent_space_id: Option<&str>,
+    default_realm_ref: Option<&str>,
+) -> anyhow::Result<Value> {
+    let created_at = event_timestamp();
+    let mut object = json!({
+        "id": space_id,
+        "schema": "cx.schema.space.v1",
+        "realm_id": realm_id,
+        "kind": kind,
+        "title": title,
+        "state": "active",
+        "created_by": actor_id,
+        "created_at": created_at,
+    });
+    if let Some(summary) = summary
+        && !summary.trim().is_empty()
+    {
+        object["summary"] = Value::String(summary.trim().to_owned());
+    }
+    if let Some(parent) = parent_space_id
+        && !parent.trim().is_empty()
+    {
+        object["parent_ref"] = Value::String(parent.trim().to_owned());
+    }
+    if let Some(default_realm) = default_realm_ref
+        && !default_realm.trim().is_empty()
+    {
+        object["default_realm_ref"] = Value::String(default_realm.trim().to_owned());
+    }
+
+    // The Space `create` event is authorized + written to the home
+    // Realm — `space_id` on the wire event = the Realm id, per the
+    // Realm/Space inversion routing: every container write lands in
+    // its `realm_id` for sync / authz. The reducer cell is keyed by
+    // the new Space id so the projection stores it correctly.
+    build_reducer_event(
+        "cx.space.create",
+        realm_id,
+        actor_id,
+        &created_at,
+        json!({ "object": object }),
+        &space_cell("cx.component.space.create.v1", space_id),
         "append",
         json!({ "space_id": space_id }),
     )
