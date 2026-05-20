@@ -2239,6 +2239,47 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   justify-self: end;
 }
 
+/* Per-row sidebar action layout: the main Link spans most of the
+ * row, the inline "+ add child Space" action sits to the right of
+ * it and stays out of the way until hover. Both share the row's
+ * background hover state so the affordance is visually unified. */
+.sidebar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.sidebar-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sidebar-row-add-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  padding: 0;
+  margin: 2px 4px 2px 0;
+  border-radius: 4px;
+  color: var(--muted, #6b7280);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 80ms ease, background-color 80ms ease;
+}
+.sidebar-row:hover .sidebar-row-add-action,
+.sidebar-row:focus-within .sidebar-row-add-action {
+  opacity: 1;
+}
+.sidebar-row-add-action:hover,
+.sidebar-row-add-action:focus-visible {
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.08));
+  color: var(--text-strong, #fff);
+  outline: none;
+}
+
 .sidebar-nav-icon,
 .server-switch-button .server-switch-icon {
   width: var(--sidebar-icon-track);
@@ -5324,17 +5365,17 @@ pub fn RouterView() -> Element {
                             title: "Realms (security boundaries) and the Spaces nested inside them — spec realm-and-space.md.",
                             "Realms & Spaces"
                         }
+                        // Header "+" creates a new Realm (no scope
+                        // needed). For new Spaces use the per-row
+                        // "+" hover action on a Realm or Space —
+                        // that surfaces the parent context inline
+                        // instead of dumping the user on a form with
+                        // no idea where the Space will land.
                         Link {
                             class: "add",
-                            title: "Create a new Realm",
+                            title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click + on that row.",
                             to: Route::SetupSection { section: "spaces".to_owned() },
                             "+"
-                        }
-                        Link {
-                            class: "add",
-                            title: "Create a new Space inside an existing Realm",
-                            to: Route::SetupSection { section: "new-space".to_owned() },
-                            "+S"
                         }
                     }
                     if !loaded_spaces.is_empty() && !sidebar_is_collapsed {
@@ -5437,9 +5478,14 @@ pub fn RouterView() -> Element {
                                 let has_remark = remark
                                     .as_ref()
                                     .is_some_and(|r| !r.local_name.trim().is_empty());
+                                let add_child_title = match item_space.kind {
+                                    SpacePreviewKind::Realm => "Create a new Space at the root of this Realm",
+                                    SpacePreviewKind::Space => "Create a new Space under this one (this Space becomes the parent)",
+                                };
                                 rsx! {
+                            div { class: "sidebar-row",
                             Link {
-                                class: "{item_class}",
+                                class: "{item_class} sidebar-row-main",
                                 "data-testid": "space-button",
                                 title: "{item_space.name}",
                                 style: "padding-left: calc(10px + {depth_px}px);",
@@ -5486,6 +5532,26 @@ pub fn RouterView() -> Element {
                                         },
                                     }
                                 }
+                            }
+                            // Contextual "+" — creates a new Space
+                            // scoped to this row. For Realms this is
+                            // "Space at the Realm root"; for Spaces
+                            // this is "child Space under this one".
+                            // Sets `selected_space` first so the
+                            // NewSpace form can derive the prefilled
+                            // realm_id + parent_space_id from it.
+                            Link {
+                                class: "sidebar-row-add-action",
+                                "data-testid": "space-row-add-action",
+                                title: "{add_child_title}",
+                                "aria-label": "{add_child_title}",
+                                to: Route::SetupSection { section: "new-space".to_owned() },
+                                onclick: {
+                                    let id = item_space.space_id.clone();
+                                    move |_| selected_space.set(id.clone())
+                                },
+                                "+"
+                            }
                             }
                                 }
                             }
@@ -5681,15 +5747,16 @@ pub fn RouterView() -> Element {
                             UiIcon { name: "inbox" }
                             span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
-                        Link {
-                            class: "btn sm primary topbar-create-button",
-                            "data-testid": "topbar-create-button",
-                            to: Route::SetupSection { section: "spaces".to_owned() },
-                            title: crate::i18n::tr("topbar.new_space"),
-                            "aria-label": crate::i18n::tr("topbar.new_space"),
-                            UiIcon { name: "plus" }
-                            span { class: "topbar-new-space-label", {crate::i18n::tr("topbar.new_space")} }
-                        }
+                        // M-UX-CONTEXT-1: the old "+ New Space"
+                        // topbar shortcut is gone. Realm + Space
+                        // creation now live in the sidebar where the
+                        // tree hierarchy makes the parent explicit:
+                        // a `+R` button at the section header for a
+                        // new Realm, and a per-row `+` (on every Realm
+                        // / Space) that scopes the new Space to that
+                        // parent. A floating "+ New Space" with no
+                        // parent context was confusing — it actually
+                        // opened the Realm bootstrap flow.
                         div { class: "account-menu-wrap",
                             button {
                                 class: "btn icon sm ghost account-menu-button",

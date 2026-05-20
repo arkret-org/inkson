@@ -462,6 +462,49 @@ pub fn SetupPanel(
     let anchor_profile_value = realm_anchor_profile();
     let hash_profile_value = realm_hash_profile();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
+    // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
+    // `selected_space` to the clicked Realm / Space and routes to
+    // the NewSpace section. When the user lands here with an empty
+    // form AND a selected row, pre-fill realm_id (always) and
+    // parent_space_id (when the source row is a Space). Guarded by
+    // "form realm_id is empty" so subsequent edits aren't clobbered.
+    if active_section == SetupSection::NewSpace && new_space_realm_id().is_empty() {
+        let selected = selected_space();
+        let selected = selected.trim();
+        if !selected.is_empty() {
+            if let Some(body) = state_store
+                .read()
+                .load()
+                .space_projections
+                .get(selected)
+                .cloned()
+            {
+                let kind = match body
+                    .get("__kind")
+                    .and_then(|kind| kind.as_str())
+                    .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
+                {
+                    Some("space") | Some("cx.schema.space.v1") => "space",
+                    _ => "realm",
+                };
+                if kind == "realm" {
+                    new_space_realm_id.set(selected.to_owned());
+                } else {
+                    // For a Space row, the new sibling/child lives in
+                    // the same home Realm; the clicked Space becomes
+                    // the parent.
+                    let realm = body
+                        .get("realm_id")
+                        .and_then(|realm| realm.as_str())
+                        .unwrap_or(selected)
+                        .to_owned();
+                    new_space_realm_id.set(realm);
+                    new_space_parent_id.set(selected.to_owned());
+                }
+            }
+        }
+    }
+
     let new_space_realm_id_value = new_space_realm_id();
     let new_space_title_value = new_space_title();
     let new_space_summary_value = new_space_summary();
@@ -562,10 +605,13 @@ pub fn SetupPanel(
                         div { class: "metric",
                             strong { "New Space" }
                             span { "navigation container inside a Realm" }
+                            div { class: "muted",
+                                "Hover a Realm or Space in the left sidebar and click the inline + — that's the canonical entry, because it pre-fills the parent context for you. The link below opens the form blank (you'll have to pick a Realm manually)."
+                            }
                             Link {
                                 class: "secondary",
                                 to: Route::SetupSection { section: SetupSection::NewSpace.slug().to_owned() },
-                                "Open New Space"
+                                "Open blank form"
                             }
                         }
                         div { class: "metric",
