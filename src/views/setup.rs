@@ -95,6 +95,43 @@ const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
     ),
 ];
 
+// Spec realm-and-space.md §2.3 — `encryption_profile` enum on the
+// Realm create event. `create-locked`, so this choice is permanent for
+// the lifetime of the Realm.
+const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 3] = [
+    (
+        "mls_rfc9420",
+        "MLS (end-to-end)",
+        "Recommended. Messages are encrypted with MLS; the server only sees ciphertext.",
+    ),
+    (
+        "none",
+        "No encryption",
+        "Plaintext content visible to the server. Use for public / broadcast Realms where confidentiality is not required.",
+    ),
+    (
+        "external",
+        "External provider",
+        "Encryption is delegated to a federated provider declared in policy. Pick this only if you know what you're doing.",
+    ),
+];
+
+// Spec realm-and-space.md §2.3 — `security_class`. `high_assurance`
+// automatically locks `federation_policy` to one of
+// `{closed, restricted, quarantine}`; client UI hint reflects this.
+const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
+    (
+        "standard",
+        "Standard",
+        "Default posture. Federation policy can be open or restricted per Realm settings.",
+    ),
+    (
+        "high_assurance",
+        "High assurance",
+        "Tightened defaults: federation is forced to restricted/closed/quarantine, audit signals are recorded.",
+    ),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
@@ -262,6 +299,13 @@ pub fn SetupPanel(
     let mut space_discoverability = use_signal(|| "listed".to_owned());
     let mut space_policy_join_rule = use_signal(|| "invite".to_owned());
     let mut space_policy_history_visibility = use_signal(|| "shared".to_owned());
+    // Spec realm-and-space.md §2.3 — `encryption_profile` and
+    // `security_class` are Realm create-locked fields. UI default is
+    // `mls_rfc9420` + `standard` (the safe / common case); the form
+    // exposes both as user choices because they cannot be changed
+    // after the Realm is created.
+    let mut realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
+    let mut realm_security_class = use_signal(|| "standard".to_owned());
     let mut space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_space_id = use_signal(String::new);
 
@@ -273,6 +317,8 @@ pub fn SetupPanel(
     let discoverability_value = space_discoverability();
     let join_rule_value = space_policy_join_rule();
     let history_visibility_value = space_policy_history_visibility();
+    let encryption_profile_value = realm_encryption_profile();
+    let security_class_value = realm_security_class();
     let seed_members_value = seed_members();
     let space_state_value = space_state();
     let created_space_id_value = created_space_id();
@@ -305,12 +351,12 @@ pub fn SetupPanel(
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { "New Space" }
-                            span { "boundary-first bootstrap" }
+                            strong { "New Realm" }
+                            span { "security-boundary bootstrap" }
                             Link {
                                 class: "secondary",
                                 to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
-                                "Open New Space"
+                                "Open New Realm"
                             }
                         }
                         div { class: "metric",
@@ -347,7 +393,7 @@ pub fn SetupPanel(
                     div { class: "actions",
                         span { class: "badge", "Onboarding = identity bootstrap" }
                         span { class: "badge", "Search = discovery and people" }
-                        span { class: "badge", "New Space = boundary bootstrap" }
+                        span { class: "badge", "New Realm = security-boundary bootstrap" }
                         span { class: "badge", "Settings = recovery and operations" }
                     }
                 }
@@ -358,12 +404,12 @@ pub fn SetupPanel(
                     div { class: "setup-column",
                         div { class: "event new-space-hero", "data-testid": "space-setup-guide",
                             div { class: "event-head",
-                                span { "New Space" }
-                                span { "bootstrap" }
+                                span { "New Realm" }
+                                span { "security boundary" }
                             }
-                            h2 { class: "settings-content-title", "Create a Space" }
+                            h2 { class: "settings-content-title", "Create a Realm" }
                             div { class: "muted",
-                                "Spec boundary stays explicit: discoverability, join rule, and history visibility are independent decisions."
+                                "A Realm is the security / sync / E2EE boundary. Discoverability, join rule, history visibility, encryption profile and security class are independent decisions — encryption_profile and security_class are create-locked, so pick deliberately."
                             }
                             PermissionPillRow {
                                 discoverability: Some(discoverability_value.clone()),
@@ -401,7 +447,7 @@ pub fn SetupPanel(
                                 }
                                 div { class: "workflow-form setup-form-grid",
                                     div { class: "setup-field",
-                                        label { "Space title" }
+                                        label { "Realm title" }
                                         input {
                                             "data-testid": "space-title-input",
                                             value: "{title_value}",
@@ -415,7 +461,7 @@ pub fn SetupPanel(
                                             "data-testid": "space-summary-input",
                                             value: "{summary_value}",
                                             rows: "3",
-                                            placeholder: "What this Space is for.",
+                                            placeholder: "What this Realm is for.",
                                             oninput: move |event| space_summary.set(event.value())
                                         }
                                     }
@@ -502,6 +548,56 @@ pub fn SetupPanel(
                                             }
                                         }
                                     }
+                                    // Spec realm-and-space.md §2.3:
+                                    // encryption_profile + security_class are
+                                    // create-locked Realm fields. Surface
+                                    // both here so the user makes the choice
+                                    // intentionally — there's no edit later.
+                                    div { class: "metric directory-axis-card",
+                                        strong { "Encryption profile" }
+                                        div { class: "workflow-form setup-field",
+                                            label { "How is content protected at rest and in transit?" }
+                                            select {
+                                                "data-testid": "realm-encryption-profile-input",
+                                                value: "{encryption_profile_value}",
+                                                onchange: move |event| realm_encryption_profile.set(event.value()),
+                                                for (option_value, label, _) in ENCRYPTION_PROFILE_OPTIONS {
+                                                    option {
+                                                        value: "{option_value}",
+                                                        selected: encryption_profile_value == option_value,
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "muted",
+                                                "{ENCRYPTION_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == encryption_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Encryption profile is not set.\")}"
+                                            }
+                                            div { class: "muted",
+                                                "Locked at creation — encryption_profile cannot be changed afterwards (spec realm-and-space.md §2.3)."
+                                            }
+                                        }
+                                    }
+                                    div { class: "metric directory-axis-card",
+                                        strong { "Security class" }
+                                        div { class: "workflow-form setup-field",
+                                            label { "Posture for federation and audit defaults." }
+                                            select {
+                                                "data-testid": "realm-security-class-input",
+                                                value: "{security_class_value}",
+                                                onchange: move |event| realm_security_class.set(event.value()),
+                                                for (option_value, label, _) in SECURITY_CLASS_OPTIONS {
+                                                    option {
+                                                        value: "{option_value}",
+                                                        selected: security_class_value == option_value,
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                            div { class: "muted",
+                                                "{SECURITY_CLASS_OPTIONS.iter().find(|(value, _, _)| *value == security_class_value).map(|(_, _, hint)| *hint).unwrap_or(\"Security class is not set.\")}"
+                                            }
+                                        }
+                                    }
                                 }
 
                                 if let Some((tone, heading, body)) = current_visibility_hint {
@@ -584,6 +680,8 @@ pub fn SetupPanel(
                                                 let discoverability = space_discoverability();
                                                 let join_rule = space_policy_join_rule();
                                                     let history_visibility = space_policy_history_visibility();
+                                                    let encryption_profile = realm_encryption_profile();
+                                                    let security_class = realm_security_class();
                                                     let seed_text = seed_members();
                                                     let actor = account_did();
                                                     let device = device_id();
@@ -603,13 +701,15 @@ pub fn SetupPanel(
                                                                     description.service_did.as_str().to_owned(),
                                                                 );
                                                             }
-                                                            match api.create_space(
+                                                            match api.create_realm(
                                                                 &actor,
                                                                 &title,
                                                                 Some(&summary),
                                                                 &discoverability,
                                                                 &join_rule,
                                                                 &history_visibility,
+                                                                &encryption_profile,
+                                                                &security_class,
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),
                                                             ).await {

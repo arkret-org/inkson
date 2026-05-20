@@ -819,7 +819,13 @@ impl ContrixApi {
         self.post_json("api/v1/auth/logout", json!({})).await
     }
 
-    pub async fn create_space(
+    /// Build + submit the canonical `cx.realm.create` event bundle.
+    ///
+    /// Per spec `models/realm-and-space.md §2.3`, the create event locks
+    /// in `encryption_profile` (`none` / `mls_rfc9420` / `external`) and
+    /// `security_class` (`standard` / `high_assurance`) — the caller MUST
+    /// surface these as user choices instead of hardcoding them.
+    pub async fn create_realm(
         &self,
         actor_id: &str,
         title: &str,
@@ -827,6 +833,8 @@ impl ContrixApi {
         discoverability: &str,
         join_rule: &str,
         history_visibility: &str,
+        encryption_profile: &str,
+        security_class: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
@@ -846,7 +854,7 @@ impl ContrixApi {
         // contrix-sdk's SpaceId validator and soland accept the new shape.
         let space_id = format!("cx:space:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        let events = build_space_bootstrap_events(
+        let events = build_realm_bootstrap_events(
             &space_id,
             actor_id,
             title,
@@ -854,6 +862,8 @@ impl ContrixApi {
             discoverability,
             join_rule,
             history_visibility,
+            encryption_profile,
+            security_class,
             &invitees,
             &plaintext_visible_services,
         )?;
@@ -2919,7 +2929,7 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
 const ZERO_ANCHOR_REF: &str =
     "cx:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
-pub fn build_space_bootstrap_events(
+pub fn build_realm_bootstrap_events(
     space_id: &str,
     actor_id: &str,
     title: &str,
@@ -2927,11 +2937,13 @@ pub fn build_space_bootstrap_events(
     discoverability: &str,
     join_rule: &str,
     history_visibility: &str,
+    encryption_profile: &str,
+    security_class: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<Value>> {
     let mut events = Vec::new();
-    events.push(build_space_create_event(
+    events.push(build_realm_create_event(
         space_id,
         actor_id,
         title,
@@ -2939,6 +2951,8 @@ pub fn build_space_bootstrap_events(
         discoverability,
         join_rule,
         history_visibility,
+        encryption_profile,
+        security_class,
     )?);
     events.push(build_space_state_event(
         space_id,
@@ -2979,7 +2993,7 @@ pub fn build_space_bootstrap_events(
     Ok(events)
 }
 
-pub fn build_space_create_event(
+pub fn build_realm_create_event(
     space_id: &str,
     actor_id: &str,
     title: &str,
@@ -2987,9 +3001,17 @@ pub fn build_space_create_event(
     discoverability: &str,
     join_rule: &str,
     history_visibility: &str,
+    encryption_profile: &str,
+    security_class: &str,
 ) -> anyhow::Result<Value> {
     let created_at = event_timestamp();
-    let federation_policy = if discoverability == "public" {
+    // Per spec realm-and-space.md §2.3: high_assurance security_class
+    // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
+    // The legacy "public discoverability → open federation" rule still
+    // applies but is overridden by high_assurance for safety.
+    let federation_policy = if security_class == "high_assurance" {
+        "restricted"
+    } else if discoverability == "public" {
         "open"
     } else {
         "restricted"
@@ -3003,7 +3025,8 @@ pub fn build_space_create_event(
         "default_discoverability": discoverability,
         "default_join_rule": join_rule,
         "history_visibility": history_visibility,
-        "encryption_profile": "mls_rfc9420",
+        "encryption_profile": encryption_profile,
+        "security_class": security_class,
         "federation_policy": federation_policy,
         "anchor_profile": "single_did",
         "anchorer": {
@@ -3683,7 +3706,7 @@ mod tests {
 
     #[test]
     fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
-        let events = build_space_bootstrap_events(
+        let events = build_realm_bootstrap_events(
             // TODO(realm-rework): switch to a `cx:realm:` id once SDK validators accept it.
             "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -3692,6 +3715,8 @@ mod tests {
             "listed",
             "invite",
             "shared",
+            "mls_rfc9420",
+            "standard",
             &["did:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
         )
