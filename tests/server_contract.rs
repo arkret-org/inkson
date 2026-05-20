@@ -541,6 +541,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             category: Some("collaboration".to_owned()),
             parent_space_id: None,
             child_space_ids: Vec::new(),
+            kind: yougen::models::SpacePreviewKind::Realm,
+            realm_id: String::new(),
         }],
         next_cursor: None,
     };

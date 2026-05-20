@@ -313,6 +313,29 @@ pub struct ResolveSpaceResponse {
     pub via_services: Vec<String>,
 }
 
+/// Sidebar tag distinguishing a security-boundary Realm from a
+/// product-organisation Space. Wire signal is either the
+/// `cx.schema.{realm,space}.v1` `schema` field on the projection
+/// body, or a yougen-local `__kind` tag used by the optimistic
+/// post-create save.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpacePreviewKind {
+    /// `cx:realm:*` — security / sync / E2EE boundary.
+    Realm,
+    /// `cx:space:*` — navigation container inside a Realm.
+    Space,
+}
+
+impl Default for SpacePreviewKind {
+    fn default() -> Self {
+        // Legacy projections (no schema marker) were always Realms —
+        // yougen had no UI to create real Spaces before
+        // M-SPACE-CREATE-1. Default tag keeps them visible.
+        Self::Realm
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpacePreview {
     pub space_id: String,
@@ -326,6 +349,14 @@ pub struct SpacePreview {
     pub parent_space_id: Option<String>,
     #[serde(default)]
     pub child_space_ids: Vec<String>,
+    /// Realm vs Space classification used by the sidebar to render
+    /// the two as separate tiers. Spec realm-and-space.md §1 / §3.
+    #[serde(default)]
+    pub kind: SpacePreviewKind,
+    /// Home Realm of this entry. Empty for Realms (they are their
+    /// own home); set to the parent Realm id for Spaces.
+    #[serde(default)]
+    pub realm_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

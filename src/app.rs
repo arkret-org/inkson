@@ -14,7 +14,7 @@ use crate::{
     },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
-    models::{ServerDescription, ServerDescriptionExt, SpacePreview},
+    models::{ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind},
     routes::Route,
     views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
 };
@@ -5320,8 +5320,22 @@ pub fn RouterView() -> Element {
 
                 div { class: "sidebar-nav-group", "data-testid": "space-list",
                     h4 { class: "sidebar-nav-group-title",
-                        span { "Spaces" }
-                        Link { class: "add", to: Route::SetupSection { section: "spaces".to_owned() }, "+" }
+                        span {
+                            title: "Realms (security boundaries) and the Spaces nested inside them — spec realm-and-space.md.",
+                            "Realms & Spaces"
+                        }
+                        Link {
+                            class: "add",
+                            title: "Create a new Realm",
+                            to: Route::SetupSection { section: "spaces".to_owned() },
+                            "+"
+                        }
+                        Link {
+                            class: "add",
+                            title: "Create a new Space inside an existing Realm",
+                            to: Route::SetupSection { section: "new-space".to_owned() },
+                            "+S"
+                        }
                     }
                     if !loaded_spaces.is_empty() && !sidebar_is_collapsed {
                         div { class: "sidebar-scope-toggle", "data-testid": "space-scope-toggle", role: "group", "aria-label": "Space selection scope",
@@ -5444,10 +5458,33 @@ pub fn RouterView() -> Element {
                                         "备注"
                                     }
                                 }
-                                if item.descendant_count > 0 {
+                                // Two-tier classification badge: Realm
+                                // (security boundary) vs Space (nav
+                                // container inside a Realm). When a
+                                // Realm has descendants, show the count
+                                // instead of the kind tag so the user
+                                // sees the tree structure at a glance.
+                                if item.descendant_count > 0 && item_space.kind == SpacePreviewKind::Realm {
                                     span { class: "pill muted xs", "{item.descendant_count}" }
                                 } else {
-                                    span { class: "pill muted xs", "Space" }
+                                    match item_space.kind {
+                                        SpacePreviewKind::Realm => rsx! {
+                                            span {
+                                                class: "pill muted xs",
+                                                "data-testid": "space-kind-realm",
+                                                title: "Realm — security / sync / E2EE boundary (spec realm-and-space.md §2)",
+                                                "Realm"
+                                            }
+                                        },
+                                        SpacePreviewKind::Space => rsx! {
+                                            span {
+                                                class: "pill muted xs",
+                                                "data-testid": "space-kind-space",
+                                                title: "Space — navigation container inside a Realm (spec realm-and-space.md §3)",
+                                                "Space"
+                                            }
+                                        },
+                                    }
                                 }
                             }
                                 }
@@ -7551,6 +7588,39 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
                         .collect::<BTreeSet<_>>()
                 })
                 .unwrap_or_default();
+            // Classify Realm vs Space. Wire signals:
+            // - `__kind` (yougen-local tag from optimistic save)
+            // - `schema` (server projection — cx.schema.realm.v1 vs
+            //   cx.schema.space.v1)
+            // Anything else (legacy) defaults to Realm because
+            // pre-M-SPACE-CREATE-1 yougen could only create Realms.
+            let kind = match body
+                .get("__kind")
+                .and_then(Value::as_str)
+                .or_else(|| body.get("schema").and_then(Value::as_str))
+            {
+                Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
+                _ => SpacePreviewKind::Realm,
+            };
+            let realm_id = match kind {
+                SpacePreviewKind::Realm => String::new(),
+                SpacePreviewKind::Space => body
+                    .get("realm_id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_default(),
+            };
+            // Sidebar tree wiring: a Space without an explicit
+            // `parent_ref` is rendered under its home Realm. This
+            // turns the Realm/Space classification into a single
+            // tree the existing sidebar code can render without
+            // restructure. Realms (and Spaces with real parents)
+            // keep their existing parent_space_id resolution.
+            let explicit_parent = extract_parent_space_id(id, body);
+            let parent_space_id = match (&kind, &explicit_parent) {
+                (SpacePreviewKind::Space, None) if !realm_id.is_empty() => Some(realm_id.clone()),
+                _ => explicit_parent,
+            };
             SpacePreview {
                 space_id: id.clone(),
                 name: title,
@@ -7561,8 +7631,10 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
                     .get("category")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
-                parent_space_id: extract_parent_space_id(id, body),
+                parent_space_id,
                 child_space_ids: extract_child_space_ids(id, body),
+                kind,
+                realm_id,
             }
         })
         .collect();
@@ -8104,6 +8176,8 @@ mod tests {
             category: None,
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
+            kind: SpacePreviewKind::Realm,
+            realm_id: String::new(),
         }
     }
 
