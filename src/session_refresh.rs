@@ -293,10 +293,36 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     // might be transient (proxy hiccup, clock skew), but if the error
     // chain mentions `auth_expired` / `invalid_grant` we treat it as
     // terminal.
-    crate::api::is_auth_expired_error(error) || {
-        let chain = format!("{error}");
-        chain.contains("invalid_grant") || chain.contains("grant_expired")
+    if crate::api::is_auth_expired_error(error) {
+        return true;
     }
+    if let Some(api_error) = error.downcast_ref::<crate::api::ContrixApiError>() {
+        let code = api_error.error.code();
+        let message = api_error.error.message().to_ascii_lowercase();
+        if matches!(
+            code,
+            "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
+        ) {
+            return true;
+        }
+        if code == "capability_denied" && terminal_session_grant_message(&message) {
+            return true;
+        }
+    }
+    let chain = format!("{error}").to_ascii_lowercase();
+    chain.contains("invalid_grant")
+        || chain.contains("grant_expired")
+        || chain.contains("grant_revoked")
+        || terminal_session_grant_message(&chain)
+}
+
+fn terminal_session_grant_message(message: &str) -> bool {
+    message.contains("session grant")
+        && (message.contains("revoked")
+            || message.contains("not active")
+            || message.contains("expired")
+            || message.contains("locked")
+            || message.contains("suspended"))
 }
 
 #[cfg(test)]
@@ -375,6 +401,44 @@ mod tests {
         let mut store = isolated_store("grant-expired");
         store.set_session_grant(Some(grant_with_session_expiry(3600, -60)));
         assert_eq!(refresh_decision(&store), RefreshDecision::GrantExpired);
+    }
+
+    #[test]
+    fn commit_clears_grant_when_principal_reports_revoked_session_grant() {
+        let mut store = isolated_store("revoked-grant");
+        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+        let error: anyhow::Error = crate::api::ContrixApiError {
+            status: reqwest::StatusCode::FORBIDDEN,
+            error: crate::api::decode_contrix_error(
+                reqwest::StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"errcode":"capability_denied","error":"session grant is not active: revoked","request_id":"cx:req:test"}}"#,
+            ),
+        }
+        .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::LoginRequired { .. }));
+        assert!(store.session_grant().is_none());
+    }
+
+    #[test]
+    fn commit_keeps_grant_for_unrelated_capability_denial() {
+        let mut store = isolated_store("unrelated-capability-denied");
+        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+        let error: anyhow::Error = crate::api::ContrixApiError {
+            status: reqwest::StatusCode::FORBIDDEN,
+            error: crate::api::decode_contrix_error(
+                reqwest::StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"errcode":"capability_denied","error":"actor is not a member of the event Space","request_id":"cx:req:test"}}"#,
+            ),
+        }
+        .into();
+
+        let outcome = commit_refresh(&mut store, Err(error));
+
+        assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
+        assert!(store.session_grant().is_some());
     }
 
     #[test]

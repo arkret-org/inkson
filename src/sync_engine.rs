@@ -58,11 +58,14 @@ const MIN_BACKOFF_SECS: u64 = 1;
 
 /// Minimum pause between successful iterations. Insurance against
 /// servers that return account subscribe catch-up immediately; without
-/// this, an `Ok → loop → Ok → loop` cycle spins at network
-/// RTT and burns the per-minute rate-limit quota in a few seconds.
-/// 250 ms = 4 req/s = 240/min, comfortably below the 600/min the
-/// reference server advertises.
-const MIN_INTER_ITERATION_MS: u64 = 250;
+/// this, an `Ok -> loop -> Ok -> loop` cycle spins at network RTT and
+/// floods the browser network panel with identical snapshots.
+///
+/// Yougen currently folds each NDJSON response with `Response::bytes()`,
+/// so it cannot yet keep the spec's long-lived account stream open. Keep
+/// the fallback poll interval human-scale until the client switches to a
+/// true frame reader.
+const MIN_INTER_ITERATION_MS: u64 = 5_000;
 
 /// Bundle of signals + state-store the engine needs to apply a response.
 /// `Copy` because Dioxus signals already are; the struct is just a

@@ -7254,7 +7254,9 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
     let mut previews: Vec<SpacePreview> = spaces
         .iter()
-        .filter(|(id, body)| id.starts_with("cx:space:") && !projection_looks_like_flow(body))
+        .filter(|(id, body)| {
+            is_realm_or_space_projection_id(id) && !projection_looks_like_flow(body)
+        })
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
             let title = summary
@@ -7334,6 +7336,10 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
         .collect();
     normalize_space_hierarchy(&mut previews);
     previews
+}
+
+fn is_realm_or_space_projection_id(id: &str) -> bool {
+    id.starts_with("cx:realm:") || id.starts_with("cx:space:")
 }
 
 fn projection_looks_like_flow(body: &Value) -> bool {
@@ -7656,6 +7662,54 @@ mod tests {
         );
         assert_eq!(previews[0].name, "Contrix Demo Space");
         assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
+    }
+
+    #[test]
+    fn sync_projection_keeps_realm_ids_from_account_subscribe() {
+        let mut spaces = BTreeMap::new();
+        spaces.insert(
+            "cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729".to_owned(),
+            json!({
+                "bottom_cells": [],
+                "ephemeral": [],
+                "flows": [{
+                    "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                    "kind": "discussion",
+                    "title": "Test"
+                }],
+                "state": [],
+                "state_after": {
+                    "events": [{
+                        "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                        "kind": "discussion",
+                        "title": "Test"
+                    }]
+                },
+                "summary": {
+                    "category": null,
+                    "flow": {
+                        "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                        "kind": "discussion",
+                        "title": "Test"
+                    },
+                    "summary": null,
+                    "tags": [],
+                    "title": "Test"
+                },
+                "timeline": {"events": [], "limited": false},
+                "unread": {"highlight_count": 0, "notification_count": 0}
+            }),
+        );
+
+        let previews = space_previews_from_sync_spaces(&spaces);
+
+        assert_eq!(previews.len(), 1);
+        assert_eq!(
+            previews[0].space_id,
+            "cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729"
+        );
+        assert_eq!(previews[0].name, "Test");
+        assert_eq!(previews[0].kind, SpacePreviewKind::Realm);
     }
 
     #[test]
