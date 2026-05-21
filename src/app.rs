@@ -3692,604 +3692,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────
-   Agent Workspace (cx.profile.agent_workspace.v1)
-   See views/agent_workspace.rs.
-   ───────────────────────────────────────────────────────────────────── */
-
-.agent-workspace-dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 16px;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.agent-workspace-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.agent-workspace-header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-
-.agent-workspace-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.agent-workspace-pending.sticky {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--surface, #fff);
-  border: 2px solid #ff8b3d;
-  border-radius: 10px;
-  padding: 14px 16px;
-  box-shadow: 0 2px 8px rgba(255, 139, 61, 0.15);
-}
-
-.agent-workspace-section-title {
-  margin: 0 0 8px 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.agent-workspace-section-title.pending {
-  color: #b3580f;
-}
-
-.agent-workspace-section-subtitle {
-  margin: 0 0 12px 0;
-  font-size: 0.875rem;
-  color: var(--text-muted, #666);
-}
-
-.agent-workspace-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
-}
-
-.agent-task-card {
-  border: 1px solid var(--border, #d9dee5);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--surface, #fff);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.agent-task-card.emphasis-pending {
-  border-color: #ff8b3d;
-  background: #fff8f1;
-}
-
-.agent-task-card.emphasis-muted {
-  opacity: 0.7;
-}
-
-.agent-task-card-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 0.85rem;
-  color: var(--text-muted, #666);
-}
-
-.agent-task-card-source {
-  font-weight: 600;
-  color: var(--text, #1a1a1a);
-}
-
-.agent-task-card-instruction {
-  font-size: 0.95rem;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.agent-task-card-banner {
-  background: #fff3e0;
-  border-left: 3px solid #ff8b3d;
-  padding: 6px 10px;
-  font-size: 0.85rem;
-  color: #b3580f;
-  border-radius: 4px;
-}
-
-.agent-task-card-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-  flex-wrap: wrap;
-}
-
-.fsm-chip-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.fsm-chip {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  line-height: 1.2;
-  border: 1px solid currentColor;
-  background: var(--surface, #fff);
-}
-
-.fsm-chip-kind {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  opacity: 0.75;
-  letter-spacing: 0.05em;
-}
-
-.fsm-chip-label {
-  font-weight: 600;
-}
-
-.fsm-chip-green {
-  color: #1f7a3a;
-  background: #e8f5ec;
-}
-
-.fsm-chip-orange {
-  color: #b3580f;
-  background: #fff3e0;
-  border-color: #ff8b3d;
-}
-
-.fsm-chip-blue {
-  color: #1b4f8f;
-  background: #e8f0fb;
-}
-
-.fsm-chip-grey {
-  color: #555;
-  background: #eee;
-}
-
-.agent-workspace-empty {
-  border: 1px dashed var(--border, #d9dee5);
-  border-radius: 8px;
-  padding: 16px;
-  text-align: center;
-  color: var(--text-muted, #666);
-}
-
-.agent-workspace-empty-hint {
-  font-size: 0.85rem;
-  margin-top: 8px;
-}
-
-.agent-workspace-agent-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.agent-workspace-agent-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--surface-subtle, #f8f9fb);
-}
-
-.agent-workspace-agent-dot {
-  color: #1f7a3a;
-}
-
-.agent-workspace-agent-name {
-  font-weight: 600;
-}
-
-.agent-workspace-agent-consulting-pill {
-  display: inline-block;
-  font-size: 0.7rem;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #e8f0fb;
-  color: #1b4f8f;
-  margin-right: 6px;
-}
-
-/* Task detail */
-
-.agent-task-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px;
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.agent-task-detail-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.agent-task-detail-banner {
-  background: #fff3e0;
-  border: 1px solid #ff8b3d;
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.agent-task-detail-banner-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.agent-task-detail-anchor {
-  font-size: 0.85rem;
-  color: var(--text-muted, #666);
-}
-
-.agent-task-detail-section {
-  border: 1px solid var(--border, #d9dee5);
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-
-.agent-task-detail-section h2 {
-  margin: 0 0 8px 0;
-  font-size: 1rem;
-}
-
-.agent-task-detail-instruction,
-.agent-task-detail-draft {
-  background: var(--surface-subtle, #f8f9fb);
-  border-radius: 6px;
-  padding: 10px;
-  white-space: pre-wrap;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.agent-task-detail-draft-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.agent-task-detail-conversation {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.agent-task-detail-conversation-line {
-  font-size: 0.9rem;
-  padding: 4px 6px;
-}
-
-.agent-task-detail-conversation-line .speaker {
-  font-weight: 600;
-}
-
-.agent-task-detail-conversation-line .ts {
-  font-size: 0.75rem;
-  color: var(--text-muted, #666);
-  margin-left: 8px;
-}
-
-.agent-task-detail-conversation-compose {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.agent-task-detail-audit {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.75rem;
-  color: var(--text-muted, #666);
-}
-
-/* Private routing indicator in compose (chat / discussion). */
-
-.private-compose-mode {
-  border: 2px solid #6d3eaf;
-  background: #f7f1ff;
-  border-radius: 8px;
-  padding: 8px;
-}
-
-.private-compose-mode .private-routing-banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.85rem;
-  color: #4b2784;
-  background: #ede2ff;
-  padding: 6px 10px;
-  border-radius: 6px;
-  margin-bottom: 6px;
-}
-
-.private-compose-mode .private-routing-banner::before {
-  content: "🔒";
-}
-
-.private-compose-summary-warning {
-  font-size: 0.8rem;
-  color: #b3580f;
-  margin-top: 4px;
-}
-
-/* Mobile: stack the dashboard, scroll FSM chips horizontally. */
-@media (max-width: 768px) {
-  .agent-workspace-cards {
-    grid-template-columns: 1fr;
-  }
-  .fsm-chip-row {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: 4px;
-  }
-}
-
-/* Dark mode tweaks. */
-@media (prefers-color-scheme: dark) {
-  .agent-task-card { background: #1f2229; }
-  .agent-task-card-banner { background: #3a2410; color: #ffb787; }
-  .agent-workspace-pending.sticky { background: #1f2229; }
-  .agent-task-detail-banner { background: #3a2410; }
-  .agent-task-detail-instruction, .agent-task-detail-draft { background: #15171c; }
-  .agent-workspace-agent-row { background: #1a1d22; }
-  .fsm-chip-green { background: #0e2a18; color: #74d68f; }
-  .fsm-chip-orange { background: #3a2410; color: #ffb787; }
-  .fsm-chip-blue { background: #15243a; color: #92baf7; }
-  .fsm-chip-grey { background: #2a2c30; color: #bbb; }
-  .private-compose-mode { background: #251a3a; border-color: #9a76d8; }
-  .private-compose-mode .private-routing-banner { background: #2f2152; color: #cdb6f6; }
-}
-
-/* ─────────────────────────────────────────────────────────────────────
-   Publish-to-source + Add-agent modals + Settings page
-   (AW-3.4 + AW-3.7 + AW-3.8 + AW-3.12)
-   ───────────────────────────────────────────────────────────────────── */
-
-.publish-to-source-modal-backdrop,
-.add-agent-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.publish-to-source-modal,
-.add-agent-modal {
-  background: var(--surface, #fff);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  width: min(560px, 90vw);
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.publish-to-source-modal-header,
-.add-agent-modal-header {
-  padding: 16px 20px 8px;
-  border-bottom: 1px solid var(--border, #d9dee5);
-}
-
-.publish-to-source-modal-header h2,
-.add-agent-modal-header h2 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-.publish-to-source-modal-body,
-.add-agent-modal-body {
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-}
-
-.publish-to-source-modal-body fieldset,
-.add-agent-modal-body fieldset {
-  border: 1px solid var(--border, #d9dee5);
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.publish-to-source-modal-body legend,
-.add-agent-modal-body legend {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0 6px;
-}
-
-.publish-to-source-modal-body label,
-.add-agent-modal-body label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-.publish-to-source-modal-preview {
-  background: var(--surface-subtle, #f8f9fb);
-  border-radius: 6px;
-  padding: 10px;
-  white-space: pre-wrap;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.85rem;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.publish-to-source-modal-disabled-note,
-.add-agent-modal-empty {
-  color: #b3580f;
-  background: #fff3e0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 0.85rem;
-}
-
-.publish-to-source-modal-footer,
-.add-agent-modal-footer {
-  padding: 12px 20px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  border-top: 1px solid var(--border, #d9dee5);
-}
-
-.add-agent-modal-disclosure {
-  font-size: 0.8rem;
-  color: var(--text-muted, #666);
-  background: var(--surface-subtle, #f8f9fb);
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin: 0;
-}
-
-/* Settings page */
-
-.agent-workspace-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 16px;
-  max-width: 800px;
-  margin: 0 auto;
-}
-
-.agent-workspace-settings-header h1 {
-  margin: 0;
-  font-size: 1.4rem;
-}
-
-.agent-workspace-settings-section {
-  border: 1px solid var(--border, #d9dee5);
-  border-radius: 10px;
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.agent-workspace-settings-section h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.agent-workspace-settings-hint {
-  font-size: 0.85rem;
-  color: var(--text-muted, #666);
-  margin: 0;
-}
-
-.agent-workspace-settings-section.danger-zone {
-  border-color: #ef4444;
-  background: #fff5f5;
-}
-
-.agent-workspace-settings-section.danger-zone summary {
-  cursor: pointer;
-}
-
-.agent-workspace-settings-section.danger-zone button.danger {
-  background: #ef4444;
-  color: #fff;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-/* Notification row */
-
-.notification-row-agent-membership {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  text-decoration: none;
-  color: inherit;
-  border-radius: 6px;
-}
-
-.notification-row-agent-membership:hover {
-  background: var(--surface-subtle, #f8f9fb);
-}
-
-.notification-row-agent-membership .notification-icon {
-  font-size: 1.2rem;
-}
-
-.notification-row-agent-membership .notification-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.notification-row-agent-membership .notification-detail {
-  font-size: 0.8rem;
-  color: var(--text-muted, #666);
-}
-
-@media (prefers-color-scheme: dark) {
-  .publish-to-source-modal,
-  .add-agent-modal { background: #1f2229; }
-  .publish-to-source-modal-preview,
-  .add-agent-modal-disclosure { background: #15171c; }
-  .agent-workspace-settings-section.danger-zone { background: #2a1818; border-color: #d44; }
-  .publish-to-source-modal-disabled-note,
-  .add-agent-modal-empty { background: #3a2410; color: #ffb787; }
-  .notification-row-agent-membership:hover { background: #1a1d22; }
-}
 "#;
 
 /// One-shot push-token provider bootstrap.
@@ -4747,8 +4149,6 @@ pub fn RouterView() -> Element {
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
-    let initial_agent_workspace =
-        agent_workspace_projection_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
@@ -4801,26 +4201,6 @@ pub fn RouterView() -> Element {
         move || initial_spaces.clone()
     });
     let mut timeline = use_signal(Vec::<TimelineEvent>::new);
-    let agent_workspace_pending = use_signal({
-        let initial_agent_workspace = initial_agent_workspace.clone();
-        move || initial_agent_workspace.pending.clone()
-    });
-    let agent_workspace_in_flight = use_signal({
-        let initial_agent_workspace = initial_agent_workspace.clone();
-        move || initial_agent_workspace.in_flight.clone()
-    });
-    let agent_workspace_recent = use_signal({
-        let initial_agent_workspace = initial_agent_workspace.clone();
-        move || initial_agent_workspace.recent.clone()
-    });
-    let agent_workspace_agents = use_signal({
-        let initial_agent_workspace = initial_agent_workspace.clone();
-        move || initial_agent_workspace.agents.clone()
-    });
-    let agent_workspace_details = use_signal({
-        let initial_agent_workspace = initial_agent_workspace.clone();
-        move || initial_agent_workspace.details.clone()
-    });
     let draft = use_signal({
         let initial_local_state = initial_local_state.clone();
         let initial_spaces = initial_spaces.clone();
@@ -4877,14 +4257,6 @@ pub fn RouterView() -> Element {
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
-    // A2 / AW-3.10: the controller's owned-agent list. chat.rs +
-    // timeline.rs composers read this Signal (via `use_context`) to
-    // decide whether to mount the PrivateComposeBanner above the
-    // textarea. Default empty until the SDK agent-workspace projection
-    // hydrates it.
-    let owned_agents_context = use_context_provider::<
-        crate::views::agent_workspace::OwnedAgentsContext,
-    >(|| Signal::new(initial_agent_workspace.agents.clone()));
     let mut theme = use_signal(move || initial_theme);
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
@@ -4897,8 +4269,6 @@ pub fn RouterView() -> Element {
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
-    // A2 — popover next to topbar "My Agents" nav entry.
-    let mut agent_workspace_info_open = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
@@ -5035,12 +4405,6 @@ pub fn RouterView() -> Element {
                     selected_space,
                     spaces,
                     timeline,
-                    agent_workspace_pending,
-                    agent_workspace_in_flight,
-                    agent_workspace_recent,
-                    agent_workspace_agents,
-                    agent_workspace_details,
-                    owned_agents_context,
                     device_queue,
                     frontier_state,
                     crypto_state,
@@ -5088,12 +4452,6 @@ pub fn RouterView() -> Element {
             theme,
             account_did,
             selected_space,
-            agent_workspace_pending,
-            agent_workspace_in_flight,
-            agent_workspace_recent,
-            agent_workspace_agents,
-            agent_workspace_details,
-            owned_agents_context,
         };
         spawn(async move {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
@@ -5485,12 +4843,6 @@ pub fn RouterView() -> Element {
                                 selected_space,
                                 spaces,
                                 timeline,
-                                agent_workspace_pending,
-                                agent_workspace_in_flight,
-                                agent_workspace_recent,
-                                agent_workspace_agents,
-                                agent_workspace_details,
-                                owned_agents_context,
                                 device_queue,
                                 frontier_state,
                                 crypto_state,
@@ -5509,7 +4861,6 @@ pub fn RouterView() -> Element {
                     }
                 }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
-                Link { class: "secondary", "data-testid": "mobile-agent-workspace-nav-button", to: Route::AgentWorkspace, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.agent_workspace")} }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_spaces.is_empty() {
@@ -5654,12 +5005,6 @@ pub fn RouterView() -> Element {
                                                         selected_space,
                                                         spaces,
                                                         timeline,
-                                                        agent_workspace_pending,
-                                                        agent_workspace_in_flight,
-                                                        agent_workspace_recent,
-                                                        agent_workspace_agents,
-                                                        agent_workspace_details,
-                                                        owned_agents_context,
                                                         device_queue,
                                                         frontier_state,
                                                         crypto_state,
@@ -6060,53 +5405,6 @@ pub fn RouterView() -> Element {
                             span { class: "mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
                             if let Some(ref err) = last_error() {
                                 span { "data-testid": "last-error", "{err}" }
-                            }
-                        }
-                        div { class: "topbar-agent-workspace-wrap", style: "position: relative; display: inline-flex; align-items: center;",
-                            Link {
-                                class: "btn icon sm ghost topbar-agent-workspace-link",
-                                "data-testid": "topbar-agent-workspace-button",
-                                to: Route::AgentWorkspace,
-                                title: crate::i18n::tr("nav.agent_workspace"),
-                                "aria-label": crate::i18n::tr("nav.agent_workspace"),
-                                UiIcon { name: "user" }
-                                span { class: "topbar-notifications-badge", "aria-hidden": "true" }
-                            }
-                            // A2 — info-icon + popover next to the My
-                            // Agents nav entry. Pressing it toggles a
-                            // small explanation card that surfaces the
-                            // mirror-Space semantics so users
-                            // understand the boundary before opening
-                            // the surface.
-                            button {
-                                class: "btn icon sm ghost topbar-agent-workspace-info",
-                                "data-testid": "topbar-agent-workspace-info-button",
-                                title: crate::i18n::tr("agent_workspace.nav.info_title"),
-                                "aria-label": crate::i18n::tr("agent_workspace.nav.info_button"),
-                                "aria-expanded": format!("{}", agent_workspace_info_open()),
-                                onclick: move |evt| {
-                                    evt.stop_propagation();
-                                    agent_workspace_info_open.toggle();
-                                },
-                                "?"
-                            }
-                            if agent_workspace_info_open() {
-                                div {
-                                    class: "topbar-agent-workspace-info-popover",
-                                    "role": "dialog",
-                                    "data-testid": "topbar-agent-workspace-info-popover",
-                                    style: "position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 280px; max-width: 360px; padding: 12px; border-radius: 8px; background: var(--bg-elevated, #1a1d22); color: var(--text-strong, #fff); border: 1px solid var(--border-default, #333); box-shadow: 0 6px 24px rgba(0,0,0,0.35);",
-                                    strong { "{crate::i18n::tr(\"agent_workspace.nav.info_title\")}" }
-                                    p { style: "margin: 6px 0 8px 0; line-height: 1.4;",
-                                        "{crate::i18n::tr(\"agent_workspace.nav.info_body\")}"
-                                    }
-                                    button {
-                                        class: "secondary",
-                                        "data-testid": "topbar-agent-workspace-info-dismiss",
-                                        onclick: move |_| agent_workspace_info_open.set(false),
-                                        "{crate::i18n::tr(\"common.close\")}"
-                                    }
-                                }
                             }
                         }
                         Link {
@@ -6778,30 +6076,6 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
-                    Route::AgentWorkspace => rsx! {
-                        crate::views::agent_workspace::AgentWorkspaceDashboard {
-                            pending: agent_workspace_pending,
-                            in_flight: agent_workspace_in_flight,
-                            recent: agent_workspace_recent,
-                            agents: agent_workspace_agents,
-                        }
-                    },
-                    Route::AgentTask { task_id } => rsx! {
-                        crate::views::agent_workspace::AgentTaskDetailPage {
-                            task_id: task_id.clone(),
-                            detail: use_signal({
-                                let task_id = task_id.clone();
-                                let details = agent_workspace_details.read().clone();
-                                move || details.get(&task_id).cloned()
-                            }),
-                        }
-                    },
-                    Route::AgentWorkspaceSettings => rsx! {
-                        crate::views::agent_workspace::AgentWorkspaceSettings {
-                            agents: agent_workspace_agents,
-                            default_profile: use_signal(crate::views::agent_workspace::AgentMemberProfile::default),
-                        }
-                    },
                     // A6.1 — global cross-Space message search panel.
                     Route::Search => rsx! {
                         crate::views::global_search::GlobalSearchPanel {
@@ -6836,49 +6110,9 @@ fn SpaceContextBar(
     full_ready: bool,
 ) -> Element {
     let _ = (&scope_label, scope_count);
-    let relation = state_store
-        .read()
-        .load()
-        .space_projections
-        .get(&space_id)
-        .and_then(space_mirror_relation);
-    let source_chip = relation.as_ref().and_then(|relation| {
-        relation.source_space_id.as_ref().map(|id| {
-            (
-                id.clone(),
-                relation.source_label.clone().unwrap_or_else(|| id.clone()),
-            )
-        })
-    });
-    let mirror_chip = relation.as_ref().and_then(|relation| {
-        relation.mirror_space_id.as_ref().map(|id| {
-            (
-                id.clone(),
-                relation.mirror_label.clone().unwrap_or_else(|| id.clone()),
-            )
-        })
-    });
     rsx! {
         div { class: "event", "data-testid": "space-context-bar",
             div { class: "actions",
-                if let Some((source_space_id, source_label)) = source_chip {
-                    Link {
-                        class: "secondary",
-                        "data-testid": "space-source-chip",
-                        to: Route::Space { space_id: source_space_id },
-                        UiIcon { name: "arrow-left" }
-                        "Source: {source_label}"
-                    }
-                }
-                if let Some((mirror_space_id, mirror_label)) = mirror_chip {
-                    Link {
-                        class: "secondary",
-                        "data-testid": "space-mirror-chip",
-                        to: Route::Space { space_id: mirror_space_id },
-                        UiIcon { name: "arrow-right" }
-                        "Mirror: {mirror_label}"
-                    }
-                }
                 for surface in SpaceSurface::all() {
                     if surface.is_available(minimal_ready, kanban_ready, chat_ready, full_ready) {
                         Link {
@@ -6925,11 +6159,6 @@ fn SpaceContextBar(
 fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "dashboard, recent activity", Route::Dashboard),
-        (
-            "My Agents",
-            "agent workspace, tasks, mention_redirect routing",
-            Route::AgentWorkspace,
-        ),
         (
             "Notifications",
             "inbox, mentions, approvals",
@@ -7335,9 +6564,6 @@ fn route_label(route: &Route) -> &'static str {
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",
         Route::Agents => "Agents",
-        Route::AgentWorkspace => "My Agents",
-        Route::AgentTask { .. } => "Agent Task",
-        Route::AgentWorkspaceSettings => "My Agents · Settings",
         Route::Search => "Search",
     }
 }
@@ -7493,13 +6719,6 @@ struct ConnectContext {
     selected_space: Signal<String>,
     spaces: Signal<Vec<SpacePreview>>,
     timeline: Signal<Vec<TimelineEvent>>,
-    agent_workspace_pending: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    agent_workspace_in_flight: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    agent_workspace_recent: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    agent_workspace_agents: Signal<Vec<crate::views::agent_workspace::OwnedAgentSummary>>,
-    agent_workspace_details:
-        Signal<BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>>,
-    owned_agents_context: crate::views::agent_workspace::OwnedAgentsContext,
     device_queue: Signal<usize>,
     frontier_state: Signal<String>,
     crypto_state: Signal<String>,
@@ -7535,12 +6754,6 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut selected_space = ctx.selected_space;
         let mut spaces = ctx.spaces;
         let mut timeline = ctx.timeline;
-        let mut agent_workspace_pending = ctx.agent_workspace_pending;
-        let mut agent_workspace_in_flight = ctx.agent_workspace_in_flight;
-        let mut agent_workspace_recent = ctx.agent_workspace_recent;
-        let mut agent_workspace_agents = ctx.agent_workspace_agents;
-        let mut agent_workspace_details = ctx.agent_workspace_details;
-        let mut owned_agents_context = ctx.owned_agents_context;
         let mut device_queue = ctx.device_queue;
         let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
@@ -7737,7 +6950,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // "re-establish the world from scratch". The SyncEngine
                 // (see crate::sync_engine) owns the long-poll loop that
                 // threads the cursor for incremental deltas.
-                match authed.sync(None).await {
+                match authed.account_subscribe_snapshot(None).await {
                     Ok(sync) => {
                         {
                             let mut store = state_store.write();
@@ -7932,15 +7145,6 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             selected_space.set(first_space.unwrap_or_default());
                         }
                         timeline.set(synced_timeline);
-                        let workspace_projection = agent_workspace_projection_from_sync_spaces(
-                            &state_store.read().load().space_projections,
-                        );
-                        agent_workspace_pending.set(workspace_projection.pending);
-                        agent_workspace_in_flight.set(workspace_projection.in_flight);
-                        agent_workspace_recent.set(workspace_projection.recent);
-                        agent_workspace_agents.set(workspace_projection.agents.clone());
-                        owned_agents_context.set(workspace_projection.agents);
-                        agent_workspace_details.set(workspace_projection.details);
                         device_queue.set(sync.to_device.len());
                         sync_cursor.set(sync.cursor);
                     }
@@ -8231,385 +7435,6 @@ pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec
         }
     }
     events
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AgentWorkspaceProjection {
-    pub pending: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    pub in_flight: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    pub recent: Vec<crate::views::agent_workspace::AgentTaskSummary>,
-    pub agents: Vec<crate::views::agent_workspace::OwnedAgentSummary>,
-    pub details: BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct SpaceMirrorRelation {
-    source_space_id: Option<String>,
-    source_label: Option<String>,
-    mirror_space_id: Option<String>,
-    mirror_label: Option<String>,
-}
-
-pub fn agent_workspace_projection_from_sync_spaces(
-    spaces: &BTreeMap<String, Value>,
-) -> AgentWorkspaceProjection {
-    use crate::views::agent_workspace::{AgentTaskDetail, OwnedAgentSummary};
-
-    let labels = space_label_map(spaces);
-    let mut all_tasks = Vec::new();
-    let mut details = BTreeMap::new();
-    let mut agents_by_did: BTreeMap<String, OwnedAgentSummary> = BTreeMap::new();
-
-    for (space_id, body) in spaces {
-        for event in projection_events(body) {
-            let kind = string_field(event, &["kind", "type"]).unwrap_or_default();
-            let payload = event_payload(event);
-            if kind == "cx.agent.endpoint" || string_field(payload, &["agent_did"]).is_some() {
-                if let Some(agent_did) = string_field(payload, &["agent_did", "did", "actor_id"]) {
-                    let label = string_field(
-                        payload,
-                        &["display_name", "agent_label", "name", "handle", "label"],
-                    )
-                    .unwrap_or_else(|| agent_did.clone());
-                    let source_label = labels
-                        .get(space_id)
-                        .cloned()
-                        .unwrap_or_else(|| space_id.clone());
-                    let entry = agents_by_did.entry(agent_did.clone()).or_insert_with(|| {
-                        OwnedAgentSummary {
-                            agent_did,
-                            display_name: label,
-                            active_in_sources: Vec::new(),
-                            in_mirror_space: false,
-                        }
-                    });
-                    if !entry.active_in_sources.iter().any(|s| s == &source_label) {
-                        entry.active_in_sources.push(source_label);
-                    }
-                }
-            }
-        }
-
-        let relation = space_mirror_relation(body);
-        if let Some(agent_did) = string_field(
-            body,
-            &[
-                "agent_did",
-                "target_agent_id",
-                "target_agent_did",
-                "controller_agent_did",
-            ],
-        ) {
-            let entry =
-                agents_by_did
-                    .entry(agent_did.clone())
-                    .or_insert_with(|| OwnedAgentSummary {
-                        agent_did: agent_did.clone(),
-                        display_name: agent_did.clone(),
-                        active_in_sources: Vec::new(),
-                        in_mirror_space: true,
-                    });
-            if let Some(label) = relation.as_ref().and_then(|r| r.source_label.clone()) {
-                if !entry.active_in_sources.iter().any(|s| s == &label) {
-                    entry.active_in_sources.push(label);
-                }
-            }
-            entry.in_mirror_space = relation
-                .as_ref()
-                .and_then(|r| r.source_space_id.as_ref())
-                .is_some();
-        }
-
-        for task_value in projection_agent_tasks(body) {
-            if let Some(summary) = agent_task_summary_from_value(space_id, task_value, &labels) {
-                let detail = AgentTaskDetail {
-                    source_anchor: string_field(
-                        task_value,
-                        &[
-                            "source_anchor",
-                            "context_anchor",
-                            "anchor",
-                            "source_event_id",
-                        ],
-                    ),
-                    instruction_full: string_field(
-                        task_value,
-                        &["instruction", "instruction_full", "body", "prompt"],
-                    )
-                    .unwrap_or_else(|| summary.instruction_preview.clone()),
-                    agent_draft: string_field(
-                        task_value,
-                        &["agent_draft", "draft", "draft_preview", "result", "output"],
-                    ),
-                    conversation: projection_conversation_lines(task_value),
-                    audit_trail: string_array_field(
-                        task_value,
-                        &["audit_trail", "audit", "events", "source_events"],
-                    ),
-                    summary: summary.clone(),
-                };
-                details.insert(summary.agent_task_id.clone(), detail);
-                all_tasks.push(summary);
-            }
-        }
-    }
-
-    let mut pending = Vec::new();
-    let mut in_flight = Vec::new();
-    let mut recent = Vec::new();
-    for task in all_tasks {
-        if task.needs_attention() {
-            pending.push(task);
-        } else if task.is_in_flight() {
-            in_flight.push(task);
-        } else {
-            recent.push(task);
-        }
-    }
-    recent.truncate(10);
-    AgentWorkspaceProjection {
-        pending,
-        in_flight,
-        recent,
-        agents: agents_by_did.into_values().collect(),
-        details,
-    }
-}
-
-fn space_label_map(spaces: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
-    spaces
-        .iter()
-        .map(|(space_id, body)| {
-            let label = body
-                .get("summary")
-                .and_then(|summary| string_field(summary, &["title", "name", "summary"]))
-                .or_else(|| string_field(body, &["title", "name", "label"]))
-                .unwrap_or_else(|| space_id.clone());
-            (space_id.clone(), label)
-        })
-        .collect()
-}
-
-fn projection_events(body: &Value) -> Vec<&Value> {
-    let mut events = Vec::new();
-    for container in [
-        body.get("timeline")
-            .and_then(|timeline| timeline.get("events"))
-            .unwrap_or(&Value::Null),
-        body.get("events").unwrap_or(&Value::Null),
-        body.get("operations").unwrap_or(&Value::Null),
-    ] {
-        if let Some(items) = container.as_array() {
-            events.extend(items.iter());
-        }
-    }
-    events
-}
-
-fn event_payload(event: &Value) -> &Value {
-    event
-        .get("payload")
-        .or_else(|| event.get("body"))
-        .or_else(|| event.get("content"))
-        .unwrap_or(event)
-}
-
-fn projection_agent_tasks(body: &Value) -> Vec<&Value> {
-    let mut tasks = Vec::new();
-    for container in [
-        body.get("agent_tasks").unwrap_or(&Value::Null),
-        body.get("tasks").unwrap_or(&Value::Null),
-        body.get("agent_workspace")
-            .and_then(|workspace| workspace.get("tasks"))
-            .unwrap_or(&Value::Null),
-        body.get("summary")
-            .and_then(|summary| summary.get("agent_tasks"))
-            .unwrap_or(&Value::Null),
-    ] {
-        if let Some(items) = container.as_array() {
-            tasks.extend(items.iter());
-        }
-    }
-    for event in projection_events(body) {
-        let kind = string_field(event, &["kind", "type"]).unwrap_or_default();
-        if kind.contains("agent_task") {
-            tasks.push(event_payload(event));
-        }
-    }
-    tasks
-}
-
-fn agent_task_summary_from_value(
-    mirror_space_id: &str,
-    value: &Value,
-    labels: &BTreeMap<String, String>,
-) -> Option<crate::views::agent_workspace::AgentTaskSummary> {
-    use crate::views::agent_workspace::AgentTaskSummary;
-
-    let task_id = string_field(
-        value,
-        &["agent_task_id", "task_id", "id", "object_id", "target_ref"],
-    )?;
-    let source_space_id = string_field(value, &["source_space_id", "source_space", "source_id"]);
-    let source_space_label =
-        string_field(value, &["source_space_label", "source_label"]).or_else(|| {
-            source_space_id
-                .as_ref()
-                .and_then(|id| labels.get(id).cloned())
-        });
-    let instruction = string_field(
-        value,
-        &[
-            "instruction_preview",
-            "instruction",
-            "prompt",
-            "body",
-            "summary",
-        ],
-    )
-    .unwrap_or_else(|| task_id.clone());
-
-    Some(AgentTaskSummary {
-        agent_task_id: task_id,
-        mirror_flow_id: string_field(value, &["mirror_flow_id", "mirror_space_id", "flow_id"])
-            .unwrap_or_else(|| mirror_space_id.to_owned()),
-        source_space_label,
-        source_flow_label: string_field(value, &["source_flow_label", "source_flow_id", "flow"]),
-        agent_label: string_field(
-            value,
-            &[
-                "agent_label",
-                "agent_display_name",
-                "agent_did",
-                "target_agent_id",
-            ],
-        )
-        .unwrap_or_else(|| "agent".to_owned()),
-        instruction_preview: clamp_preview(&instruction, 120),
-        execution: parse_execution_state(
-            string_field(value, &["execution_state", "execution", "state"])
-                .as_deref()
-                .unwrap_or("active"),
-        ),
-        transparency: parse_transparency_state(
-            string_field(value, &["transparency_state", "transparency"])
-                .as_deref()
-                .unwrap_or("ok"),
-        ),
-        source_authority: parse_source_authority_state(
-            string_field(
-                value,
-                &["source_authority_state", "source_authority", "authority"],
-            )
-            .as_deref()
-            .unwrap_or("ok"),
-        ),
-        last_updated: string_field(value, &["updated_at", "last_updated", "created_at", "hlc"])
-            .unwrap_or_else(|| "synced".to_owned()),
-    })
-}
-
-fn projection_conversation_lines(
-    value: &Value,
-) -> Vec<crate::views::agent_workspace::TaskConversationLine> {
-    value
-        .get("conversation")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|line| {
-            let text = string_field(line, &["text", "body", "content"])?;
-            Some(crate::views::agent_workspace::TaskConversationLine {
-                speaker_label: string_field(line, &["speaker_label", "speaker", "actor"])
-                    .unwrap_or_else(|| "agent".to_owned()),
-                text,
-                timestamp: string_field(line, &["timestamp", "created_at", "hlc"])
-                    .unwrap_or_default(),
-            })
-        })
-        .collect()
-}
-
-fn parse_execution_state(value: &str) -> crate::views::agent_workspace::ExecutionState {
-    use crate::views::agent_workspace::ExecutionState;
-    match value {
-        "pending_source_stub" | "pending" | "waiting_for_source" => {
-            ExecutionState::PendingSourceStub
-        }
-        "completed" | "done" => ExecutionState::Completed,
-        "cancelled_stub_rejected" | "stub_rejected" => ExecutionState::CancelledStubRejected,
-        "cancelled_orphan" | "orphaned" => ExecutionState::CancelledOrphan,
-        "cancelled_by_controller" | "cancelled" => ExecutionState::CancelledByController,
-        _ => ExecutionState::Active,
-    }
-}
-
-fn parse_transparency_state(value: &str) -> crate::views::agent_workspace::TransparencyState {
-    use crate::views::agent_workspace::TransparencyState;
-    match value {
-        "lost" | "transparency_lost" => TransparencyState::Lost,
-        "reconfirmed_after_loss" | "reconfirmed" => TransparencyState::ReconfirmedAfterLoss,
-        _ => TransparencyState::Ok,
-    }
-}
-
-fn parse_source_authority_state(
-    value: &str,
-) -> crate::views::agent_workspace::SourceAuthorityState {
-    use crate::views::agent_workspace::SourceAuthorityState;
-    match value {
-        "revoked" | "source_authority_revoked" => SourceAuthorityState::Revoked,
-        "reconfirmed_after_revoke" | "reconfirmed" => SourceAuthorityState::ReconfirmedAfterRevoke,
-        _ => SourceAuthorityState::Ok,
-    }
-}
-
-fn clamp_preview(value: &str, max_chars: usize) -> String {
-    let mut out: String = value.chars().take(max_chars).collect();
-    if value.chars().count() > max_chars {
-        out.push_str("...");
-    }
-    out
-}
-
-fn space_mirror_relation(body: &Value) -> Option<SpaceMirrorRelation> {
-    let source_space_id = string_field(
-        body,
-        &["source_space_id", "source_space", "public_source_space_id"],
-    )
-    .or_else(|| {
-        body.get("agent_workspace")
-            .and_then(|workspace| string_field(workspace, &["source_space_id", "source_space"]))
-    });
-    let mirror_space_id = string_field(
-        body,
-        &[
-            "mirror_space_id",
-            "private_mirror_space_id",
-            "agent_mirror_space_id",
-        ],
-    )
-    .or_else(|| {
-        body.get("agent_workspace")
-            .and_then(|workspace| string_field(workspace, &["mirror_space_id", "mirror_space"]))
-    });
-    if source_space_id.is_none() && mirror_space_id.is_none() {
-        return None;
-    }
-    Some(SpaceMirrorRelation {
-        source_label: string_field(body, &["source_space_label", "source_label"]).or_else(|| {
-            body.get("agent_workspace").and_then(|workspace| {
-                string_field(workspace, &["source_space_label", "source_label"])
-            })
-        }),
-        mirror_label: string_field(body, &["mirror_space_label", "mirror_label"]).or_else(|| {
-            body.get("agent_workspace").and_then(|workspace| {
-                string_field(workspace, &["mirror_space_label", "mirror_label"])
-            })
-        }),
-        source_space_id,
-        mirror_space_id,
-    })
 }
 
 fn frontier_label(frontier: &serde_json::Value) -> Option<String> {

@@ -12,21 +12,16 @@
 //! This component is shared between `views/directory.rs`, `views/space_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
+pub use contrix_sdk::{Discoverability, HistoryVisibility, JoinRule};
 use dioxus::prelude::*;
 
-/// Values for `discoverability` (discovery-directory §2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Discoverability {
-    Public,
-    Listed,
-    Restricted,
-    Unlisted,
-    InviteOnly,
-    Secret,
+pub trait DiscoverabilityUi {
+    fn label(&self) -> &'static str;
+    fn class_name(&self) -> &'static str;
 }
 
-impl Discoverability {
-    pub fn label(self) -> &'static str {
+impl DiscoverabilityUi for Discoverability {
+    fn label(&self) -> &'static str {
         match self {
             Self::Public => "public",
             Self::Listed => "listed",
@@ -37,7 +32,7 @@ impl Discoverability {
         }
     }
 
-    pub fn class_name(self) -> &'static str {
+    fn class_name(&self) -> &'static str {
         match self {
             Self::Public => "badge green",
             Self::Listed => "badge blue",
@@ -46,32 +41,26 @@ impl Discoverability {
             Self::Secret => "badge red",
         }
     }
+}
 
-    pub fn from_str_loose(value: &str) -> Self {
-        match value {
-            "public" => Self::Public,
-            "listed" => Self::Listed,
-            "restricted" => Self::Restricted,
-            "unlisted" => Self::Unlisted,
-            "secret" => Self::Secret,
-            _ => Self::InviteOnly,
-        }
+fn discoverability_from_str_loose(value: &str) -> Discoverability {
+    match value {
+        "public" => Discoverability::Public,
+        "listed" => Discoverability::Listed,
+        "restricted" => Discoverability::Restricted,
+        "unlisted" => Discoverability::Unlisted,
+        "secret" => Discoverability::Secret,
+        _ => Discoverability::InviteOnly,
     }
 }
 
-/// Values for `join_rule` (authz/event-auth-state-resolution §6 and discovery §3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JoinRule {
-    Public,
-    Knock,
-    KnockRestricted,
-    Invite,
-    Restricted,
-    Closed,
+pub trait JoinRuleUi {
+    fn label(&self) -> &'static str;
+    fn class_name(&self) -> &'static str;
 }
 
-impl JoinRule {
-    pub fn label(self) -> &'static str {
+impl JoinRuleUi for JoinRule {
+    fn label(&self) -> &'static str {
         match self {
             Self::Public => "public",
             Self::Knock => "knock",
@@ -82,7 +71,7 @@ impl JoinRule {
         }
     }
 
-    pub fn class_name(self) -> &'static str {
+    fn class_name(&self) -> &'static str {
         match self {
             Self::Public => "badge green",
             Self::Knock | Self::KnockRestricted => "badge blue",
@@ -91,32 +80,27 @@ impl JoinRule {
             Self::Closed => "badge red",
         }
     }
+}
 
-    pub fn from_str_loose(value: &str) -> Self {
-        match value {
-            "public" | "open" => Self::Public,
-            "knock" => Self::Knock,
-            "request" => Self::Knock,
-            "knock_restricted" => Self::KnockRestricted,
-            "restricted" => Self::Restricted,
-            "closed" => Self::Closed,
-            _ => Self::Invite,
-        }
+fn join_rule_from_str_loose(value: &str) -> JoinRule {
+    match value {
+        "public" | "open" => JoinRule::Public,
+        "knock" => JoinRule::Knock,
+        "request" => JoinRule::Knock,
+        "knock_restricted" => JoinRule::KnockRestricted,
+        "restricted" => JoinRule::Restricted,
+        "closed" => JoinRule::Closed,
+        _ => JoinRule::Invite,
     }
 }
 
-/// Values for `history_visibility` (authz/event-auth-state-resolution §6 is the normative source).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HistoryVisibility {
-    WorldReadable,
-    Shared,
-    Invited,
-    Joined,
-    Restricted,
+pub trait HistoryVisibilityUi {
+    fn label(&self) -> &'static str;
+    fn class_name(&self) -> &'static str;
 }
 
-impl HistoryVisibility {
-    pub fn label(self) -> &'static str {
+impl HistoryVisibilityUi for HistoryVisibility {
+    fn label(&self) -> &'static str {
         match self {
             Self::WorldReadable => "world_readable",
             Self::Shared => "shared",
@@ -126,7 +110,7 @@ impl HistoryVisibility {
         }
     }
 
-    pub fn class_name(self) -> &'static str {
+    fn class_name(&self) -> &'static str {
         match self {
             Self::WorldReadable => "badge green",
             Self::Shared => "badge blue",
@@ -135,15 +119,15 @@ impl HistoryVisibility {
             Self::Restricted => "badge red",
         }
     }
+}
 
-    pub fn from_str_loose(value: &str) -> Self {
-        match value {
-            "world_readable" => Self::WorldReadable,
-            "shared" | "shared_history" => Self::Shared,
-            "invited" => Self::Invited,
-            "restricted" => Self::Restricted,
-            _ => Self::Joined,
-        }
+fn history_visibility_from_str_loose(value: &str) -> HistoryVisibility {
+    match value {
+        "world_readable" => HistoryVisibility::WorldReadable,
+        "shared" | "shared_history" => HistoryVisibility::Shared,
+        "invited" => HistoryVisibility::Invited,
+        "restricted" => HistoryVisibility::Restricted,
+        _ => HistoryVisibility::Joined,
     }
 }
 
@@ -152,9 +136,9 @@ impl HistoryVisibility {
 #[component]
 pub fn PermissionPill(prefix: String, value: String, kind: String) -> Element {
     let class = match kind.as_str() {
-        "discoverability" => Discoverability::from_str_loose(&value).class_name(),
-        "join_rule" => JoinRule::from_str_loose(&value).class_name(),
-        "history" | "history_visibility" => HistoryVisibility::from_str_loose(&value).class_name(),
+        "discoverability" => discoverability_from_str_loose(&value).class_name(),
+        "join_rule" => join_rule_from_str_loose(&value).class_name(),
+        "history" | "history_visibility" => history_visibility_from_str_loose(&value).class_name(),
         _ => "badge",
     };
     let testid = format!("permission-pill-{kind}");
@@ -203,23 +187,23 @@ mod tests {
 
     #[test]
     fn join_rule_loose_parse_falls_back_to_invite() {
-        assert_eq!(JoinRule::from_str_loose("garbage"), JoinRule::Invite);
-        assert_eq!(JoinRule::from_str_loose("knock"), JoinRule::Knock);
-        assert_eq!(JoinRule::from_str_loose("open"), JoinRule::Public);
+        assert_eq!(join_rule_from_str_loose("garbage"), JoinRule::Invite);
+        assert_eq!(join_rule_from_str_loose("knock"), JoinRule::Knock);
+        assert_eq!(join_rule_from_str_loose("open"), JoinRule::Public);
     }
 
     #[test]
     fn history_visibility_default_is_joined() {
         assert_eq!(
-            HistoryVisibility::from_str_loose("garbage"),
+            history_visibility_from_str_loose("garbage"),
             HistoryVisibility::Joined
         );
         assert_eq!(
-            HistoryVisibility::from_str_loose("world_readable"),
+            history_visibility_from_str_loose("world_readable"),
             HistoryVisibility::WorldReadable
         );
         assert_eq!(
-            HistoryVisibility::from_str_loose("shared"),
+            history_visibility_from_str_loose("shared"),
             HistoryVisibility::Shared
         );
     }

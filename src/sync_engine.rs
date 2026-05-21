@@ -1,8 +1,8 @@
-//! Background long-poll sync loop.
+//! Background account subscribe sync loop.
 //!
 //! Background engine that keeps the local store + UI signals continuously
-//! aligned with `/api/v1/sync` instead of refreshing only on app boot,
-//! the Refresh button, or a server switch.
+//! aligned with `/api/v1/account/subscribe` instead of refreshing only on
+//! app boot, the Refresh button, or a server switch.
 //!
 //! Design contract (matches the "正经做法" laid out in the design
 //! discussion):
@@ -11,9 +11,9 @@
 //!   reads it on every iteration and writes back the new
 //!   `cursor` after each successful response. Reload of the tab
 //!   resumes from the persisted cursor without losing position.
-//! * **First iteration is full sync** when no cursor is stored (or it's
-//!   the `"-"` sentinel). Subsequent iterations are long-poll
-//!   incremental with `timeout_ms = LONG_POLL_TIMEOUT_MS`.
+//! * **First iteration is initial account sync** when no cursor is stored
+//!   (or it's the `"-"` sentinel). Subsequent iterations resume with
+//!   `after=<cursor>&catchup=true`.
 //! * **Server-authoritative reconcile**: on a full sync the response is
 //!   the truth — any cached projection not in `response.spaces` gets
 //!   pruned via `LocalStateStore::retain_space_projections`. On
@@ -48,11 +48,6 @@ use crate::api::{
 use crate::local_state::{LocalAnchorView, LocalStateStore};
 use crate::models::{ClientSyncResponse, SpacePreview};
 
-/// How long to hold an incremental `/sync` request open. soland clamps
-/// the server-side wait independently; this is the client's upper
-/// bound on a single HTTP round-trip.
-const LONG_POLL_TIMEOUT_MS: u64 = 30_000;
-
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
 /// short enough that recovery is noticeable to the user.
@@ -62,9 +57,8 @@ const MAX_BACKOFF_SECS: u64 = 60;
 const MIN_BACKOFF_SECS: u64 = 1;
 
 /// Minimum pause between successful iterations. Insurance against
-/// servers that don't actually long-poll on `/sync` (e.g. soland's
-/// current handler returns immediately regardless of `timeout_ms`) —
-/// without this, an `Ok → loop → Ok → loop` cycle spins at network
+/// servers that return account subscribe catch-up immediately; without
+/// this, an `Ok → loop → Ok → loop` cycle spins at network
 /// RTT and burns the per-minute rate-limit quota in a few seconds.
 /// 250 ms = 4 req/s = 240/min, comfortably below the 600/min the
 /// reference server advertises.
@@ -88,13 +82,6 @@ pub struct SyncEngineContext {
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
     pub selected_space: Signal<String>,
-    pub agent_workspace_pending: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_in_flight: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_recent: Signal<Vec<crate::views::agent_workspace::AgentTaskSummary>>,
-    pub agent_workspace_agents: Signal<Vec<crate::views::agent_workspace::OwnedAgentSummary>>,
-    pub agent_workspace_details:
-        Signal<std::collections::BTreeMap<String, crate::views::agent_workspace::AgentTaskDetail>>,
-    pub owned_agents_context: crate::views::agent_workspace::OwnedAgentsContext,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -236,13 +223,8 @@ async fn run_iteration(
         .clone()
         .filter(|c| !c.trim().is_empty() && c != "-");
     let is_full_sync = cursor.is_none();
-    let timeout_ms = if is_full_sync {
-        0
-    } else {
-        LONG_POLL_TIMEOUT_MS
-    };
 
-    match api.sync_with_timeout(cursor.as_deref(), timeout_ms).await {
+    match api.account_subscribe_snapshot(cursor.as_deref()).await {
         Ok(response) => {
             // Late-arriving response from a stale generation must not
             // overwrite signals owned by the new generation. The
@@ -275,10 +257,10 @@ async fn run_iteration(
     }
 }
 
-/// Apply a `/sync` response: persist projections (server-authoritatively
+/// Apply an account subscribe response: persist projections (server-authoritatively
 /// reconciled when full-sync), hydrate Anchor views + account-data, and
-/// publish derived UI signals (spaces / timeline / agent workspace /
-/// device queue / status / cursor).
+/// publish derived UI signals (spaces / timeline / device queue /
+/// status / cursor).
 ///
 /// Exposed at module scope so tests can drive it without spinning up
 /// the loop. `connect()` in `app.rs` shares the same code path — once
@@ -297,12 +279,6 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     let mut device_queue = ctx.device_queue;
     let mut theme = ctx.theme;
     let mut selected_space = ctx.selected_space;
-    let mut agent_workspace_pending = ctx.agent_workspace_pending;
-    let mut agent_workspace_in_flight = ctx.agent_workspace_in_flight;
-    let mut agent_workspace_recent = ctx.agent_workspace_recent;
-    let mut agent_workspace_agents = ctx.agent_workspace_agents;
-    let mut agent_workspace_details = ctx.agent_workspace_details;
-    let mut owned_agents_context = ctx.owned_agents_context;
     let account_did = ctx.account_did.read().clone();
 
     {
@@ -375,16 +351,6 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
 
     let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.spaces);
     timeline.set(synced_timeline);
-
-    let workspace_projection = crate::app::agent_workspace_projection_from_sync_spaces(
-        &state_store.read().load().space_projections,
-    );
-    agent_workspace_pending.set(workspace_projection.pending);
-    agent_workspace_in_flight.set(workspace_projection.in_flight);
-    agent_workspace_recent.set(workspace_projection.recent);
-    agent_workspace_agents.set(workspace_projection.agents.clone());
-    owned_agents_context.set(workspace_projection.agents);
-    agent_workspace_details.set(workspace_projection.details);
 
     device_queue.set(response.to_device.len());
     sync_cursor.set(response.cursor.clone());

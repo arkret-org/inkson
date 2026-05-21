@@ -1,5 +1,4 @@
 pub mod account_data;
-pub mod agent_workspace_watcher;
 pub mod anchor_witness;
 pub mod api;
 pub mod app;
@@ -39,12 +38,6 @@ pub mod key_store;
 pub mod late_recovery;
 pub mod local_state;
 pub mod media;
-/// Round 4 (spec a77b995) — mention_redirect plaintext routing
-/// consumer. Receivers consult
-/// `mention_redirect_target_actor_ids` before decrypting the message
-/// body; if the local actor is not in the list, the body MUST NOT be
-/// decrypted at the push layer.
-pub mod mention_redirect;
 /// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
 /// discussion-promote, sidecar-hash). The chat view consumes these
 /// helpers; see `crate::messaging::mod` for the rationale.

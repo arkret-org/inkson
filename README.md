@@ -36,8 +36,6 @@ wire-breaking list.
   revoking is an explicit user action (no implicit cascade).
 - **`SnapshotBootstrap`** — query response with snapshot hint is
   accepted; full chunked import is staged.
-- **`mention_redirect_target_actor_ids` routing** — devices outside the
-  list never decrypt the redirected content.
 - **Late-recovery banner** — sourced from
   `late_recovery_original_event_id`.
 

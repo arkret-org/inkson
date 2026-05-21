@@ -31,8 +31,6 @@ Closes the round-4 protocol-review commits on the client surfaces. See
   in the invite UI.
 - **BREAKING** `agent_id` / `applet_id` are constructed strictly as DIDs
   (with `cx:applet:<uuidv7>` accepted for applet IDs).
-- **Added** `mention_redirect_target_actor_ids` consumed for plaintext
-  routing; targets outside the array do not decrypt content.
 - **Added** late-recovery banner is now sourced from
   `late_recovery_original_event_id` on
   `cx.audit.policy_access{access_kind=e2ee_late_recovery}`.

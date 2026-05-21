@@ -1103,7 +1103,7 @@ impl LocalStateStore {
     }
 
     /// Drop every `space_projections` entry whose key isn't in `keep`. Used
-    /// by the sync reconcile path when `since=None` so spaces the server
+    /// by the sync reconcile path when `after=None` so spaces the server
     /// no longer reports get pruned from the local cache instead of
     /// lingering as ghost entries in the sidebar.
     ///

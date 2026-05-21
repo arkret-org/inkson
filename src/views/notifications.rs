@@ -395,7 +395,7 @@ fn refresh_notifications(
 ) {
     spawn(async move {
         match with_authed_api(&base_url, access_token, |api| async move {
-            api.sync(None).await
+            api.account_subscribe_snapshot(None).await
         })
         .await
         {

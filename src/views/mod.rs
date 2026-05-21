@@ -35,7 +35,6 @@
 // 5. The Auth Service can only issue short-lived `cx.session.grant`; any
 //    change to the long-lived device set must go through `cx.device.authorized`.
 
-pub mod agent_workspace;
 pub mod agents;
 pub mod applets;
 pub mod audit;
@@ -149,11 +148,6 @@ pub enum View {
     /// `cx.agent.protocol_session.{start,status,result}` via
     /// `crate::operation::cx_ops::agent_*` builders.
     Agents,
-    /// Agent Workspace dashboard — controller's private mirror Space entry.
-    /// Spec `extensions/agent-workspace-profile.md` (`cx.profile.agent_workspace.v1`).
-    /// Shows pending / in-flight / completed agent_task objects, with
-    /// transparency / source_authority FSM cell state visible.
-    AgentWorkspace,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by
     /// direct navigation to `Route::Search`.

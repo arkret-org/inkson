@@ -367,18 +367,12 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     Some(api_error.error.retry_after_ms().unwrap_or(0))
 }
 
-/// `true` when `/sync` rejected the cursor — either expired, invalid,
+/// `true` when account subscribe rejected the cursor — either expired, invalid,
 /// or with an integrity mismatch — so the SyncEngine knows to demote to
-/// a `since=None` full sync instead of looping on the same broken cursor.
-///
-/// Wire constants are pulled from `contrix_sdk` so renames in the spec
-/// layer (e.g. round 4's `sync_token_expired` → `cursor_expired`) can't
-/// silently de-recognise an error and surface a 410 to the UI.
+/// a `after=None` full sync instead of looping on the same broken cursor.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
-    use contrix_sdk::{
-        ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM, ERROR_CODE_SYNC_TOKEN_EXPIRED,
-    };
+    use contrix_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
     error
         .downcast_ref::<ContrixApiError>()
         .is_some_and(|api_error| {
@@ -389,7 +383,6 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
             matches!(
                 code,
                 code if code == ERROR_CODE_CURSOR_EXPIRED
-                    || code == ERROR_CODE_SYNC_TOKEN_EXPIRED
                     || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
             ) || (cursor_message
                 && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == "invalid_cursor"))
@@ -1061,17 +1054,12 @@ impl ContrixApi {
         self.get_json("api/v1/account/describe").await
     }
 
-    pub async fn sync(&self, after: Option<&str>) -> anyhow::Result<ClientSyncResponse> {
-        self.sync_with_timeout(after, 0).await
-    }
-
     /// `cx.account.subscribe` snapshot fold. The server returns NDJSON frames;
-    /// this method consumes the first `delta` frame and keeps the rest of the
-    /// app on the existing folded `ClientSyncResponse` projection path.
-    pub async fn sync_with_timeout(
+    /// this consumes the first `delta` frame and keeps the rest of the app on
+    /// the existing folded `ClientSyncResponse` projection path.
+    pub async fn account_subscribe_snapshot(
         &self,
         after: Option<&str>,
-        timeout_ms: u64,
     ) -> anyhow::Result<ClientSyncResponse> {
         // H3 — enforce `cx:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
@@ -1087,7 +1075,6 @@ impl ContrixApi {
                 query.append_pair("after", cursor);
             }
         }
-        let _ = timeout_ms;
         let request = self.http.get(url).header(ACCEPT, "application/x-ndjson");
         let response = self
             .send_with_retry(self.prepare_request(request), Method::GET, true)
@@ -2227,7 +2214,7 @@ impl ContrixApi {
     /// or placeholder-signed envelope.
     ///
     /// For reducer-input event kinds, `anchor_ref` is auto-filled from
-    /// the current Realm anchor (`/api/v1/sync/snapshot-head`) when the
+    /// the current Realm anchor (`/api/v1/snapshot/head`) when the
     /// caller did not supply one.
     pub async fn submit_event_envelope(
         &self,
@@ -2335,7 +2322,7 @@ impl ContrixApi {
 
     /// Resolve the current anchor head for `realm_id` to be stamped onto
     /// outgoing reducer-input events as `anchor_ref`. Wraps
-    /// `GET /api/v1/sync/snapshot-head?realm_id=...` and returns the
+    /// `GET /api/v1/snapshot/head?realm_id=...` and returns the
     /// `cx:anchor:sha256:<hex>` ref the server projects as the realm's
     /// head.
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
@@ -2363,7 +2350,7 @@ impl ContrixApi {
     /// the single approved network path.
     ///
     /// TODO(round23-T02): once soland exposes a transport-specific ephemeral
-    /// channel (sync subscribe live stream / presence fanout), wire this to
+    /// channel (events subscribe live stream / presence fanout), wire this to
     /// that endpoint. For now we POST to `api/v1/ephemeral` and fail fast
     /// rather than fall back to `cx.events.submit`.
     pub async fn submit_ephemeral_envelope(
@@ -3775,7 +3762,7 @@ fn query_component(value: &str) -> String {
 /// H3 — central guard for the `cx:cursor:*` prefix invariant. Every yougen
 /// entry point that takes a cursor / `next_cursor` / `after` query argument
 /// passes it through this helper before going on the wire. The nil-initial
-/// case for `sync_with_timeout` (`since: None`) is handled by callers using
+/// account subscribe case (`after: None`) is handled by callers using
 /// `Option::map` so this never runs against an `""` placeholder.
 pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
     if cursor.is_empty() {

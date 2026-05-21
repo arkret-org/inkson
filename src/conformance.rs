@@ -1,6 +1,7 @@
 //! Conformance profiles, JSON schema validation, and security checks
 //! per contrix-spec sections 12–13.
 
+use contrix_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -728,18 +729,6 @@ impl std::fmt::Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
-
-/// Discoverability levels per contrix-spec section 9.1.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Discoverability {
-    Public,
-    Listed,
-    Restricted,
-    Unlisted,
-    InviteOnly,
-    Secret,
-}
 
 /// Space discovery state per contrix-spec section 9.2.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

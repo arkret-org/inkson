@@ -75,20 +75,10 @@ pub struct SearchDestination {
 
 /// Resolve a search result to the most specific local target we can
 /// express. Newer soland rows may carry `message_id`, `event_id`,
-/// `surface`, `task_id`, or `agent_task_id`; older rows still degrade
-/// to the Space overview.
+/// `surface`, or `task_id`; older rows still degrade to the Space overview.
 pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     let space_id = result.get("space_id").and_then(Value::as_str)?;
-    if let Some(task_id) = string_field(result, &["agent_task_id", "task_id"]) {
-        if task_id.starts_with("cx:agent_task:") {
-            return Some(SearchDestination {
-                route: Route::AgentTask {
-                    task_id: task_id.clone(),
-                },
-                anchor: Some(task_id),
-                label: "Open task".to_owned(),
-            });
-        }
+    if let Some(task_id) = string_field(result, &["task_id"]) {
         return Some(SearchDestination {
             route: Route::KanbanTask {
                 space_id: space_id.to_owned(),

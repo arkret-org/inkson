@@ -137,7 +137,7 @@ pub trait ServerDescriptionExt {
     /// construction so we don't need a separate "is empty" guard.
     fn trust_domain_matches(&self, expected: &str) -> bool;
     /// Round 4 — treat a missing / null `plaintext_visibility` as
-    /// `untrusted` (fail-closed for mention-redirect / late-recovery).
+    /// `untrusted` for late-recovery handling.
     fn is_plaintext_visibility_untrusted(&self) -> bool;
 }
 

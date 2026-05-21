@@ -2029,11 +2029,6 @@ pub fn ChatPanel(
     // passphrase input above Send Secure; read by the secure-send path
     // to run `group.encrypt_payload()`.
     let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
-    // A2 / AW-3.10: shared owned-agent list so the composer can mount
-    // [`PrivateComposeBanner`] + apply the `private-compose-mode` class
-    // once the active draft mentions an owned agent. Default empty
-    // until the SDK projection hydrates it.
-    let owned_agents_ctx = use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
     let mut mls_passphrase_draft = use_signal(String::new);
     // Multi-device Welcome flow controls. The
     // `Invite to MLS group` button fetches the target (actor, device)
@@ -2248,7 +2243,7 @@ pub fn ChatPanel(
             {
                 account_display_name_for_load.set(display_name);
             }
-            if let Ok(sync) = api.sync(None).await {
+            if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                 {
                     let mut store = state_store.write();
                     store.save_sync_cursor(sync.cursor.clone());
@@ -2450,30 +2445,7 @@ pub fn ChatPanel(
         });
     }
 
-    // A2 / AW-3.10: precompute private-compose state outside the rsx
-    // block so the let bindings live in Rust scope (rsx parses `if {}`
-    // bodies as nodes, not statements). When the active chat draft
-    // mentions one of the controller's owned agents we apply the
-    // `private-compose-mode` class so the textarea border + background
-    // flip to the private routing palette, and mount the
-    // [`PrivateComposeBanner`] underneath.
-    let private_compose_owned_agents = owned_agents_ctx.read().clone();
-    let private_compose_mentions = crate::views::helpers::parse_structured_mentions(&chat_draft());
-    let private_compose_target_did = private_compose_mentions
-        .iter()
-        .map(|m| m.target.clone())
-        .find(|target| {
-            crate::views::agent_workspace::is_controller_owned_agent(
-                target,
-                &private_compose_owned_agents,
-            )
-        });
-    let private_compose_active = private_compose_target_did.is_some();
-    let composer_class = if private_compose_active {
-        "discussion-composer private-compose-mode"
-    } else {
-        "discussion-composer"
-    };
+    let composer_class = "discussion-composer";
 
     rsx! {
         div { class: "{shell_class}", "data-testid": "chat-panel",
@@ -4583,14 +4555,6 @@ pub fn ChatPanel(
                             onclick: move |_| reply_to_message.set(None),
                             "Cancel"
                         }
-                    }
-                }
-                if let Some(agent_did) = private_compose_target_did.as_ref() {
-                    crate::views::agent_workspace::PrivateComposeBanner {
-                        agent_display_name: crate::views::agent_workspace::owned_agent_display_name(
-                            agent_did,
-                            &private_compose_owned_agents,
-                        ),
                     }
                 }
                 // A6.2: drag-drop attachment zone wrapping the textarea.

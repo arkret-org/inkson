@@ -140,31 +140,12 @@ pub enum Route {
     #[route("/agents", crate::app::RouterView)]
     Agents,
 
-    /// Agent Workspace — controller's private mirror Space entry.
-    /// Spec `cx.profile.agent_workspace.v1`.
-    #[route("/agent-workspace", crate::app::RouterView)]
-    AgentWorkspace,
-
-    /// Single agent_task detail page.
-    #[route("/agent-workspace/task/:task_id", AgentTaskPage)]
-    AgentTask { task_id: String },
-
-    /// Agent Workspace per-agent settings + workspace teardown.
-    #[route("/agent-workspace/settings", crate::app::RouterView)]
-    AgentWorkspaceSettings,
-
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
     /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
     /// directly navigating to `/search`. Backed by soland's
     /// `POST /api/v1/index/search` substring scan.
     #[route("/search", crate::app::RouterView)]
     Search,
-}
-
-#[component]
-fn AgentTaskPage(task_id: String) -> Element {
-    let _ = task_id;
-    rsx! { crate::app::RouterView {} }
 }
 
 #[component]
@@ -272,9 +253,6 @@ impl Route {
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
             Route::Agents => View::Agents,
-            Route::AgentWorkspace | Route::AgentTask { .. } | Route::AgentWorkspaceSettings => {
-                View::AgentWorkspace
-            }
             Route::Search => View::Search,
         }
     }
@@ -346,7 +324,6 @@ impl From<View> for Route {
             View::Onboarding => Route::Onboarding,
             View::Quarantine => Route::Quarantine,
             View::Agents => Route::Agents,
-            View::AgentWorkspace => Route::AgentWorkspace,
             View::Search => Route::Search,
         }
     }

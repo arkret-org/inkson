@@ -338,12 +338,6 @@ pub fn TimelinePanel(
         .into_iter()
         .map(|entry| entry.did)
         .collect();
-    // A2 / AW-3.10: shared owned-agent list so the timeline composer
-    // can mount [`PrivateComposeBanner`] + apply the
-    // `private-compose-mode` class when the active draft mentions one
-    // of the controller's agents.
-    let owned_agents_ctx = use_context::<crate::views::agent_workspace::OwnedAgentsContext>();
-
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
     let selected_space_c = selected_space.clone();
@@ -391,7 +385,7 @@ pub fn TimelinePanel(
         spawn(async move {
             if let Ok(sync) =
                 with_authed_api_with_sync(&base, api_token, wait_for, |api| async move {
-                    api.sync(None).await
+                    api.account_subscribe_snapshot(None).await
                 })
                 .await
             {
@@ -482,30 +476,7 @@ pub fn TimelinePanel(
         });
     }
 
-    // A2 / AW-3.10: precompute private-compose state outside rsx so
-    // the let bindings live in Rust statement scope (rsx parses node
-    // contexts as nodes, not statements). When the active timeline
-    // draft mentions one of the controller's owned agents we apply
-    // the `private-compose-mode` class so the textarea border +
-    // background flip to the private routing palette, and mount the
-    // [`PrivateComposeBanner`] underneath.
-    let private_compose_owned_agents = owned_agents_ctx.read().clone();
-    let private_compose_mentions = crate::views::helpers::parse_structured_mentions(&draft());
-    let private_compose_target_did = private_compose_mentions
-        .iter()
-        .map(|m| m.target.clone())
-        .find(|target| {
-            crate::views::agent_workspace::is_controller_owned_agent(
-                target,
-                &private_compose_owned_agents,
-            )
-        });
-    let private_compose_active = private_compose_target_did.is_some();
-    let composer_class = if private_compose_active {
-        "composer private-compose-mode"
-    } else {
-        "composer"
-    };
+    let composer_class = "composer";
 
     // Round R2/R3 (T07) — Realm terminal-state projection. When the
     // selected Realm has emitted `cx.realm.destroy`, the timeline MUST
@@ -1104,18 +1075,7 @@ pub fn TimelinePanel(
             }
         }
 
-        // A2 / AW-3.10: `composer_class` + `private_compose_target_did`
-        // are precomputed above the rsx block so the let bindings live
-        // in Rust statement scope rather than node-context.
         div { class: "{composer_class}", "data-testid": "composer",
-            if let Some(agent_did) = private_compose_target_did.as_ref() {
-                crate::views::agent_workspace::PrivateComposeBanner {
-                    agent_display_name: crate::views::agent_workspace::owned_agent_display_name(
-                        agent_did,
-                        &private_compose_owned_agents,
-                    ),
-                }
-            }
             div {
                 class: "event",
                 "data-testid": "plaintext-boundary-panel",

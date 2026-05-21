@@ -1,28 +1,17 @@
 use std::collections::HashMap;
 
+use contrix_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 
 use crate::hlc::Hlc;
 
-/// Discoverability levels as defined by the spec.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Discoverability {
-    /// Visible in public directories and search results.
-    Public,
-    /// Listed in directories but not in general search.
-    Listed,
-    /// Restricted to organization members or specific groups.
-    Restricted,
-    /// Not listed, only accessible via direct link.
-    Unlisted,
-    /// Only accessible via explicit invitation.
-    InviteOnly,
-    /// Completely hidden, no directory presence.
-    Secret,
+pub trait DiscoverabilityExt {
+    fn as_str(&self) -> &'static str;
+    fn allows_discovery(&self, is_member: bool, has_invite: bool) -> bool;
 }
 
-impl Discoverability {
-    pub fn as_str(&self) -> &str {
+impl DiscoverabilityExt for Discoverability {
+    fn as_str(&self) -> &'static str {
         match self {
             Self::Public => "public",
             Self::Listed => "listed",
@@ -33,20 +22,8 @@ impl Discoverability {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "public" => Self::Public,
-            "listed" => Self::Listed,
-            "restricted" => Self::Restricted,
-            "unlisted" => Self::Unlisted,
-            "invite_only" => Self::InviteOnly,
-            "secret" => Self::Secret,
-            _ => Self::Unlisted,
-        }
-    }
-
     /// Check if this level allows discovery by the given context.
-    pub fn allows_discovery(&self, is_member: bool, has_invite: bool) -> bool {
+    fn allows_discovery(&self, is_member: bool, has_invite: bool) -> bool {
         match self {
             Self::Public => true,
             Self::Listed => true,
@@ -55,6 +32,18 @@ impl Discoverability {
             Self::InviteOnly => has_invite,
             Self::Secret => false,
         }
+    }
+}
+
+pub fn discoverability_from_str(s: &str) -> Discoverability {
+    match s {
+        "public" => Discoverability::Public,
+        "listed" => Discoverability::Listed,
+        "restricted" => Discoverability::Restricted,
+        "unlisted" => Discoverability::Unlisted,
+        "invite_only" => Discoverability::InviteOnly,
+        "secret" => Discoverability::Secret,
+        _ => Discoverability::Unlisted,
     }
 }
 
@@ -439,7 +428,7 @@ mod tests {
         assert_eq!(Discoverability::Public.as_str(), "public");
         assert_eq!(Discoverability::Secret.as_str(), "secret");
         assert_eq!(
-            Discoverability::from_str("invite_only"),
+            discoverability_from_str("invite_only"),
             Discoverability::InviteOnly
         );
     }
