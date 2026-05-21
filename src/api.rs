@@ -1058,20 +1058,16 @@ impl ContrixApi {
     }
 
     pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
-        self.get_json("api/v1/sync/describe").await
+        self.get_json("api/v1/account/describe").await
     }
 
     pub async fn sync(&self, since: Option<&str>) -> anyhow::Result<ClientSyncResponse> {
         self.sync_with_timeout(since, 0).await
     }
 
-    /// `/sync` with an explicit long-poll timeout. `timeout_ms == 0` makes
-    /// soland reply immediately with whatever it has cached for the
-    /// cursor; non-zero values are honoured as the upper bound the
-    /// server will hold the request open waiting for new events. The
-    /// `SyncEngine` background task uses ~30s for the streaming-style
-    /// loop and 0 for the boot bootstrap that just wants the current
-    /// snapshot.
+    /// `cx.account.subscribe` snapshot fold. The server returns NDJSON frames;
+    /// this method consumes the first `delta` frame and keeps the rest of the
+    /// app on the existing folded `ClientSyncResponse` projection path.
     pub async fn sync_with_timeout(
         &self,
         since: Option<&str>,
@@ -1082,11 +1078,30 @@ impl ContrixApi {
         if let Some(token) = since {
             validate_cursor(token)?;
         }
-        self.post_json(
-            "api/v1/sync",
-            json!({"since": since, "timeout_ms": timeout_ms, "set_presence": "online"}),
-        )
-        .await
+        let mut url = self.endpoint("api/v1/account/subscribe")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("catchup", "true");
+            query.append_pair("set_presence", "online");
+            if let Some(cursor) = since {
+                query.append_pair("after", cursor);
+            }
+        }
+        let _ = timeout_ms;
+        let request = self.http.get(url).header(ACCEPT, "application/x-ndjson");
+        let response = self
+            .send_with_retry(self.prepare_request(request), Method::GET, true)
+            .await?;
+        let status = response.status();
+        let bytes = response.bytes().await?;
+        if !status.is_success() {
+            return Err(ContrixApiError {
+                status,
+                error: decode_contrix_error(status, &bytes),
+            }
+            .into());
+        }
+        parse_account_subscribe_snapshot(&bytes)
     }
 
     pub async fn search_realms(
@@ -1180,7 +1195,7 @@ impl ContrixApi {
     }
 
     pub async fn snapshot_head(&self, space_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
-        self.get_json(&format!("api/v1/sync/snapshot-head?realm_id={space_id}"))
+        self.get_json(&format!("api/v1/snapshot/head?realm_id={space_id}"))
             .await
     }
 
@@ -3861,6 +3876,20 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncResponse> {
     Ok(serde_json::from_value(value)?)
 }
 
+fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncResponse> {
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let trimmed = trim_ascii(line);
+        if trimmed.is_empty() {
+            continue;
+        }
+        let frame: contrix_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        if let Some(response) = ClientSyncResponse::from_account_subscribe_frame(frame) {
+            return Ok(response);
+        }
+    }
+    anyhow::bail!("account subscribe stream ended before a delta frame")
+}
+
 pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeResBody> {
     Ok(serde_json::from_value(value)?)
 }
@@ -3895,8 +3924,8 @@ mod tests {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_features": ["sync.account"],
-            "supported_operations": ["cx.sync.account"],
+            "supported_features": ["account.subscribe"],
+            "supported_operations": ["cx.account.subscribe"],
             "supported_bindings": [{"kind": "http_json"}],
             "auth_metadata": {},
             "limits": {"storage": "memory"},

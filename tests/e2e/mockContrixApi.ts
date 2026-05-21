@@ -106,7 +106,7 @@ export async function mockContrixApi(page: Page) {
           "moves.submit",
         ],
         supported_operations: [
-          "cx.sync.account",
+          "cx.account.subscribe",
           "cx.events.query",
           "cx.events.subscribe",
           "cx.directory.search_realms",
@@ -540,11 +540,12 @@ export async function mockContrixApi(page: Page) {
       return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
     }
 
-    if (url.pathname === "/api/v1/sync") {
+    if (url.pathname === "/api/v1/account/subscribe") {
       const demoTimelineEvents = timelineEvents.filter((event) => event.space_id === DEMO_SPACE);
-      return json(route, {
+      const frame = {
+        kind: "delta",
         cursor: "cx:cursor:e2e-2",
-        spaces: {
+        realms: {
           join: {
             [DEMO_SPACE]: {
               summary: {
@@ -585,8 +586,8 @@ export async function mockContrixApi(page: Page) {
           knock: {},
           leave: {},
         },
-        to_device: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }],
-        account_data: [
+        to_device: { events: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
+        account_data: { events: [
           {
             kind: "cx.notification",
             notification_id: "notif-msg-1",
@@ -609,10 +610,15 @@ export async function mockContrixApi(page: Page) {
             timestamp: "2026-04-28T12:02:00Z",
             read: false,
           },
-        ],
+        ] },
         device_lists: { changed: [], left: [] },
-        presence: [],
+        presence: { events: [] },
         notifications: { events: [] },
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "cx:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -699,7 +705,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, { events, next_cursor: null, frontier: {} });
     }
 
-    if (url.pathname === "/api/v1/sync/snapshot-head") {
+    if (url.pathname === "/api/v1/snapshot/head") {
       return json(route, {
         snapshot_ref: `cx:snapshot:${DEMO_SPACE}:head`,
         state_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -737,7 +743,7 @@ export async function mockContrixApi(page: Page) {
       }, 202);
     }
 
-    if (url.pathname === "/api/v1/sync/describe") {
+    if (url.pathname === "/api/v1/account/describe") {
       return json(route, {
         service_did: "did:web:server.local",
         supported_sync_profiles: ["initial", "incremental"],

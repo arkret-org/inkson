@@ -798,7 +798,7 @@ mod tests {
         // Server advertises exactly the operations SDK's
         // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
         // client should be ready. `chat_mvp` additionally requires
-        // `cx.sync.account` which the fixture intentionally omits, so
+        // `cx.account.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
@@ -841,8 +841,8 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("cx.sync.account")),
-            "expected chat_mvp to flag missing cx.sync.account, got {:?}",
+                .any(|missing| missing.contains("cx.account.subscribe")),
+            "expected chat_mvp to flag missing cx.account.subscribe, got {:?}",
             chat.missing
         );
     }

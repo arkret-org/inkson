@@ -28,7 +28,7 @@ fn yougen_accepts_server_contract_payloads() {
         "protocol_version": "1.0",
         "supported_profiles": ["cx.schema.core.v1"],
         "supported_features": [
-            "sync.account",
+            "account.subscribe",
             "sync.backfill",
             "directory.search_realms",
             "directory.resolve_realm",
@@ -39,10 +39,10 @@ fn yougen_accepts_server_contract_payloads() {
             "moderation.report"
         ],
         "supported_operations": [
-            "cx.sync.account",
+            "cx.account.subscribe",
             "cx.events.query",
             "cx.events.subscribe",
-            "cx.sync.get_snapshot_head",
+            "cx.snapshot.head",
             "cx.directory.describe",
             "cx.directory.search_realms",
             "cx.directory.resolve_realm",
@@ -302,10 +302,10 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_operations": [
             "cx.events.describe",
             "cx.events.submit",
-            "cx.sync.account"
+            "cx.account.subscribe"
         ],
         "supported_bindings": [{"kind": "http_json"}],
-        "supported_features": ["events.submit", "sync.account"],
+        "supported_features": ["events.submit", "account.subscribe"],
         "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"default": "e2ee", "allowed_services": []},
@@ -335,8 +335,8 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_operations": ["cx.sync.account"],
-            "supported_features": ["sync.account"]
+            "supported_operations": ["cx.account.subscribe"],
+            "supported_features": ["account.subscribe"]
         }))
         .is_err()
     );
@@ -349,9 +349,9 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "supported_operations": ["cx.sync.account"],
+        "supported_operations": ["cx.account.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
-        "supported_features": ["sync.account"],
+        "supported_features": ["account.subscribe"],
         "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"default": "encrypted"},
