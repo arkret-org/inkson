@@ -4,7 +4,10 @@ use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::{
-    api::{ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error},
+    api::{
+        ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
+        is_space_membership_denied_error,
+    },
     audit::build_audit_ryw_receipt,
     components::{HelpTip, UiIcon},
     hlc::{Hlc, observe_seq},
@@ -34,6 +37,7 @@ struct ChannelEntity {
     category: String,
     topic: Option<String>,
     unread: usize,
+    is_default: bool,
 }
 
 /// T7.4: end-to-end encryption decryption state for a message.
@@ -1230,6 +1234,28 @@ fn apply_mention_completion(current: &str, replacement: &str) -> String {
     }
 }
 
+fn is_schema_message_id(value: &str) -> bool {
+    let Some(suffix) = value.trim().strip_prefix("cx:message:") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && suffix
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+}
+
+fn new_chat_message_id() -> String {
+    format!("cx:message:{}", uuid_v7())
+}
+
+fn schema_message_id_or_new(value: &str) -> String {
+    if is_schema_message_id(value) {
+        value.trim().to_owned()
+    } else {
+        new_chat_message_id()
+    }
+}
+
 fn chat_message_create_operation(
     space_id: &str,
     actor: &str,
@@ -1242,29 +1268,34 @@ fn chat_message_create_operation(
 ) -> crate::operation::EventEnvelope {
     let mention_values = mentions_to_json(mentions);
     let mention_relations = mention_relation_json(message_id, mentions);
+    let content = json!({
+        "kind": "cx.content.text",
+        "body": body,
+    });
+    let mut payload = json!({
+        "body": body,
+        // T2.3: the legacy `branch` top-level field is forbidden on the
+        // wire (artifacts/registry/forbidden-wire-fields.json,
+        // hard_reject). v1 uses `track` — a display-only timeline
+        // segment identifier — instead.
+        "track": "discussion",
+        "content": content,
+        "encrypted": false,
+        "flow_id": flow_id,
+        "kind": channel_kind,
+        "message_id": message_id,
+        "mentions": mention_values,
+        "mention_relations": mention_relations,
+    });
+    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("reply_to".to_owned(), json!(reply_to));
+            obj.insert("thread_id".to_owned(), json!(reply_to));
+        }
+    }
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
-        .body(json!({
-            "body": body,
-            // T2.3: the legacy `branch` top-level field is forbidden on the
-            // wire (artifacts/registry/forbidden-wire-fields.json,
-            // hard_reject). v1 uses `track` — a display-only timeline
-            // segment identifier — instead.
-            "track": "discussion",
-            "content": {
-                "blocks": [{"kind": "text", "text": body}],
-                "body": body,
-                "mentions": mention_values.clone(),
-            },
-            "encrypted": false,
-            "flow_id": flow_id,
-            "kind": channel_kind,
-            "message_id": message_id,
-            "mentions": mention_values,
-            "mention_relations": mention_relations,
-            "reply_to": reply_to,
-            "thread_id": reply_to,
-        }))
+        .body(payload)
         .build("yougen")
 }
 
@@ -1274,6 +1305,9 @@ fn chat_send_error_message(error: &anyhow::Error) -> String {
             .to_owned()
     } else if is_plaintext_visibility_policy_error(error) {
         "Plaintext is not enabled for this Space on the current service. Send Secure or update Space plaintext visibility."
+            .to_owned()
+    } else if is_space_membership_denied_error(error) {
+        "This account is not a member of this Space. Join the Space or switch to an account that is a member before sending."
             .to_owned()
     } else {
         error.to_string()
@@ -1611,6 +1645,19 @@ fn first_string_in_candidate_paths<'a>(
     })
 }
 
+fn default_discussion_flow_id(space_id: &str) -> String {
+    let trimmed = space_id.trim();
+    if let Some(suffix) = trimmed.strip_prefix("cx:space:") {
+        format!("cx:flow:{suffix}")
+    } else if let Some(suffix) = trimmed.strip_prefix("space:") {
+        format!("cx:flow:{suffix}")
+    } else if trimmed.starts_with("cx:flow:") {
+        trimmed.to_owned()
+    } else {
+        format!("cx:flow:{}", trimmed.trim_start_matches("cx:"))
+    }
+}
+
 fn candidate_has_track(candidate: &Value, track: &str) -> bool {
     candidate
         .get("tracks")
@@ -1643,7 +1690,104 @@ fn flow_create_has_synthesis_track(candidates: &[&Value]) -> bool {
         })
 }
 
-fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEntity> {
+fn channel_from_flow_projection(
+    space_id: &str,
+    flow: &Value,
+    is_default: bool,
+) -> Option<ChannelEntity> {
+    if !candidate_has_track(flow, "discussion") {
+        return None;
+    }
+
+    let flow_id = first_string_in_candidate_paths(&[flow], &[&["flow_id"], &["id"]])
+        .map(str::trim)
+        .filter(|id| id.starts_with("cx:flow:"))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_discussion_flow_id(space_id));
+    let name = first_string_in_candidate_paths(&[flow], &[&["title"], &["name"]])
+        .filter(|title| !title.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            if is_default {
+                "Discussion".to_owned()
+            } else {
+                flow_id.clone()
+            }
+        });
+    let category = first_string_in_candidate_paths(
+        &[flow],
+        &[
+            &["category"],
+            &["fields", "category"],
+            &["summary", "category"],
+        ],
+    )
+    .filter(|category| !category.trim().is_empty())
+    .map(ToOwned::to_owned)
+    .unwrap_or_else(|| {
+        if is_default {
+            "default flow".to_owned()
+        } else {
+            "general".to_owned()
+        }
+    });
+    let topic = first_string_in_candidate_paths(
+        &[flow],
+        &[
+            &["summary"],
+            &["topic"],
+            &["description"],
+            &["fields", "summary"],
+            &["fields", "topic"],
+        ],
+    )
+    .filter(|topic| !topic.trim().is_empty())
+    .map(ToOwned::to_owned)
+    .or_else(|| {
+        if is_default {
+            Some("Default Flow discussion track".to_owned())
+        } else {
+            None
+        }
+    });
+    let has_synthesis = flow_create_has_synthesis_track(&[flow]);
+
+    Some(ChannelEntity {
+        flow_id,
+        name,
+        kind: if !is_default && has_synthesis {
+            "flow".to_owned()
+        } else {
+            "discussion".to_owned()
+        },
+        category,
+        topic,
+        unread: 0,
+        is_default,
+    })
+}
+
+fn default_discussion_channel(space_id: &str, space_body: Option<&Value>) -> ChannelEntity {
+    if let Some(flow) = space_body
+        .and_then(|body| body.get("summary"))
+        .and_then(|summary| summary.get("flow"))
+        && let Some(channel) = channel_from_flow_projection(space_id, flow, true)
+    {
+        return channel;
+    }
+
+    ChannelEntity {
+        flow_id: default_discussion_flow_id(space_id),
+        name: "Discussion".to_owned(),
+        kind: "discussion".to_owned(),
+        category: "default flow".to_owned(),
+        topic: Some("Default Flow discussion track".to_owned()),
+        unread: 0,
+        is_default: true,
+    }
+}
+
+fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
     if !candidates
         .iter()
@@ -1732,6 +1876,7 @@ fn channel_from_flow_event(_space_id: &str, event: &Value) -> Option<ChannelEnti
         category,
         topic,
         unread: 0,
+        is_default: flow_id == default_discussion_flow_id(space_id),
     })
 }
 
@@ -1744,9 +1889,13 @@ fn channels_from_events(space_id: &str, events: &[Value]) -> Vec<ChannelEntity> 
 
 fn channels_from_sync_spaces(
     spaces: &std::collections::BTreeMap<String, Value>,
+    default_space_ids: &[String],
 ) -> Vec<ChannelEntity> {
     let mut channels = Vec::new();
     for (space_id, body) in spaces {
+        if default_space_ids.iter().any(|id| id == space_id) {
+            channels.push(default_discussion_channel(space_id, Some(body)));
+        }
         let Some(timeline_events) = body
             .get("timeline")
             .and_then(|timeline| timeline.get("events"))
@@ -1842,8 +1991,19 @@ pub fn ChatPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let navigator = use_navigator();
-    let mut channels = use_signal(Vec::<ChannelEntity>::new);
-    let mut selected_channel = use_signal(String::new);
+    let initial_default_channel = (!selected_space.trim().is_empty())
+        .then(|| default_discussion_channel(&selected_space, None));
+    let initial_selected_channel = initial_default_channel
+        .as_ref()
+        .map(|channel| channel.flow_id.clone())
+        .unwrap_or_default();
+    let mut channels = use_signal(move || {
+        initial_default_channel
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>()
+    });
+    let mut selected_channel = use_signal(move || initial_selected_channel.clone());
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
     // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
@@ -1967,7 +2127,11 @@ pub fn ChatPanel(
     let filter_value = track_filter();
     let visible_channels: Vec<ChannelEntity> = all_channels
         .iter()
-        .filter(|channel| filter_value == "with_discussion_track" || channel.kind == "discussion")
+        .filter(|channel| {
+            filter_value == "with_discussion_track"
+                || channel.is_default
+                || channel.kind == "discussion"
+        })
         .cloned()
         .collect();
     let visible_channels_empty = visible_channels.is_empty();
@@ -2093,9 +2257,14 @@ pub fn ChatPanel(
                     }
                 }
                 loaded_messages.extend(chat_messages_from_sync_spaces(&sync.spaces));
+                let default_space_ids = if selected_scope_for_load.is_empty() {
+                    vec![selected_space_for_load.clone()]
+                } else {
+                    selected_scope_for_load.clone()
+                };
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_sync_spaces(&sync.spaces),
+                    channels_from_sync_spaces(&sync.spaces, &default_space_ids),
                 );
                 sync_cursor.set(sync.cursor);
             }
@@ -2313,13 +2482,13 @@ pub fn ChatPanel(
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
                             h2 { {crate::i18n::tr("chat.discussions_header")} }
-                            HelpTip { text: "Only discussion tracks under this Space are listed. Use the alternate filter to include other flows that expose a discussion track." }
+                            HelpTip { text: "Discussion is the selected Flow's track. The default Flow is always available for this Space; the alternate filter includes every Flow with a discussion track." }
                         }
                         div { class: "discussion-panel-head-actions",
                             button {
                                 class: "primary icon-button",
-                                "aria-label": crate::i18n::tr("chat.new_discussion"),
-                                title: crate::i18n::tr("chat.new_discussion"),
+                                "aria-label": crate::i18n::tr("chat.new_flow"),
+                                title: crate::i18n::tr("chat.new_flow"),
                                 "data-testid": "open-channel-dialog",
                                 onclick: move |_| create_dialog_open.set(true),
                                 UiIcon { name: "plus" }
@@ -2338,13 +2507,13 @@ pub fn ChatPanel(
                             class: if track_filter() == "discussion_only" { "segment active" } else { "segment" },
                             "data-testid": "discussion-filter-only",
                             onclick: move |_| track_filter.set("discussion_only".to_owned()),
-                            "Discussion only"
+                            "Default + discussion"
                         }
                         button {
                             class: if track_filter() == "with_discussion_track" { "segment active" } else { "segment" },
                             "data-testid": "discussion-filter-track",
                             onclick: move |_| track_filter.set("with_discussion_track".to_owned()),
-                            "Has discussion"
+                            "All Flow tracks"
                         }
                     }
                     div { class: "discussion-list", "data-testid": "channel-list",
@@ -2393,11 +2562,11 @@ pub fn ChatPanel(
 
             if create_dialog_open() {
                 div { class: "discussion-modal-backdrop", "data-testid": "channel-create-modal",
-                    div { class: "discussion-modal", role: "dialog", "aria-modal": "true", "aria-label": "New discussion",
+                    div { class: "discussion-modal", role: "dialog", "aria-modal": "true", "aria-label": "New Flow",
                         div { class: "discussion-modal-head",
                             div { class: "discussion-title-row",
-                                h2 { "New Discussion" }
-                                HelpTip { text: "Creates a Flow with a primary discussion track. Enable the card option when the same Flow should also carry a synthesis track." }
+                                h2 { "New Flow" }
+                                HelpTip { text: "Creates an additional Flow. Its discussion track is available from this view; enable the card option when the same Flow should also carry a synthesis track." }
                             }
                             button {
                                 class: "secondary icon-button",
@@ -2412,7 +2581,7 @@ pub fn ChatPanel(
                             input {
                                 "data-testid": "new-channel-name",
                                 value: "{new_channel_name}",
-                                placeholder: "Discussion title",
+                                placeholder: "Flow title",
                                 oninput: move |evt| new_channel_name.set(evt.value()),
                             }
                             label { {crate::i18n::tr("chat.label.summary")} }
@@ -2652,7 +2821,7 @@ pub fn ChatPanel(
                                     move |_| {
                                         let title = new_channel_name().trim().to_owned();
                                         if title.is_empty() {
-                                            status_msg.set("Discussion title is required".to_owned());
+                                            status_msg.set("Flow title is required".to_owned());
                                             return;
                                         }
                                         let category = "general".to_owned();
@@ -2710,7 +2879,7 @@ pub fn ChatPanel(
                                                 }
                                                 if let Err(error) = op.refresh_proof_hashes() {
                                                     status_msg.set(format!(
-                                                        "Could not create discussion proof: {error}"
+                                                        "Could not create Flow proof: {error}"
                                                     ));
                                                     return;
                                                 }
@@ -2718,7 +2887,7 @@ pub fn ChatPanel(
                                             }
                                             Err(error) => {
                                                 status_msg.set(format!(
-                                                    "Could not create discussion: {error}"
+                                                    "Could not create Flow: {error}"
                                                 ));
                                                 return;
                                             }
@@ -2742,7 +2911,7 @@ pub fn ChatPanel(
                                                 .build("yougen")
                                             })
                                             .collect();
-                                        status_msg.set("Creating discussion".to_owned());
+                                        status_msg.set("Creating Flow".to_owned());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
                                                 Ok(api) => match api
@@ -2757,6 +2926,7 @@ pub fn ChatPanel(
                                                                 category: category.clone(),
                                                                 topic: channel_topic.clone(),
                                                                 unread: 0,
+                                                                is_default: false,
                                                             });
                                                             selected_channel.set(flow_id.clone());
                                                             frontier_state.set(submitted.event_id.clone());
@@ -2781,7 +2951,7 @@ pub fn ChatPanel(
                                                             }
                                                             // Fan out seed watcher subscriptions.
                                                             // Best-effort: failures are surfaced
-                                                            // in status, but the discussion is
+                                                            // in status, but the Flow is
                                                             // already created. Default UX places
                                                             // every seed at `participating`; users
                                                             // can change their own level later.
@@ -2802,10 +2972,10 @@ pub fn ChatPanel(
                                                             }
                                                             if watch_failures > 0 {
                                                                 status_msg.set(format!(
-                                                                    "Discussion created; {watch_failures} watcher invite(s) failed"
+                                                                    "Flow created; {watch_failures} watcher invite(s) failed"
                                                                 ));
                                                             } else {
-                                                                status_msg.set("Discussion created".to_owned());
+                                                                status_msg.set("Flow created".to_owned());
                                                             }
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
@@ -2814,7 +2984,7 @@ pub fn ChatPanel(
                                                             new_channel_create_card.set(false);
                                                             create_dialog_open.set(false);
                                                         }
-                                                        Err(error) => status_msg.set(format!("Discussion create failed: {error}")),
+                                                        Err(error) => status_msg.set(format!("Flow create failed: {error}")),
                                                     },
                                                     Err(error) => status_msg.set(format!("Invalid server URL: {error}")),
                                                 }
@@ -3415,11 +3585,14 @@ pub fn ChatPanel(
                                                 let mentions = msg.mentions.clone();
                                                 let reply_to = msg.reply_to.clone();
                                                 move |_| {
+                                                    let retry_message_id =
+                                                        schema_message_id_or_new(&local_id);
                                                     if let Some(found) = messages
                                                         .write()
                                                         .iter_mut()
                                                         .find(|candidate| candidate.id == local_id)
                                                     {
+                                                        found.id = retry_message_id.clone();
                                                         found.pending = true;
                                                         found.failed = false;
                                                         found.error = None;
@@ -3431,8 +3604,8 @@ pub fn ChatPanel(
                                                     let actor = actor.clone();
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(&sync_cursor());
-                                                    let message_id = local_id.clone();
-                                                    let message_id_for_lookup = local_id.clone();
+                                                    let message_id = retry_message_id.clone();
+                                                    let message_id_for_lookup = retry_message_id.clone();
                                                     let message_id_for_store = message_id.clone();
                                                     let body_for_store = body.clone();
                                                     let actor_for_store = actor.clone();
@@ -4582,8 +4755,10 @@ pub fn ChatPanel(
                     div { class: "mention-chip-row",
                         button {
                             r#type: "button",
-                            class: "mention-trigger-button",
+                            class: "composer-tool-button",
                             "data-testid": "mention-trigger-button",
+                            title: "Mention member",
+                            "aria-label": "Mention member",
                             onclick: move |_| {
                                 let mut state = mention_picker_state.write();
                                 if state.open {
@@ -4592,7 +4767,52 @@ pub fn ChatPanel(
                                     state.open();
                                 }
                             },
-                            "@"
+                            UiIcon { name: "at-sign" }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "composer-tool-button",
+                            "data-testid": "attachment-menu-button",
+                            title: "Add attachment",
+                            "aria-label": "Add attachment",
+                            onclick: move |_| {
+                                let current = attachment_menu_open();
+                                attachment_menu_open.set(!current);
+                            },
+                            UiIcon { name: "plus" }
+                        }
+                        if attachment_menu_open() {
+                            div { class: "attachment-menu",
+                                button {
+                                    r#type: "button",
+                                    class: "attachment-menu-item",
+                                    "data-testid": "attachment-menu-poll",
+                                    onclick: move |_| {
+                                        attachment_menu_open.set(false);
+                                        poll_draft.set(Some(
+                                            crate::messaging::polls::PollDraft::new(),
+                                        ));
+                                    },
+                                    "Create poll"
+                                }
+                                // G3.Y2 — cotest references this short-cut
+                                // testid (`open-poll-composer-button`); we
+                                // alias it onto the same handler so existing
+                                // specs and the new attachment menu both
+                                // open the same composer.
+                                button {
+                                    r#type: "button",
+                                    class: "secondary",
+                                    "data-testid": "open-poll-composer-button",
+                                    onclick: move |_| {
+                                        attachment_menu_open.set(false);
+                                        poll_draft.set(Some(
+                                            crate::messaging::polls::PollDraft::new(),
+                                        ));
+                                    },
+                                    "Poll"
+                                }
+                            }
                         }
                         for chip in mention_picker_state.read().inserted.clone() {
                             div {
@@ -4717,54 +4937,6 @@ pub fn ChatPanel(
                         class: "compose-upload-progress",
                         "data-testid": "compose-upload-progress",
                         "{compose_upload_status}"
-                    }
-                }
-                // G3.Y2 — attachment menu (`+` button). Currently only
-                // exposes the Poll entry; future content types
-                // (file, code snippet, etc.) plug in here.
-                div { class: "compose-attachment-menu-row",
-                    button {
-                        r#type: "button",
-                        class: "secondary",
-                        "data-testid": "attachment-menu-button",
-                        onclick: move |_| {
-                            let current = attachment_menu_open();
-                            attachment_menu_open.set(!current);
-                        },
-                        "+"
-                    }
-                    if attachment_menu_open() {
-                        div { class: "attachment-menu",
-                            button {
-                                r#type: "button",
-                                class: "attachment-menu-item",
-                                "data-testid": "attachment-menu-poll",
-                                onclick: move |_| {
-                                    attachment_menu_open.set(false);
-                                    poll_draft.set(Some(
-                                        crate::messaging::polls::PollDraft::new(),
-                                    ));
-                                },
-                                "Create poll"
-                            }
-                            // G3.Y2 — cotest references this short-cut
-                            // testid (`open-poll-composer-button`); we
-                            // alias it onto the same handler so existing
-                            // specs and the new attachment menu both
-                            // open the same composer.
-                            button {
-                                r#type: "button",
-                                class: "secondary",
-                                "data-testid": "open-poll-composer-button",
-                                onclick: move |_| {
-                                    attachment_menu_open.set(false);
-                                    poll_draft.set(Some(
-                                        crate::messaging::polls::PollDraft::new(),
-                                    ));
-                                },
-                                "Poll"
-                            }
-                        }
                     }
                 }
                 if let Some(draft) = poll_draft.read().clone() {
@@ -4967,7 +5139,7 @@ pub fn ChatPanel(
                                         }
                                     }
                                 }
-                                let local_id = format!("chat-msg-{}", uuid_v7());
+                                let local_id = new_chat_message_id();
                                 let channel = channels()
                                     .iter()
                                     .find(|candidate| candidate.flow_id == selected_channel())
@@ -5059,6 +5231,7 @@ pub fn ChatPanel(
                                 let space_for_record = space.clone();
                                 let actor_for_store = actor.clone();
                                 let body_for_store = body.clone();
+                                let body_for_restore = body.clone();
                                 let flow_id_for_store = flow_id.clone();
                                 let message_id_for_store = message_id.clone();
                                 let reply_to_for_store = reply_to.clone();
@@ -5117,8 +5290,17 @@ pub fn ChatPanel(
                                             }
                                             Err(error) => {
                                                 let auth_expired = is_auth_expired_error(&error);
+                                                let membership_denied =
+                                                    is_space_membership_denied_error(&error);
                                                 let message = chat_send_error_message(&error);
-                                                if let Some(found) = messages
+                                                if membership_denied {
+                                                    messages
+                                                        .write()
+                                                        .retain(|candidate| candidate.id != local_id);
+                                                    if chat_draft().trim().is_empty() {
+                                                        chat_draft.set(body_for_restore.clone());
+                                                    }
+                                                } else if let Some(found) = messages
                                                     .write()
                                                     .iter_mut()
                                                     .find(|candidate| candidate.id == local_id)
@@ -5160,39 +5342,42 @@ pub fn ChatPanel(
                     // EncryptedPayload + persisted post-encrypt state).
                     // Send Secure requires a saved passphrase for the
                     // active Space.
-                    input {
-                        class: "secondary",
-                        r#type: "password",
-                        "data-testid": "mls-passphrase-input",
-                        placeholder: crate::i18n::tr("chat.mls_passphrase_placeholder"),
-                        value: "{mls_passphrase_draft}",
-                        oninput: move |evt| mls_passphrase_draft.set(evt.value()),
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "mls-passphrase-save-button",
-                        title: crate::i18n::tr("chat.mls_passphrase_save"),
-                        onclick: {
-                            let space_id = selected_space.clone();
-                            let mut store = mls_passphrase_store;
-                            move |_| {
-                                let value = mls_passphrase_draft();
-                                if value.is_empty() {
-                                    store.write().clear(&space_id);
-                                    status_msg.set(
-                                        "MLS passphrase cleared; Send Secure requires a passphrase".to_owned(),
-                                    );
-                                } else {
-                                    store.write().set(space_id.clone(), value);
-                                    status_msg.set(
-                                        "MLS passphrase set — Send Secure now uses real MLS encrypt".to_owned(),
-                                    );
-                                }
-                                mls_passphrase_draft.set(String::new());
+                    details { class: "compose-security-panel",
+                        summary { "Advanced encryption" }
+                        div { class: "compose-security-grid",
+                            input {
+                                class: "secondary",
+                                r#type: "password",
+                                "data-testid": "mls-passphrase-input",
+                                placeholder: crate::i18n::tr("chat.mls_passphrase_placeholder"),
+                                value: "{mls_passphrase_draft}",
+                                oninput: move |evt| mls_passphrase_draft.set(evt.value()),
                             }
-                        },
-                        {crate::i18n::tr("chat.mls_passphrase_save")}
-                    }
+                            button {
+                                class: "secondary",
+                                "data-testid": "mls-passphrase-save-button",
+                                title: crate::i18n::tr("chat.mls_passphrase_save"),
+                                onclick: {
+                                    let space_id = selected_space.clone();
+                                    let mut store = mls_passphrase_store;
+                                    move |_| {
+                                        let value = mls_passphrase_draft();
+                                        if value.is_empty() {
+                                            store.write().clear(&space_id);
+                                            status_msg.set(
+                                                "MLS passphrase cleared; Send Secure requires a passphrase".to_owned(),
+                                            );
+                                        } else {
+                                            store.write().set(space_id.clone(), value);
+                                            status_msg.set(
+                                                "MLS passphrase set — Send Secure now uses real MLS encrypt".to_owned(),
+                                            );
+                                        }
+                                        mls_passphrase_draft.set(String::new());
+                                    }
+                                },
+                                {crate::i18n::tr("chat.mls_passphrase_save")}
+                            }
                     // MLS multi-device invite row. Three controls:
                     //   1. Publish my key package → POST keys/upload with
                     //      a fresh MlsKeyPackageRecord so peers can
@@ -5357,6 +5542,7 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let space = selected_space.clone();
                             let actor = account_did.clone();
+                            let selected_flow = selected_channel_value.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -5365,6 +5551,11 @@ pub fn ChatPanel(
                                 }
                                 let space = space.clone();
                                 let actor = actor.clone();
+                                let flow_id = if selected_flow.trim().is_empty() {
+                                    default_discussion_flow_id(&space)
+                                } else {
+                                    selected_flow.clone()
+                                };
                                 let api_token = token();
                                 let wait_for = active_sync_token(&sync_cursor());
                                 let _hlc = Hlc::now("yougen").to_string();
@@ -5526,21 +5717,22 @@ pub fn ChatPanel(
                                     )
                                     .build("yougen");
                                 let encrypted_epoch = mls_commit_epoch;
+                                let message_id = new_chat_message_id();
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
                                     "cx.message.create",
                                 )
                                 .body(json!({
+                                    "message_id": message_id,
+                                    "flow_id": flow_id,
+                                    "track": "discussion",
                                     "body": format!("[encrypted epoch {encrypted_epoch}]"),
                                     "content": {
-                                        "blocks": [{
-                                            "kind": "text",
-                                            "text": format!("[encrypted epoch {encrypted_epoch}]"),
-                                        }],
+                                        "kind": "cx.content.text",
                                         "body": format!("[encrypted epoch {encrypted_epoch}]"),
-                                        "encrypted_payload": encrypted_payload_json,
                                     },
+                                    "encrypted": true,
                                     "covered_frontier": covered_frontier.clone(),
                                     "encrypted_payload": encrypted_payload_json,
                                 }))
@@ -5643,6 +5835,8 @@ pub fn ChatPanel(
                             }
                         },
                         {crate::i18n::tr("chat.send_secure")}
+                    }
+                        }
                     }
                 }
                 if !status_msg().is_empty() {
@@ -5775,7 +5969,8 @@ mod tests {
                 "actor_seq": 43,
                 "payload": {
                     "content": {
-                        "blocks": [{"kind": "text", "text": "nested payload message"}]
+                        "kind": "cx.content.text",
+                        "body": "nested payload message"
                     },
                     "flow_id": "cx:flow:support",
                     "message_id": "chat-msg-nested"
@@ -5788,6 +5983,64 @@ mod tests {
         assert_eq!(message.id, "cx:event:nested");
         assert_eq!(message.flow_id, "cx:flow:support");
         assert_eq!(message.body, "nested payload message");
+    }
+
+    #[test]
+    fn chat_message_create_operation_emits_schema_canonical_content() {
+        let op = chat_message_create_operation(
+            "cx:space:demo",
+            "did:web:alice.example",
+            "cx:flow:demo",
+            "discussion",
+            "cx:message:test-1",
+            "hello from chat",
+            &[],
+            None,
+        );
+
+        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(op.payload["message_id"].as_str(), Some("cx:message:test-1"));
+        assert_eq!(op.payload["flow_id"].as_str(), Some("cx:flow:demo"));
+        assert_eq!(op.payload["track"].as_str(), Some("discussion"));
+        assert_eq!(
+            op.payload["content"]["kind"].as_str(),
+            Some("cx.content.text")
+        );
+        assert_eq!(
+            op.payload["content"]["body"].as_str(),
+            Some("hello from chat")
+        );
+        assert!(op.payload["content"].get("blocks").is_none());
+        assert!(op.payload.get("reply_to").is_none());
+        assert!(op.payload.get("thread_id").is_none());
+    }
+
+    #[test]
+    fn chat_message_create_operation_includes_reply_fields_only_when_present() {
+        let op = chat_message_create_operation(
+            "cx:space:demo",
+            "did:web:alice.example",
+            "cx:flow:demo",
+            "discussion",
+            "cx:message:test-reply",
+            "reply body",
+            &[],
+            Some("cx:message:parent"),
+        );
+
+        assert_eq!(op.payload["reply_to"].as_str(), Some("cx:message:parent"));
+        assert_eq!(op.payload["thread_id"].as_str(), Some("cx:message:parent"));
+    }
+
+    #[test]
+    fn chat_message_ids_use_schema_prefix() {
+        let id = new_chat_message_id();
+
+        assert!(id.starts_with("cx:message:"));
+        assert!(is_schema_message_id(&id));
+        assert!(is_schema_message_id("cx:message:local-1"));
+        assert!(!is_schema_message_id("chat-msg-local"));
+        assert!(schema_message_id_or_new("chat-msg-local").starts_with("cx:message:"));
     }
 
     #[test]
@@ -6019,6 +6272,7 @@ mod tests {
         assert_eq!(channel.category, "support");
         assert_eq!(channel.kind, "discussion");
         assert_eq!(channel.topic.as_deref(), Some("Operations support"));
+        assert!(!channel.is_default);
     }
 
     #[test]
@@ -6039,6 +6293,42 @@ mod tests {
         });
 
         assert!(channel_from_flow_event("cx:space:demo", &event).is_none());
+    }
+
+    #[test]
+    fn default_discussion_channel_uses_space_default_flow_projection() {
+        let body = json!({
+            "summary": {
+                "title": "Demo Space",
+                "flow": {
+                    "flow_id": "cx:flow:demo",
+                    "title": "General",
+                    "summary": "Space-wide conversation",
+                    "tracks": {
+                        "discussion": {"enabled": true},
+                        "synthesis": {"enabled": true}
+                    }
+                }
+            }
+        });
+
+        let channel = default_discussion_channel("cx:space:demo", Some(&body));
+
+        assert_eq!(channel.flow_id, "cx:flow:demo");
+        assert_eq!(channel.name, "General");
+        assert_eq!(channel.kind, "discussion");
+        assert_eq!(channel.topic.as_deref(), Some("Space-wide conversation"));
+        assert!(channel.is_default);
+    }
+
+    #[test]
+    fn default_discussion_channel_synthesizes_default_flow_when_projection_is_absent() {
+        let channel = default_discussion_channel("cx:space:demo", None);
+
+        assert_eq!(channel.flow_id, "cx:flow:demo");
+        assert_eq!(channel.name, "Discussion");
+        assert_eq!(channel.category, "default flow");
+        assert!(channel.is_default);
     }
 
     // ── T7.2 watcher pill helpers ────────────────────────────────

@@ -294,21 +294,21 @@ test.describe("feature coverage placeholders", () => {
   // ---- Discoverability ≠ Join Rule ≠ History ----
   // claude-design: desktop/directory.html
   // spec: discovery/discovery-directory.md §2
-  test("directory: invite_only space hides existence from search", async ({ page }) => {
+  test("directory: invite_only realm hides existence from search", async ({ page }) => {
     // The keyword-search path must respect
     // `discoverability=invite_only` - the spec (discovery/discovery-
     // directory.md §2) requires that searches MUST NOT enumerate
-    // invite-only Spaces. Soland's `/api/v1/directory/search-spaces`
+    // invite-only Realms. Soland's `/api/v1/directory/search-realms`
     // filters them out; the mock surface returns the same shape so the
     // contract holds without a live server.
     await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    // Spaces tab is the default for the directory; just in case it's
+    // Realms tab is the default for the directory; just in case it's
     // not the active tab on first mount, click it explicitly so the
-    // search button hits search-spaces (not search-actors etc.).
+    // search button hits search-realms (not search-actors etc.).
     await page.getByTestId("tab-spaces").click();
     await page.getByTestId("directory-search-input").fill("demo");
     await page.getByTestId("directory-search-button").click();
-    // The mock returns a single listed Space (`discoverability=listed`).
+    // The mock returns a single listed Realm (`discoverability=listed`).
     // The contract: every search-result row's wire shape MUST come from
     // a listed/public discoverability bucket. We assert at least one
     // result is rendered (sanity), and that none of them carry the

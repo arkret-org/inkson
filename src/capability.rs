@@ -8,7 +8,8 @@ use crate::hlc::Hlc;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionGroup {
     Common,
-    PlaceFlow,
+    #[serde(alias = "PlaceFlow")]
+    SpaceFlow,
     Conversation,
     Morph,
     Administrative,
@@ -53,7 +54,7 @@ impl ActionGroup {
                 "cx.invite.accept",
                 "cx.invite.cancel",
             ],
-            Self::PlaceFlow => &[
+            Self::SpaceFlow => &[
                 "cx.flow.move",
                 "cx.flow.reorder",
                 // Per contrix-spec dc01ad7 the four
@@ -123,10 +124,11 @@ pub enum Constraint {
         #[serde(default)]
         facet_allow: Vec<String>,
     },
-    /// Limit scope to specific spaces or Places.
+    /// Limit scope to specific Realm-owned Space containers.
     ScopeLimitation {
         space_ids: Vec<String>,
-        place_ids: Vec<String>,
+        #[serde(default, alias = "place_ids")]
+        space_container_ids: Vec<String>,
     },
     /// Control delegation depth and re-authorization.
     DelegationControl {
@@ -220,16 +222,18 @@ impl Constraint {
             }
             Self::ScopeLimitation {
                 space_ids,
-                place_ids,
+                space_container_ids,
             } => {
                 if let Some(ref space) = ctx.space_id {
                     if !space_ids.is_empty() && !space_ids.contains(space) {
                         return ConstraintResult::Deny(format!("space {space} not in scope"));
                     }
                 }
-                if let Some(ref place) = ctx.place_id {
-                    if !place_ids.is_empty() && !place_ids.contains(place) {
-                        return ConstraintResult::Deny(format!("place {place} not in scope"));
+                if let Some(ref container) = ctx.space_container_id {
+                    if !space_container_ids.is_empty() && !space_container_ids.contains(container) {
+                        return ConstraintResult::Deny(format!(
+                            "space container {container} not in scope"
+                        ));
                     }
                 }
                 ConstraintResult::Allow
@@ -338,7 +342,7 @@ pub struct EvalContext {
     pub object_type: Option<String>,
     pub facets: Vec<String>,
     pub space_id: Option<String>,
-    pub place_id: Option<String>,
+    pub space_container_id: Option<String>,
     pub action: Option<String>,
     pub delegation_depth: u32,
     pub operation_counts: HashMap<String, u32>,
@@ -914,7 +918,7 @@ mod tests {
         // (`flow.create`) is now an explicit miss so we catch any
         // regression that re-introduces the legacy short form.
         // R1.7: security boundary actions live in cx.realm.*; container
-        // (former Place) actions live in cx.space.*.
+        // container actions live in cx.space.*.
         assert!(ActionGroup::Common.contains("cx.realm.read"));
         assert!(ActionGroup::Common.contains("cx.flow.create"));
         assert!(ActionGroup::Conversation.contains("cx.message.create"));

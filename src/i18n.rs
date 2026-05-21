@@ -375,7 +375,7 @@ pub fn english_translations() -> TranslationDict {
         "dashboard.notifications_empty_sub",
         "Unread items, approvals, and alerts appear here",
     );
-    dict.set("chat.empty_discussions", "No discussions yet.");
+    dict.set("chat.empty_discussions", "No discussion tracks available.");
     dict.set("chat.empty_messages", "No messages yet.");
     // F-CHAT-DEAD-UI-1: discussion settings panel.
     dict.set("chat.settings.mute_notifications", "Mute notifications");
@@ -552,10 +552,11 @@ pub fn english_translations() -> TranslationDict {
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
     // generic verbs like Save/Cancel/Retry/Edit/Confirm).
-    dict.set("chat.discussions_header", "Discussions");
+    dict.set("chat.discussions_header", "Flow discussions");
     dict.set("chat.users_header", "Users");
     dict.set("chat.settings_header", "Settings");
     dict.set("chat.new_discussion", "New discussion");
+    dict.set("chat.new_flow", "New Flow");
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
@@ -645,12 +646,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("message.unpin", "Unpin");
     dict.set("pinned_bar.empty", "No pinned messages.");
     dict.set("pinned_bar.scroll_to", "Jump to message");
-    dict.set("chat.empty.title", "No discussions yet");
+    dict.set("chat.empty.title", "No discussion track available");
     dict.set(
         "chat.empty.description",
-        "Create a discussion to start chatting in this Space.",
+        "This Space should expose a default Flow discussion track.",
     );
-    dict.set("chat.empty.create_button", "Create your first discussion");
+    dict.set("chat.empty.create_button", "Create Flow");
 
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.group.all", "All");
@@ -1273,7 +1274,7 @@ pub fn chinese_translations() -> TranslationDict {
         "dashboard.notifications_empty_sub",
         "未读项、审批请求与提醒会显示在此处",
     );
-    dict.set("chat.empty_discussions", "尚无讨论。");
+    dict.set("chat.empty_discussions", "暂无可用讨论 track。");
     dict.set("chat.empty_messages", "尚无消息。");
     // F-CHAT-DEAD-UI-1: 与 en dict 同步的讨论设置面板文案。
     dict.set("chat.settings.mute_notifications", "静音通知");
@@ -1440,10 +1441,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("space_admin.mls_remove_passphrase_placeholder", "快照口令");
 
     // Chat / Discussion view
-    dict.set("chat.discussions_header", "讨论");
+    dict.set("chat.discussions_header", "Flow 讨论");
     dict.set("chat.users_header", "用户");
     dict.set("chat.settings_header", "设置");
     dict.set("chat.new_discussion", "新建讨论");
+    dict.set("chat.new_flow", "新建 Flow");
     dict.set("chat.hide_list", "隐藏讨论列表");
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
@@ -1524,12 +1526,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("message.unpin", "取消钉选");
     dict.set("pinned_bar.empty", "暂无钉选消息。");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
-    dict.set("chat.empty.title", "还没有讨论");
+    dict.set("chat.empty.title", "暂无可用讨论 track");
     dict.set(
         "chat.empty.description",
-        "创建一个讨论,以在该空间中开始聊天。",
+        "该 Space 应该提供默认 Flow 的讨论 track。",
     );
-    dict.set("chat.empty.create_button", "创建第一个讨论");
+    dict.set("chat.empty.create_button", "创建 Flow");
 
     // Notifications panel
     dict.set("notifications.group.all", "全部");

@@ -48,7 +48,7 @@ async function createDiscussion(
   );
   await page.getByTestId("create-channel-button").click();
   const body = await request.then((candidate) => candidate.postDataJSON());
-  await expect(page.getByTestId("chat-status")).toContainText("Discussion created");
+  await expect(page.getByTestId("chat-status")).toContainText("Flow created");
   await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
   return body;
 }
@@ -184,7 +184,7 @@ test("loopback proxy server aliases are normalized to local.host", async ({ page
   await expect(page.getByTestId("principal-context")).toContainText("https://local.host");
   await expect(page.getByTestId("server-url-input")).toHaveCount(0);
   await expect(page.getByTestId("connect-button")).toHaveCount(0);
-  await expect(page.getByTestId("topbar-crumbs")).toContainText("https://local.host");
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("https://local.host");
 });
 
 test("topbar breadcrumbs avoid duplicated route and server context", async ({ page }) => {
@@ -374,6 +374,7 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
 });
 
 test("directory search resolve and space selection flow works", async ({ page }) => {
+  await page.getByTestId("topbar-search-button").click();
   await page.getByTestId("global-search-input").fill("demo");
   await page.getByTestId("global-search-input").press("Enter");
   await expect(page.getByTestId("directory-panel")).toBeVisible();
@@ -485,7 +486,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
 });
 
-test("chat creates discussion entities and sends structured mention payloads", async ({ page }) => {
+test("chat exposes the default discussion track and creates flow-backed tracks", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);
   await expect(page.getByTestId("discussion-list-panel")).toBeVisible();
@@ -496,8 +497,10 @@ test("chat creates discussion entities and sends structured mention payloads", a
   await expect(page.getByTestId("discussion-users-toggle")).toBeVisible();
   await expect(page.getByTestId("discussion-users-panel")).toHaveCount(0);
   await expect(page.getByTestId("discussion-settings-panel")).toHaveCount(0);
-  await expect(page.getByTestId("channel-item")).toHaveCount(0);
-  await expect(page.getByTestId("empty-discussion-list")).toBeVisible();
+  await expect(page.getByTestId("channel-item")).toHaveCount(1);
+  await expect(page.getByTestId("channel-item").first()).toContainText("Discussion");
+  await expect(page.getByTestId("empty-discussion-list")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-main-panel")).toContainText("No messages yet");
   await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Launch board discussion");
   await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Announcements discussion");
   await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Support desk discussion");
@@ -529,21 +532,21 @@ test("chat creates discussion entities and sends structured mention payloads", a
   const channelBody = await channelEvent.then((request) => request.postDataJSON());
   expect(channelBody.kind).toBe("cx.flow.create");
   expect(channelBody.payload.kind).toBeUndefined();
-  expect(channelBody.payload.flow).toBeTruthy();
+  const flowObject = channelBody.payload.object;
+  expect(flowObject).toBeTruthy();
   expect(channelBody.payload.category).toBe("general");
   expect(channelBody.payload.fields.category).toBe("general");
-  expect(channelBody.payload.flow.fields.category).toBe("general");
+  expect(flowObject.fields.category).toBe("general");
   expect(channelBody.payload.summary).toBe("Broadcast deploy updates");
-  expect(channelBody.payload.flow.summary).toBe("Broadcast deploy updates");
-  expect(channelBody.payload.participants).toContain("did:web:alice.example");
-  expect(channelBody.payload.participants).toContain("did:web:bob.example");
-  expect(channelBody.payload.flow.tracks.discussion).toBeTruthy();
-  expect(channelBody.payload.flow.tracks.synthesis).toBeUndefined();
+  expect(flowObject.summary).toBe("Broadcast deploy updates");
+  expect(flowObject.created_by).toBe("did:web:alice.example");
+  expect(flowObject.tracks.discussion).toBeTruthy();
+  expect(flowObject.tracks.synthesis).toBeUndefined();
   expect(channelBody.payload.flow_id).toContain("cx:flow:");
   expect(channelBody.payload.title).toBe("Ops Announce");
   expect(channelBody.payload.rank).toBeTruthy();
   await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
-  await expect(page.getByTestId("chat-status")).toContainText("Discussion created");
+  await expect(page.getByTestId("chat-status")).toContainText("Flow created");
   await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
 
   await page.getByTestId("open-channel-dialog").click();
@@ -552,8 +555,8 @@ test("chat creates discussion entities and sends structured mention payloads", a
   const cardBackedEvent = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("create-channel-button").click();
   const cardBackedBody = await cardBackedEvent.then((request) => request.postDataJSON());
-  expect(cardBackedBody.payload.flow.tracks.discussion).toBeTruthy();
-  expect(cardBackedBody.payload.flow.tracks.synthesis).toBeTruthy();
+  expect(cardBackedBody.payload.object.tracks.discussion).toBeTruthy();
+  expect(cardBackedBody.payload.object.tracks.synthesis).toBeTruthy();
   expect(cardBackedBody.payload.create_card).toBe(true);
   await expect(page.getByTestId("space-list")).not.toContainText("Ops Announce");
   await expect(page.getByTestId("space-list")).not.toContainText("Card Backed Discussion");
@@ -571,8 +574,11 @@ test("chat creates discussion entities and sends structured mention payloads", a
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("cx.message.create");
+  expect(chatBody.payload.message_id).toMatch(/^cx:message:/);
   expect(chatBody.payload.flow_id).toContain("cx:flow:");
   expect(chatBody.payload.track).toBe("discussion");
+  expect(chatBody.payload.content.kind).toBe("cx.content.text");
+  expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #cx:task:123");
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
@@ -628,18 +634,18 @@ test("chat send failures mark the message and keep actions quiet until hover", a
       return route.fallback();
     }
     return route.fulfill({
-      status: 401,
+      status: 503,
       contentType: "application/json",
       body: JSON.stringify({
         ok: false,
         error: {
           ok: false,
           error: {
-            code: "auth_expired",
-            message: "session expired",
+            code: "server_unavailable",
+            message: "transient send failure",
           },
         },
-        request_id: "cx:req:e2e-auth-expired",
+        request_id: "cx:req:e2e-send-failed",
       }),
     });
   });
@@ -650,12 +656,46 @@ test("chat send failures mark the message and keep actions quiet until hover", a
   const message = page.getByTestId("chat-message").last();
   await expect(message).toContainText("message that will fail");
   await expect(message).toHaveClass(/is-failed/);
-  await expect(page.getByTestId("chat-message-error").last()).toContainText("Session expired");
+  await expect(page.getByTestId("chat-message-error").last()).toContainText("transient send failure");
   await expect(page.getByTestId("chat-retry-button").last()).toBeVisible();
   await expect(page.getByTestId("chat-reply-button").last()).toBeHidden();
 
   await message.hover();
   await expect(page.getByTestId("chat-reply-button").last()).toBeVisible();
+});
+
+test("chat membership denial restores draft without panicking", async ({ page }) => {
+  await openDiscussion(page);
+  await createDiscussion(page, "Membership Denied Discussion");
+  await page.route("**/api/v1/events", async (route) => {
+    if (route.request().method() !== "POST") {
+      return route.fallback();
+    }
+    const body = await route.request().postDataJSON();
+    if (body.kind !== "cx.message.create") {
+      return route.fallback();
+    }
+    return route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          errcode: "capability_denied",
+          error: "actor is not a member of the event Space",
+          request_id: "cx:req:e2e-membership-denied",
+        },
+      }),
+    });
+  });
+
+  await page.getByTestId("chat-input").fill("membership denied message");
+  await page.getByTestId("send-chat-button").click();
+
+  await expect(page.getByText("App panicked!")).toHaveCount(0);
+  await expect(page.getByTestId("chat-status")).toContainText("not a member");
+  await expect(page.getByTestId("chat-input")).toHaveValue("membership denied message");
+  await expect(page.getByTestId("chat-message").filter({ hasText: "membership denied message" })).toHaveCount(0);
 });
 
 test("chat retries plaintext sends after granting current service visibility", async ({ page }) => {
@@ -696,14 +736,15 @@ test("chat retries plaintext sends after granting current service visibility", a
 
   const policyUpdate = page.waitForRequest(
     (request) =>
-      request.url().includes(`/api/v1/spaces/${DEMO_SPACE}`) &&
-      request.method() === "PATCH",
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST" &&
+      request.postDataJSON().kind === "cx.realm.update",
   );
   await page.getByTestId("chat-input").fill("policy retry message");
   await page.getByTestId("send-chat-button").click();
 
   const policyBody = await policyUpdate.then((request) => request.postDataJSON());
-  expect(policyBody.plaintext_visible_services).toContain("did:web:server.local");
+  expect(policyBody.payload.patch.plaintext_visible_services).toContain("did:web:server.local");
   await expect(page.getByTestId("chat-status")).toContainText("Message sent");
   await expect(page.getByTestId("chat-message").last()).not.toHaveClass(/is-failed/);
   expect(attempts).toBe(2);

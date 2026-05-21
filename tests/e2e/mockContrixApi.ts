@@ -69,6 +69,7 @@ export async function mockContrixApi(page: Page) {
       }
       return json(route, {
         service_did: "did:web:server.local",
+        trust_domain: "cx:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
@@ -85,8 +86,8 @@ export async function mockContrixApi(page: Page) {
         supported_features: [
           "sync.client_sync",
           "sync.backfill",
-          "directory.search_spaces",
-          "directory.resolve_space",
+          "directory.search_realms",
+          "directory.resolve_realm",
           "authz.check",
           "space.create",
           "space.manage_members",
@@ -97,8 +98,8 @@ export async function mockContrixApi(page: Page) {
           "keys.upload",
           "keys.query",
           "keys.claim",
-          "device_messages.receive",
-          "device_messages.send",
+          "device_messages.get",
+          "device_messages.put",
           "push.register_device",
           "mimi_provider_facade",
           "events.submit",
@@ -108,10 +109,10 @@ export async function mockContrixApi(page: Page) {
           "cx.sync.account",
           "cx.events.query",
           "cx.events.subscribe",
-          "cx.directory.search_spaces",
-          "cx.directory.resolve_space",
+          "cx.directory.search_realms",
+          "cx.directory.resolve_realm",
           "cx.authz.check",
-          "cx.spaces.create",
+          "cx.extension.soland.spaces.create",
           "cx.events.submit",
           "cx.message.create",
           "cx.message.revise",
@@ -120,8 +121,8 @@ export async function mockContrixApi(page: Page) {
           "cx.keys.upload",
           "cx.keys.query",
           "cx.keys.claim",
-          "cx.device_messages.receive",
-          "cx.device_messages.send",
+          "cx.device_messages.get",
+          "cx.device_messages.put",
           "cx.push.register_device",
           "cx.mimi.provider_directory",
           "cx.events.describe",
@@ -130,6 +131,7 @@ export async function mockContrixApi(page: Page) {
         ],
         supported_schema_profiles: ["cx.schema.core.v1"],
         supported_reducer_profiles: ["cx.reducer.v1"],
+        supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
           mode: "development",
           supported_auth_methods: ["oauth2_bearer_introspection"],
@@ -141,6 +143,12 @@ export async function mockContrixApi(page: Page) {
           default: "e2ee",
           allowed_services: ["did:web:server.local"],
         },
+        implemented_features: [],
+        claimed_profiles: [],
+        verified_profiles: [],
+        experimental_features: [],
+        compat_surfaces: [],
+        development_mode: true,
       });
     }
 
@@ -577,40 +585,38 @@ export async function mockContrixApi(page: Page) {
           knock: {},
           leave: {},
         },
-        to_device: { events: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
-        account_data: {
-          events: [
-            {
-              kind: "cx.notification",
-              notification_id: "notif-msg-1",
-              title: "New message",
-              body: "Alice sent a message in Demo Space",
-              space_id: DEMO_SPACE,
-              notification_kind: "message",
-              type: "message",
-              timestamp: "2026-04-28T12:01:00Z",
-              read: false,
-            },
-            {
-              kind: "cx.notification",
-              notification_id: "notif-invite-1",
-              title: "New invite",
-              body: "You were invited to review Demo Space",
-              space_id: DEMO_SPACE,
-              notification_kind: "invite",
-              type: "invite",
-              timestamp: "2026-04-28T12:02:00Z",
-              read: false,
-            },
-          ],
-        },
+        to_device: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }],
+        account_data: [
+          {
+            kind: "cx.notification",
+            notification_id: "notif-msg-1",
+            title: "New message",
+            body: "Alice sent a message in Demo Space",
+            space_id: DEMO_SPACE,
+            notification_kind: "message",
+            type: "message",
+            timestamp: "2026-04-28T12:01:00Z",
+            read: false,
+          },
+          {
+            kind: "cx.notification",
+            notification_id: "notif-invite-1",
+            title: "New invite",
+            body: "You were invited to review Demo Space",
+            space_id: DEMO_SPACE,
+            notification_kind: "invite",
+            type: "invite",
+            timestamp: "2026-04-28T12:02:00Z",
+            read: false,
+          },
+        ],
         device_lists: { changed: [], left: [] },
-        presence: { events: [] },
+        presence: [],
         notifications: { events: [] },
       });
     }
 
-    if (url.pathname === "/api/v1/directory/search-spaces") {
+    if (url.pathname === "/api/v1/directory/search-realms") {
       return json(route, {
         results: [spacePreview()],
         next_cursor: null,
@@ -661,7 +667,10 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/resolve-space") {
+    if (
+      url.pathname === "/api/v1/directory/resolve-space" ||
+      url.pathname === "/api/v1/directory/resolve-realm"
+    ) {
       return json(route, {
         space_preview: spacePreview(),
         stripped_state: [],

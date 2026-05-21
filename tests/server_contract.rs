@@ -9,7 +9,7 @@ use yougen::{
     },
     api::{
         ContrixApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
-        parse_events_subscribe_ndjson_text, parse_resolve_space, parse_server_description,
+        parse_events_subscribe_ndjson_text, parse_resolve_realm, parse_server_description,
         parse_sync, parse_sync_describe,
     },
     config::{ClientConfig, LocalConfigStore},
@@ -30,8 +30,8 @@ fn yougen_accepts_server_contract_payloads() {
         "supported_features": [
             "sync.account",
             "sync.backfill",
-            "directory.search_spaces",
-            "directory.resolve_space",
+            "directory.search_realms",
+            "directory.resolve_realm",
             "index.query",
             "authz.check",
             "profile.presence",
@@ -44,8 +44,8 @@ fn yougen_accepts_server_contract_payloads() {
             "cx.events.subscribe",
             "cx.sync.get_snapshot_head",
             "cx.directory.describe",
-            "cx.directory.search_spaces",
-            "cx.directory.resolve_space",
+            "cx.directory.search_realms",
+            "cx.directory.resolve_realm",
             "cx.index.describe",
             "cx.index.query",
             "cx.authz.check",
@@ -149,7 +149,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(directory.discovery_profiles[0], "cx.profile.directory.v1");
 
-    let resolved = parse_resolve_space(json!({
+    let resolved = parse_resolve_realm(json!({
         "space_preview": {
             "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
             "name": "Contrix Demo Space",
@@ -440,6 +440,43 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
         &frames[2],
         contrix_sdk::EventsSubscribeFrameBody::CatchupComplete
     ));
+}
+
+#[test]
+fn protocol_migration_fixtures_do_not_reintroduce_legacy_surface_names() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let checked_files = [
+        "tests/e2e/mockContrixApi.ts",
+        "src/views/directory.rs",
+        "src/views/kanban.rs",
+    ];
+    let forbidden_terms = [
+        "directory.search_spaces",
+        "directory.resolve_space",
+        "cx.spaces.create",
+        "cx.device_messages.receive",
+        "cx.device_messages.send",
+        "/api/v1/directory/search-spaces",
+        "to_device: { events",
+        "presence: { events",
+        "account_data: { events",
+        "PlaceProjectionView",
+        "cx:place:",
+        "Board Place",
+    ];
+
+    for relative in checked_files {
+        let path = root.join(relative);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for term in forbidden_terms {
+            assert!(
+                !source.contains(term),
+                "{} must not contain legacy protocol surface `{term}`",
+                path.display()
+            );
+        }
+    }
 }
 
 #[test]

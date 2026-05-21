@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     sync::{
         Arc,
@@ -10,7 +11,7 @@ use std::{
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
-use contrix_sdk::ErrorEnvelope;
+use contrix_sdk::{ErrorDetail, ErrorEnvelope};
 use ed25519_dalek::Signer;
 use reqwest::{
     Client, Method, StatusCode,
@@ -158,27 +159,75 @@ fn guard_event_proof_against_production(event: &EventEnvelope) -> anyhow::Result
     Ok(())
 }
 
+fn guard_event_value_proof_against_production(event: &Value) -> anyhow::Result<()> {
+    let mode = current_proof_mode();
+    if !mode.enforces_real_signer() {
+        return Ok(());
+    }
+    let proof = event
+        .get("proofs")
+        .and_then(Value::as_array)
+        .and_then(|proofs| proofs.first())
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot send: no signer configured for this server (proof mode = {})",
+                mode.label_en()
+            )
+        })?;
+    let jws = proof.get("jws").and_then(Value::as_str).unwrap_or_default();
+    if jws == PLACEHOLDER_PROOF_JWS || jws.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Cannot send: dev-mode placeholder proof rejected by production guard (proof mode = {})",
+            mode.label_en()
+        ));
+    }
+    if !jws.contains("..") || jws.split("..").nth(1).is_none_or(str::is_empty) {
+        return Err(anyhow::anyhow!(
+            "Cannot send: proof jws is missing a real signature (proof mode = {})",
+            mode.label_en()
+        ));
+    }
+    Ok(())
+}
+
+fn scope_id_as_realm_id(value: &str) -> String {
+    value
+        .strip_prefix("cx:space:")
+        .map(|suffix| format!("cx:realm:{suffix}"))
+        .unwrap_or_else(|| value.to_owned())
+}
+
 /// Generic wrapper for soland's
-/// `/api/v1/projection/{places|flows}` lifecycle endpoints. Keeps the
-/// query response shape symmetric across the two surfaces so the kanban
-/// hydrate path can pluck `.places` / `.flows` with the same code.
+/// `/api/v1/projection/{space-containers|flows}` lifecycle endpoints. Keeps
+/// the query response shape symmetric across the two surfaces so the kanban
+/// hydrate path can pluck projection rows with the same code.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionResponse<T> {
-    pub space_id: String,
+    #[serde(rename = "realm_id", alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub total: u32,
-    #[serde(default = "Vec::new", alias = "places", alias = "flows")]
+    #[serde(
+        default = "Vec::new",
+        alias = "places",
+        alias = "space_containers",
+        alias = "flows"
+    )]
     pub items: Vec<T>,
 }
 
-/// Server-side Place row from `GET /api/v1/projection/places`. Only the
-/// fields the kanban hydrate path actually consumes are typed; the rest
-/// are tolerated via `#[serde(default)]` so future soland additions
-/// don't break deserialization.
+/// Server-side Space-container projection row.
+///
+/// Soland now serves these rows from
+/// `GET /api/v1/projection/space-containers`; legacy `places` / `place_id`
+/// fields remain accepted during migration.
 #[derive(Clone, Debug, Deserialize)]
-pub struct PlaceProjectionView {
-    pub place_id: String,
-    pub space_id: String,
+pub struct SpaceContainerProjectionView {
+    #[serde(rename = "container_space_id", alias = "place_id")]
+    pub container_space_id: String,
+    #[serde(rename = "realm_id", alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub kind: String,
     #[serde(default)]
@@ -428,6 +477,18 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
                     .error
                     .message()
                     .contains("plaintext_visible_services")
+        })
+}
+
+pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ContrixApiError>()
+        .is_some_and(|api_error| {
+            let code = api_error.error.code();
+            let message = api_error.error.message().to_ascii_lowercase();
+            api_error.status == StatusCode::FORBIDDEN
+                && (code == "capability_denied" || code.ends_with(".capability_denied"))
+                && message.contains("not a member")
         })
 }
 
@@ -812,9 +873,7 @@ impl ContrixApi {
         }
 
         // R1.7: the security boundary (formerly Space) is now Realm.
-        // TODO(realm-rework): switch local prefix to `cx:realm:` once
-        // contrix-sdk's SpaceId validator and soland accept the new shape.
-        let space_id = format!("cx:space:{}", uuid_v7());
+        let space_id = format!("cx:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
         let events = build_realm_bootstrap_events(
             &space_id,
@@ -1078,7 +1137,7 @@ impl ContrixApi {
         .await
     }
 
-    pub async fn search_spaces(
+    pub async fn search_realms(
         &self,
         query: &str,
         next_cursor: Option<&str>,
@@ -1090,16 +1149,31 @@ impl ContrixApi {
         self.post_json("api/v1/directory/search-realms", body).await
     }
 
+    /// Compatibility alias for legacy UI code. The wire operation is
+    /// `cx.directory.search_realms`; directory results are Realm previews.
+    pub async fn search_spaces(
+        &self,
+        query: &str,
+        next_cursor: Option<&str>,
+    ) -> anyhow::Result<SearchSpacesResponse> {
+        self.search_realms(query, next_cursor).await
+    }
+
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResBody> {
         self.get_json("api/v1/directory/describe").await
     }
 
-    pub async fn resolve_space(&self, space_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
+    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
         self.post_json(
             "api/v1/directory/resolve-realm",
-            json!({"space_id": space_id}),
+            json!({"realm_id": realm_id}),
         )
         .await
+    }
+
+    /// Compatibility alias for the pre-Realm/Space inversion naming.
+    pub async fn resolve_space(&self, space_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
+        self.resolve_realm(space_id).await
     }
 
     /// Query durable events through the current `/api/v1/events` surface.
@@ -1877,16 +1951,24 @@ impl ContrixApi {
             .await
     }
 
-    // Pull the canonical Place / Flow lifecycle state for a Space so the
+    // Pull the canonical Space-container / Flow lifecycle state for a Space so the
     // kanban view can hydrate `column.state` / `card.lifecycle` after a
     // refresh. Pairs with soland's `routing::events::projection_query`.
     pub async fn list_place_projections(
         &self,
         space_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionResponse<PlaceProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
+        self.list_space_container_projections(space_id).await
+    }
+
+    pub async fn list_space_container_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
         // `cx:space:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
-        let path = format!("api/v1/projection/places?space_id={space_id}");
+        let realm_id = scope_id_as_realm_id(space_id);
+        let path = format!("api/v1/projection/space-containers?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
@@ -2103,6 +2185,7 @@ impl ContrixApi {
     }
 
     async fn submit_event(&self, event: &Value) -> anyhow::Result<SubmitEventResponse> {
+        guard_event_value_proof_against_production(event)?;
         let idempotency_key = event
             .get("unsigned")
             .and_then(|value| value.get("local_operation_idempotency_alias"))
@@ -3157,7 +3240,7 @@ fn build_reducer_event(
         "kind": kind,
         "actor_id": actor_id,
         "actor_seq": next_seq(),
-        "space_id": space_id,
+        "realm_id": scope_id_as_realm_id(space_id),
         "created_at": created_at,
         "hlc": Hlc::now("yougen").encode(),
         "prev_refs": [],
@@ -3382,11 +3465,79 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
             }
         }
     }
+    #[derive(serde::Deserialize)]
+    struct WrappedPlainEnvelope {
+        error: PlainEnvelope,
+        #[serde(default)]
+        request_id: Option<String>,
+    }
+    impl From<WrappedPlainEnvelope> for ErrorEnvelope {
+        fn from(value: WrappedPlainEnvelope) -> Self {
+            let mut envelope: ErrorEnvelope = value.error.into();
+            if envelope.request_id == "unknown"
+                && let Some(request_id) = value.request_id
+            {
+                envelope.request_id = request_id;
+            }
+            envelope
+        }
+    }
+    #[derive(serde::Deserialize)]
+    struct LegacyErrorShape {
+        #[serde(alias = "code")]
+        errcode: Option<String>,
+        #[serde(alias = "message")]
+        error: Option<String>,
+        #[serde(default)]
+        request_id: Option<String>,
+        #[serde(default)]
+        details: BTreeMap<String, Value>,
+    }
+    #[derive(serde::Deserialize)]
+    struct LegacyEnvelopeShape {
+        #[serde(default)]
+        ok: bool,
+        error: LegacyErrorShape,
+        #[serde(default)]
+        request_id: Option<String>,
+    }
+    impl From<LegacyEnvelopeShape> for ErrorEnvelope {
+        fn from(value: LegacyEnvelopeShape) -> Self {
+            let code = value
+                .error
+                .errcode
+                .filter(|code| !code.trim().is_empty())
+                .unwrap_or_else(|| "unknown_error".to_owned());
+            let message = value
+                .error
+                .error
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| "Request failed".to_owned());
+            ErrorEnvelope {
+                ok: value.ok,
+                error: ErrorDetail {
+                    code,
+                    message,
+                    retry_after_ms: None,
+                    details: value.error.details,
+                },
+                request_id: value
+                    .error
+                    .request_id
+                    .or(value.request_id)
+                    .unwrap_or_else(default_request_id),
+            }
+        }
+    }
 
     let envelope = if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
         body.error
+    } else if let Ok(wrapped_plain) = serde_json::from_slice::<WrappedPlainEnvelope>(bytes) {
+        wrapped_plain.into()
     } else if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
         plain.into()
+    } else if let Ok(legacy) = serde_json::from_slice::<LegacyEnvelopeShape>(bytes) {
+        legacy.into()
     } else {
         ErrorEnvelope::new(
             "http_status",
@@ -3615,6 +3766,10 @@ pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescrib
 
 pub fn parse_resolve_space(value: Value) -> anyhow::Result<ResolveSpaceResponse> {
     Ok(serde_json::from_value(value)?)
+}
+
+pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveSpaceResponse> {
+    parse_resolve_space(value)
 }
 
 #[cfg(test)]
@@ -3990,6 +4145,33 @@ mod tests {
     }
 
     #[test]
+    fn decodes_legacy_errcode_error_shape() {
+        let decoded = decode_contrix_error(
+            StatusCode::FORBIDDEN,
+            br#"{"ok":false,"error":{"errcode":"capability_denied","error":"actor is not a member of the event Space","request_id":"cx:req:legacy"}}"#,
+        );
+
+        assert_eq!(decoded.code(), "capability_denied");
+        assert_eq!(
+            decoded.message(),
+            "actor is not a member of the event Space"
+        );
+        assert_eq!(decoded.request_id, "cx:req:legacy");
+    }
+
+    #[test]
+    fn decodes_wrapped_error_envelope_without_inner_request_id() {
+        let decoded = decode_contrix_error(
+            StatusCode::UNAUTHORIZED,
+            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:req:outer"}"#,
+        );
+
+        assert_eq!(decoded.code(), "auth_expired");
+        assert_eq!(decoded.message(), "session expired");
+        assert_eq!(decoded.request_id, "cx:req:outer");
+    }
+
+    #[test]
     fn recognizes_auth_expired_errors() {
         let error: anyhow::Error = ContrixApiError {
             status: StatusCode::UNAUTHORIZED,
@@ -4076,6 +4258,19 @@ mod tests {
         }
         .into();
         assert!(!is_plaintext_visibility_policy_error(&other_policy));
+    }
+
+    #[test]
+    fn recognizes_space_membership_denied_errors() {
+        let error: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"errcode":"capability_denied","error":"actor is not a member of the event Space","request_id":"cx:req:membership"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_space_membership_denied_error(&error));
     }
 
     #[test]

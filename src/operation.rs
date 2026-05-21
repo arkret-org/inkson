@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::canonical::{canonical_json_bytes, canonical_sha256};
@@ -145,6 +145,20 @@ pub fn set_proof_mode(mode: ProofMode) {
 /// and tests can detect the unsafe shape.
 pub const PLACEHOLDER_PROOF_JWS: &str = "a..b";
 
+fn scope_id_as_realm_id(value: &str) -> String {
+    value
+        .strip_prefix("cx:space:")
+        .map(|suffix| format!("cx:realm:{suffix}"))
+        .unwrap_or_else(|| value.to_owned())
+}
+
+fn serialize_scope_as_realm_id<S>(value: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&scope_id_as_realm_id(value.as_str()))
+}
+
 /// Current v1 Event Envelope used by active write paths.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
@@ -152,6 +166,11 @@ pub struct EventEnvelope {
     pub kind: String,
     pub actor_id: String,
     pub actor_seq: u64,
+    #[serde(
+        rename = "realm_id",
+        alias = "space_id",
+        serialize_with = "serialize_scope_as_realm_id"
+    )]
     pub space_id: String,
     pub created_at: String,
     pub hlc: String,
@@ -635,7 +654,7 @@ fn rand_u64() -> u64 {
 
 /// Canonical helper constructors used by the current UI.
 pub mod cx_ops {
-    use super::OperationBuilder;
+    use super::{OperationBuilder, scope_id_as_realm_id};
     use serde_json::{Value, json};
 
     /// Build a canonical `cx.flow.create` discussion operation with the full
@@ -783,26 +802,24 @@ pub mod cx_ops {
 
     /// Build a `cx.space.create` operation for Board/List container Spaces.
     ///
-    /// After R1.7 realm/space inversion, what used to be called "Place"
-    /// (Board/List containers) are now "Space" objects. The security
-    /// boundary that used to be Space is now Realm. The optional
-    /// `board_place_id` + `rank` fields let the Kanban UI keep carrying the
-    /// board ordering hint while the object id and event kind stay canonical.
-    pub fn place_create(
-        space_id: &str,
+    /// After R1.7 realm/space inversion, Board/List containers are Space
+    /// objects and the security boundary is Realm. The optional
+    /// `parent_space_id` + `rank` fields carry the board/list structural
+    /// placement while the object id and event kind stay canonical.
+    pub fn space_create(
+        realm_id: &str,
         actor: &str,
-        place_id: &str,
+        container_space_id: &str,
         kind: &str,
         title: &str,
-        board_place_id: Option<&str>,
+        parent_space_id: Option<&str>,
         rank: Option<&str>,
     ) -> OperationBuilder {
         let mut body = json!({
-            "place_id": place_id,
             "object": {
-                "id": place_id,
+                "id": container_space_id,
                 "schema": "cx.schema.space.v1",
-                "space_id": space_id,
+                "realm_id": scope_id_as_realm_id(realm_id),
                 "kind": kind,
                 "title": title,
                 "created_by": actor,
@@ -810,18 +827,37 @@ pub mod cx_ops {
                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             },
         });
-        if let Some(board_place_id) = board_place_id {
-            body["board_place_id"] = json!(board_place_id);
-            body["object"]["board_place_id"] = json!(board_place_id);
-            body["object"]["parent_ref"] = json!(board_place_id);
+        if let Some(parent_space_id) = parent_space_id {
+            body["object"]["parent_ref"] = json!(parent_space_id);
         }
         if let Some(rank) = rank {
-            body["rank"] = json!(rank);
             body["object"]["rank"] = json!(rank);
         }
-        OperationBuilder::new(space_id, actor, "cx.space.create")
-            .target_ref(place_id)
+        OperationBuilder::new(realm_id, actor, "cx.space.create")
+            .target_ref(container_space_id)
             .body(body)
+    }
+
+    /// Compatibility alias for pre-R1.7 call sites. New production code
+    /// should call [`space_create`].
+    pub fn place_create(
+        realm_id: &str,
+        actor: &str,
+        container_space_id: &str,
+        kind: &str,
+        title: &str,
+        parent_space_id: Option<&str>,
+        rank: Option<&str>,
+    ) -> OperationBuilder {
+        space_create(
+            realm_id,
+            actor,
+            container_space_id,
+            kind,
+            title,
+            parent_space_id,
+            rank,
+        )
     }
 
     /// Build a `cx.flow.create` for a document Flow.
@@ -1081,27 +1117,53 @@ pub mod cx_ops {
             .body(json!({"state": "canceled", "reason": reason}))
     }
 
-    /// Build a `cx.space.archive` operation against a container Space (former
-    /// Place). The Space transitions from `Active` to `Archived`; reversible
-    /// via [`place_restore`]. Spec: `models/realm-and-space.md` §4.4 (post-R1.7
-    /// rename). Soland's lifecycle requirements validator requires the
-    /// `place_id` field on the wire.
-    // TODO(realm-rework): rename `place_id` payload field to `space_id` once
-    // soland's reducer accepts the new name.
-    pub fn place_archive(space_id: &str, actor: &str, place_id: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.space.archive")
-            .target_ref(place_id)
-            .body(json!({ "place_id": place_id }))
+    /// Build a `cx.space.archive` operation against a container Space. The
+    /// Space transitions from `Active` to `Archived`; reversible via
+    /// [`space_restore`]. Spec: `models/realm-and-space.md` §4.4. The wire
+    /// payload uses canonical `space_id`; legacy soland builds accepted
+    /// `place_id` as a migration alias only.
+    pub fn space_archive(
+        realm_id: &str,
+        actor: &str,
+        container_space_id: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.space.archive")
+            .target_ref(container_space_id)
+            .body(json!({ "space_id": container_space_id }))
     }
 
-    /// Build a `cx.space.restore` operation. Reverses [`place_archive`]
+    /// Compatibility alias for pre-R1.7 call sites. New production code
+    /// should call [`space_archive`].
+    pub fn place_archive(
+        realm_id: &str,
+        actor: &str,
+        container_space_id: &str,
+    ) -> OperationBuilder {
+        space_archive(realm_id, actor, container_space_id)
+    }
+
+    /// Build a `cx.space.restore` operation. Reverses [`space_archive`]
     /// (`archived -> active`). The SDK reducer enforces `state == archived`
     /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
     /// `models/realm-and-space.md` §4.4 (post-R1.7 rename), `common-fields.md §5`.
-    pub fn place_restore(space_id: &str, actor: &str, place_id: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.space.restore")
-            .target_ref(place_id)
-            .body(json!({ "place_id": place_id }))
+    pub fn space_restore(
+        realm_id: &str,
+        actor: &str,
+        container_space_id: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.space.restore")
+            .target_ref(container_space_id)
+            .body(json!({ "space_id": container_space_id }))
+    }
+
+    /// Compatibility alias for pre-R1.7 call sites. New production code
+    /// should call [`space_restore`].
+    pub fn place_restore(
+        realm_id: &str,
+        actor: &str,
+        container_space_id: &str,
+    ) -> OperationBuilder {
+        space_restore(realm_id, actor, container_space_id)
     }
 
     /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
@@ -1311,10 +1373,11 @@ pub mod cx_ops {
             }))
     }
 
-    /// Flow position update (kanban card position). Spec event kind is
-    /// `cx.flow.update` carrying a `position` field; the server reducer
-    /// folds the value into the `cx.component.flow.position.v1` cas-register
-    /// cell.
+    /// Legacy flow position update (kanban card position).
+    ///
+    /// Current protocol writes new position changes through
+    /// `cx.flow.move` / `cx.flow.reorder`; this helper remains for old
+    /// local drafts that still carry a generic `position` object.
     pub fn flow_position_update(
         realm_id: &str,
         actor: &str,
@@ -1337,19 +1400,86 @@ pub mod cx_ops {
     pub fn flow_position_cas_update(
         realm_id: &str,
         actor: &str,
-        board_place_id: &str,
+        kind: &str,
+        board_space_id: &str,
         flow_id: &str,
         expected_position: Value,
         effect_position: Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.flow.update")
-            .target_ref(flow_id)
-            .body(json!({
-                "flow_id": flow_id,
-                "board_place_id": board_place_id,
-                "expected_position": expected_position,
-                "position": effect_position,
-            }))
+        let position_field = |value: &Value, field: &str| {
+            value
+                .get(field)
+                .or_else(|| match field {
+                    "space_id" => value
+                .get("list_space_id")
+                // Compatibility for persisted local drafts from the
+                // pre-R1.7 Kanban implementation.
+                .or_else(|| value.get("list_place_id")),
+                    _ => None,
+                })
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        };
+        let expected_space = position_field(&expected_position, "space_id");
+        let expected_rank = position_field(&expected_position, "rank");
+        let effect_space = position_field(&effect_position, "space_id");
+        let effect_rank = position_field(&effect_position, "rank");
+
+        let Some(effect_space) = effect_space else {
+            return OperationBuilder::new(realm_id, actor, "cx.flow.update")
+                .target_ref(flow_id)
+                .body(json!({
+                    "flow_id": flow_id,
+                    "board_space_id": board_space_id,
+                    "expected_position": expected_position,
+                    "position": effect_position,
+                }));
+        };
+        let Some(effect_rank) = effect_rank else {
+            return OperationBuilder::new(realm_id, actor, "cx.flow.update")
+                .target_ref(flow_id)
+                .body(json!({
+                    "flow_id": flow_id,
+                    "board_space_id": board_space_id,
+                    "expected_position": expected_position,
+                    "position": effect_position,
+                }));
+        };
+
+        let mut body = serde_json::Map::new();
+        body.insert("board_space_id".to_owned(), json!(board_space_id));
+        body.insert("flow_id".to_owned(), json!(flow_id));
+        body.insert("rank".to_owned(), json!(effect_rank));
+
+        match kind {
+            "cx.flow.reorder" => {
+                body.insert("space_id".to_owned(), json!(effect_space));
+                if let Some(rank) = expected_rank {
+                    body.insert("expected_position".to_owned(), json!({ "rank": rank }));
+                }
+                OperationBuilder::new(realm_id, actor, "cx.flow.reorder")
+                    .target_ref(flow_id)
+                    .body(Value::Object(body))
+            }
+            _ => {
+                body.insert("target_space_id".to_owned(), json!(effect_space));
+                if let Some(space_id) = expected_space {
+                    body.insert("from_space_id".to_owned(), json!(space_id));
+                }
+                if let (Some(space_id), Some(rank)) = (
+                    position_field(&expected_position, "space_id"),
+                    expected_rank,
+                ) {
+                    body.insert(
+                        "expected_position".to_owned(),
+                        json!({ "space_id": space_id, "rank": rank }),
+                    );
+                }
+                OperationBuilder::new(realm_id, actor, "cx.flow.move")
+                    .target_ref(flow_id)
+                    .body(Value::Object(body))
+            }
+        }
     }
 
     // ── Applet protocol family ────────────────────────────────────────
@@ -1585,11 +1715,8 @@ mod tests {
         })
     }
 
-    // R1.7 (realm-rework): `required_fields` / `assert_required_fields_present`
-    // helpers were retired with `spec_place_schema_accepts_client_place_create_payload_shape`'s
-    // tightened assertions — the new container `space.schema.json` requires a
-    // `realm_id` that the client builder does not yet emit. Restore once the
-    // builder is wired to emit `realm_id`.
+    // R1.7 (realm-rework): kept as local schema-test helpers for cases that
+    // need to assert required-property presence directly.
     #[allow(dead_code)]
     fn required_fields(schema: &serde_json::Value) -> Vec<String> {
         schema
@@ -1807,39 +1934,113 @@ mod tests {
     }
 
     #[test]
-    fn place_create_emits_canonical_place_object() {
-        let op = cx_ops::place_create(
+    fn flow_position_cas_update_emits_canonical_move_payload() {
+        let op = cx_ops::flow_position_cas_update(
             "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
-            "cx:place:0196419b-0000-7000-8000-000000000002",
+            "cx.flow.move",
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "cx:flow:0196419b-0000-7000-8000-000000000020",
+            json!({
+                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "rank": "a1"
+            }),
+            json!({
+                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000040",
+                "rank": "b1"
+            }),
+        )
+        .build("node");
+
+        assert_eq!(op.kind, "cx.flow.move");
+        assert_eq!(
+            op.payload["board_space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000010"
+        );
+        assert_eq!(
+            op.payload["target_space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000040"
+        );
+        assert_eq!(op.payload["rank"], "b1");
+        assert_eq!(
+            op.payload["expected_position"]["space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000030"
+        );
+        assert_eq!(op.payload["expected_position"]["rank"], "a1");
+        assert!(op.payload.get("board_place_id").is_none());
+        assert!(op.payload.get("target_place_id").is_none());
+        assert!(op.payload.get("position").is_none());
+    }
+
+    #[test]
+    fn flow_position_cas_update_emits_canonical_reorder_payload() {
+        let op = cx_ops::flow_position_cas_update(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            "cx.flow.reorder",
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "cx:flow:0196419b-0000-7000-8000-000000000020",
+            json!({
+                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "rank": "a1"
+            }),
+            json!({
+                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "rank": "a2"
+            }),
+        )
+        .build("node");
+
+        assert_eq!(op.kind, "cx.flow.reorder");
+        assert_eq!(
+            op.payload["board_space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000010"
+        );
+        assert_eq!(
+            op.payload["space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000030"
+        );
+        assert_eq!(op.payload["rank"], "a2");
+        assert_eq!(op.payload["expected_position"]["rank"], "a1");
+        assert!(op.payload["expected_position"].get("space_id").is_none());
+        assert!(op.payload.get("target_space_id").is_none());
+        assert!(op.payload.get("position").is_none());
+    }
+
+    #[test]
+    fn space_create_emits_canonical_space_object() {
+        let op = cx_ops::space_create(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            "cx:space:0196419b-0000-7000-8000-000000000002",
             "list",
             "To Do",
-            Some("cx:place:0196419b-0000-7000-8000-000000000003"),
+            Some("cx:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
         )
         .build("node");
         assert_eq!(op.kind, "cx.space.create");
         assert_eq!(
             op.local_target_ref(),
-            Some("cx:place:0196419b-0000-7000-8000-000000000002")
+            Some("cx:space:0196419b-0000-7000-8000-000000000002")
         );
-        assert_eq!(
-            op.payload["place_id"],
-            "cx:place:0196419b-0000-7000-8000-000000000002"
-        );
+        assert!(op.payload.get("place_id").is_none());
+        assert!(op.payload.get("board_place_id").is_none());
         assert_eq!(op.payload["object"]["schema"], "cx.schema.space.v1");
         assert_eq!(
-            op.payload["object"]["space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000001"
+            op.payload["object"]["id"],
+            "cx:space:0196419b-0000-7000-8000-000000000002"
         );
-        assert_eq!(op.payload["object"]["kind"], "list");
         assert_eq!(
-            op.payload["object"]["board_place_id"],
-            "cx:place:0196419b-0000-7000-8000-000000000003"
+            op.payload["object"]["realm_id"],
+            "cx:realm:0196419b-0000-7000-8000-000000000001"
         );
+        assert!(op.payload["object"].get("space_id").is_none());
+        assert_eq!(op.payload["object"]["kind"], "list");
+        assert!(op.payload["object"].get("board_place_id").is_none());
         assert_eq!(
             op.payload["object"]["parent_ref"],
-            "cx:place:0196419b-0000-7000-8000-000000000003"
+            "cx:space:0196419b-0000-7000-8000-000000000003"
         );
         assert_eq!(op.payload["object"]["rank"], "U");
         assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
@@ -1852,23 +2053,14 @@ mod tests {
     }
 
     #[test]
-    fn spec_place_schema_accepts_client_place_create_payload_shape() {
+    fn spec_space_schema_accepts_client_space_create_payload_shape() {
         // R1.7 rename: the container schema artifact is now space.schema.json
         // (the former place.schema.json was retired in contrix-spec's R1.7
-        // pass). The builder still names its locals `space_id` / `place_id`
-        // for the security-boundary id vs container id distinction; the
-        // wire-level object schema is the renamed cx.schema.space.v1.
-        // TODO(realm-rework): the test below only spot-checks that the
-        // wire schema string matches and that key fields (`schema`, `kind`,
-        // `title`, `created_by`, `created_at`) are present; the new
-        // space.schema.json's required `realm_id` is not yet emitted by
-        // the client builder. Wire that through once soland accepts both
-        // shapes.
+        // pass). The builder still has the legacy helper name
+        // `space_create` emits a canonical Space object.
         let schema = spec_schema("space.schema.json");
-        // TODO(realm-rework): the first arg should be a `cx:realm:` id
-        // once SDK validators accept the new prefix.
-        let op = cx_ops::place_create(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+        let op = cx_ops::space_create(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "cx:space:0196419b-0000-7000-8000-000000000002",
             "list",
@@ -1880,7 +2072,13 @@ mod tests {
         let object = &op.payload["object"];
 
         assert_eq!(object["schema"], schema["properties"]["schema"]["const"]);
+        assert_eq!(
+            object["realm_id"],
+            "cx:realm:0196419b-0000-7000-8000-000000000001"
+        );
         assert_eq!(op.kind, "cx.space.create");
+        assert!(op.payload.get("place_id").is_none());
+        assert!(serde_json::to_string(&op).unwrap().contains("\"realm_id\""));
         assert!(!serde_json::to_string(&op).unwrap().contains("cx:list:"));
     }
 
@@ -2042,19 +2240,29 @@ mod tests {
     }
 
     #[test]
-    fn place_lifecycle_helpers_emit_canonical_kinds() {
-        let place_id = "cx:place:01904100-0000-7000-8000-1fb50799ad42";
-        let archive =
-            cx_ops::place_archive("cx:space:test", "did:web:alice.example", place_id).build("node");
+    fn space_lifecycle_helpers_emit_canonical_kinds() {
+        let container_space_id = "cx:space:01904100-0000-7000-8000-1fb50799ad42";
+        let archive = cx_ops::space_archive(
+            "cx:realm:01904100-0000-7000-8000-1fb50799ad40",
+            "did:web:alice.example",
+            container_space_id,
+        )
+        .build("node");
         assert_eq!(archive.kind, "cx.space.archive");
-        assert_eq!(archive.payload["place_id"], place_id);
-        assert_eq!(archive.local_target_ref(), Some(place_id));
+        assert_eq!(archive.payload["space_id"], container_space_id);
+        assert!(archive.payload.get("place_id").is_none());
+        assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
-        let restore =
-            cx_ops::place_restore("cx:space:test", "did:web:alice.example", place_id).build("node");
+        let restore = cx_ops::space_restore(
+            "cx:realm:01904100-0000-7000-8000-1fb50799ad40",
+            "did:web:alice.example",
+            container_space_id,
+        )
+        .build("node");
         assert_eq!(restore.kind, "cx.space.restore");
-        assert_eq!(restore.payload["place_id"], place_id);
-        assert_eq!(restore.local_target_ref(), Some(place_id));
+        assert_eq!(restore.payload["space_id"], container_space_id);
+        assert!(restore.payload.get("place_id").is_none());
+        assert_eq!(restore.local_target_ref(), Some(container_space_id));
     }
 
     #[test]

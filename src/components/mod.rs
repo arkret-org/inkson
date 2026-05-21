@@ -54,6 +54,7 @@ pub fn UiIcon(name: String) -> Element {
     let path = match name.as_str() {
         "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",
         "activity" => "M3 12h4l3 7 4-14 3 7h4",
+        "at-sign" => "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8M16 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
         "alert" => {
             "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0ZM12 9v4m0 4h.01"
         }

@@ -28,7 +28,7 @@ const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
 const STYLE: &str = r#"
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #eef3ed; color: #162018; }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 .auth-shell { width: 100vw; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #e7efe6; box-sizing: border-box; }
 .auth-shell.theme-night { background: #0f172a; color: #e5edf7; }
 .auth-card { width: min(420px, 100%); border: 1px solid #d2ddd2; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12); }
@@ -57,6 +57,8 @@ button, input, textarea { font: inherit; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
 .search { display: grid; gap: 8px; }
 .search input:not([type="checkbox"]):not([type="radio"]), .settings input:not([type="checkbox"]):not([type="radio"]), .workflow-form input:not([type="checkbox"]):not([type="radio"]), .composer textarea, .composer input:not([type="checkbox"]):not([type="radio"]) { width: 100%; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 7px 12px; background: white; color: #18212f; }
+.settings select, .workflow-form select, .event select, .actions select { min-height: 40px; box-sizing: border-box; border: 1px solid #cbd5df; border-radius: 6px; padding: 8px 36px 8px 12px; background: white; color: #18212f; line-height: 1.35; }
+.settings select, .workflow-form select { width: 100%; }
 .composer label, .settings label, .workflow-form label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text, #4e5b6b); }
 .composer label > input[type="checkbox"], .composer label > input[type="radio"], .settings label > input[type="checkbox"], .settings label > input[type="radio"], .workflow-form label > input[type="checkbox"], .workflow-form label > input[type="radio"] { width: auto; margin: 0; padding: 0; }
 .space-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
@@ -349,6 +351,8 @@ body {
 .workflow-form input:not([type="checkbox"]):not([type="radio"]),
 .composer textarea,
 .composer input:not([type="checkbox"]):not([type="radio"]),
+.event select,
+.actions select,
 .settings textarea,
 .settings select,
 .workflow-form textarea,
@@ -365,6 +369,8 @@ body {
 .workflow-form input:not([type="checkbox"]):not([type="radio"]):focus,
 .composer textarea:focus,
 .composer input:not([type="checkbox"]):not([type="radio"]):focus,
+.event select:focus,
+.actions select:focus,
 .settings textarea:focus,
 .settings select:focus,
 .workflow-form textarea:focus,
@@ -1740,6 +1746,107 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   resize: vertical;
 }
 
+.discussion-composer .compose-drop-zone {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 44%, var(--surface));
+}
+
+.discussion-composer .compose-drop-zone:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 22%, var(--surface));
+}
+
+.discussion-composer .compose-drop-zone textarea {
+  width: 100%;
+  min-height: 74px;
+  max-height: 180px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  box-shadow: none;
+}
+
+.discussion-composer .mention-chip-row {
+  position: relative;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.composer-tool-button {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.composer-tool-button:hover,
+.composer-tool-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  color: var(--accent-ink);
+  outline: none;
+}
+
+.discussion-composer .attachment-menu {
+  position: absolute;
+  left: 38px;
+  bottom: calc(100% + 6px);
+  z-index: 25;
+  min-width: 180px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.discussion-composer > .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compose-security-panel {
+  width: 100%;
+}
+
+.compose-security-panel > summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compose-security-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto minmax(160px, 1fr) minmax(120px, 0.8fr) auto auto;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.compose-security-grid input {
+  min-width: 0;
+}
+
 .discussion-status {
   min-height: 18px;
 }
@@ -1890,6 +1997,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   box-sizing: border-box;
   position: relative;
   isolation: isolate;
+  color: var(--text);
   background:
     radial-gradient(circle at 16% 18%, var(--page-glow-a), transparent 28%),
     radial-gradient(circle at 84% 12%, var(--page-glow-b), transparent 26%),
@@ -1915,6 +2023,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
 .auth-panel {
   padding: 28px;
+  min-width: 0;
 }
 
 .auth-logo {
@@ -1939,6 +2048,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .auth-form {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .auth-form input,
@@ -1962,6 +2072,79 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 4%, var(--surface));
   box-shadow: none;
+}
+
+.auth-primary {
+  justify-self: stretch;
+  width: 100%;
+}
+
+.auth-passkey {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.auth-passkey .primary,
+.auth-passkey .secondary {
+  width: 100%;
+  min-width: 0;
+  box-shadow: none;
+}
+
+.auth-session-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 68%, transparent);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.auth-session-state [data-testid^="session-"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-session-state [data-testid="session-status"] {
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-session-state .ghost {
+  appearance: none;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  margin-top: 2px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-session-state .ghost:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .auth-form .actions {
@@ -2405,9 +2588,9 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   flex-shrink: 0;
 }
 
-.workspace-header .actions > .search {
+.workspace-header .actions > .topbar-command-search {
   flex: 0 1 auto;
-  min-width: 140px;
+  min-width: 0;
 }
 
 .workspace-header > .sidebar-collapse-toggle {
@@ -2415,21 +2598,41 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   flex-shrink: 0;
 }
 
-.workspace-header .crumbs {
+.topbar-context {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.workspace-header .crumbs > * {
+.topbar-context > * {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.workspace-header .crumbs > .sep {
-  flex-shrink: 0;
+.topbar-context-title {
+  color: var(--text);
+  font-weight: 750;
+}
+
+.topbar-context-pill {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.topbar-context-pill.muted {
+  color: var(--text-3);
+  background: transparent;
 }
 
 .workspace-header .actions .btn,
@@ -2470,6 +2673,58 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   background: #2563eb;
   box-sizing: border-box;
   pointer-events: none;
+}
+
+.topbar-command-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.topbar-command-search.is-open {
+  width: min(34vw, 360px);
+  min-width: 260px;
+}
+
+.topbar-command-search-field {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 7px 0 10px;
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.topbar-command-search-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 18%, var(--surface));
+}
+
+.topbar-command-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  font-size: 12px;
+}
+
+.topbar-command-search kbd {
+  flex: 0 0 auto;
+}
+
+.topbar-command-search .command-palette {
+  left: auto;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(420px, calc(100vw - 32px));
 }
 
 .workspace-header .actions .pill {
@@ -3022,20 +3277,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   box-shadow: none;
   align-items: center;
   justify-content: flex-start;
-}
-
-.workspace-header .search {
-  width: min(34vw, 330px);
-  cursor: text;
-}
-
-.workspace-header .search input {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  font-size: 12px;
+  gap: 10px;
+  overflow: visible;
 }
 
 .workspace-body > .timeline {
@@ -3343,13 +3586,13 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 @media (max-width: 1200px) {
-  .workspace-header .crumbs .crumb-tag,
-  .workspace-header .crumbs .id.muted.mono {
+  .topbar-context-pill.muted {
     display: none;
   }
 
-  .workspace-header .search {
-    width: min(26vw, 240px);
+  .topbar-command-search.is-open {
+    width: min(32vw, 300px);
+    min-width: 220px;
   }
 
   .topbar-create-button .topbar-new-space-label {
@@ -3376,7 +3619,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   }
 
   .auth-mode-grid,
-  .auth-form .actions {
+  .auth-form .actions,
+  .auth-passkey {
     grid-template-columns: 1fr;
   }
 
@@ -3426,9 +3670,13 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     height: calc(100vh - var(--topbar-h));
   }
 
-  .workspace-header .search,
-  .workspace-header .crumbs .id {
+  .topbar-context-pill {
     display: none;
+  }
+
+  .topbar-command-search.is-open {
+    width: min(58vw, 320px);
+    min-width: 0;
   }
 
   .workspace-header .actions {
@@ -4648,6 +4896,7 @@ pub fn RouterView() -> Element {
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
+    let mut topbar_search_expanded = use_signal(|| false);
     // A2 — popover next to topbar "My Agents" nav entry.
     let mut agent_workspace_info_open = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
@@ -4656,7 +4905,7 @@ pub fn RouterView() -> Element {
 
     // On first render with a live session, fetch the directory + sync so
     // the sidebar's Space list shows up after a page reload. The list
-    // intentionally isn't persisted in localStorage — `search_spaces`
+    // intentionally isn't persisted in localStorage — directory search
     // results live only in the in-memory `spaces` signal, so without
     // this kick we'd render "No spaces loaded" until the user clicks
     // Refresh.
@@ -4975,6 +5224,27 @@ pub fn RouterView() -> Element {
     let route_title = resolved_space_surface
         .map(SpaceSurface::title)
         .unwrap_or_else(|| route_label(&route));
+    let topbar_context_title = selected_preview
+        .as_ref()
+        .map(|space| space.name.clone())
+        .unwrap_or_else(|| {
+            if route_uses_space_context {
+                "Space".to_owned()
+            } else {
+                route_title.to_owned()
+            }
+        });
+    let topbar_surface_label = if route_uses_space_context {
+        match resolved_space_surface {
+            Some(SpaceSurface::Discussion | SpaceSurface::Document) => None,
+            Some(surface) => Some(surface.title()),
+            None => Some(route_label(&route)),
+        }
+    } else {
+        None
+    };
+    let topbar_search_is_open =
+        palette_open() || topbar_search_expanded() || !global_query().is_empty();
     let document_title = if matches!(&route, Route::Dashboard) {
         "Yougen | Contrix".to_owned()
     } else {
@@ -5096,6 +5366,13 @@ pub fn RouterView() -> Element {
                 let modifiers = event.modifiers();
                 let ctrl = modifiers.ctrl();
                 let meta = modifiers.meta();
+                if (ctrl || meta) && key.eq_ignore_ascii_case("k") {
+                    event.prevent_default();
+                    event.stop_propagation();
+                    topbar_search_expanded.set(true);
+                    palette_open.set(true);
+                    return;
+                }
                 if crate::views::global_search::key_event_is_search_trigger(&key, ctrl, meta) {
                     event.prevent_default();
                     event.stop_propagation();
@@ -5655,20 +5932,16 @@ pub fn RouterView() -> Element {
                             UiIcon { name: "panel-left-close" }
                         }
                     }
-                    div { class: "crumbs", "data-testid": "topbar-crumbs",
-                        Link { to: Route::SettingsSection { section: "server".to_owned() }, strong { "{active_server_label}" } }
-                        span { class: "crumb-tag", if has_session { "Session" } else { "Server" } }
-                        if let Some(space) = selected_preview.as_ref() {
-                            span { class: "sep", "/" }
-                            span { class: "id", "Spaces" }
-                            span { class: "sep", "/" }
-                            span { class: "id", "data-testid": "space-title", "{space.name}" }
-                            span { class: "sep", "/" }
-                            span { class: "id", "{route_title}" }
-                            span { class: "id muted mono", "data-testid": "selected-space-id", "{space.space_id}" }
-                        } else {
-                            span { class: "sep", "/" }
-                            span { class: "id", "data-testid": "space-title", "{route_title}" }
+                    div { class: "topbar-context", "data-testid": "topbar-crumbs",
+                        span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
+                        if let Some(label) = topbar_surface_label {
+                            span { class: "topbar-context-pill", "{label}" }
+                        }
+                        if route_uses_space_context && active_space_scope_count > 1 {
+                            span { class: "topbar-context-pill muted", "{active_space_scope_label}" }
+                        }
+                        if !active_space_id.is_empty() {
+                            span { class: "sr-only mono", "data-testid": "selected-space-id", "{active_space_id}" }
                         }
                     }
                     div { class: "actions",
@@ -5691,46 +5964,93 @@ pub fn RouterView() -> Element {
                             },
                             UiIcon { name: theme_toggle_icon }
                         }
-                        div { class: "search",
-                            span { "⌕" }
-                            input {
-                                "data-testid": "global-search-input",
-                                value: "{global_query}",
-                                placeholder: crate::i18n::tr("topbar.search_placeholder"),
-                                onfocusin: move |_| palette_open.set(true),
-                                oninput: move |event| {
-                                    global_query.set(event.value());
-                                    palette_open.set(true);
-                                },
-                                onkeydown: move |event| {
-                                    let key = event.key().to_string();
-                                    if key == "Escape" {
-                                        palette_open.set(false);
-                                        global_query.set(String::new());
+                        div {
+                            class: if topbar_search_is_open {
+                                "topbar-command-search is-open"
+                            } else {
+                                "topbar-command-search"
+                            },
+                            if !topbar_search_is_open {
+                                button {
+                                    r#type: "button",
+                                    class: "btn icon sm ghost",
+                                    "data-testid": "topbar-search-button",
+                                    title: crate::i18n::tr("topbar.search_placeholder"),
+                                    "aria-label": crate::i18n::tr("topbar.search_placeholder"),
+                                    onclick: move |_| {
+                                        topbar_search_expanded.set(true);
+                                        palette_open.set(true);
+                                    },
+                                    UiIcon { name: "search" }
+                                }
+                            } else {
+                                div { class: "topbar-command-search-field",
+                                    UiIcon { name: "search" }
+                                    input {
+                                        "data-testid": "global-search-input",
+                                        value: "{global_query}",
+                                        placeholder: crate::i18n::tr("topbar.search_placeholder"),
+                                        autofocus: true,
+                                        onfocusin: move |_| palette_open.set(true),
+                                        oninput: move |event| {
+                                            global_query.set(event.value());
+                                            palette_open.set(true);
+                                        },
+                                        onkeydown: move |event| {
+                                            let key = event.key().to_string();
+                                            if key == "Escape" {
+                                                palette_open.set(false);
+                                                topbar_search_expanded.set(false);
+                                                global_query.set(String::new());
+                                            } else if key == "Enter" {
+                                                if !global_query().trim().is_empty() {
+                                                    view.set(Route::to_view(&Route::Directory));
+                                                    let _ = navigator.push(Route::Directory);
+                                                    palette_open.set(false);
+                                                    topbar_search_expanded.set(false);
+                                                }
+                                            }
+                                        },
                                     }
-                                },
-                            }
-                            kbd { "⌘K" }
-                            if palette_open() {
-                                CommandPalette {
-                                    query: global_query(),
-                                    spaces: spaces(),
-                                    on_navigate: move |route: Route| {
-                                        view.set(Route::to_view(&route));
-                                        let _ = navigator.push(route);
-                                        palette_open.set(false);
-                                        global_query.set(String::new());
-                                    },
-                                    on_pick_space: move |space_id: String| {
-                                        selected_space.set(space_id.clone());
-                                        view.set(crate::views::View::Timeline);
-                                        let _ = navigator.push(Route::Space { space_id });
-                                        palette_open.set(false);
-                                        global_query.set(String::new());
-                                    },
-                                    on_close: move |_: ()| {
-                                        palette_open.set(false);
-                                    },
+                                    kbd { "⌘K" }
+                                    button {
+                                        r#type: "button",
+                                        class: "btn icon sm ghost topbar-command-search-close",
+                                        title: crate::i18n::tr("common.close"),
+                                        "aria-label": crate::i18n::tr("common.close"),
+                                        onclick: move |_| {
+                                            palette_open.set(false);
+                                            topbar_search_expanded.set(false);
+                                            global_query.set(String::new());
+                                        },
+                                        UiIcon { name: "x" }
+                                    }
+                                }
+                                if palette_open() {
+                                    CommandPalette {
+                                        query: global_query(),
+                                        spaces: spaces(),
+                                        on_navigate: move |route: Route| {
+                                            view.set(Route::to_view(&route));
+                                            let _ = navigator.push(route);
+                                            palette_open.set(false);
+                                            topbar_search_expanded.set(false);
+                                            global_query.set(String::new());
+                                        },
+                                        on_pick_space: move |space_id: String| {
+                                            selected_space.set(space_id.clone());
+                                            view.set(crate::views::View::Timeline);
+                                            let _ = navigator.push(Route::Space { space_id });
+                                            palette_open.set(false);
+                                            topbar_search_expanded.set(false);
+                                            global_query.set(String::new());
+                                        },
+                                        on_close: move |_: ()| {
+                                            palette_open.set(false);
+                                            topbar_search_expanded.set(false);
+                                            global_query.set(String::new());
+                                        },
+                                    }
                                 }
                             }
                         }
@@ -5788,17 +6108,6 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
-                        }
-                        // A6.1 — global cross-Space message search
-                        // entry. Mirrors the Cmd+F (Ctrl+F) chord so
-                        // mouse-first users discover the affordance.
-                        Link {
-                            class: "btn icon sm ghost topbar-search-link",
-                            "data-testid": "topbar-search-button",
-                            to: Route::Search,
-                            title: crate::i18n::tr("topbar.search_button"),
-                            "aria-label": crate::i18n::tr("topbar.search_button"),
-                            UiIcon { name: "search" }
                         }
                         Link {
                             class: "btn icon sm ghost topbar-notifications-link",
@@ -6626,7 +6935,8 @@ fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
             "inbox, mentions, approvals",
             Route::Notifications,
         ),
-        ("Directory", "search spaces, orgs, actors", Route::Directory),
+        ("Search", "messages across spaces", Route::Search),
+        ("Directory", "search realms, orgs, actors", Route::Directory),
         (
             "Onboarding",
             "DID, handle, device, recovery",

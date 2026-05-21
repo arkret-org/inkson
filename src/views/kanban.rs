@@ -13,11 +13,11 @@ use crate::{
     views::helpers::with_authed_api,
 };
 
-/// Fallback Board Place id used by the demo seed data. Production
+/// Fallback Board Space id used by the demo seed data. Production
 /// kanban routes resolve this from the URL / saved View; until that
 /// wiring lands the seed columns and offline-queued Moves share this
 /// constant so CAS cell keys are stable across reloads.
-const DEMO_BOARD_PLACE_ID: &str = "cx:place:0196419b-0000-7000-8000-00000000b0a0";
+const DEMO_BOARD_SPACE_ID: &str = "cx:space:0196419b-0000-7000-8000-00000000b0a0";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
 /// rebased + re-submitted before the UI surfaces it as Quarantined and
@@ -39,22 +39,22 @@ struct KanbanColumn {
     title: String,
     rank: String,
     cards: Vec<KanbanCard>,
-    /// Place lifecycle state. `Active` is the wire default; `Archived` is set
+    /// Space-container lifecycle state. `Active` is the wire default; `Archived` is set
     /// optimistically after a successful `cx.space.archive` submit and reset
     /// after `cx.space.restore`. Spec: `models/realm-and-space.md §4.4`
     /// (post-R1.7 rename).
     /// `Tombstoned` is irreversible and modeled here for completeness but the
     /// UI currently has no tombstone affordance — server-only path.
-    state: PlaceLifecycleState,
+    state: SpaceContainerLifecycleState,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum PlaceLifecycleState {
+enum SpaceContainerLifecycleState {
     #[default]
     Active,
     Archived,
     /// Server-only terminal state. UI never produces this; the variant
-    /// exists so `dispatch_place_lifecycle` can exhaustively match.
+    /// exists so `dispatch_space_container_lifecycle` can exhaustively match.
     #[allow(dead_code)]
     Tombstoned,
 }
@@ -126,7 +126,7 @@ struct LockedFlow {
 
 /// Snapshot of the card-being-dragged's pre-move state. The cas-register
 /// model in [`operations-sync.md` §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md)
-/// requires the source `(list_place_id, rank)` to seed `head_eq` on the
+/// requires the source `(list_space_id, rank)` to seed `head_eq` on the
 /// resulting `cx.flow.move` / `cx.flow.reorder` Move. We capture it on
 /// `ondragstart` so the drop handler doesn't have to re-derive it from
 /// the column state (which may have been mutated optimistically in the
@@ -139,10 +139,10 @@ struct DraggedCard {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct BoardPlaceOption {
+struct BoardSpaceOption {
     id: String,
     title: String,
-    state: PlaceLifecycleState,
+    state: SpaceContainerLifecycleState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -334,34 +334,34 @@ fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     None
 }
 
-fn initial_board_place_options(seed_fallback_allowed: bool) -> Vec<BoardPlaceOption> {
+fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOption> {
     if seed_fallback_allowed {
-        vec![BoardPlaceOption {
-            id: DEMO_BOARD_PLACE_ID.to_owned(),
+        vec![BoardSpaceOption {
+            id: DEMO_BOARD_SPACE_ID.to_owned(),
             title: "Local demo board".to_owned(),
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         }]
     } else {
         Vec::new()
     }
 }
 
-fn board_place_options_from_projection(
-    places: &[crate::api::PlaceProjectionView],
-) -> Vec<BoardPlaceOption> {
+fn board_space_options_from_projection(
+    places: &[crate::api::SpaceContainerProjectionView],
+) -> Vec<BoardSpaceOption> {
     let mut options = places
         .iter()
         .filter(|place| {
             place.kind == "board" || (place.kind.trim().is_empty() && place.parent_ref.is_none())
         })
-        .map(|place| BoardPlaceOption {
-            id: place.place_id.clone(),
+        .map(|place| BoardSpaceOption {
+            id: place.container_space_id.clone(),
             title: if place.title.trim().is_empty() {
-                place.place_id.clone()
+                place.container_space_id.clone()
             } else {
                 place.title.clone()
             },
-            state: place_state_from_wire(&place.state),
+            state: space_container_state_from_wire(&place.state),
         })
         .collect::<Vec<_>>();
     options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
@@ -386,7 +386,7 @@ fn collection_projection_to_columns(
             title: group.title.clone(),
             rank: group.rank.clone().unwrap_or_default(),
             cards: group.items.iter().map(card_from_projection_item).collect(),
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         })
         .collect()
 }
@@ -537,14 +537,14 @@ pub fn KanbanPanel(
             Vec::new()
         }
     });
-    let initial_board_options = initial_board_place_options(seed_fallback_allowed);
-    let initial_board_place_id = initial_board_options
+    let initial_board_options = initial_board_space_options(seed_fallback_allowed);
+    let initial_board_space_id = initial_board_options
         .first()
         .map(|option| option.id.clone())
         .unwrap_or_default();
     let mut columns = use_signal(|| initial_columns);
-    let mut board_place_options = use_signal(move || initial_board_options.clone());
-    let mut selected_board_place_id = use_signal(move || initial_board_place_id.clone());
+    let mut board_space_options = use_signal(move || initial_board_options.clone());
+    let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
     let mut board_view_id = use_signal(String::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
@@ -606,7 +606,7 @@ pub fn KanbanPanel(
             let view = auto_board_view_id();
             if view.trim().is_empty() {
                 board_status.set(
-                    "No board View selected; using Place/Flow projections and local queue only"
+                    "No board View selected; using Space-container/Flow projections and local queue only"
                         .to_owned(),
                 );
                 return;
@@ -700,7 +700,7 @@ pub fn KanbanPanel(
         }
     });
 
-    // Hydrate Place / Flow lifecycle state from the soland
+    // Hydrate Space-container / Flow lifecycle state from the soland
     // `/api/v1/projection/{places|flows}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
@@ -722,7 +722,7 @@ pub fn KanbanPanel(
             let places_res = {
                 let space = space.clone();
                 with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_place_projections(&space).await
+                    api.list_space_container_projections(&space).await
                 })
                 .await
             };
@@ -739,19 +739,20 @@ pub fn KanbanPanel(
             if places_ok || flows_ok {
                 let mut cols = columns.write();
                 if let Ok(resp) = places_res {
-                    let options = board_place_options_from_projection(&resp.items);
+                    let options = board_space_options_from_projection(&resp.items);
                     if !options.is_empty() {
-                        let current_board = selected_board_place_id();
+                        let current_board = selected_board_space_id();
                         if current_board.trim().is_empty()
                             || !options.iter().any(|option| option.id == current_board)
                         {
-                            selected_board_place_id.set(options[0].id.clone());
+                            selected_board_space_id.set(options[0].id.clone());
                         }
-                        board_place_options.set(options);
+                        board_space_options.set(options);
                     }
                     for view in &resp.items {
-                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.place_id) {
-                            let new_state = place_state_from_wire(&view.state);
+                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.container_space_id)
+                        {
+                            let new_state = space_container_state_from_wire(&view.state);
                             if col.state != new_state {
                                 col.state = new_state;
                                 applied += 1;
@@ -889,21 +890,21 @@ pub fn KanbanPanel(
                     }
                 }
 
-                div { class: "actions", "data-testid": "board-place-selector",
-                    span { class: "muted", "Board Place:" }
+                div { class: "actions", "data-testid": "board-space-selector",
+                    span { class: "muted", "Board Space:" }
                     select {
-                        "data-testid": "board-place-select",
-                        value: "{selected_board_place_id}",
-                        onchange: move |event| selected_board_place_id.set(event.value()),
+                        "data-testid": "board-space-select",
+                        value: "{selected_board_space_id}",
+                        onchange: move |event| selected_board_space_id.set(event.value()),
                         option {
                             value: "",
-                            selected: selected_board_place_id().is_empty(),
+                            selected: selected_board_space_id().is_empty(),
                             "Select board"
                         }
-                        for board_option in board_place_options().iter() {
+                        for board_option in board_space_options().iter() {
                             option {
                                 value: "{board_option.id}",
-                                selected: selected_board_place_id() == board_option.id,
+                                selected: selected_board_space_id() == board_option.id,
                                 "{board_option.title}"
                             }
                         }
@@ -922,7 +923,7 @@ pub fn KanbanPanel(
                     }
                     button {
                         class: "secondary",
-                        "data-testid": "create-board-place-button",
+                        "data-testid": "create-board-space-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -932,7 +933,7 @@ pub fn KanbanPanel(
                                     board_status.set("board title is required".to_owned());
                                     return;
                                 }
-                                let board_place_id = format!("cx:place:{}", uuid_v7());
+                                let board_space_id = format!("cx:space:{}", uuid_v7());
                                 let identity = match state_store.write().ensure_local_identity() {
                                     Ok(identity) => identity,
                                     Err(err) => {
@@ -940,16 +941,16 @@ pub fn KanbanPanel(
                                         return;
                                     }
                                 };
-                                board_place_options.write().push(BoardPlaceOption {
-                                    id: board_place_id.clone(),
+                                board_space_options.write().push(BoardSpaceOption {
+                                    id: board_space_id.clone(),
                                     title: title.clone(),
-                                    state: PlaceLifecycleState::Active,
+                                    state: SpaceContainerLifecycleState::Active,
                                 });
-                                selected_board_place_id.set(board_place_id.clone());
-                                let op = crate::operation::cx_ops::place_create(
+                                selected_board_space_id.set(board_space_id.clone());
+                                let op = crate::operation::cx_ops::space_create(
                                     &space,
                                     &identity.device_did,
-                                    &board_place_id,
+                                    &board_space_id,
                                     "board",
                                     &title,
                                     None,
@@ -972,7 +973,7 @@ pub fn KanbanPanel(
                 }
 
                 div { class: "metric-grid", "data-testid": "board-projection-model",
-                    div { class: "metric", strong { "Board" } span { "{selected_board_place_id}" } div { class: "muted", "View renderer: kanban" } }
+                    div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "View renderer: kanban" } }
                     div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "Collection projection source" } }
                     div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
                     div { class: "metric", strong { "Sync state" } span { "{frontier_state}" } div { class: "muted", "Moves rebase from latest projection" } }
@@ -990,8 +991,8 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "add-column-button",
                             onclick: {
-                                // Lists are Places in v1. The optimistic
-                                // local column uses the new Place id while
+                                // Lists are Space containers in v1. The optimistic
+                                // local column uses the new Space-container id while
                                 // the write submits `cx.space.create`.
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
@@ -1000,20 +1001,20 @@ pub fn KanbanPanel(
                                     if title.is_empty() {
                                         return;
                                     }
-                                    let board_place_id = selected_board_place_id();
-                                    if board_place_id.trim().is_empty() {
-                                        board_status.set("select or create a Board Place before adding lists".to_owned());
+                                    let board_space_id = selected_board_space_id();
+                                    if board_space_id.trim().is_empty() {
+                                        board_status.set("select or create a Board Space before adding lists".to_owned());
                                         return;
                                     }
                                     let col_count = columns().len();
                                     let rank = format!("r{:03}", col_count + 1);
-                                    let list_place_id = format!("cx:place:{}", uuid_v7());
+                                    let list_space_id = format!("cx:space:{}", uuid_v7());
                                     columns.write().push(KanbanColumn {
-                                        id: list_place_id.clone(),
+                                        id: list_space_id.clone(),
                                         title: title.clone(),
                                         rank: rank.clone(),
                                         cards: Vec::new(),
-                                        state: PlaceLifecycleState::Active,
+                                        state: SpaceContainerLifecycleState::Active,
                                     });
                                     let identity = match state_store.write().ensure_local_identity() {
                                         Ok(identity) => identity,
@@ -1022,13 +1023,13 @@ pub fn KanbanPanel(
                                             return;
                                         }
                                     };
-                                    let op = crate::operation::cx_ops::place_create(
+                                    let op = crate::operation::cx_ops::space_create(
                                         &space,
                                         &identity.device_did,
-                                        &list_place_id,
+                                        &list_space_id,
                                         "list",
                                         &title,
-                                        Some(&board_place_id),
+                                        Some(&board_space_id),
                                         Some(&rank),
                                     )
                                     .build("yougen");
@@ -1093,7 +1094,7 @@ pub fn KanbanPanel(
                 };
                 rsx! {
             div { class: "{board_grid_class}", "data-testid": "kanban-board-grid",
-                for column in columns().iter().filter(|c| c.state == PlaceLifecycleState::Active) {
+                for column in columns().iter().filter(|c| c.state == SpaceContainerLifecycleState::Active) {
                     div {
                         class: "{board_column_class}",
                         "data-testid": "kanban-column",
@@ -1112,9 +1113,9 @@ pub fn KanbanPanel(
                                 let Some(dragged) = dragging_card() else {
                                     return;
                                 };
-                                let board_place_id = selected_board_place_id();
-                                if board_place_id.trim().is_empty() {
-                                    board_status.set("select or create a Board Place before moving cards".to_owned());
+                                let board_space_id = selected_board_space_id();
+                                if board_space_id.trim().is_empty() {
+                                    board_status.set("select or create a Board Space before moving cards".to_owned());
                                     return;
                                 }
                                 dragging_card.set(None);
@@ -1127,7 +1128,7 @@ pub fn KanbanPanel(
                                     base.clone(),
                                     token,
                                     space.clone(),
-                                    board_place_id,
+                                    board_space_id,
                                     view_id_for_rebase,
                                     dragged,
                                     target_column_id.clone(),
@@ -1143,7 +1144,7 @@ pub fn KanbanPanel(
                             span { class: "space-title", "{column.title}" }
                             span { "rank {column.rank} / {column.cards.len()}" }
                             {
-                                let gate = capability_gate_for_place(
+                                let gate = capability_gate_for_space_container(
                                     &capability_engine,
                                     &account_did,
                                     &selected_space,
@@ -1160,7 +1161,7 @@ pub fn KanbanPanel(
                                     button {
                                         class: "secondary",
                                         "data-testid": "list-archive-button",
-                                        "data-place-id": "{column.id}",
+                                        "data-space-container-id": "{column.id}",
                                         "data-cap-gate": testid_state,
                                         disabled: !gate.enabled,
                                         title: title_text,
@@ -1168,15 +1169,15 @@ pub fn KanbanPanel(
                                             let base = base_url.clone();
                                             let space = selected_space.clone();
                                             let actor = account_did.clone();
-                                            let place_id = column.id.clone();
+                                            let space_container_id = column.id.clone();
                                             move |_| {
-                                                dispatch_place_lifecycle(
+                                                dispatch_space_container_lifecycle(
                                                     base.clone(),
                                                     token,
                                                     space.clone(),
                                                     actor.clone(),
-                                                    place_id.clone(),
-                                                    PlaceLifecycleState::Archived,
+                                                    space_container_id.clone(),
+                                                    SpaceContainerLifecycleState::Archived,
                                                     columns,
                                                     board_status,
                                                 );
@@ -1232,9 +1233,9 @@ pub fn KanbanPanel(
                                         let Some(dragged) = dragging_card() else {
                                             return;
                                         };
-                                        let board_place_id = selected_board_place_id();
-                                        if board_place_id.trim().is_empty() {
-                                            board_status.set("select or create a Board Place before moving cards".to_owned());
+                                        let board_space_id = selected_board_space_id();
+                                        if board_space_id.trim().is_empty() {
+                                            board_status.set("select or create a Board Space before moving cards".to_owned());
                                             return;
                                         }
                                         dragging_card.set(None);
@@ -1247,7 +1248,7 @@ pub fn KanbanPanel(
                                             base.clone(),
                                             token,
                                             space.clone(),
-                                            board_place_id,
+                                            board_space_id,
                                             view_id_for_rebase,
                                             dragged,
                                             target_column_id.clone(),
@@ -1367,7 +1368,7 @@ pub fn KanbanPanel(
                                             // flow.position Move (subject =
                                             // flow_id) carrying the canonical
                                             // position record
-                                            // {list_place_id, rank, title}.
+                                            // {list_space_id, rank, title}.
                                             // Soland's reducer treats
                                             // it as cas-register set on the
                                             // flow.position cell.
@@ -1379,13 +1380,13 @@ pub fn KanbanPanel(
                                                 if title.is_empty() {
                                                     return;
                                                 }
-                                                let board_place_id = selected_board_place_id();
-                                                if board_place_id.trim().is_empty() {
-                                                    board_status.set("select or create a Board Place before adding cards".to_owned());
+                                                let board_space_id = selected_board_space_id();
+                                                if board_space_id.trim().is_empty() {
+                                                    board_status.set("select or create a Board Space before adding cards".to_owned());
                                                     return;
                                                 }
                                                 let flow_id = format!("cx:flow:{}", uuid_v7());
-                                                // Place the new card at the end of the column.
+                                                // Insert the new card at the end of the column.
                                                 // Look up the column's current tail rank and ask
                                                 // `rank_between` for a strictly-greater rank. If
                                                 // exhausted, fall back to the alphabet midpoint —
@@ -1428,8 +1429,8 @@ pub fn KanbanPanel(
                                                 }
                                                 let value = json!({
                                                     "flow_id": flow_id,
-                                                    "board_place_id": board_place_id,
-                                                    "list_place_id": col_id,
+                                                    "board_space_id": board_space_id,
+                                                    "list_space_id": col_id,
                                                     "title": title,
                                                     "rank": rank,
                                                     "flow_kind": "card",
@@ -1483,7 +1484,7 @@ pub fn KanbanPanel(
             {
                 let archived: Vec<KanbanColumn> = columns()
                     .iter()
-                    .filter(|c| c.state == PlaceLifecycleState::Archived)
+                    .filter(|c| c.state == SpaceContainerLifecycleState::Archived)
                     .cloned()
                     .collect();
                 let archived_count = archived.len();
@@ -1502,7 +1503,7 @@ pub fn KanbanPanel(
                                         span { class: "space-title", "{column.title}" }
                                         span { "rank {column.rank} / {column.cards.len()} card(s)" }
                                         {
-                                            let gate = capability_gate_for_place(
+                                            let gate = capability_gate_for_space_container(
                                                 &capability_engine,
                                                 &account_did,
                                                 &selected_space,
@@ -1519,7 +1520,7 @@ pub fn KanbanPanel(
                                                 button {
                                                     class: "secondary",
                                                     "data-testid": "list-restore-button",
-                                                    "data-place-id": "{column.id}",
+                                                    "data-space-container-id": "{column.id}",
                                                     "data-cap-gate": testid_state,
                                                     disabled: !gate.enabled,
                                                     title: title_text,
@@ -1527,15 +1528,15 @@ pub fn KanbanPanel(
                                                         let base = base_url.clone();
                                                         let space = selected_space.clone();
                                                         let actor = account_did.clone();
-                                                        let place_id = column.id.clone();
+                                                        let space_container_id = column.id.clone();
                                                         move |_| {
-                                                            dispatch_place_lifecycle(
+                                                            dispatch_space_container_lifecycle(
                                                                 base.clone(),
                                                                 token,
                                                                 space.clone(),
                                                                 actor.clone(),
-                                                                place_id.clone(),
-                                                                PlaceLifecycleState::Active,
+                                                                space_container_id.clone(),
+                                                                SpaceContainerLifecycleState::Active,
                                                                 columns,
                                                                 board_status,
                                                             );
@@ -2237,7 +2238,7 @@ fn dispatch_card_detail_update(
 /// Build + sign + submit a `cx.component.flow.position.v1` Move via
 /// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
 /// queue regardless of submit outcome. Used by both list and card create
-/// paths - `subject` is the cell subject (Place id or Flow id), `kind` is
+/// paths - `subject` is the cell subject (Space-container id or Flow id), `kind` is
 /// the classifier the MoveSubmissionState tracker uses to decorate state
 /// pills (`cx.space.create` / `cx.flow.create`).
 fn submit_kanban_operation_event(
@@ -2406,13 +2407,13 @@ struct ColumnNeighbours {
 /// - Same-column drop ⇒ `cx.flow.reorder`.
 /// - Both compile to the same
 ///   `cx:cell:cx.component.flow.position.v1:<board>:<flow>` cas-register
-///   cell; the difference is whether `effect.list_place_id` equals
-///   `expected.list_place_id`.
+///   cell; the difference is whether `effect.list_space_id` equals
+///   `expected.list_space_id`.
 fn dispatch_flow_position_move(
     base_url: String,
     token: Signal<String>,
     space_id: String,
-    board_place_id: String,
+    board_space_id: String,
     board_view_id: String,
     dragged: DraggedCard,
     target_column_id: String,
@@ -2469,11 +2470,11 @@ fn dispatch_flow_position_move(
         return;
     };
     let expected = FlowPositionExpectation::At {
-        list_place_id: dragged.from_column_id.clone(),
+        list_space_id: dragged.from_column_id.clone(),
         rank: dragged.from_rank.clone(),
     };
-    let effect = FlowPositionEffect::Place {
-        list_place_id: target_column_id.clone(),
+    let effect = FlowPositionEffect::SetPosition {
+        list_space_id: target_column_id.clone(),
         rank: new_rank.clone(),
     };
     let kind = if dragged.from_column_id == target_column_id {
@@ -2485,7 +2486,7 @@ fn dispatch_flow_position_move(
         base_url,
         token,
         space_id,
-        board_place_id,
+        board_space_id,
         board_view_id,
         dragged.card_id,
         kind,
@@ -2497,37 +2498,37 @@ fn dispatch_flow_position_move(
     );
 }
 
-/// Pure guard for Place lifecycle transitions. Refuses two illegal cases:
+/// Pure guard for Space-container lifecycle transitions. Refuses two illegal cases:
 /// (1) same-state self-transition — UI structure already gates this
 /// (Archive button only renders on Active columns and vice versa), but
 /// keeping a programmatic guard avoids no-op server roundtrips if a future
 /// code path bypasses the UI filter; (2) UI-emitted Tombstone — terminal
 /// state is server-only. Extracted as a pure fn so the policy is unit-tested
 /// without spinning up a Dioxus runtime.
-fn validate_place_lifecycle_transition(
-    place_id: &str,
-    prior: PlaceLifecycleState,
-    target: PlaceLifecycleState,
+fn validate_space_container_lifecycle_transition(
+    space_container_id: &str,
+    prior: SpaceContainerLifecycleState,
+    target: SpaceContainerLifecycleState,
 ) -> Result<(), String> {
-    if matches!(target, PlaceLifecycleState::Tombstoned) {
+    if matches!(target, SpaceContainerLifecycleState::Tombstoned) {
         return Err("Tombstone is server-only; UI dispatch refused".to_owned());
     }
     if prior == target {
         return Err(format!(
-            "list {place_id} already in {target:?} state; refused"
+            "list {space_container_id} already in {target:?} state; refused"
         ));
     }
     Ok(())
 }
 
-/// Map soland's wire state strings into `PlaceLifecycleState`.
+/// Map soland's wire state strings into `SpaceContainerLifecycleState`.
 /// Anything we don't recognise stays `Active`
 /// (the safe default — server can correct on next sync).
-fn place_state_from_wire(state: &str) -> PlaceLifecycleState {
+fn space_container_state_from_wire(state: &str) -> SpaceContainerLifecycleState {
     match state {
-        "archived" => PlaceLifecycleState::Archived,
-        "tombstoned" => PlaceLifecycleState::Tombstoned,
-        _ => PlaceLifecycleState::Active,
+        "archived" => SpaceContainerLifecycleState::Archived,
+        "tombstoned" => SpaceContainerLifecycleState::Tombstoned,
+        _ => SpaceContainerLifecycleState::Active,
     }
 }
 
@@ -2543,25 +2544,25 @@ fn flow_lifecycle_from_wire(state: &str) -> FlowLifecycleState {
 }
 
 /// Cap-Gate-3: helper that reads the app-provided `CapabilityEngine`
-/// signal and returns the UI gate for a Place-scoped action. Wraps
+/// signal and returns the UI gate for a Space-container-scoped action. Wraps
 /// `engine.read().ui_gate(...)` so kanban callers don't have to spell
 /// out the `ResourceRef` / `EvalContext` every time.
-fn capability_gate_for_place(
+fn capability_gate_for_space_container(
     engine: &Signal<crate::capability::CapabilityEngine>,
     actor: &str,
     space_id: &str,
-    place_id: &str,
+    space_container_id: &str,
     action: &str,
 ) -> crate::capability::CapabilityGate {
     let resource = crate::capability::ResourceRef {
         space_id: Some(space_id.to_owned()),
-        object_ref: Some(place_id.to_owned()),
-        object_type: Some("Place".to_owned()),
+        object_ref: Some(space_container_id.to_owned()),
+        object_type: Some("space_container".to_owned()),
         ..Default::default()
     };
     let ctx = crate::capability::EvalContext {
         space_id: Some(space_id.to_owned()),
-        place_id: Some(place_id.to_owned()),
+        space_container_id: Some(space_container_id.to_owned()),
         action: Some(action.to_owned()),
         ..Default::default()
     };
@@ -2591,20 +2592,20 @@ fn capability_gate_for_flow(
 }
 
 /// Dispatch a `cx.space.archive` or `cx.space.restore` operation against
-/// the given list (container Space, former Place) and optimistically update
-/// the column's `PlaceLifecycleState` in the UI signal. Spec:
+/// the given list (container Space) and optimistically update
+/// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
 /// `models/realm-and-space.md §4.4` (post-R1.7 rename). Soland's lifecycle
-/// envelope validator and the SDK reducer's `place_not_archived` guard
+/// envelope validator and the SDK reducer's lifecycle guard
 /// both enforce wire / state shape; this helper only handles the
 /// submit + local optimistic projection. If the submit fails the local
 /// state is rolled back to the prior value.
-fn dispatch_place_lifecycle(
+fn dispatch_space_container_lifecycle(
     base_url: String,
     token: Signal<String>,
     space_id: String,
     actor_did: String,
-    place_id: String,
-    target: PlaceLifecycleState,
+    space_container_id: String,
+    target: SpaceContainerLifecycleState,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut board_status: Signal<String>,
 ) {
@@ -2613,12 +2614,16 @@ fn dispatch_place_lifecycle(
     // critical section so prior is observed atomically.
     let prior_state = {
         let mut cols = columns.write();
-        let Some(col) = cols.iter_mut().find(|c| c.id == place_id) else {
-            board_status.set(format!("internal: list {place_id} not in board state"));
+        let Some(col) = cols.iter_mut().find(|c| c.id == space_container_id) else {
+            board_status.set(format!(
+                "internal: list {space_container_id} not in board state"
+            ));
             return;
         };
         let prior = col.state;
-        if let Err(msg) = validate_place_lifecycle_transition(&place_id, prior, target) {
+        if let Err(msg) =
+            validate_space_container_lifecycle_transition(&space_container_id, prior, target)
+        {
             board_status.set(msg);
             return;
         }
@@ -2628,20 +2633,20 @@ fn dispatch_place_lifecycle(
 
     // Only Active <-> Archived reach here (validator rejects Tombstone).
     let builder = match target {
-        PlaceLifecycleState::Archived => {
-            crate::operation::cx_ops::place_archive(&space_id, &actor_did, &place_id)
+        SpaceContainerLifecycleState::Archived => {
+            crate::operation::cx_ops::space_archive(&space_id, &actor_did, &space_container_id)
         }
-        PlaceLifecycleState::Active => {
-            crate::operation::cx_ops::place_restore(&space_id, &actor_did, &place_id)
+        SpaceContainerLifecycleState::Active => {
+            crate::operation::cx_ops::space_restore(&space_id, &actor_did, &space_container_id)
         }
-        PlaceLifecycleState::Tombstoned => {
-            // Invariant: `validate_place_lifecycle_transition` (called above)
+        SpaceContainerLifecycleState::Tombstoned => {
+            // Invariant: `validate_space_container_lifecycle_transition` (called above)
             // already rejects any move to Tombstone, so by construction the
             // only targets that reach this match are Active|Archived. If we
             // ever land here something upstream broke the contract — fail
             // loud rather than emitting a silently-wrong Move.
             panic!(
-                "invariant violation: validate_place_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
+                "invariant violation: validate_space_container_lifecycle_transition guarantees target is Active|Archived; got {target:?}"
             )
         }
     };
@@ -2663,7 +2668,11 @@ fn dispatch_place_lifecycle(
             }
             Err(err) => {
                 // Rollback optimistic state on submit failure.
-                if let Some(col) = columns.write().iter_mut().find(|c| c.id == place_id) {
+                if let Some(col) = columns
+                    .write()
+                    .iter_mut()
+                    .find(|c| c.id == space_container_id)
+                {
                     col.state = prior_state;
                 }
                 board_status.set(format!("{kind} failed: {}", err.display()));
@@ -2673,7 +2682,7 @@ fn dispatch_place_lifecycle(
 }
 
 /// Pure guard for Flow lifecycle transitions. Mirrors
-/// `validate_place_lifecycle_transition` at the Flow layer — refuses
+/// `validate_space_container_lifecycle_transition` at the Flow layer — refuses
 /// same-state self-transitions and UI-emitted Tombstone targets.
 fn validate_flow_lifecycle_transition(
     flow_id: &str,
@@ -2693,7 +2702,7 @@ fn validate_flow_lifecycle_transition(
 
 /// Dispatch `cx.flow.archive` or `cx.flow.restore` for a card and
 /// optimistically update its `FlowLifecycleState`. Mirrors
-/// `dispatch_place_lifecycle` but at the Flow object layer. Spec:
+/// `dispatch_space_container_lifecycle` but at the Flow object layer. Spec:
 /// `flow-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
 /// enforces `state == archived` for restore (`flow_not_archived`) and
 /// `state == active` for archive (`flow_not_active` — once SDK round
@@ -2826,7 +2835,7 @@ fn submit_flow_position_cas_move(
     base_url: String,
     token: Signal<String>,
     space_id: String,
-    board_place_id: String,
+    board_space_id: String,
     board_view_id: String,
     flow_id: String,
     kind: &'static str,
@@ -2840,7 +2849,7 @@ fn submit_flow_position_cas_move(
         base_url,
         token,
         space_id,
-        board_place_id,
+        board_space_id,
         board_view_id,
         flow_id,
         kind,
@@ -2863,7 +2872,7 @@ fn submit_flow_position_cas_move_with_attempt(
     base_url: String,
     token: Signal<String>,
     space_id: String,
-    board_place_id: String,
+    board_space_id: String,
     board_view_id: String,
     flow_id: String,
     kind: &'static str,
@@ -2886,37 +2895,38 @@ fn submit_flow_position_cas_move_with_attempt(
     let expected_json = match &expected {
         FlowPositionExpectation::Initial => serde_json::Value::Null,
         FlowPositionExpectation::At {
-            list_place_id,
+            list_space_id,
             rank,
         } => {
-            json!({"list_place_id": list_place_id, "rank": rank})
+            json!({"list_space_id": list_space_id, "rank": rank})
         }
     };
     let effect_json = match &effect {
-        FlowPositionEffect::Place {
-            list_place_id,
+        FlowPositionEffect::SetPosition {
+            list_space_id,
             rank,
         } => {
-            json!({"list_place_id": list_place_id, "rank": rank})
+            json!({"list_space_id": list_space_id, "rank": rank})
         }
         FlowPositionEffect::Remove => serde_json::Value::Null,
     };
     let envelope = crate::operation::cx_ops::flow_position_cas_update(
         &space_id,
         &actor_did,
-        &board_place_id,
+        kind,
+        &board_space_id,
         &flow_id,
         expected_json.clone(),
         effect_json.clone(),
     )
     .build("yougen");
     let move_id = envelope.local_operation_id().to_owned();
-    let cell_id = flow_position_cell_id(&board_place_id, &flow_id);
+    let cell_id = flow_position_cell_id(&board_space_id, &flow_id);
     let effect_summary = match &effect {
-        FlowPositionEffect::Place {
-            list_place_id,
+        FlowPositionEffect::SetPosition {
+            list_space_id,
             rank,
-        } => format!("set {{list_place_id={list_place_id}, rank={rank}}}"),
+        } => format!("set {{list_space_id={list_space_id}, rank={rank}}}"),
         FlowPositionEffect::Remove => "set null (remove)".to_owned(),
     };
     let record = BoardWriteRecord {
@@ -2943,18 +2953,19 @@ fn submit_flow_position_cas_move_with_attempt(
             "kind": kind,
             "move_id": move_id,
             "cell": cell_id,
+            "board_space_id": board_space_id,
             "expected_position": match &expected {
                 FlowPositionExpectation::Initial => serde_json::Value::Null,
                 FlowPositionExpectation::At {
-                    list_place_id,
+                    list_space_id,
                     rank,
-                } => json!({"list_place_id": list_place_id, "rank": rank}),
+                } => json!({"space_id": list_space_id, "rank": rank}),
             },
-            "effect": match &effect {
-                FlowPositionEffect::Place {
-                    list_place_id,
+            "target_position": match &effect {
+                FlowPositionEffect::SetPosition {
+                    list_space_id,
                     rank,
-                } => json!({"list_place_id": list_place_id, "rank": rank}),
+                } => json!({"space_id": list_space_id, "rank": rank}),
                 FlowPositionEffect::Remove => serde_json::Value::Null,
             },
             "write_state": "submitted",
@@ -2968,7 +2979,7 @@ fn submit_flow_position_cas_move_with_attempt(
     let space_for_record = space_id.clone();
     let base_for_rebase = base_url.clone();
     let space_for_rebase = space_id.clone();
-    let board_for_rebase = board_place_id.clone();
+    let board_for_rebase = board_space_id.clone();
     let view_for_rebase = board_view_id.clone();
     let flow_for_rebase = flow_id.clone();
     let effect_for_rebase = effect.clone();
@@ -3073,14 +3084,14 @@ fn submit_flow_position_cas_move_with_attempt(
 /// the conflict-recovery path takes a snapshot + state witness +
 /// inclusion proof; this MVP approximation just refetches the
 /// collection projection (which the soland reducer derives from the
-/// same cell store) and reads the flow's current `list_place_id` /
+/// same cell store) and reads the flow's current `list_space_id` /
 /// `rank` from it.
 #[allow(clippy::too_many_arguments)]
 fn rebase_flow_position_after_conflict(
     base_url: String,
     token: Signal<String>,
     space_id: String,
-    board_place_id: String,
+    board_space_id: String,
     board_view_id: String,
     flow_id: String,
     kind: String,
@@ -3129,7 +3140,7 @@ fn rebase_flow_position_after_conflict(
             base_url,
             token,
             space_id,
-            board_place_id,
+            board_space_id,
             board_view_id,
             flow_id,
             kind_static,
@@ -3157,7 +3168,7 @@ fn locate_flow_position_in_projection(
             if item_id == flow_id {
                 if let Some(position) = item.position.as_ref() {
                     return FlowPositionExpectation::At {
-                        list_place_id: group.group_id.clone(),
+                        list_space_id: group.group_id.clone(),
                         rank: position.rank.clone(),
                     };
                 }
@@ -3218,7 +3229,7 @@ fn write_state_samples() -> Vec<CardState> {
 fn seed_columns() -> Vec<KanbanColumn> {
     vec![
         KanbanColumn {
-            id: "cx:place:01list-todo000000000000000000".to_owned(),
+            id: "cx:space:01list-todo000000000000000000".to_owned(),
             title: "To Do".to_owned(),
             rank: "U".to_owned(),
             cards: vec![KanbanCard {
@@ -3259,10 +3270,10 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,
             }],
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
-            id: "cx:place:01list-progress00000000000000".to_owned(),
+            id: "cx:space:01list-progress00000000000000".to_owned(),
             title: "In Progress".to_owned(),
             rank: "f".to_owned(),
             cards: vec![KanbanCard {
@@ -3288,10 +3299,10 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 state: CardState::Queued,
                 lifecycle: FlowLifecycleState::Active,
             }],
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
-            id: "cx:place:01list-done00000000000000000".to_owned(),
+            id: "cx:space:01list-done00000000000000000".to_owned(),
             title: "Done".to_owned(),
             rank: "p".to_owned(),
             cards: vec![KanbanCard {
@@ -3320,7 +3331,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 state: CardState::Conflict,
                 lifecycle: FlowLifecycleState::Active,
             }],
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         },
     ]
 }
@@ -3349,18 +3360,21 @@ mod tests {
     /// renderer enums. Unknown values stay at the safe `Active` default.
     #[test]
     fn lifecycle_wire_strings_decode_to_enums() {
-        assert_eq!(place_state_from_wire("active"), PlaceLifecycleState::Active);
         assert_eq!(
-            place_state_from_wire("archived"),
-            PlaceLifecycleState::Archived
+            space_container_state_from_wire("active"),
+            SpaceContainerLifecycleState::Active
         );
         assert_eq!(
-            place_state_from_wire("tombstoned"),
-            PlaceLifecycleState::Tombstoned
+            space_container_state_from_wire("archived"),
+            SpaceContainerLifecycleState::Archived
         );
         assert_eq!(
-            place_state_from_wire("garbage"),
-            PlaceLifecycleState::Active
+            space_container_state_from_wire("tombstoned"),
+            SpaceContainerLifecycleState::Tombstoned
+        );
+        assert_eq!(
+            space_container_state_from_wire("garbage"),
+            SpaceContainerLifecycleState::Active
         );
 
         assert_eq!(
@@ -3387,72 +3401,75 @@ mod tests {
         );
     }
 
-    /// Place lifecycle state defaults to Active per the spec wire
+    /// Space-container lifecycle state defaults to Active per the spec wire
     /// default; seed columns and projection-mapped columns MUST start
     /// active so they appear in the main board grid.
     #[test]
-    fn place_lifecycle_state_default_is_active() {
-        assert_eq!(PlaceLifecycleState::default(), PlaceLifecycleState::Active);
+    fn space_container_lifecycle_state_default_is_active() {
+        assert_eq!(
+            SpaceContainerLifecycleState::default(),
+            SpaceContainerLifecycleState::Active
+        );
         // Every seeded column starts Active.
         for column in seed_columns() {
             assert_eq!(
                 column.state,
-                PlaceLifecycleState::Active,
+                SpaceContainerLifecycleState::Active,
                 "seed column {} must start Active",
                 column.id
             );
         }
     }
 
-    /// Place lifecycle validator rejects (a) same-state self-transition
+    /// Space-container lifecycle validator rejects (a) same-state self-transition
     /// and (b) UI-emitted Tombstone target. The legal transitions
     /// (Active → Archived and Archived → Active) MUST be accepted so
     /// archive / restore continue to work end-to-end.
     #[test]
-    fn validate_place_lifecycle_transition_rules() {
+    fn validate_space_container_lifecycle_transition_rules() {
         // Same-state refusal — Active → Active.
-        let err = validate_place_lifecycle_transition(
-            "cx:place:test",
-            PlaceLifecycleState::Active,
-            PlaceLifecycleState::Active,
+        let err = validate_space_container_lifecycle_transition(
+            "cx:space:test",
+            SpaceContainerLifecycleState::Active,
+            SpaceContainerLifecycleState::Active,
         )
         .expect_err("same-state Active→Active must be refused");
         assert!(err.contains("already in"));
-        assert!(err.contains("cx:place:test"));
+        assert!(err.contains("cx:space:test"));
 
         // Same-state refusal — Archived → Archived.
-        validate_place_lifecycle_transition(
-            "cx:place:test",
-            PlaceLifecycleState::Archived,
-            PlaceLifecycleState::Archived,
+        validate_space_container_lifecycle_transition(
+            "cx:space:test",
+            SpaceContainerLifecycleState::Archived,
+            SpaceContainerLifecycleState::Archived,
         )
         .expect_err("same-state Archived→Archived must be refused");
 
         // Tombstone target refusal — UI never emits Tombstone.
-        let err = validate_place_lifecycle_transition(
-            "cx:place:test",
-            PlaceLifecycleState::Active,
-            PlaceLifecycleState::Tombstoned,
+        let err = validate_space_container_lifecycle_transition(
+            "cx:space:test",
+            SpaceContainerLifecycleState::Active,
+            SpaceContainerLifecycleState::Tombstoned,
         )
         .expect_err("UI-emitted Tombstone must be refused");
         assert!(err.contains("Tombstone"));
 
         // Legal transitions stay green.
-        validate_place_lifecycle_transition(
-            "cx:place:test",
-            PlaceLifecycleState::Active,
-            PlaceLifecycleState::Archived,
+        validate_space_container_lifecycle_transition(
+            "cx:space:test",
+            SpaceContainerLifecycleState::Active,
+            SpaceContainerLifecycleState::Archived,
         )
         .expect("Active→Archived is a legal transition");
-        validate_place_lifecycle_transition(
-            "cx:place:test",
-            PlaceLifecycleState::Archived,
-            PlaceLifecycleState::Active,
+        validate_space_container_lifecycle_transition(
+            "cx:space:test",
+            SpaceContainerLifecycleState::Archived,
+            SpaceContainerLifecycleState::Active,
         )
         .expect("Archived→Active is a legal transition");
     }
 
-    /// Symmetric to `validate_place_lifecycle_transition_rules` at the
+    /// Symmetric to `validate_space_container_lifecycle_transition_rules` at the
     /// Flow layer. Same two refusal cases, same two legal transitions.
     #[test]
     fn validate_flow_lifecycle_transition_rules() {
@@ -3494,7 +3511,7 @@ mod tests {
         .expect("Archived→Active is a legal transition");
     }
 
-    /// Symmetric to `place_lifecycle_state_default_is_active` —
+    /// Symmetric to `space_container_lifecycle_state_default_is_active` —
     /// FlowLifecycleState MUST default to Active and every seeded card
     /// MUST start Active so the demo board exercises the happy path.
     #[test]
@@ -3639,32 +3656,32 @@ mod tests {
     }
 
     #[test]
-    fn board_place_options_pick_board_places_from_projection() {
-        let options = board_place_options_from_projection(&[
-            crate::api::PlaceProjectionView {
-                place_id: "cx:place:0196419b-0000-7000-8000-000000000001".to_owned(),
-                space_id: "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+    fn board_space_options_pick_board_spaces_from_projection() {
+        let options = board_space_options_from_projection(&[
+            crate::api::SpaceContainerProjectionView {
+                container_space_id: "cx:space:0196419b-0000-7000-8000-000000000001".to_owned(),
+                realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "board".to_owned(),
                 title: "Release".to_owned(),
                 state: "active".to_owned(),
                 rank: None,
                 parent_ref: None,
             },
-            crate::api::PlaceProjectionView {
-                place_id: "cx:place:0196419b-0000-7000-8000-000000000002".to_owned(),
-                space_id: "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+            crate::api::SpaceContainerProjectionView {
+                container_space_id: "cx:space:0196419b-0000-7000-8000-000000000002".to_owned(),
+                realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "list".to_owned(),
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_ref: Some("cx:place:0196419b-0000-7000-8000-000000000001".to_owned()),
+                parent_ref: Some("cx:space:0196419b-0000-7000-8000-000000000001".to_owned()),
             },
         ]);
 
         assert_eq!(options.len(), 1);
         assert_eq!(
             options[0].id,
-            "cx:place:0196419b-0000-7000-8000-000000000001"
+            "cx:space:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(options[0].title, "Release");
     }
@@ -3770,26 +3787,26 @@ mod tests {
     fn relocate_card_preserves_rank_ordering_after_move() {
         let mut cols = vec![
             KanbanColumn {
-                id: "cx:place:list-a".to_owned(),
+                id: "cx:space:list-a".to_owned(),
                 title: "A".to_owned(),
                 rank: "U".to_owned(),
                 cards: vec![test_card("cx:flow:a1", "U"), test_card("cx:flow:a2", "f")],
-                state: PlaceLifecycleState::Active,
+                state: SpaceContainerLifecycleState::Active,
             },
             KanbanColumn {
-                id: "cx:place:list-b".to_owned(),
+                id: "cx:space:list-b".to_owned(),
                 title: "B".to_owned(),
                 rank: "f".to_owned(),
                 cards: vec![test_card("cx:flow:b1", "U"), test_card("cx:flow:b3", "z")],
-                state: PlaceLifecycleState::Active,
+                state: SpaceContainerLifecycleState::Active,
             },
         ];
         // Move a1 from A → B, dropped at rank "m" (between b1=U and b3=z).
         let moved = relocate_card(
             &mut cols,
             "cx:flow:a1",
-            "cx:place:list-a",
-            "cx:place:list-b",
+            "cx:space:list-a",
+            "cx:space:list-b",
             "m",
         )
         .unwrap();
@@ -3813,7 +3830,7 @@ mod tests {
     #[test]
     fn relocate_card_handles_in_list_reorder() {
         let mut cols = vec![KanbanColumn {
-            id: "cx:place:list-a".to_owned(),
+            id: "cx:space:list-a".to_owned(),
             title: "A".to_owned(),
             rank: "U".to_owned(),
             cards: vec![
@@ -3821,14 +3838,14 @@ mod tests {
                 test_card("cx:flow:a2", "f"),
                 test_card("cx:flow:a3", "p"),
             ],
-            state: PlaceLifecycleState::Active,
+            state: SpaceContainerLifecycleState::Active,
         }];
         // Move a3 to the top of the same list (rank "0" — before "U").
         let moved = relocate_card(
             &mut cols,
             "cx:flow:a3",
-            "cx:place:list-a",
-            "cx:place:list-a",
+            "cx:space:list-a",
+            "cx:space:list-a",
             "0",
         )
         .unwrap();
@@ -3843,7 +3860,7 @@ mod tests {
     /// `locate_flow_position_in_projection` is the post-conflict rebase
     /// adapter — it must find the flow's current cell pre-state from a
     /// freshly-fetched projection. When the flow is present with a
-    /// position, return `At { list_place_id, rank }`; absent ⇒ `Initial`.
+    /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
     #[test]
     fn locate_flow_position_finds_present_flow_with_rank() {
         use contrix_sdk::{
@@ -3856,7 +3873,7 @@ mod tests {
             view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
             frontier: Vec::new(),
             groups: vec![CollectionProjectionGroup {
-                group_id: "cx:place:01list-review".to_owned(),
+                group_id: "cx:space:01list-review".to_owned(),
                 title: "Review".to_owned(),
                 rank: Some("U".to_owned()),
                 items: vec![CollectionProjectionItem {
@@ -3877,7 +3894,7 @@ mod tests {
         assert_eq!(
             expected,
             FlowPositionExpectation::At {
-                list_place_id: "cx:place:01list-review".to_owned(),
+                list_space_id: "cx:space:01list-review".to_owned(),
                 rank: "h3".to_owned(),
             }
         );

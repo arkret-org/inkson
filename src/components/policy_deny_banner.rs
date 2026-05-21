@@ -22,7 +22,6 @@
 //!   server did on their behalf.
 
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use dioxus::prelude::*;
 use serde_json::Value;
@@ -51,16 +50,28 @@ impl PolicyDenyEvent {
         message: impl Into<String>,
         obligations: Vec<Value>,
     ) -> Self {
-        let captured_at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or_default();
         Self {
             code: code.into(),
             message: message.into(),
             obligations,
-            captured_at_ms,
+            captured_at_ms: policy_deny_now_ms(),
         }
+    }
+}
+
+fn policy_deny_now_ms() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now().max(0.0) as u64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_default()
     }
 }
 
@@ -136,9 +147,6 @@ pub fn PolicyDenyBanner() -> Element {
         let Some(captured_at) = captured_at else {
             return;
         };
-        // TODO(G3.Y3-followup): wasm32 needs gloo-timers here — we don't
-        // pull tokio::time on the web build. For now the desktop / mobile
-        // builds get auto-dismiss; web users dismiss manually via the X.
         #[cfg(not(target_arch = "wasm32"))]
         {
             spawn(async move {
@@ -234,6 +242,13 @@ mod tests {
         assert_eq!(event.message, "external_policy_blocks_user");
         // Second take is empty — the queue is take-once.
         assert!(take_policy_deny().is_none());
+    }
+
+    #[test]
+    fn deny_event_captures_timestamp() {
+        let event = PolicyDenyEvent::new("capability_denied", "blocked", vec![]);
+
+        assert!(event.captured_at_ms > 0);
     }
 
     #[test]

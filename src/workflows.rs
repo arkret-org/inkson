@@ -77,10 +77,10 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
         },
         ClientWorkflow {
             id: "space.discovery",
-            name: "Discover and resolve public spaces",
+            name: "Discover and resolve public realms",
             stage: WorkflowStage::Supported,
             client_surface: "Directory panel",
-            server_dependency: "POST /api/v1/directory/search-spaces and resolve-space",
+            server_dependency: "POST /api/v1/directory/search-realms and resolve-realm",
         },
         ClientWorkflow {
             id: "space.create",

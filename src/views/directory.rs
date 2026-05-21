@@ -67,7 +67,7 @@ pub fn DirectoryPanel(
                     role: "tab",
                     "aria-selected": if active_tab() == DirectoryTab::Spaces { "true" } else { "false" },
                     onclick: move |_| active_tab.set(DirectoryTab::Spaces),
-                    "Spaces"
+                    "Realms"
                 }
                 button {
                     class: if active_tab() == DirectoryTab::Organizations { "primary" } else { "secondary" },
@@ -322,7 +322,7 @@ pub fn DirectoryPanel(
                     span { "Search" }
                     span { match active_tab() {
                         DirectoryTab::ProtocolObjects => "developer objects",
-                        DirectoryTab::Spaces => "spaces",
+                        DirectoryTab::Spaces => "realms",
                         DirectoryTab::Organizations => "organizations",
                         DirectoryTab::Actors => "actors",
                         DirectoryTab::Handles => "handles",
@@ -334,14 +334,14 @@ pub fn DirectoryPanel(
                         value: "{query}",
                         "aria-label": match active_tab() {
                             DirectoryTab::ProtocolObjects => "Search protocol objects for developer diagnostics",
-                            DirectoryTab::Spaces => "Search spaces",
+                            DirectoryTab::Spaces => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Resolve handle",
                         },
                         placeholder: match active_tab() {
                             DirectoryTab::ProtocolObjects => "Search Cards, Discussions, Actors, Spaces (diagnostic lookup)",
-                            DirectoryTab::Spaces => "Search spaces",
+                            DirectoryTab::Spaces => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Enter handle (e.g. alice.example)",
@@ -364,12 +364,12 @@ pub fn DirectoryPanel(
                                                 status.set("loaded protocol object diagnostic results".to_owned());
                                             }
                                             DirectoryTab::Spaces => {
-                                                match api.search_spaces(&q, None).await {
+                                                match api.search_realms(&q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().spaces_cursor = search.next_cursor.clone();
                                                         let count = search.results.len();
                                                         spaces.set(search.results);
-                                                        status.set(format!("loaded {count} space result(s)"));
+                                                        status.set(format!("loaded {count} realm result(s)"));
                                                     }
                                                     Err(error) => status.set(format!("search failed: {error}")),
                                                 }
@@ -428,12 +428,12 @@ pub fn DirectoryPanel(
                                                     status.set("loaded protocol object diagnostic results".to_owned());
                                                 }
                                                 DirectoryTab::Spaces => {
-                                                    match api.search_spaces(&q, None).await {
+                                                    match api.search_realms(&q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().spaces_cursor = search.next_cursor.clone();
                                                             let count = search.results.len();
                                                             spaces.set(search.results);
-                                                            status.set(format!("loaded {count} space result(s)"));
+                                                            status.set(format!("loaded {count} realm result(s)"));
                                                         }
                                                         Err(error) => status.set(format!("search failed: {error}")),
                                                     }
@@ -483,7 +483,7 @@ pub fn DirectoryPanel(
                                         let api_token = token();
                                         spawn(async move {
                                             match with_authed_api(&base, api_token, |api| async move {
-                                                api.resolve_space(&id).await
+                                                api.resolve_realm(&id).await
                                             })
                                             .await
                                             {
@@ -524,7 +524,7 @@ pub fn DirectoryPanel(
                 }
             }
 
-            // Spaces tab results
+            // Realm directory results
             if active_tab() == DirectoryTab::Spaces {
                 for space in spaces() {
                     div { class: "event", "data-testid": "directory-result",
@@ -546,7 +546,7 @@ pub fn DirectoryPanel(
                                         view.set(super::View::Timeline);
                                     }
                                 },
-                                "Open Space"
+                                "Open Realm"
                             }
                             button {
                                 class: "secondary",
@@ -566,8 +566,8 @@ pub fn DirectoryPanel(
                         for space in spaces() {
                             GenericEntityCard {
                                 title: space.name.clone(),
-                                summary: space.description.clone().unwrap_or_else(|| "Space projection".to_owned()),
-                                entity_type: "space".to_owned(),
+                                summary: space.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
+                                entity_type: "realm".to_owned(),
                             }
                         }
                     }
@@ -590,7 +590,7 @@ pub fn DirectoryPanel(
                                             pagination.write().loading_more = true;
                                             spawn(async move {
                                                 match with_authed_api(&base, api_token, |api| async move {
-                                                    api.search_spaces(&q, cursor.as_deref()).await
+                                                    api.search_realms(&q, cursor.as_deref()).await
                                                 })
                                                 .await
                                                 {

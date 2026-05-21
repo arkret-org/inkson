@@ -7,7 +7,7 @@
 //! re-discovering the SDK's struct layout.
 
 pub use contrix_sdk::Morph;
-pub use contrix_sdk::{Place, PlaceId, Relation, RelationProfile, SpaceId};
+pub use contrix_sdk::{Relation, RelationProfile, SpaceId};
 
 use serde_json::{Value, json};
 
@@ -67,30 +67,36 @@ pub fn build_relation_delete(space_id: &str, actor: &str, relation_id: &str) -> 
         .body(json!({"relation_id": relation_id}))
 }
 
-/// Build a `cx.container.move_item` operation. `parent_place_id` is the
-/// containing Place (board / list / container); `item_ref` is the typed-id of
-/// the moved object; `rank` is the new ordering rank (`encoding.md` §10.3).
+/// Build a `cx.container.move_item` operation. Payload shape mirrors
+/// `container_position_payload`: `container_ref`, `source_ref`, `target_ref`,
+/// and the new ordering `rank`.
 pub fn build_container_move_item(
     space_id: &str,
     actor: &str,
-    parent_place_id: &str,
-    item_ref: &str,
+    container_ref: &str,
+    source_ref: &str,
+    target_ref: &str,
     rank: &str,
 ) -> OperationBuilder {
     OperationBuilder::new(space_id, actor, "cx.container.move_item")
-        .target_ref(parent_place_id)
+        .target_ref(container_ref)
         .body(json!({
-            "parent_place_id": parent_place_id,
-            "item_ref": item_ref,
+            "container_ref": container_ref,
+            "source_ref": source_ref,
+            "target_ref": target_ref,
             "rank": rank,
         }))
 }
 
-/// Build a `cx.container.rebalance` operation, batched form of `move_item`.
+/// Build a `cx.container.rebalance` operation. The required position fields
+/// remain at top level; `items` carries optional profile-specific batch detail.
 pub fn build_container_rebalance(
     space_id: &str,
     actor: &str,
-    parent_place_id: &str,
+    container_ref: &str,
+    source_ref: &str,
+    target_ref: &str,
+    rank: &str,
     new_order: Vec<(String, String)>,
 ) -> OperationBuilder {
     let items: Vec<Value> = new_order
@@ -98,9 +104,12 @@ pub fn build_container_rebalance(
         .map(|(item_ref, rank)| json!({"item_ref": item_ref, "rank": rank}))
         .collect();
     OperationBuilder::new(space_id, actor, "cx.container.rebalance")
-        .target_ref(parent_place_id)
+        .target_ref(container_ref)
         .body(json!({
-            "parent_place_id": parent_place_id,
+            "container_ref": container_ref,
+            "source_ref": source_ref,
+            "target_ref": target_ref,
+            "rank": rank,
             "items": items,
         }))
 }
@@ -141,17 +150,27 @@ mod tests {
     }
 
     #[test]
-    fn container_move_item_targets_parent_place() {
+    fn container_move_item_uses_spec_position_payload() {
         let op = build_container_move_item(
             "cx:space:s1",
             "did:web:alice",
-            "cx:place:list1",
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:flow:f1",
             "cx:flow:f1",
             "r0",
         )
         .build("node");
         assert_eq!(op.kind, "cx.container.move_item");
-        assert_eq!(op.local_target_ref(), Some("cx:place:list1"));
+        assert_eq!(
+            op.local_target_ref(),
+            Some("cx:space:0196419b-0000-7000-8000-000000000001")
+        );
+        assert_eq!(
+            op.payload["container_ref"],
+            "cx:space:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(op.payload["source_ref"], "cx:flow:f1");
+        assert_eq!(op.payload["target_ref"], "cx:flow:f1");
         assert_eq!(op.payload["rank"], "r0");
     }
 
@@ -160,7 +179,10 @@ mod tests {
         let op = build_container_rebalance(
             "cx:space:s1",
             "did:web:alice",
-            "cx:place:list1",
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:flow:f1",
+            "cx:flow:f2",
+            "r1",
             vec![
                 ("cx:flow:f1".to_owned(), "r0".to_owned()),
                 ("cx:flow:f2".to_owned(), "r1".to_owned()),
@@ -168,6 +190,12 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "cx.container.rebalance");
+        assert_eq!(
+            op.payload["container_ref"],
+            "cx:space:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(op.payload["target_ref"], "cx:flow:f2");
+        assert_eq!(op.payload["rank"], "r1");
         assert_eq!(op.payload["items"][0]["item_ref"], "cx:flow:f1");
         assert_eq!(op.payload["items"][1]["rank"], "r1");
     }

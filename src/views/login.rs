@@ -29,6 +29,8 @@ struct CompletedLogin {
     grant: PersistedSessionGrant,
 }
 
+const SHOW_PASSKEY_LOGIN_UI: bool = false;
+
 #[component]
 pub fn LoginPanel(
     base_url: Signal<String>,
@@ -163,78 +165,80 @@ pub fn LoginPanel(
                 // endpoint does today). The buttons here will pivot to
                 // that endpoint as soon as it ships — same call shape,
                 // smaller follow-up.
-                div { class: "auth-passkey", role: "group", "aria-label": "Passkey",
-                    button {
-                        class: "secondary",
-                        "data-testid": "passkey-register-button",
-                        disabled: is_busy(),
-                        onclick: move |_| {
-                            is_busy.set(true);
-                            auth_status.set("Starting passkey registration...".to_owned());
-                            let principal = base_url();
-                            let device = normalize_device_id(&device_id());
-                            device_id.set(device.clone());
-                            spawn(async move {
-                                let result = run_passkey_register(
-                                    &principal,
-                                    &account_did(),
-                                    &device,
-                                    state_store_write,
-                                )
-                                .await;
-                                is_busy.set(false);
-                                match result {
-                                    Ok(message) => auth_status.set(message),
-                                    Err(error) => auth_status.set(error),
-                                }
-                            });
-                        },
-                        "Register passkey"
-                    }
-                    button {
-                        class: "primary",
-                        "data-testid": "passkey-login-button",
-                        disabled: is_busy(),
-                        onclick: move |_| {
-                            is_busy.set(true);
-                            auth_status.set("Authenticating with passkey...".to_owned());
-                            let principal = base_url();
-                            let device = normalize_device_id(&device_id());
-                            device_id.set(device.clone());
-                            spawn(async move {
-                                let outcome = run_passkey_login(
-                                    &principal,
-                                    &account_did(),
-                                    &device,
-                                    state_store_write,
-                                )
-                                .await;
-                                match outcome {
-                                    Ok(completed) => {
-                                        base_url.set(completed.principal_server_url.clone());
-                                        account_did.set(completed.actor.clone());
-                                        device_id.set(completed.device_id.clone());
-                                        token.set(completed.access_token.clone());
-                                        persist_config(
-                                            config_store,
-                                            completed.principal_server_url,
-                                            completed.actor,
-                                            completed.device_id,
-                                            completed.access_token,
-                                        );
-                                        state_store_write
-                                            .write()
-                                            .set_session_grant(Some(completed.grant));
-                                        status.set("Online".to_owned());
-                                        auth_status.set("Signed in".to_owned());
-                                        on_login.call(());
+                if SHOW_PASSKEY_LOGIN_UI {
+                    div { class: "auth-passkey", role: "group", "aria-label": "Passkey",
+                        button {
+                            class: "secondary",
+                            "data-testid": "passkey-register-button",
+                            disabled: is_busy(),
+                            onclick: move |_| {
+                                is_busy.set(true);
+                                auth_status.set("Starting passkey registration...".to_owned());
+                                let principal = base_url();
+                                let device = normalize_device_id(&device_id());
+                                device_id.set(device.clone());
+                                spawn(async move {
+                                    let result = run_passkey_register(
+                                        &principal,
+                                        &account_did(),
+                                        &device,
+                                        state_store_write,
+                                    )
+                                    .await;
+                                    is_busy.set(false);
+                                    match result {
+                                        Ok(message) => auth_status.set(message),
+                                        Err(error) => auth_status.set(error),
                                     }
-                                    Err(error) => auth_status.set(error),
-                                }
-                                is_busy.set(false);
-                            });
-                        },
-                        "Sign in with passkey"
+                                });
+                            },
+                            "Register passkey"
+                        }
+                        button {
+                            class: "primary",
+                            "data-testid": "passkey-login-button",
+                            disabled: is_busy(),
+                            onclick: move |_| {
+                                is_busy.set(true);
+                                auth_status.set("Authenticating with passkey...".to_owned());
+                                let principal = base_url();
+                                let device = normalize_device_id(&device_id());
+                                device_id.set(device.clone());
+                                spawn(async move {
+                                    let outcome = run_passkey_login(
+                                        &principal,
+                                        &account_did(),
+                                        &device,
+                                        state_store_write,
+                                    )
+                                    .await;
+                                    match outcome {
+                                        Ok(completed) => {
+                                            base_url.set(completed.principal_server_url.clone());
+                                            account_did.set(completed.actor.clone());
+                                            device_id.set(completed.device_id.clone());
+                                            token.set(completed.access_token.clone());
+                                            persist_config(
+                                                config_store,
+                                                completed.principal_server_url,
+                                                completed.actor,
+                                                completed.device_id,
+                                                completed.access_token,
+                                            );
+                                            state_store_write
+                                                .write()
+                                                .set_session_grant(Some(completed.grant));
+                                            status.set("Online".to_owned());
+                                            auth_status.set("Signed in".to_owned());
+                                            on_login.call(());
+                                        }
+                                        Err(error) => auth_status.set(error),
+                                    }
+                                    is_busy.set(false);
+                                });
+                            },
+                            "Sign in with passkey"
+                        }
                     }
                 }
 
@@ -478,7 +482,7 @@ pub(crate) async fn start_oidc_flow(
 ) -> Result<(), String> {
     let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
         .await
-        .map_err(|error| format!("Server sign-in discovery failed: {error}"))?;
+        .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
     let coauth = CoauthApi::new(&auth_server_url)
         .map_err(|error| format!("Invalid auth server URL: {error}"))?;
     let topology = coauth
@@ -498,6 +502,27 @@ pub(crate) async fn start_oidc_flow(
     .map_err(|error| format!("Could not save sign-in state: {error}"))?;
     open_oidc_authorize_url(&bundle.authorize_url)
         .map_err(|error| format!("Could not open server sign-in: {error}"))
+}
+
+fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Error) -> String {
+    let normalized = normalize_server_url(principal_server_url);
+    let local_hint = url::Url::parse(&normalized)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| {
+            matches!(
+                host.as_str(),
+                "local.host" | "localhost" | "127.0.0.1" | "::1"
+            )
+        });
+
+    if local_hint {
+        format!(
+            "Could not reach {normalized} for server sign-in discovery. Start the local Principal Server on local.host:443 and make sure its HTTPS certificate is trusted. Details: {error}"
+        )
+    } else {
+        format!("Could not reach {normalized} for server sign-in discovery: {error}")
+    }
 }
 
 async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin, String> {
