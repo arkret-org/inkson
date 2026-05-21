@@ -1061,8 +1061,8 @@ impl ContrixApi {
         self.get_json("api/v1/account/describe").await
     }
 
-    pub async fn sync(&self, since: Option<&str>) -> anyhow::Result<ClientSyncResponse> {
-        self.sync_with_timeout(since, 0).await
+    pub async fn sync(&self, after: Option<&str>) -> anyhow::Result<ClientSyncResponse> {
+        self.sync_with_timeout(after, 0).await
     }
 
     /// `cx.account.subscribe` snapshot fold. The server returns NDJSON frames;
@@ -1070,12 +1070,12 @@ impl ContrixApi {
     /// app on the existing folded `ClientSyncResponse` projection path.
     pub async fn sync_with_timeout(
         &self,
-        since: Option<&str>,
+        after: Option<&str>,
         timeout_ms: u64,
     ) -> anyhow::Result<ClientSyncResponse> {
         // H3 — enforce `cx:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
-        if let Some(token) = since {
+        if let Some(token) = after {
             validate_cursor(token)?;
         }
         let mut url = self.endpoint("api/v1/account/subscribe")?;
@@ -1083,7 +1083,7 @@ impl ContrixApi {
             let mut query = url.query_pairs_mut();
             query.append_pair("catchup", "true");
             query.append_pair("set_presence", "online");
-            if let Some(cursor) = since {
+            if let Some(cursor) = after {
                 query.append_pair("after", cursor);
             }
         }
@@ -3956,9 +3956,7 @@ mod tests {
         // Spec-aligned wire shape per `client-sync.md §2`: flat
         // `spaces` keyed by realm id, explicit `left_spaces`,
         // flat arrays for top-level streams. The SDK's
-        // `SyncResBody` accepts `next_batch` as a serde alias so
-        // pre-spec-rename payloads still decode during the
-        // migration window.
+        // Canonical account subscribe snapshot shape.
         let sync_v1 = parse_sync(json!({
             "cursor": "cx:cursor:v1",
             "spaces": {
