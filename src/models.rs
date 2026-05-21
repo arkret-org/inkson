@@ -1,4 +1,6 @@
-pub use contrix_sdk::{ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry};
+pub use contrix_sdk::{
+    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

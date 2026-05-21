@@ -209,7 +209,9 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
     // ASCII alphanumeric (no `.`/`-`/`_`/`:`); the method-specific id
     // MUST NOT contain whitespace.
     if method.is_empty()
-        || !method.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        || !method
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         || id.trim().is_empty()
         || id.chars().any(char::is_whitespace)
     {
@@ -367,6 +369,12 @@ enum SettingsSection {
     Mimi,
     Notifications,
     Privacy,
+    /// G3.Y3 — consent grants (`/settings/consent`).
+    Consent,
+    /// G3.Y3 — personal blocklist (`/settings/blocklist`).
+    Blocklist,
+    /// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
+    Capabilities,
     Theme,
     Release,
 }
@@ -379,6 +387,9 @@ impl SettingsSection {
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
+            "consent" => Self::Consent,
+            "blocklist" | "blocked-users" => Self::Blocklist,
+            "capabilities" => Self::Capabilities,
             "theme" => Self::Theme,
             "release" => Self::Release,
             _ => Self::Server,
@@ -393,6 +404,9 @@ impl SettingsSection {
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
+            Self::Consent => "consent",
+            Self::Blocklist => "blocklist",
+            Self::Capabilities => "capabilities",
             Self::Theme => "theme",
             Self::Release => "release",
         }
@@ -406,6 +420,9 @@ impl SettingsSection {
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
+            Self::Consent => "Consent grants",
+            Self::Blocklist => "Blocked actors",
+            Self::Capabilities => "Capabilities",
             Self::Theme => "Appearance & locale",
             Self::Release => "Diagnostics",
         }
@@ -419,6 +436,9 @@ impl SettingsSection {
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy",
+            Self::Consent => "Consent",
+            Self::Blocklist => "Blocklist",
+            Self::Capabilities => "Authorization",
             Self::Theme => "Preferences",
             Self::Release => "Advanced",
         }
@@ -442,6 +462,15 @@ impl SettingsSection {
             Self::Privacy => {
                 "Actor-private preferences, disclosure policy, and selective sharing rules."
             }
+            Self::Consent => {
+                "Per-peer consent grants — who may contact you, in what scope, until when. Spec identity/consent-model.md §2."
+            }
+            Self::Blocklist => {
+                "Actor-private personal blocklist. Spec governance/content-moderation.md §4 — client-side filter complementing server-side quarantine."
+            }
+            Self::Capabilities => {
+                "Capability grants held or issued by this actor, with delegation chain. Spec authz/capabilities.md §3."
+            }
             Self::Theme => {
                 "Theme, locale, and client-facing defaults that stay private to this actor."
             }
@@ -453,9 +482,17 @@ impl SettingsSection {
 }
 
 const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[SettingsSection::Encryption];
-const SETTINGS_DELIVERY_GROUP: &[SettingsSection] =
-    &[SettingsSection::Notifications, SettingsSection::Privacy];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
+    &[SettingsSection::Encryption, SettingsSection::Capabilities];
+const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
+    SettingsSection::Notifications,
+    SettingsSection::Privacy,
+    // G3.Y3 — consent + blocklist sit next to Privacy because both are
+    // actor-private disclosure controls (spec
+    // identity/consent-model.md §2, governance/content-moderation.md §4).
+    SettingsSection::Consent,
+    SettingsSection::Blocklist,
+];
 const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
     &[SettingsSection::Theme, SettingsSection::Storage];
 const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
@@ -468,12 +505,12 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     ),
     (
         "Security",
-        "Device identity, recovery, and local encryption posture.",
+        "Device identity, recovery, capability grants, and local encryption posture.",
         SETTINGS_SECURITY_GROUP,
     ),
     (
         "Notifications & privacy",
-        "Notification delivery behavior and actor-private disclosure controls.",
+        "Notification delivery behavior, actor-private disclosure controls, and consent/blocklist.",
         SETTINGS_DELIVERY_GROUP,
     ),
     (
@@ -2542,6 +2579,42 @@ pub fn SettingsPanel(
                         button { class: "secondary", "data-testid": "account-data-clear", "Clear actor-private preferences" }
                     }
                 }
+                        }
+                    }
+
+                    // ── G3.Y3 consent grants ─────────────────────────────
+                    if active_section == SettingsSection::Consent {
+                        div { class: "settings-content-stack",
+                            crate::views::settings_consent::ConsentSettingsCard {
+                                base_url,
+                                account_did,
+                                token,
+                                state_store,
+                            }
+                        }
+                    }
+
+                    // ── G3.Y3 personal blocklist ─────────────────────────
+                    if active_section == SettingsSection::Blocklist {
+                        div { class: "settings-content-stack",
+                            crate::views::settings_blocklist::BlocklistSettingsCard {
+                                base_url,
+                                account_did,
+                                token,
+                                state_store,
+                            }
+                        }
+                    }
+
+                    // ── G3.Y3 capability viewer ──────────────────────────
+                    if active_section == SettingsSection::Capabilities {
+                        div { class: "settings-content-stack",
+                            crate::views::settings_capabilities::CapabilitiesSettingsCard {
+                                base_url,
+                                account_did,
+                                token,
+                                state_store,
+                            }
                         }
                     }
 

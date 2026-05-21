@@ -564,8 +564,8 @@ pub fn SetupPanel(
         })
         .map(|(id, body)| (id.clone(), projection_title(id, body)))
         .collect();
-    let new_space_ready = !new_space_title_value.trim().is_empty()
-        && !new_space_realm_id_value.trim().is_empty();
+    let new_space_ready =
+        !new_space_title_value.trim().is_empty() && !new_space_realm_id_value.trim().is_empty();
     let new_space_can_submit = has_session && new_space_ready;
     let seed_members_value = seed_members();
     let space_state_value = space_state();

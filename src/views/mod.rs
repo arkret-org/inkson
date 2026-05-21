@@ -74,10 +74,43 @@ pub mod onboarding;
 pub mod quarantine;
 pub mod recovery;
 pub mod settings;
+/// G3.Y3 — personal blocklist settings card (`/settings/blocklist`).
+/// Lives next to the monolithic `settings` module to avoid touching
+/// the 2.7k-line file while G3.Y1 / G3.Y2 are also editing it.
+pub mod settings_blocklist;
+/// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
+pub mod settings_capabilities;
+/// G3.Y3 — consent grants settings card (`/settings/consent`).
+pub mod settings_consent;
+/// G3.Y1 — device management (list + revoke + QR pairing) split out
+/// from `settings.rs` so the device / key-backup territory stays
+/// distinct from the policy / consent territory (G3.Y3) at file
+/// granularity. Hosts `/settings/devices` and `/settings/devices/pair`.
+pub mod settings_devices;
+/// G3.Y1 — fresh-device restore ceremony hosted at `/recover`. Takes
+/// the recovery passphrase, derives the vault KEK locally, fetches
+/// the latest backup envelope, and decrypts it without exposing the
+/// passphrase to the server.
+pub mod settings_recover_restore;
+/// G3.Y1 — single-purpose passphrase setup ceremony surfaced from
+/// the settings sidebar at `/settings/recovery`. Distinct from
+/// `views/recovery.rs` which hosts the broader recovery-options
+/// aggregator at `/recovery`.
+pub mod settings_recovery;
+/// G3.Y1 — manual key-backup status / trigger / restore controls at
+/// `/settings/security`. Wires (where possible) to the existing
+/// `cx.schema.key_backup.v1` API surface; soland MLS-key backup
+/// endpoints that don't yet exist are tagged `TODO(G3.Y1-followup)`.
+pub mod settings_security;
 pub mod setup;
 pub mod space_admin;
 pub mod timeline;
 pub mod verify_device;
+/// G3.Y4 — real WebRTC call surface (1:1 + group + mute + screen
+/// share + recording controls). Renders next to `call::CallPanel`
+/// (the signaling-only landing page) at `/call` so the durable
+/// signal count + the live call FSM live on the same route.
+pub mod webrtc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {
@@ -125,6 +158,16 @@ pub enum View {
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by
     /// direct navigation to `Route::Search`.
     Search,
+    /// G3.Y1 — device management surface (list + revoke + QR pair).
+    /// Rendered for both `/settings/devices` and `/settings/devices/pair`
+    /// because the pair flow is a single panel mounted on a sub-route.
+    SettingsDevices,
+    /// G3.Y1 — passphrase ceremony surface at `/settings/recovery`.
+    SettingsRecovery,
+    /// G3.Y1 — local key-backup status + manual trigger at `/settings/security`.
+    SettingsSecurity,
+    /// G3.Y1 — fresh-device restore-from-backup surface at `/recover`.
+    Recover,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

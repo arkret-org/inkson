@@ -133,9 +133,8 @@ pub fn build_consent_revoke_move_v2(
     // so the receiver-side schema_violation guard has the field to look
     // at. The SDK validator distinguishes "missing" from "empty"; the
     // op payload always sets the key.
-    op["observed_dots"] = serde_json::to_value(observed_dots).unwrap_or_else(|_| {
-        serde_json::Value::Array(Vec::new())
-    });
+    op["observed_dots"] = serde_json::to_value(observed_dots)
+        .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
     let effect = serde_json::json!({ "cell": cell_id, "op": op });
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }

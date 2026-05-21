@@ -253,6 +253,40 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+/// G3.Y0 + G3.C1 — exchange the persisted session grant for a fresh
+/// one against coauth's `POST /api/v1/session-grants/refresh` endpoint.
+///
+/// The endpoint requires:
+///
+/// * A `DPoP:` header proving possession of the same key that's bound
+///   to the grant's `cnf.jkt` claim (issuance side: G3.S1 / G3.C1).
+/// * The prior grant JWT in the body (single-use: the old grant is
+///   revoked on success).
+///
+/// On success the caller persists the rotated grant + access-token
+/// materials and bumps the in-memory token signal. On a 401 / 403 /
+/// `refresh_token_already_consumed`-style error the caller must fall
+/// through to the soft-logout path (clear access token + bounce to
+/// `/login`) but keep the device DPoP key in place per the G3.Y0
+/// soft/hard split.
+///
+/// Returns the [`crate::coauth::RefreshSessionGrantResponse`] body so
+/// the caller can persist the new grant id + `cnf.jkt` for the next
+/// rotation. The `htu` argument is the absolute URL of coauth's
+/// refresh endpoint — the cotest harness pins it; production callers
+/// derive it from the persisted grant's audience.
+pub async fn refresh_via_dpop(
+    auth_server_url: &str,
+    grant_jwt: &str,
+    audience: Option<&str>,
+    dpop_proof: &str,
+) -> anyhow::Result<crate::coauth::RefreshSessionGrantResponse> {
+    let coauth = crate::coauth::CoauthApi::new(auth_server_url)?;
+    coauth
+        .refresh_session_grant(grant_jwt, audience, dpop_proof)
+        .await
+}
+
 fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     // We don't have a structured error code for "grant revoked" — fall
     // back to the same heuristic as session-expired handling. A bare 401

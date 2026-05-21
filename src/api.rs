@@ -104,18 +104,18 @@ use crate::models::{
     AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
     ClientSyncResponse, ContactResponse, ContactsResponse, DevLoginResponse,
     DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
-    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse, EventsDescribeResBody,
-    HealthResponse, IceConfigRequest, IceConfigResponse, IdentityDescribeResBody,
-    IdentityResolveResBody, IndexSearchResponse, InvitesResponse, KeysClaimResBody,
-    KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody, MimiGroupInfoResBody,
-    MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
+    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
+    EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
+    IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
+    KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
+    MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
     MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
     OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
     ResolveSpaceResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
-    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
-    TokenRefreshResponse, TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
+    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody, TokenRefreshResponse,
+    TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
 };
 use crate::operation::{
     EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode, uuid_v7,
@@ -218,7 +218,28 @@ pub struct MorphProjectionView {
     pub state: String,
 }
 
-#[derive(Clone, Debug)]
+/// G3.Y0 — closure surface for the DPoP-bound refresh interceptor.
+///
+/// The HTTP layer can't reach into `LocalStateStore` to mint a fresh
+/// proof itself (layering inversion — `LocalStateStore` lives one
+/// crate-internal level above the API client and carries `Signal`
+/// state). Instead, the caller registers a hook that takes the
+/// triggering 401 response and produces the new access token, then
+/// the API client retries the failed request with the new bearer.
+///
+/// Returning `Err` falls through to the existing 401 handling (let
+/// the request fail with `AuthExpired`); returning `Ok(None)` means
+/// "we *could* refresh but won't right now" (transient backoff);
+/// returning `Ok(Some(_))` swaps the bearer and retries once.
+pub type DpopRefreshHook = std::sync::Arc<
+    dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + 'static>,
+        > + Send
+        + Sync
+        + 'static,
+>;
+
+#[derive(Clone)]
 pub struct ContrixApi {
     base_url: Url,
     pub(crate) http: Client,
@@ -226,8 +247,36 @@ pub struct ContrixApi {
     wait_for_sync_token: Option<String>,
     retry: RetryPolicy,
     refresh_token: Option<String>,
+    /// G3.Y0 — DPoP-bound refresh interceptor. Called when the server
+    /// returns a 401 on a request that carries a `cnf.jkt`-bound
+    /// bearer (the hook's caller knows that signal because the
+    /// `ContrixApi` is freshly minted with the bound token).
+    dpop_refresh_hook: Option<DpopRefreshHook>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
+}
+
+impl fmt::Debug for ContrixApi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContrixApi")
+            .field("base_url", &self.base_url)
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("wait_for_sync_token", &self.wait_for_sync_token)
+            .field("retry", &self.retry)
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "dpop_refresh_hook",
+                &self.dpop_refresh_hook.as_ref().map(|_| "<closure>"),
+            )
+            .field("cancel_token", &self.cancel_token)
+            .finish()
+    }
 }
 
 /// Network connectivity state.
@@ -348,10 +397,10 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 /// layer (e.g. round 4's `sync_token_expired` → `cursor_expired`) can't
 /// silently de-recognise an error and surface a 410 to the UI.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
+    use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
     use contrix_sdk::{
         ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM, ERROR_CODE_SYNC_TOKEN_EXPIRED,
     };
-    use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
     error
         .downcast_ref::<ContrixApiError>()
         .is_some_and(|api_error| {
@@ -447,9 +496,22 @@ impl ContrixApi {
             wait_for_sync_token: None,
             retry: options.retry,
             refresh_token: None,
+            dpop_refresh_hook: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
         })
+    }
+
+    /// G3.Y0 — install a DPoP-bound refresh hook. See [`DpopRefreshHook`].
+    /// The hook fires once per request when the server returns 401; on
+    /// `Ok(Some(new_token))` the request is replayed with the new
+    /// bearer, on `Ok(None)` or `Err(_)` the original 401 is returned
+    /// to the caller (which will surface as `AuthExpired` and bounce
+    /// the user to the login view via the existing
+    /// `redirect_to_login` machinery).
+    pub fn with_dpop_refresh_hook(mut self, hook: DpopRefreshHook) -> Self {
+        self.dpop_refresh_hook = Some(hook);
+        self
     }
 
     pub fn with_bearer(mut self, access_token: impl Into<String>) -> Self {
@@ -810,9 +872,7 @@ impl ContrixApi {
     ) -> anyhow::Result<SpaceLifecycleResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "actor_id is required for cx.space.create"
-            ));
+            return Err(anyhow::anyhow!("actor_id is required for cx.space.create"));
         }
         let title = title.trim();
         if title.is_empty() {
@@ -1600,10 +1660,9 @@ impl ContrixApi {
         actor_id: &str,
         patch: Value,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let envelope = crate::operation::cx_ops::realm_update_patch(
-            realm_id, actor_id, realm_id, patch,
-        )
-        .build("yougen");
+        let envelope =
+            crate::operation::cx_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)
+                .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
 
@@ -1690,8 +1749,8 @@ impl ContrixApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let envelope = crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id)
-            .build("yougen");
+        let envelope =
+            crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id).build("yougen");
         self.submit_event_envelope(&envelope).await
     }
 
@@ -1733,15 +1792,8 @@ impl ContrixApi {
         actor_id: &str,
         member: &str,
     ) -> anyhow::Result<SubmitEventResponse> {
-        self.transition_member_state(
-            realm_id,
-            actor_id,
-            member,
-            Some("join"),
-            "ban",
-            "admin_ban",
-        )
-        .await
+        self.transition_member_state(realm_id, actor_id, member, Some("join"), "ban", "admin_ban")
+            .await
     }
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
@@ -1854,6 +1906,34 @@ impl ContrixApi {
     /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
         self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
+            .await
+    }
+
+    /// G3.Y1 — list the principal's active devices via soland's
+    /// `cx.devices.list` (`GET /api/v1/devices`). Returns the raw JSON
+    /// response shape `{ "actor": ..., "current_device_id": ..., "devices": [...] }`.
+    /// Each device record carries at minimum `device_id`,
+    /// `is_current_session_device`, and a `verification_state` per
+    /// `routing/identity/device.rs::device_list`.
+    pub async fn list_devices(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/devices").await
+    }
+
+    /// G3.Y1 — request a short-lived pairing challenge from soland.
+    /// `POST /api/v1/devices/pairing-challenge`. The current device is
+    /// the one calling; the response carries an opaque challenge that
+    /// the new sibling device folds into its QR payload before
+    /// soliciting [`authorize_device_pairing`].
+    pub async fn device_pairing_challenge(&self, body: Value) -> anyhow::Result<Value> {
+        self.post_json("api/v1/devices/pairing-challenge", body)
+            .await
+    }
+
+    /// G3.Y1 — finalize device pairing. The current device authorises
+    /// the sibling device payload from the QR scan and registers it in
+    /// soland's device inventory. `POST /api/v1/devices/authorize-pairing`.
+    pub async fn authorize_device_pairing(&self, body: Value) -> anyhow::Result<Value> {
+        self.post_json("api/v1/devices/authorize-pairing", body)
             .await
     }
 
@@ -2098,10 +2178,7 @@ impl ContrixApi {
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let value = serde_json::to_value(&body)?;
-        let request = self
-            .http
-            .post(self.endpoint("api/v1/events")?)
-            .json(&value);
+        let request = self.http.post(self.endpoint("api/v1/events")?).json(&value);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
@@ -2315,6 +2392,34 @@ impl ContrixApi {
                         }
                     }
 
+                    // G3.Y0 — DPoP-bound 401 retry. Distinct from the
+                    // OIDC `refresh_token` path above: the hook fires
+                    // for the session-grant `cnf.jkt` flow where there
+                    // *is* no OAuth refresh token, only the grant +
+                    // device key. The hook decides whether to mint a
+                    // new access token (Ok(Some(_))) or fall through
+                    // to the AuthExpired soft-logout (Ok(None) / Err).
+                    if response.status() == StatusCode::UNAUTHORIZED
+                        && !did_refresh
+                        && self.refresh_token.is_none()
+                    {
+                        if let Some(hook) = self.dpop_refresh_hook.as_ref() {
+                            let hook = hook.clone();
+                            match hook().await {
+                                Ok(Some(new_token)) => {
+                                    refreshed_access_token = Some(new_token);
+                                    did_refresh = true;
+                                    continue;
+                                }
+                                Ok(None) | Err(_) => {
+                                    // Fall through to the un-refreshed
+                                    // response; caller's AuthExpired
+                                    // handling kicks in (soft logout).
+                                }
+                            }
+                        }
+                    }
+
                     if retryable
                         && attempt < self.retry.max_retries
                         && is_retryable_status(response.status())
@@ -2513,18 +2618,14 @@ pub fn build_call_signal_envelope_v2(
     let actor = contrix_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
-        anyhow::bail!(
-            "cx.call.signal v2 requires non-empty device_id (round 4 schema_violation)"
-        );
+        anyhow::bail!("cx.call.signal v2 requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
         contrix_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))?,
     );
     if !contrix_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
-        anyhow::bail!(
-            "cx.call.signal signal_type {signal_type:?} not in canonical 13-value enum"
-        );
+        anyhow::bail!("cx.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
     let call = contrix_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for cx.call.signal: {err}"))?;
@@ -2711,13 +2812,12 @@ pub fn build_realm_create_event(
     // Fall back to "restricted" if the caller passed "open" together
     // with high_assurance — the UI also disables the option but
     // belt-and-suspenders here.
-    let effective_federation_policy = if security_class == "high_assurance"
-        && federation_policy == "open"
-    {
-        "restricted"
-    } else {
-        federation_policy
-    };
+    let effective_federation_policy =
+        if security_class == "high_assurance" && federation_policy == "open" {
+            "restricted"
+        } else {
+            federation_policy
+        };
     // Spec realm.schema.json — `id` MUST match `^cx:realm:UUID7`. The
     // caller still passes the envelope-level `space_id` as `cx:space:`
     // because that's what soland's wire-validator currently accepts;
@@ -3254,6 +3354,13 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
 /// If none match, we synthesise a minimal envelope tagged
 /// `cx.error.http_status` so downstream code always has something
 /// well-formed to surface.
+///
+/// G3.Y3 — additionally, when `status` is 403 *and* the decoded
+/// envelope carries a policy-shaped code, dispatch a
+/// [`crate::components::PolicyDenyEvent`] so the global banner picks
+/// it up without each call site having to wire its own UI. The
+/// obligations array (per `authz/policy-server.md` §3) is pulled from
+/// the envelope's `details["obligations"]` slot if present.
 pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     #[derive(serde::Deserialize)]
     struct PlainEnvelope {
@@ -3276,16 +3383,50 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
         }
     }
 
-    if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
-        return body.error;
+    let envelope = if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
+        body.error
+    } else if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
+        plain.into()
+    } else {
+        ErrorEnvelope::new(
+            "http_status",
+            format!("HTTP request failed with status {status}"),
+        )
+    };
+
+    maybe_dispatch_policy_deny(status, &envelope);
+    envelope
+}
+
+/// G3.Y3 — on a 403 with a policy-shaped envelope, push a
+/// [`crate::components::PolicyDenyEvent`] onto the global queue so the
+/// `PolicyDenyBanner` mounted near the app shell surfaces it without
+/// each call site needing to plumb its own error UI.
+///
+/// Skips auth-expired codes (those have their own session-death
+/// redirect path) and any non-403 statuses.
+fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnvelope) {
+    if status != StatusCode::FORBIDDEN {
+        return;
     }
-    if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
-        return plain.into();
+    let code = envelope.code();
+    if !crate::components::is_policy_deny_code(code) {
+        return;
     }
-    ErrorEnvelope::new(
-        "http_status",
-        format!("HTTP request failed with status {status}"),
-    )
+    // Obligations may arrive under `details["obligations"]` (preferred,
+    // per the signed-transcript shape) or under a top-level
+    // `obligations` field on the envelope itself. We honour both.
+    let obligations: Vec<Value> = envelope
+        .details()
+        .get("obligations")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    crate::components::push_policy_deny(crate::components::PolicyDenyEvent::new(
+        code.to_owned(),
+        envelope.message().to_owned(),
+        obligations,
+    ));
 }
 
 fn is_retryable_method(method: &Method) -> bool {
@@ -3738,9 +3879,7 @@ mod tests {
 
         let catalog = contrix_sdk::schema::event_payload_validator_catalog();
         for event in &events {
-            let kind = event["kind"]
-                .as_str()
-                .expect("event kind is a string");
+            let kind = event["kind"].as_str().expect("event kind is a string");
             // Skip event kinds soland's spec-artifact catalog hasn't
             // registered yet — for those soland uses lighter validation
             // and there's nothing for us to assert.

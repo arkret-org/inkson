@@ -1162,10 +1162,7 @@ pub fn english_translations() -> TranslationDict {
         "consent.revoke.dot_list_header",
         "Observed dots that will cascade revoke:",
     );
-    dict.set(
-        "consent.revoke.cascade_button",
-        "Revoke all observed dots",
-    );
+    dict.set("consent.revoke.cascade_button", "Revoke all observed dots");
 
     dict
 }

@@ -1,0 +1,366 @@
+//! G3.Y3 — Capability delegation viewer (`/settings/capabilities`).
+//!
+//! Read-only-ish UI for inspecting `cx.capability.*` rows attached to
+//! the current actor: capabilities held (subject), capabilities granted
+//! out (issuer), and the full delegation chain for each row. The cotest
+//! `authz/capability-chain` scenario is already 7 live; this view adds
+//! the UI surfaces so future UI-driven assertions (`capability-row`,
+//! `capability-chain-step`, `capability-revoke-button`) can hook in.
+//!
+//! Spec anchors:
+//! - `authz/capabilities.md` §3 — capability schema.
+//! - `authz/capabilities.md` §3.2 — delegation.
+//! - `authz/capabilities.md` §3.3 — revoke + cascade.
+//! - `authz/capabilities.md` §3.4 — audit trail.
+
+use dioxus::prelude::*;
+use serde_json::Value;
+
+use crate::{
+    api::ContrixApi,
+    components::{EmptyState, EmptyStateKind, HelpTip},
+    local_state::LocalStateStore,
+    views::helpers::with_authed_api,
+};
+
+/// One row in the user's capability list. Backed by either the user
+/// being the subject (capability held) or the issuer (capability
+/// delegated to someone else). Decoded leniently because the soland
+/// projection schema is still in flux (spec §3 — fields can be empty
+/// when the originating event omits an optional attenuation step).
+#[derive(Clone, Debug, PartialEq)]
+struct CapabilityRow {
+    capability_id: String,
+    action: String,
+    scope: String,
+    issuer_did: String,
+    subject_did: String,
+    expires_at: String,
+    /// Per `authz/capabilities.md` §3.2 — each delegation hop carries
+    /// its own attenuation. Rendered as `capability-chain-step`
+    /// entries in the detail modal.
+    chain: Vec<DelegationStep>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DelegationStep {
+    issuer_did: String,
+    subject_did: String,
+    constraints: String,
+}
+
+/// Best-effort decoder for one capability projection row. Soland's
+/// `effective-grants` response carries `Vec<Value>`; until the schema
+/// stabilises we pull strings out individually so unknown shapes
+/// degrade to an empty cell rather than a parse error.
+fn decode_capability_row(value: &Value) -> Option<CapabilityRow> {
+    let capability_id = value
+        .get("capability_id")
+        .or_else(|| value.get("grant_id"))
+        .and_then(|v| v.as_str())?
+        .to_owned();
+    let action = value
+        .get("action")
+        .or_else(|| value.get("actions").and_then(|a| a.get(0)))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let scope = value
+        .get("scope")
+        .or_else(|| value.get("resource"))
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let issuer_did = value
+        .get("issuer")
+        .or_else(|| value.get("grantor"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let subject_did = value
+        .get("subject")
+        .or_else(|| value.get("grantee"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let expires_at = value
+        .get("expires_at")
+        .or_else(|| value.get("constraints").and_then(|c| c.get("expires_at")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let chain = value
+        .get("chain")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|step| {
+                    Some(DelegationStep {
+                        issuer_did: step
+                            .get("issuer")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        subject_did: step
+                            .get("subject")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        constraints: step
+                            .get("constraints")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(CapabilityRow {
+        capability_id,
+        action,
+        scope,
+        issuer_did,
+        subject_did,
+        expires_at,
+        chain,
+    })
+}
+
+#[component]
+pub fn CapabilitiesSettingsCard(
+    base_url: Signal<String>,
+    account_did: Signal<String>,
+    token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
+    let _ = state_store;
+
+    let mut rows = use_signal(Vec::<CapabilityRow>::new);
+    let mut status = use_signal(String::new);
+    let mut detail_for = use_signal(|| Option::<String>::None);
+
+    // Fire a single effective-grants probe per token change.
+    use_effect(move || {
+        let base = base_url();
+        let tok = token();
+        let did = account_did();
+        if tok.trim().is_empty() || did.trim().is_empty() {
+            return;
+        }
+        spawn(async move {
+            match with_authed_api(&base, tok, |api: ContrixApi| async move {
+                api.effective_grants(&did).await
+            })
+            .await
+            {
+                Ok(resp) => {
+                    let decoded: Vec<CapabilityRow> = resp
+                        .grants
+                        .iter()
+                        .filter_map(decode_capability_row)
+                        .collect();
+                    if decoded.is_empty() && !resp.grants.is_empty() {
+                        status.set(format!(
+                            "Received {} grants but none matched the expected schema",
+                            resp.grants.len()
+                        ));
+                    } else {
+                        status.set(format!("Loaded {} capabilities", decoded.len()));
+                    }
+                    rows.set(decoded);
+                }
+                Err(err) => {
+                    // TODO(G3.Y3-followup): when soland adds the per-actor
+                    // `GET /api/v1/authz/capabilities/{actor}` endpoint with
+                    // the full delegation chain (spec §3.2), prefer that
+                    // over effective-grants — the latter projects only the
+                    // resolved leaf, not the hop history needed for the
+                    // `capability-chain-step` detail modal.
+                    status.set(format!("Failed to load capabilities: {}", err.display()));
+                }
+            }
+        });
+    });
+
+    rsx! {
+        div { class: "event", "data-testid": "capability-list-panel",
+            div { class: "event-head",
+                span { "Capabilities" }
+                HelpTip { text: "Capability grants held by this actor or issued by this actor. Spec authz/capabilities.md §3 — grant/delegate/revoke." }
+            }
+            if !status.read().is_empty() {
+                div { class: "muted", "{status}" }
+            }
+            if rows.read().is_empty() {
+                EmptyState {
+                    title: "No capabilities".to_owned(),
+                    kind: EmptyStateKind::Empty,
+                    message: Some(
+                        "No grants found for this actor. Either the projection is still warming up, or no grants have been issued yet."
+                            .to_owned(),
+                    ),
+                    test_id: Some("capability-empty".to_owned()),
+                }
+            } else {
+                ul { class: "settings-list",
+                    for row in rows.read().iter().cloned() {
+                        li {
+                            class: "event",
+                            "data-testid": "capability-row",
+                            "data-capability-id": "{row.capability_id}",
+                            "data-action": "{row.action}",
+                            "data-scope": "{row.scope}",
+                            "data-issuer-did": "{row.issuer_did}",
+                            "data-subject-did": "{row.subject_did}",
+                            "data-expires-at": "{row.expires_at}",
+                            div { class: "event-head",
+                                span { "{row.action}" }
+                                span { class: "muted", "expires {row.expires_at}" }
+                            }
+                            div { class: "muted", "issued by {row.issuer_did} → {row.subject_did}" }
+                            div { class: "muted mono", "scope {row.scope}" }
+                            div { class: "actions",
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "capability-detail-button",
+                                    "data-capability-id": "{row.capability_id}",
+                                    onclick: {
+                                        let id = row.capability_id.clone();
+                                        move |_| detail_for.set(Some(id.clone()))
+                                    },
+                                    "Detail"
+                                }
+                                // Revoke is only meaningful when the current
+                                // actor is the issuer (per §3.3); render the
+                                // button regardless but disable it when the
+                                // viewer is not the issuer. Soland still
+                                // validates server-side, so a stray click
+                                // returns capability_denied via the global
+                                // policy-deny banner — defence in depth.
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "capability-revoke-button",
+                                    "data-capability-id": "{row.capability_id}",
+                                    disabled: row.issuer_did != account_did(),
+                                    onclick: {
+                                        let id = row.capability_id.clone();
+                                        move |_| {
+                                            // TODO(G3.Y3-followup): wire to
+                                            // `POST /api/v1/authz/capabilities/{id}/revoke`
+                                            // once soland ships the revoke endpoint
+                                            // (spec §3.3). Until then the click is a
+                                            // no-op so the testid is hookable.
+                                            status.set(format!(
+                                                "TODO: revoke capability {id} via soland (G3.Y3-followup)"
+                                            ));
+                                        }
+                                    },
+                                    "Revoke"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(capability_id) = detail_for.read().clone() {
+                if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
+                    div {
+                        class: "event modal",
+                        "data-testid": "capability-detail-modal",
+                        "data-capability-id": "{row.capability_id}",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        div { class: "event-head",
+                            span { "Delegation chain" }
+                            button {
+                                class: "btn icon sm ghost",
+                                "data-testid": "capability-detail-close",
+                                "aria-label": "Close capability detail",
+                                onclick: move |_| detail_for.set(None),
+                                "×"
+                            }
+                        }
+                        div { class: "muted", "{row.capability_id}" }
+                        if row.chain.is_empty() {
+                            div {
+                                class: "muted",
+                                "data-testid": "capability-chain-empty",
+                                "No attenuation chain — capability is held directly from the root issuer."
+                            }
+                        } else {
+                            ol { class: "settings-list",
+                                for (idx, step) in row.chain.iter().enumerate() {
+                                    li {
+                                        class: "event",
+                                        "data-testid": "capability-chain-step",
+                                        "data-step-index": "{idx}",
+                                        div { class: "event-head",
+                                            span { "Step {idx + 1}" }
+                                            span { class: "mono", "{step.issuer_did} → {step.subject_did}" }
+                                        }
+                                        div { class: "muted mono", "constraints {step.constraints}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn decodes_minimal_capability_row() {
+        let value = json!({
+            "capability_id": "cap-1",
+            "action": "cx.space.write_message",
+            "issuer": "did:web:alice.example",
+            "subject": "did:web:bob.example",
+            "expires_at": "2026-12-31T00:00:00Z",
+        });
+        let row = decode_capability_row(&value).expect("should decode");
+        assert_eq!(row.capability_id, "cap-1");
+        assert_eq!(row.action, "cx.space.write_message");
+        assert_eq!(row.issuer_did, "did:web:alice.example");
+        assert_eq!(row.subject_did, "did:web:bob.example");
+        assert!(row.chain.is_empty());
+    }
+
+    #[test]
+    fn decodes_delegation_chain() {
+        let value = json!({
+            "capability_id": "cap-2",
+            "action": "cx.space.write_message",
+            "grantor": "did:web:bob.example",
+            "grantee": "did:web:carol.example",
+            "chain": [
+                {"issuer": "did:web:alice.example", "subject": "did:web:bob.example", "constraints": {"expires_at": "+1h"}},
+                {"issuer": "did:web:bob.example", "subject": "did:web:carol.example", "constraints": {"expires_at": "+30m"}},
+            ],
+        });
+        let row = decode_capability_row(&value).expect("should decode");
+        assert_eq!(row.chain.len(), 2);
+        assert_eq!(row.chain[0].issuer_did, "did:web:alice.example");
+        assert_eq!(row.chain[1].subject_did, "did:web:carol.example");
+    }
+
+    #[test]
+    fn returns_none_when_capability_id_missing() {
+        let value = json!({"action": "cx.space.read"});
+        assert!(decode_capability_row(&value).is_none());
+    }
+
+    #[test]
+    fn fallbacks_handle_grant_id_alias() {
+        let value = json!({"grant_id": "cap-3"});
+        let row = decode_capability_row(&value).expect("should decode");
+        assert_eq!(row.capability_id, "cap-3");
+        assert!(row.action.is_empty());
+    }
+}

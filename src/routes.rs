@@ -43,6 +43,40 @@ pub enum Route {
     #[route("/settings", crate::app::RouterView)]
     Settings,
 
+    /// G3.Y1 — device management (list + revoke). Static segment so
+    /// dioxus-router matches this before `/settings/:section` falls
+    /// through to the generic `SettingsPanel`.
+    #[route("/settings/devices", crate::app::RouterView)]
+    SettingsDevices,
+
+    /// G3.Y1 — QR-driven pairing for a sibling device. Live on its
+    /// own URL so the e2e harness can deep-link into the pair flow
+    /// without scrolling through the device list.
+    #[route("/settings/devices/pair", crate::app::RouterView)]
+    SettingsDevicesPair,
+
+    /// G3.Y1 — recovery passphrase setup + confirmation. Distinct
+    /// from the existing `Route::Recovery` (`/recovery`) which hosts
+    /// the broader recovery-options aggregator; this one is the
+    /// single-purpose passphrase ceremony surfaced from the settings
+    /// sidebar.
+    #[route("/settings/recovery", crate::app::RouterView)]
+    SettingsRecovery,
+
+    /// G3.Y1 — local key-backup status + manual trigger / restore
+    /// buttons. Backed by soland's `cx.schema.key_backup.v1` endpoints
+    /// (`PUT/GET /api/v1/keys/backups/{backup_id}`) plus the local MLS
+    /// snapshot bookkeeping in `mls_persistence`.
+    #[route("/settings/security", crate::app::RouterView)]
+    SettingsSecurity,
+
+    /// G3.Y1 — passphrase-driven restore on a fresh device. Sibling
+    /// of [`Route::Recovery`] (`/recovery`) but targeted at the
+    /// recover-from-backup case the cotest harness exercises against
+    /// an empty browser context.
+    #[route("/recover", crate::app::RouterView)]
+    Recover,
+
     #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
 
@@ -212,6 +246,15 @@ impl Route {
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
+            // G3.Y1 — new device / recovery / security panels render
+            // under the existing settings shell visually but are
+            // distinct top-level View variants so the sidebar +
+            // command-palette state machine can highlight them
+            // individually.
+            Route::SettingsDevices | Route::SettingsDevicesPair => View::SettingsDevices,
+            Route::SettingsRecovery => View::SettingsRecovery,
+            Route::SettingsSecurity => View::SettingsSecurity,
+            Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
             Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => View::SpaceAdmin,
             // Audit / Call / Applets routes still render their own panels
@@ -287,6 +330,10 @@ impl From<View> for Route {
             View::Directory => Route::Directory,
             View::Setup => Route::Setup,
             View::Settings => Route::Settings,
+            View::SettingsDevices => Route::SettingsDevices,
+            View::SettingsRecovery => Route::SettingsRecovery,
+            View::SettingsSecurity => Route::SettingsSecurity,
+            View::Recover => Route::Recover,
             View::VerifyDevice => Route::VerifyDevice,
             View::SpaceAdmin => Route::SpaceAdmin {
                 space_id: String::new(),
@@ -345,6 +392,13 @@ mod tests {
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,
+            // G3.Y1 — device / recovery / security panels each get
+            // their own dedicated View variant; verify the round-trip.
+            Route::SettingsDevices,
+            Route::SettingsDevicesPair,
+            Route::SettingsRecovery,
+            Route::SettingsSecurity,
+            Route::Recover,
         ];
 
         for route in routes {

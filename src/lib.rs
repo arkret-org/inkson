@@ -4,6 +4,10 @@ pub mod anchor_witness;
 pub mod api;
 pub mod app;
 pub mod audit;
+/// G3.Y0 — per-device DPoP signing key management. Sits on top of
+/// `crate::dpop` (the pure JWS builder) and persists the key + JKT via
+/// `LocalStateStore::dpop_device_key`.
+pub mod auth_dpop;
 pub mod blob;
 pub mod canonical;
 pub mod capability;
@@ -34,13 +38,17 @@ pub mod key_store;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;
 pub mod local_state;
+pub mod media;
 /// Round 4 (spec a77b995) — mention_redirect plaintext routing
 /// consumer. Receivers consult
 /// `mention_redirect_target_actor_ids` before decrypting the message
 /// body; if the local actor is not in the list, the body MUST NOT be
 /// decrypted at the push layer.
 pub mod mention_redirect;
-pub mod media;
+/// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
+/// discussion-promote, sidecar-hash). The chat view consumes these
+/// helpers; see `crate::messaging::mod` for the rationale.
+pub mod messaging;
 pub mod mimi_client;
 pub mod mls_governance;
 pub mod mls_passphrase;

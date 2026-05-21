@@ -43,8 +43,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::{
-    ContrixApi, is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after,
-    sleep_for,
+    ContrixApi, is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after, sleep_for,
 };
 use crate::local_state::{LocalAnchorView, LocalStateStore};
 use crate::models::{ClientSyncResponse, SpacePreview};
@@ -180,7 +179,10 @@ pub async fn run_sync_engine(
                 // Caller's `use_effect` will respawn when they are.
                 return;
             }
-            IterationOutcome::RateLimited { retry_after_ms, reason } => {
+            IterationOutcome::RateLimited {
+                retry_after_ms,
+                reason,
+            } => {
                 {
                     let mut last_error = ctx.last_error;
                     last_error.set(Some(reason));

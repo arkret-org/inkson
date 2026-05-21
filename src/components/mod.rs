@@ -2,6 +2,10 @@ use dioxus::prelude::*;
 
 pub mod empty_state;
 pub mod permission_pill;
+/// G3.Y3 — global policy-deny toast / banner. Mounted once near the
+/// app shell so any view inherits the 403 surface without needing to
+/// thread its own error UI.
+pub mod policy_deny_banner;
 pub mod shortcut_help;
 pub mod sync_badge;
 pub mod write_state;
@@ -9,6 +13,10 @@ pub mod write_state;
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
+};
+pub use policy_deny_banner::{
+    POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
+    push_policy_deny, take_policy_deny,
 };
 pub use shortcut_help::{
     ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,

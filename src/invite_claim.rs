@@ -180,9 +180,7 @@ impl InviteBindingTranscript {
     pub fn canonical_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let value = serde_json::to_value(self)?;
         contrix_sdk::canonical::canonical_json_bytes(&value)
-            .map_err(|err| {
-                anyhow::anyhow!("invite binding_proof canonical_json failed: {err}")
-            })
+            .map_err(|err| anyhow::anyhow!("invite binding_proof canonical_json failed: {err}"))
     }
 }
 
@@ -214,8 +212,7 @@ pub fn build_invite_claim_body(
     let subject_proof = InviteSubjectProof {
         signed_by: device_kid.to_owned(),
         alg: "EdDSA".to_owned(),
-        signature: base64::engine::general_purpose::STANDARD_NO_PAD
-            .encode(sig.to_bytes()),
+        signature: base64::engine::general_purpose::STANDARD_NO_PAD.encode(sig.to_bytes()),
     };
     Ok(json!({
         "invite_id": invite_id,
@@ -233,8 +230,8 @@ use base64::Engine as _;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Verifier;
     use ed25519_dalek::SECRET_KEY_LENGTH;
+    use ed25519_dalek::Verifier;
 
     fn deterministic_signing_key(seed_byte: u8) -> SigningKey {
         let mut seed = [0u8; SECRET_KEY_LENGTH];
@@ -305,9 +302,6 @@ mod tests {
                 .map(|s| !s.is_empty())
                 .unwrap_or(false)
         );
-        assert_eq!(
-            body["binding_proof"]["oob_code_kind"],
-            "offline_token"
-        );
+        assert_eq!(body["binding_proof"]["oob_code_kind"], "offline_token");
     }
 }

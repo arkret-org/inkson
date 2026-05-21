@@ -211,6 +211,24 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// Canonical OIDC token endpoint response shape. Used by
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
+/// G3.Y0 — wire shape of `POST /api/v1/session-grants/refresh` (G3.C1).
+/// Mirrors `coauth::handlers::contrix::RefreshSessionGrantResponse`. We
+/// keep the fields as `String` so the cotest harness can assert
+/// equality against the JSON body verbatim.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RefreshSessionGrantResponse {
+    pub grant_id: String,
+    pub grant_jwt: String,
+    pub session_public_key: String,
+    pub session_private_key_pem: String,
+    pub expires_at: String,
+    pub audience: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub dpop_jkt: String,
+    pub previous_grant_id: String,
+}
+
 /// OpenID Connect Core §3.1.3.3 - extra provider-specific fields
 /// flow through `extras` so tokens minted by Auth0 / Keycloak / etc.
 /// don't fail to deserialize on a one-off `provider_session_id` claim.
@@ -607,6 +625,132 @@ impl CoauthApi {
             );
         }
         serde_json::from_str(&body).context("parse OIDC refresh response")
+    }
+
+    /// G3.Y0 — POST coauth's self-serve `passkey/register/start`
+    /// ceremony. Returns the `CreationChallengeResponse` JSON the
+    /// browser feeds into `navigator.credentials.create({ publicKey: ... })`.
+    pub async fn passkey_register_start(
+        &self,
+        passkey_register_start_path: &str,
+        handle: Option<&str>,
+        display_name: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            passkey_register_start_path,
+            json!({
+                "handle": handle,
+                "display_name": display_name,
+            }),
+        )
+        .await
+    }
+
+    /// G3.Y0 — POST coauth's `passkey/register/finish` ceremony with
+    /// the attestation produced by the browser authenticator. Returns
+    /// the persisted credential id (base64url) on success.
+    ///
+    /// TODO(G3.Y0-followup): the canonical happy path returns a
+    /// session_grant + access_token alongside the credential id so
+    /// yougen can transition straight into a signed-in shell. The
+    /// admin endpoint we currently target returns only the credential
+    /// id; the caller has to follow up with a dev-login or session
+    /// exchange to actually get an access token.
+    pub async fn passkey_register_finish(
+        &self,
+        passkey_register_finish_path: &str,
+        attestation: serde_json::Value,
+        label: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            passkey_register_finish_path,
+            json!({
+                "attestation": attestation,
+                "label": label,
+            }),
+        )
+        .await
+    }
+
+    /// G3.Y0 — POST coauth's `passkey/auth/start` ceremony. Returns
+    /// the `RequestChallengeResponse` JSON the browser feeds into
+    /// `navigator.credentials.get({ publicKey: ... })`.
+    pub async fn passkey_auth_start(
+        &self,
+        passkey_auth_start_path: &str,
+        login_hint: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            passkey_auth_start_path,
+            json!({
+                "login_hint": login_hint,
+            }),
+        )
+        .await
+    }
+
+    /// G3.Y0 — POST coauth's `passkey/auth/finish` ceremony with the
+    /// assertion produced by the browser. Returns the credential id
+    /// on success.
+    ///
+    /// TODO(G3.Y0-followup): canonical happy path returns the
+    /// session_grant; today the admin endpoint returns only the
+    /// credential id and the caller still needs to follow up via the
+    /// OIDC bridge for the actual access token.
+    pub async fn passkey_auth_finish(
+        &self,
+        passkey_auth_finish_path: &str,
+        assertion: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            passkey_auth_finish_path,
+            json!({
+                "assertion": assertion,
+            }),
+        )
+        .await
+    }
+
+    /// G3.Y0 + G3.C1 — call coauth's `POST /api/v1/session-grants/refresh`
+    /// with a DPoP proof and the prior grant JWT. On success returns
+    /// the rotated grant (single-use semantics: the old grant is now
+    /// revoked).
+    ///
+    /// The DPoP proof MUST be minted against `htu` = absolute URL of
+    /// the refresh endpoint and `htm` = `"POST"`, signed by the same
+    /// key whose thumbprint is bound to the prior grant's `cnf.jkt`.
+    pub async fn refresh_session_grant(
+        &self,
+        grant_jwt: &str,
+        audience: Option<&str>,
+        dpop_proof: &str,
+    ) -> anyhow::Result<RefreshSessionGrantResponse> {
+        let endpoint = self.endpoint("api/v1/session-grants/refresh")?;
+        let body = json!({
+            "grant_jwt": grant_jwt,
+            "audience": audience,
+        });
+        let response = self
+            .http
+            .post(endpoint)
+            .header("DPoP", dpop_proof)
+            .json(&body)
+            .send()
+            .await
+            .context("session-grant refresh POST failed")?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .context("read session-grant refresh body")?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "session-grant refresh returned {status}: {body}",
+                status = status,
+                body = text.chars().take(512).collect::<String>(),
+            );
+        }
+        serde_json::from_str(&text).context("parse session-grant refresh response")
     }
 
     pub async fn start_oidc_browser_bridge(

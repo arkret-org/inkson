@@ -2885,12 +2885,18 @@ fn submit_flow_position_cas_move_with_attempt(
     };
     let expected_json = match &expected {
         FlowPositionExpectation::Initial => serde_json::Value::Null,
-        FlowPositionExpectation::At { list_place_id, rank } => {
+        FlowPositionExpectation::At {
+            list_place_id,
+            rank,
+        } => {
             json!({"list_place_id": list_place_id, "rank": rank})
         }
     };
     let effect_json = match &effect {
-        FlowPositionEffect::Place { list_place_id, rank } => {
+        FlowPositionEffect::Place {
+            list_place_id,
+            rank,
+        } => {
             json!({"list_place_id": list_place_id, "rank": rank})
         }
         FlowPositionEffect::Remove => serde_json::Value::Null,

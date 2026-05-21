@@ -73,7 +73,9 @@ pub fn build_call_state(
 pub enum CallSignalIngestOutcome {
     /// Envelope passed v2 validation, the proof was present, and the
     /// per-`(realm, call, actor, device)` seq advanced strictly forward.
-    Accepted { payload: contrix_sdk::CallSignalPayload },
+    Accepted {
+        payload: contrix_sdk::CallSignalPayload,
+    },
     /// `payload.seq` rolled back or repeated — the receiver drops the
     /// signal and SHOULD emit a local `hangup` for `call_id`. The
     /// `seq` field carries the offending value for telemetry.
@@ -103,10 +105,7 @@ impl CallSignalReceiver {
     /// Run the v2 envelope validator + per-key monotonicity guard. The
     /// caller is responsible for the proof-verification step BEFORE
     /// invoking this (the SDK only asserts `proof.is_some()`).
-    pub fn ingest(
-        &mut self,
-        envelope: &contrix_sdk::EphemeralEnvelope,
-    ) -> CallSignalIngestOutcome {
+    pub fn ingest(&mut self, envelope: &contrix_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
         let payload = match contrix_sdk::validate_call_signal_envelope(envelope) {
             Ok(p) => p,
             Err(err) => {
@@ -218,10 +217,7 @@ mod tests {
         assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
     }
 
-    fn make_v2_envelope(
-        seq: u64,
-        signal_type: &str,
-    ) -> contrix_sdk::EphemeralEnvelope {
+    fn make_v2_envelope(seq: u64, signal_type: &str) -> contrix_sdk::EphemeralEnvelope {
         let mut env = crate::api::build_call_signal_envelope_v2(
             "cx:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",

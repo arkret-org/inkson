@@ -5136,6 +5136,12 @@ pub fn RouterView() -> Element {
                 }
                 sidebar_resizing.set(false);
             },
+            // G3.Y3 — global policy-deny banner. Floats above the shell
+            // so any 403 with a policy-shaped envelope is surfaced
+            // without each call site wiring its own error UI. The
+            // banner is pulled from a process-wide queue populated by
+            // `api::decode_contrix_error`'s `maybe_dispatch_policy_deny`.
+            crate::components::PolicyDenyBanner {}
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",
@@ -5972,6 +5978,13 @@ pub fn RouterView() -> Element {
                                                     // Device-level state (local_identity,
                                                     // push_registration) is preserved.
                                                     state_store.write().clear_account_scoped();
+                                                    // G3.Y0 — this is the *hard* logout path
+                                                    // (user clicked "Log out"). Wipe the
+                                                    // device DPoP key so the next sign-in
+                                                    // rotates `cnf.jkt`. The soft path
+                                                    // (`session_refresh`'s LoginRequired
+                                                    // outcome) deliberately keeps the key.
+                                                    state_store.write().set_dpop_device_key(None);
                                                     let _ = crate::coauth::clear_persisted_oidc_scaffold();
                                                     // Wipe the in-memory UI signals too so the
                                                     // sidebar can't paint a frame of stale
@@ -6246,6 +6259,40 @@ pub fn RouterView() -> Element {
                             push_ready,
                         }
                     },
+                    // G3.Y1 — device management + QR pairing live on
+                    // their own routes so the e2e harness can deep-link
+                    // into them without scrolling past unrelated
+                    // settings sections.
+                    Route::SettingsDevices | Route::SettingsDevicesPair => rsx! {
+                        crate::views::settings_devices::SettingsDevicesPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            state_store,
+                        }
+                    },
+                    Route::SettingsRecovery => rsx! {
+                        crate::views::settings_recovery::SettingsRecoveryPanel {
+                            account_did,
+                            state_store,
+                        }
+                    },
+                    Route::SettingsSecurity => rsx! {
+                        crate::views::settings_security::SettingsSecurityPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            state_store,
+                        }
+                    },
+                    Route::Recover => rsx! {
+                        crate::views::settings_recover_restore::RecoverPanel {
+                            base_url,
+                            token,
+                        }
+                    },
                     Route::VerifyDevice => {
                         if e2ee_ready {
                             rsx! {
@@ -6368,6 +6415,7 @@ pub fn RouterView() -> Element {
                     },
                     Route::Call => rsx! {
                         crate::views::call::CallPanel { state_store }
+                        crate::views::webrtc::WebRtcCallPanel { state_store }
                     },
                     Route::Recovery => rsx! {
                         crate::views::recovery::RecoveryPanel {
@@ -6968,6 +7016,11 @@ fn route_label(route: &Route) -> &'static str {
         Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
+        Route::Recover => "Restore from backup",
+        Route::SettingsDevices => "Devices",
+        Route::SettingsDevicesPair => "Pair new device",
+        Route::SettingsRecovery => "Recovery passphrase",
+        Route::SettingsSecurity => "Key backup",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",

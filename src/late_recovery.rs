@@ -182,10 +182,7 @@ mod tests {
             observed_at: base + Duration::minutes(30),
         };
         let ev = LateRecoveredEvent::from_audit_policy_access(&payload, base, false).unwrap();
-        assert_eq!(
-            ev.event_id,
-            "cx:event:01904100-0000-7000-8000-000000000007"
-        );
+        assert_eq!(ev.event_id, "cx:event:01904100-0000-7000-8000-000000000007");
         assert_eq!(ev.lag_minutes(), 30);
         assert!(!should_filter_recovered_event(&ev));
     }

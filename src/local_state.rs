@@ -828,6 +828,46 @@ pub struct ClientLocalState {
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
+    /// G3.Y0 — per-device DPoP signing key persisted across launches.
+    /// Used to mint `DPoP:` proofs for session-grant issuance and the
+    /// G3.C1 `POST /api/v1/session-grants/refresh` endpoint, which both
+    /// require a key the server can bind to `cnf.jkt`.
+    ///
+    /// Security tradeoff: the wasm32 build persists this in `localStorage`
+    /// (via the parent `state.json` blob). A future hardening pass MUST
+    /// move it into IndexedDB with `extractable: false` SubtleCrypto keys
+    /// so the private bytes can't be exfiltrated by an XSS payload.
+    /// TODO(G3.Y0-followup): IndexedDB-backed `SubtleCrypto` key handle.
+    #[serde(default)]
+    pub dpop_device_key: Option<DpopDeviceKeyRecord>,
+}
+
+/// G3.Y0 — persisted shape of the per-device DPoP signing key. The
+/// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
+///
+/// We intentionally use ed25519 (EdDSA) rather than ES256 because every
+/// other signing path in yougen is already ed25519 (cross-signing,
+/// move-signing, session-grant introspection proofs) and coauth's
+/// `DpopVerifier` (`coauth::services::dpop`) accepts the `EdDSA`
+/// algorithm out of the box. Sticking with ed25519 keeps a single
+/// key-format story across the client.
+///
+/// TODO(G3.Y0-followup): wrap with `crate::secure_key_store::SecureKeyStore`
+/// so the seed bytes don't sit in plaintext `state.json` (the equivalent
+/// of the localStorage wrapping the wasm32 build already does for
+/// `LocalIdentityRecord`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DpopDeviceKeyRecord {
+    /// Base64url-no-pad of the 32-byte ed25519 seed.
+    pub seed_b64: String,
+    /// RFC 7638 thumbprint of the public JWK (what soland binds as
+    /// `cnf.jkt` on issued grants). Cached so the UI / refresh path can
+    /// surface it without re-deriving.
+    pub jkt: String,
+    /// Wall-clock the key was generated. Used by the settings panel to
+    /// expose "this device's DPoP key was created at …" and by audit
+    /// trails if a hard-logout later needs to wipe it.
+    pub created_at: DateTime<Utc>,
 }
 
 /// Hard cap on the number of buffered telemetry entries kept in
@@ -965,6 +1005,7 @@ impl Default for ClientLocalState {
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
             server_trust_domain: None,
+            dpop_device_key: None,
         }
     }
 }
@@ -1155,14 +1196,49 @@ impl LocalStateStore {
         let preserved_telemetry = std::mem::take(&mut self.cached.telemetry_log);
         let preserved_oidc = self.cached.oidc_tokens.clone();
         let preserved_grant = self.cached.session_grant.clone();
+        // G3.Y0 — the DPoP device key is device-level state, same
+        // semantics as `local_identity`. Preserved across the
+        // soft-logout / account-change paths so a re-authentication on
+        // this device keeps `cnf.jkt` stable; only the hard-logout flow
+        // (`clear_device_scoped`) wipes it.
+        let preserved_dpop = self.cached.dpop_device_key.clone();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
             telemetry_log: preserved_telemetry,
             oidc_tokens: preserved_oidc,
             session_grant: preserved_grant,
+            dpop_device_key: preserved_dpop,
             ..ClientLocalState::default()
         };
+        let _ = self.flush();
+    }
+
+    /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`
+    /// would wipe, PLUS the device DPoP key, push registration, and
+    /// local identity. The next sign-in starts from a clean slate
+    /// (new `cnf.jkt`, new `did:key`).
+    ///
+    /// Distinct from `clear_account_scoped` (which is the soft path —
+    /// session expired, server-switch, account-change). The split is
+    /// the public surface for the G3.Y0 soft-vs-hard logout contract:
+    /// soft keeps device material so the user can re-authenticate on
+    /// the same `cnf.jkt`; hard rotates the device key.
+    pub fn clear_device_scoped(&mut self) {
+        self.ensure_cached_loaded();
+        self.cached = ClientLocalState::default();
+        let _ = self.flush();
+    }
+
+    /// G3.Y0 — read the persisted device DPoP key, if any.
+    pub fn dpop_device_key(&self) -> Option<DpopDeviceKeyRecord> {
+        self.load().dpop_device_key
+    }
+
+    /// G3.Y0 — persist (or clear via `None`) the device DPoP key.
+    pub fn set_dpop_device_key(&mut self, record: Option<DpopDeviceKeyRecord>) {
+        self.ensure_cached_loaded();
+        self.cached.dpop_device_key = record;
         let _ = self.flush();
     }
 

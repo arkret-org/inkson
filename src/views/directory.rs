@@ -782,6 +782,36 @@ pub fn DirectoryPanel(
                                 div { class: "space-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
                                 div { class: "muted", "{actor.get(\"display_name\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
                             }
+                            // G3.Y3 — directory-side `block-actor-button`.
+                            // Navigates to the blocklist settings page
+                            // with the target DID prefilled via the
+                            // local state store, so the cotest
+                            // `personal-blocklist` scenario can pick a
+                            // peer from search results and block them
+                            // without typing the DID by hand.
+                            //
+                            // TODO(G3.Y3-followup): replace the route-only
+                            // hop with an in-place block confirmation
+                            // overlay once the soland account_data
+                            // `POST /api/v1/account-data/blocklist`
+                            // endpoint exists; today the click is just a
+                            // shortcut into `/settings/blocklist`.
+                            {
+                                let actor_did = actor
+                                    .get("did")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                rsx! {
+                                    Link {
+                                        class: "secondary",
+                                        "data-testid": "block-actor-button",
+                                        "data-actor-did": "{actor_did}",
+                                        to: Route::SettingsSection { section: "blocklist".to_owned() },
+                                        "Block"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
