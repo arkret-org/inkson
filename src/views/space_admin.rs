@@ -18,14 +18,6 @@ use crate::{
 /// signal in [`SpaceAdminPanel`].
 pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
-/// Placeholder anchor frontier used until sync.rs (P0 M3) surfaces the
-/// effective Anchor head. Mirrors `consent_demo::PLACEHOLDER_ANCHOR_REF`.
-/// Test-only — the production UI now reads the resolved frontier from
-/// `LocalAnchorView` via `state_store.read().anchor_ref_for_move`.
-#[cfg(test)]
-const PLACEHOLDER_ANCHOR_REF: &str =
-    "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
 // cx.events.submit via the cx_ops::* event builders. The original

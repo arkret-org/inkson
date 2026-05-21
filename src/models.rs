@@ -264,7 +264,7 @@ pub struct DirectoryDescribeResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveSpaceResponse {
+pub struct ResolveRealmResponse {
     pub space_preview: SpacePreview,
     #[serde(default)]
     pub stripped_state: Vec<Value>,

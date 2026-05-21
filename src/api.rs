@@ -21,10 +21,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 use url::Url;
 
-use crate::hlc::{Hlc, next_seq};
 /// A token that can be used to cancel in-flight API requests.
 #[derive(Clone, Debug)]
 pub struct CancellationToken {
@@ -113,108 +112,35 @@ use crate::models::{
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
     MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
     OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
-    ResolveSpaceResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
+    ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
     SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody, TokenRefreshResponse,
     TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
 };
 use crate::operation::{
-    EventEnvelope, OperationEnvelope, PLACEHOLDER_PROOF_JWS, ProofMode, current_proof_mode, uuid_v7,
+    Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
+    scope_id_as_realm_id, uuid_v7,
 };
 
-/// T1.3 — pre-submit guard. Returns an error when the active
-/// [`ProofMode`] enforces a real signer (Production / RealEd25519 /
-/// ExternalSigner) but the envelope still carries the placeholder
-/// `jws == "a..b"` (or no proof at all). Mirrors the soland-side
-/// `dev_proof_in_production` rejection so the UI can surface a clear
-/// local error before the round-trip.
-fn guard_event_proof_against_production(event: &EventEnvelope) -> anyhow::Result<()> {
-    let mode = current_proof_mode();
-    if !mode.enforces_real_signer() {
-        return Ok(());
-    }
-    let Some(proof) = event.proofs.first() else {
-        return Err(anyhow::anyhow!(
-            "Cannot send: no signer configured for this server (proof mode = {})",
-            mode.label_en()
-        ));
-    };
-    if proof.jws == PLACEHOLDER_PROOF_JWS || proof.jws.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Cannot send: dev-mode placeholder proof rejected by production guard (proof mode = {})",
-            mode.label_en()
-        ));
-    }
-    // Production / real-signer modes require a fully signed proof. The
-    // wire shape "a..b" is the placeholder used by `attach_placeholder_proof`;
-    // a real Ed25519 JWS has three `.`-separated segments and a non-empty
-    // signature tail (`<header>..<sig>` with sig length > 0).
-    if !proof.jws.contains("..") || proof.jws.split("..").nth(1).is_none_or(str::is_empty) {
-        return Err(anyhow::anyhow!(
-            "Cannot send: proof jws is missing a real signature (proof mode = {})",
-            mode.label_en()
-        ));
-    }
-    let _ = ProofMode::PlaceholderDev; // keep the variant exposed in api.rs for downstream consumers.
-    Ok(())
-}
-
-fn guard_event_value_proof_against_production(event: &Value) -> anyhow::Result<()> {
-    let mode = current_proof_mode();
-    if !mode.enforces_real_signer() {
-        return Ok(());
-    }
-    let proof = event
-        .get("proofs")
-        .and_then(Value::as_array)
-        .and_then(|proofs| proofs.first())
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Cannot send: no signer configured for this server (proof mode = {})",
-                mode.label_en()
-            )
-        })?;
-    let jws = proof.get("jws").and_then(Value::as_str).unwrap_or_default();
-    if jws == PLACEHOLDER_PROOF_JWS || jws.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Cannot send: dev-mode placeholder proof rejected by production guard (proof mode = {})",
-            mode.label_en()
-        ));
-    }
-    if !jws.contains("..") || jws.split("..").nth(1).is_none_or(str::is_empty) {
-        return Err(anyhow::anyhow!(
-            "Cannot send: proof jws is missing a real signature (proof mode = {})",
-            mode.label_en()
-        ));
-    }
-    Ok(())
-}
-
-fn scope_id_as_realm_id(value: &str) -> String {
-    value
-        .strip_prefix("cx:space:")
-        .map(|suffix| format!("cx:realm:{suffix}"))
-        .unwrap_or_else(|| value.to_owned())
-}
-
 /// Generic wrapper for soland's
-/// `/api/v1/projection/{space-containers|flows}` lifecycle endpoints. Keeps
+/// `/api/v1/projection/{space_containers|flows}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
-/// hydrate path can pluck projection rows with the same code.
+/// hydrate path can pluck projection rows with the same code. The wire
+/// shape is canonical `items` — legacy `places` / `flows` / `space_containers`
+/// aliases are gone.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionResponse<T> {
     pub realm_id: String,
     #[serde(default)]
     pub total: u32,
-    #[serde(default = "Vec::new", alias = "space_containers", alias = "flows")]
+    #[serde(default = "Vec::new")]
     pub items: Vec<T>,
 }
 
 /// Server-side Space-container projection row.
 ///
 /// Soland serves these rows from
-/// `GET /api/v1/projection/space-containers`.
+/// `GET /api/v1/projection/space_containers`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
     pub container_space_id: String,
@@ -294,6 +220,10 @@ pub struct ContrixApi {
     dpop_refresh_hook: Option<DpopRefreshHook>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
+    /// H1 — cached `GET /api/v1/events/describe` response. Used so callers
+    /// like `submit_events_batch` can consult `capabilities.batch_submit`
+    /// without re-hitting the network on every batch.
+    events_describe_cache: Arc<OnceCell<EventsDescribeResBody>>,
 }
 
 impl fmt::Debug for ContrixApi {
@@ -315,6 +245,14 @@ impl fmt::Debug for ContrixApi {
                 &self.dpop_refresh_hook.as_ref().map(|_| "<closure>"),
             )
             .field("cancel_token", &self.cancel_token)
+            .field(
+                "events_describe_cache",
+                &self
+                    .events_describe_cache
+                    .get()
+                    .map(|_| "<cached>")
+                    .unwrap_or("<empty>"),
+            )
             .finish()
     }
 }
@@ -551,6 +489,7 @@ impl ContrixApi {
             dpop_refresh_hook: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
+            events_describe_cache: Arc::new(OnceCell::new()),
         })
     }
 
@@ -866,7 +805,8 @@ impl ContrixApi {
         // R1.7: the security boundary (formerly Space) is now Realm.
         let space_id = format!("cx:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        let events = build_realm_bootstrap_events(
+        let anchor = self.current_anchor_for(&space_id).await?;
+        let mut envelopes = build_realm_bootstrap_events(
             &space_id,
             actor_id,
             title,
@@ -883,9 +823,25 @@ impl ContrixApi {
             &invitees,
             &plaintext_visible_services,
         )?;
-        for event in events {
-            self.submit_event(&event).await?;
+        // Fill in a real anchor_ref for every reducer-input envelope in
+        // the batch — bootstrap events are all reducer-input kinds.
+        for envelope in envelopes.iter_mut() {
+            if envelope.anchor_ref.is_none() {
+                envelope.anchor_ref = Some(anchor.clone());
+            }
         }
+        // Sign every envelope before they reach the wire; the batch
+        // submitter takes pre-signed typed envelopes.
+        for envelope in envelopes.iter_mut() {
+            crate::event_signer::sign_with_active(envelope).map_err(|err| {
+                anyhow::anyhow!(
+                    "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
+                )
+            })?;
+        }
+        let idempotency_key = format!("cx:operation:{}", uuid_v7());
+        self.submit_events_batch(&envelopes, Some(&idempotency_key))
+            .await?;
 
         let mut members = Vec::new();
         members.push(actor_id.to_owned());
@@ -945,7 +901,7 @@ impl ContrixApi {
             parent_space_id,
             default_realm_ref,
         )?;
-        self.submit_event(&event).await?;
+        self.submit_event_envelope(&event).await?;
 
         Ok(SpaceLifecycleResponse {
             ok: true,
@@ -979,7 +935,7 @@ impl ContrixApi {
             ));
         }
         let event = build_space_lifecycle_event(space_id, realm_id, actor_id, kind)?;
-        self.submit_event(&event).await?;
+        self.submit_event_envelope(&event).await?;
         Ok(())
     }
 
@@ -1000,7 +956,7 @@ impl ContrixApi {
         let event = build_member_state_transition_event(
             realm_id, actor_id, member, from_state, to_state, reason,
         )?;
-        self.submit_event(&event).await
+        self.submit_event_envelope(&event).await
     }
 
     /// Read the current anchorer cell value for a Space (admin-only).
@@ -1121,6 +1077,11 @@ impl ContrixApi {
         since: Option<&str>,
         timeout_ms: u64,
     ) -> anyhow::Result<ClientSyncResponse> {
+        // H3 — enforce `cx:cursor:*` prefix on non-nil values. nil
+        // (`None`) is the boot bootstrap case and stays untouched.
+        if let Some(token) = since {
+            validate_cursor(token)?;
+        }
         self.post_json(
             "api/v1/sync",
             json!({"since": since, "timeout_ms": timeout_ms, "set_presence": "online"}),
@@ -1133,6 +1094,9 @@ impl ContrixApi {
         query: &str,
         next_cursor: Option<&str>,
     ) -> anyhow::Result<SearchSpacesResponse> {
+        if let Some(token) = next_cursor {
+            validate_cursor(token)?;
+        }
         let mut body = json!({"query": query, "limit": 20});
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
@@ -1140,31 +1104,16 @@ impl ContrixApi {
         self.post_json("api/v1/directory/search-realms", body).await
     }
 
-    /// Compatibility alias for legacy UI code. The wire operation is
-    /// `cx.directory.search_realms`; directory results are Realm previews.
-    pub async fn search_spaces(
-        &self,
-        query: &str,
-        next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchSpacesResponse> {
-        self.search_realms(query, next_cursor).await
-    }
-
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResBody> {
         self.get_json("api/v1/directory/describe").await
     }
 
-    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
+    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmResponse> {
         self.post_json(
             "api/v1/directory/resolve-realm",
             json!({"realm_id": realm_id}),
         )
         .await
-    }
-
-    /// Compatibility alias for the pre-Realm/Space inversion naming.
-    pub async fn resolve_space(&self, space_id: &str) -> anyhow::Result<ResolveSpaceResponse> {
-        self.resolve_realm(space_id).await
     }
 
     /// Query durable events through the current `/api/v1/events` surface.
@@ -1198,6 +1147,9 @@ impl ContrixApi {
     where
         F: FnMut(contrix_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
     {
+        if let Some(token) = after {
+            validate_cursor(token)?;
+        }
         let request = self
             .http
             .get(self.endpoint(&events_subscribe_path(space_id, after, include_history))?)
@@ -1236,14 +1188,14 @@ impl ContrixApi {
         &self,
         actor: &str,
         action: &str,
-        space_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<AuthzCheckResBody> {
         self.post_json(
             "api/v1/authz/check",
             json!({
                 "actor": actor,
                 "action": action,
-                "resource": {"kind": "space", "space_id": space_id}
+                "resource": {"kind": "realm", "realm_id": realm_id}
             }),
         )
         .await
@@ -1316,10 +1268,12 @@ impl ContrixApi {
         register_device_path: Option<&str>,
         unregister_device_path: Option<&str>,
     ) -> ContrixPushClient {
-        // yougen does not currently fail-closed on session grant for push;
-        // the access_token is the session's bearer credential.
+        // Fail-closed on session grant: chime server is expected to mint a
+        // grant that scopes the push surface to this session. The
+        // access_token is the session's bearer credential.
+        // TODO(chime): server must mint grant for register/unregister.
         let mut client =
-            ContrixPushClient::new(self.base_url.as_str()).with_required_session_grant(false);
+            ContrixPushClient::new(self.base_url.as_str()).with_required_session_grant(true);
         if let Some(token) = self.access_token.as_deref() {
             client = client.with_bearer_token(token);
         }
@@ -1332,6 +1286,7 @@ impl ContrixApi {
         client
     }
 
+    #[cfg(feature = "demo-crypto")]
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         self.post_json(
@@ -1349,6 +1304,13 @@ impl ContrixApi {
             }),
         )
         .await
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadResBody> {
+        anyhow::bail!(
+            "upload_keys ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
+        )
     }
 
     pub async fn claim_keys(
@@ -1382,6 +1344,7 @@ impl ContrixApi {
     /// (one_time_keys / fallback_keys / device_signature) carry their
     /// default-test shape; soland tolerates them being placeholder when
     /// the only consumer is the MLS Welcome flow.
+    #[cfg(feature = "demo-crypto")]
     pub async fn publish_mls_key_package(
         &self,
         device_id: &str,
@@ -1406,6 +1369,17 @@ impl ContrixApi {
             }),
         )
         .await
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    pub async fn publish_mls_key_package(
+        &self,
+        _device_id: &str,
+        _record: &contrix_sdk::MlsKeyPackageRecord,
+    ) -> anyhow::Result<KeysUploadResBody> {
+        anyhow::bail!(
+            "publish_mls_key_package ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
+        )
     }
 
     /// Fetch a peer's MLS key package via
@@ -1439,6 +1413,7 @@ impl ContrixApi {
         Ok(Some(record))
     }
 
+    #[cfg(feature = "demo-crypto")]
     pub async fn send_to_device(
         &self,
         actor: &str,
@@ -1455,13 +1430,27 @@ impl ContrixApi {
         .await
     }
 
+    #[cfg(not(feature = "demo-crypto"))]
+    pub async fn send_to_device(
+        &self,
+        _actor: &str,
+        _device_id: &str,
+    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+        anyhow::bail!(
+            "send_to_device ships an opaque test ciphertext and requires the `demo-crypto` build feature"
+        )
+    }
+
+    /// I4 — demo crypto fallback gate. Wired by `#[cfg(feature =
+    /// "demo-crypto")]`: when the feature is on, local loopback hosts may
+    /// ship the dev-only placeholder ciphertext / device_signature; when
+    /// the feature is off (default), the function ALWAYS returns an
+    /// error and the dev placeholders never reach the wire. No runtime
+    /// env-var override exists by design — production binaries are
+    /// compiled `--no-default-features` (or any feature set excluding
+    /// `demo-crypto`) and the entire fallback path is unreachable.
+    #[cfg(feature = "demo-crypto")]
     fn ensure_demo_crypto_fallback_allowed(&self, label: &str) -> anyhow::Result<()> {
-        if std::env::var("YOUGEN_ALLOW_DEMO_CRYPTO_FALLBACK")
-            .ok()
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        {
-            return Ok(());
-        }
         if matches!(
             self.base_url.host_str().unwrap_or_default(),
             "localhost" | "127.0.0.1" | "::1" | "local.host"
@@ -1469,6 +1458,20 @@ impl ContrixApi {
             return Ok(());
         }
         anyhow::bail!("{label} is disabled for non-local production servers")
+    }
+
+    /// Without the `demo-crypto` feature, the demo fallback is wholly
+    /// disabled — even loopback hosts fail closed. The function is kept
+    /// in scope so test assertions can verify the guard is wired; in
+    /// practice every public caller (`upload_keys`,
+    /// `publish_mls_key_package`, `send_to_device`) is itself feature-
+    /// gated and never reaches this helper without `demo-crypto`.
+    #[cfg(not(feature = "demo-crypto"))]
+    #[allow(dead_code)]
+    fn ensure_demo_crypto_fallback_allowed(&self, label: &str) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "{label} requires the `demo-crypto` build feature (compiled out of this binary)"
+        )
     }
 
     /// POST a typed `cx.schema.device_message.v1` envelope to soland's
@@ -1660,6 +1663,9 @@ impl ContrixApi {
         query: &str,
         next_cursor: Option<&str>,
     ) -> anyhow::Result<SearchOrganizationsResponse> {
+        if let Some(token) = next_cursor {
+            validate_cursor(token)?;
+        }
         let mut body = json!({"query": query, "limit": 20});
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
@@ -1673,6 +1679,9 @@ impl ContrixApi {
         query: &str,
         next_cursor: Option<&str>,
     ) -> anyhow::Result<SearchActorsResponse> {
+        if let Some(token) = next_cursor {
+            validate_cursor(token)?;
+        }
         let mut body = json!({"query": query, "limit": 20});
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
@@ -1779,7 +1788,7 @@ impl ContrixApi {
                 json!(history_visibility),
             )?,
         ] {
-            self.submit_event(&event).await?;
+            self.submit_event_envelope(&event).await?;
         }
         Ok(SpacePolicyResponse {
             ok: true,
@@ -2168,80 +2177,135 @@ impl ContrixApi {
         self.get_json("api/v1/events/describe").await
     }
 
-    async fn submit_event(&self, event: &Value) -> anyhow::Result<SubmitEventResponse> {
-        guard_event_value_proof_against_production(event)?;
-        let idempotency_key = event
-            .get("unsigned")
-            .and_then(|value| value.get("local_operation_idempotency_alias"))
-            .and_then(Value::as_str)
+    /// H1 — return a cached `events_describe` body. The first call performs
+    /// the round-trip; subsequent calls return the cached reference. The
+    /// `capabilities.batch_submit` flag is read off this body by
+    /// [`Self::submit_events_batch`] to decide whether to send a real
+    /// batch or fall back to per-envelope submits.
+    pub async fn events_describe_cached(&self) -> anyhow::Result<&EventsDescribeResBody> {
+        self.events_describe_cache
+            .get_or_try_init(|| async { self.events_describe().await })
+            .await
+    }
+
+    /// H1 — read `capabilities.batch_submit` off the cached
+    /// `events_describe`. Conservative default: when the field is absent
+    /// or the cache fetch fails, assume the server does NOT support batch
+    /// and fall back to per-envelope submits. `EventsDescribeResBody`
+    /// surfaces server capabilities under the canonical `capabilities`
+    /// JSON blob on soland.
+    async fn batch_submit_supported(&self) -> bool {
+        let Ok(describe) = self.events_describe_cached().await else {
+            return false;
+        };
+        describe
+            .capabilities
+            .get("batch_submit")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    /// Submit a typed [`EventEnvelope`] over `cx.events.submit`. The
+    /// active-signer registry is the SINGLE source of detached JWS
+    /// proofs — if no signer is installed this fails closed with
+    /// `no active signer configured` rather than sending an unsigned
+    /// or placeholder-signed envelope.
+    ///
+    /// For reducer-input event kinds, `anchor_ref` is auto-filled from
+    /// the current Realm anchor (`/api/v1/sync/snapshot-head`) when the
+    /// caller did not supply one.
+    pub async fn submit_event_envelope(
+        &self,
+        event: &EventEnvelope,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let mut signed = event.clone();
+
+        // Real anchor_ref for reducer-input kinds. The simple heuristic
+        // is: any envelope that already carries `effects[]` is a
+        // reducer-input write and MUST point at the current Realm
+        // anchor head. Non-reducer kinds (cx.read.marker,
+        // cx.account_data.set, cx.account.blocklist, etc.) have no
+        // effects and keep `anchor_ref: None`.
+        if signed.anchor_ref.is_none() && !signed.effects.is_empty() {
+            let anchor = self.current_anchor_for(&signed.realm_id).await?;
+            signed.anchor_ref = Some(anchor);
+        }
+
+        // Single signing path. No placeholder, no fallback.
+        if signed.proofs.is_empty() {
+            crate::event_signer::sign_with_active(&mut signed).map_err(|err| {
+                anyhow::anyhow!(
+                    "no active signer configured \u{2014} cannot submit unsigned event: {err}"
+                )
+            })?;
+        }
+        if signed.proofs.is_empty() {
+            anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
+        }
+
+        let idempotency_key = signed
+            .local_operation_idempotency_alias()
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let request = self.http.post(self.endpoint("api/v1/events")?).json(event);
+        let value = serde_json::to_value(&signed)?;
+        let request = self.http.post(self.endpoint("api/v1/events")?).json(&value);
         let request = self.with_write_request_headers(request, &idempotency_key);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
     }
 
-    pub async fn submit_event_envelope(
-        &self,
-        event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventResponse> {
-        // T1.3 — production proof guard. When the runtime
-        // [`current_proof_mode`] is anything other than
-        // [`ProofMode::PlaceholderDev`], we must not ship envelopes
-        // whose proof is the dev placeholder. Soland production rejects
-        // them with `dev_proof_in_production` / `invalid_proof`, but
-        // failing closed here gives the UI a clear local error instead
-        // of a network round-trip that exposes the dev origin.
-        //
-        // T5.2 — when the active proof mode demands a real signer and
-        // the envelope was built unsigned (the
-        // `RealEd25519`/`ExternalSigner` branches in
-        // `OperationBuilder::build` deliberately skip the placeholder
-        // attach), reach into the process-wide `event_signer` registry
-        // and sign in place before the guard runs. Callers that prefer
-        // explicit signing can call `event_signer::sign_with_active`
-        // directly before submit; this path is just the lazy fallback
-        // so the dozens of UI call sites that currently
-        // `submit_event_envelope(&op)` without an inline sign call keep
-        // working.
-        let mut signed = event.clone();
-        if crate::event_signer::should_auto_sign()
-            && signed
-                .proofs
-                .first()
-                .is_none_or(|proof| proof.jws == PLACEHOLDER_PROOF_JWS || proof.jws.is_empty())
-        {
-            crate::event_signer::sign_with_active(&mut signed)
-                .map_err(|err| anyhow::anyhow!("active signer rejected envelope: {err}"))?;
-        }
-        guard_event_proof_against_production(&signed)?;
-        let value = serde_json::to_value(&signed)?;
-        self.submit_event(&value).await
-    }
-
-    #[deprecated(note = "legacy adapter only; active writes must use submit_event_envelope")]
-    pub async fn submit_operation_event(
-        &self,
-        operation: &OperationEnvelope,
-    ) -> anyhow::Result<SubmitEventResponse> {
-        let event = EventEnvelope::from_legacy_operation(operation)?;
-        self.submit_event_envelope(&event).await
-    }
-
-    /// `cx.events.submit` in batch form. Spec binds events.submit to
-    /// `POST /api/v1/events` and distinguishes the three accepted body
-    /// shapes (single envelope, [`contrix_sdk::EventsSubmitBatchRequest`],
+    /// `cx.events.submit` in batch form over typed envelopes. Spec binds
+    /// events.submit to `POST /api/v1/events` and distinguishes the three
+    /// accepted body shapes (single envelope,
+    /// [`contrix_sdk::EventsSubmitBatchRequest`],
     /// [`contrix_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
     /// by URL suffix. The federation shape is S2S only and yougen MUST
     /// NEVER serialise it.
+    ///
+    /// Envelopes MUST already be signed by the caller (typically via
+    /// `event_signer::sign_with_active`) — the batch path does not
+    /// auto-sign because callers commonly need an atomic anchor_ref +
+    /// sign sequence the per-envelope helper cannot replicate.
     pub async fn submit_events_batch(
         &self,
-        envelopes: &[Value],
+        envelopes: &[EventEnvelope],
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<Value> {
+        // Re-validate every envelope carries a signed proof. The batch
+        // submit path is fail-closed by construction.
+        for envelope in envelopes {
+            if envelope.proofs.is_empty() {
+                anyhow::bail!(
+                    "submit_events_batch refuses unsigned envelope (event_id={}, kind={})",
+                    envelope.event_id,
+                    envelope.kind
+                );
+            }
+        }
+
+        // H1 — capability gate. When the server advertises
+        // `capabilities.batch_submit == false` (or has not declared the
+        // capability), fall back to per-envelope `submit_event_envelope`
+        // so a deployment that hasn't wired the batch path still receives
+        // every event. The envelopes are already signed; we just lose the
+        // atomic accept/reject grouping the batch endpoint would give us.
+        if !self.batch_submit_supported().await {
+            for envelope in envelopes {
+                self.submit_event_envelope(envelope).await?;
+            }
+            return Ok(json!({
+                "status": "accepted",
+                "fallback": "per_envelope",
+                "count": envelopes.len(),
+            }));
+        }
+
+        let events_value: Vec<Value> = envelopes
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>()?;
         let body = contrix_sdk::EventsSubmitBatchRequest {
-            events: envelopes.to_vec(),
+            events: events_value,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let value = serde_json::to_value(&body)?;
@@ -2252,6 +2316,26 @@ impl ContrixApi {
         let request = self.with_write_request_headers(request, &idem);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
+    }
+
+    /// Resolve the current anchor head for `realm_id` to be stamped onto
+    /// outgoing reducer-input events as `anchor_ref`. Wraps
+    /// `GET /api/v1/sync/snapshot-head?realm_id=...` and returns the
+    /// `cx:anchor:sha256:<hex>` ref the server projects as the realm's
+    /// head.
+    pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
+        let response = self.snapshot_head(realm_id).await?;
+        // Soland projects the head as a snapshot_ref in the form
+        // `cx:anchor:sha256:<hex>` (matches event-schema.json
+        // $defs/anchor_ref). Trust the server's wire shape and return
+        // it verbatim — fail closed if the field is empty so an
+        // upstream bug shows up locally before the wire round-trip.
+        if response.snapshot_ref.is_empty() {
+            anyhow::bail!(
+                "snapshot-head for {realm_id} returned an empty snapshot_ref \u{2014} cannot stamp anchor_ref"
+            );
+        }
+        Ok(response.snapshot_ref)
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
@@ -2774,9 +2858,6 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     format!("{base}/api/v1/blob/get?blob_ref={blob_ref}")
 }
 
-const ZERO_ANCHOR_REF: &str =
-    "cx:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
-
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_bootstrap_events(
     space_id: &str,
@@ -2794,15 +2875,13 @@ pub fn build_realm_bootstrap_events(
     trust_domain: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
-) -> anyhow::Result<Vec<Value>> {
-    // Order matters — soland's authz layer requires the actor to
-    // be a member of the Realm before it accepts any per-facet state
-    // event (join_rule / history_visibility / discovery / ...). The
-    // creator-join `cx.member.state` MUST come right after the
-    // `cx.realm.create` event and before any facet write, otherwise
-    // every facet event 403s with `capability_denied: actor is not
-    // a member of the event Space`.
-    let mut events = Vec::new();
+) -> anyhow::Result<Vec<EventEnvelope>> {
+    // Spec realm-and-space.md §2.6: creator membership is auto-derived
+    // by the reducer from `cx.realm.create`'s `created_by_principal == actor_id`.
+    // The bootstrap MUST NOT emit an explicit `cx.member.state{join}` for
+    // the creator — the reducer writes that cell atomically with the
+    // create event.
+    let mut events: Vec<EventEnvelope> = Vec::new();
     events.push(build_realm_create_event(
         space_id,
         actor_id,
@@ -2817,9 +2896,6 @@ pub fn build_realm_bootstrap_events(
         anchor_profile,
         hash_profile,
         trust_domain,
-    )?);
-    events.push(build_member_state_event(
-        space_id, actor_id, actor_id, "join",
     )?);
     events.push(build_space_state_event(
         space_id,
@@ -2840,9 +2916,9 @@ pub fn build_realm_bootstrap_events(
         json!(discoverability),
     )?);
 
-    let plaintext_services_event =
-        build_plaintext_visible_services_event(space_id, actor_id, plaintext_visible_services)?;
-    if let Some(event) = plaintext_services_event {
+    if let Some(event) =
+        build_plaintext_visible_services_event(space_id, actor_id, plaintext_visible_services)?
+    {
         events.push(event);
     }
 
@@ -2872,31 +2948,19 @@ pub fn build_realm_create_event(
     anchor_profile: &str,
     hash_profile: &str,
     trust_domain: &str,
-) -> anyhow::Result<Value> {
-    let created_at = event_timestamp();
+) -> anyhow::Result<EventEnvelope> {
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
-    // Fall back to "restricted" if the caller passed "open" together
-    // with high_assurance — the UI also disables the option but
-    // belt-and-suspenders here.
     let effective_federation_policy =
         if security_class == "high_assurance" && federation_policy == "open" {
             "restricted"
         } else {
             federation_policy
         };
-    // Spec realm.schema.json — `id` MUST match `^cx:realm:UUID7`. The
-    // caller still passes the envelope-level `space_id` as `cx:space:`
-    // because that's what soland's wire-validator currently accepts;
-    // here we synthesise the matching `cx:realm:` form for the inner
-    // realm object id by stripping the legacy prefix. Once soland's
-    // validate_space_id accepts `cx:realm:` directly, callers can
-    // mint a single cx:realm: id and this rewrite becomes a no-op.
-    let realm_object_id = if let Some(suffix) = space_id.strip_prefix("cx:space:") {
-        format!("cx:realm:{suffix}")
-    } else {
-        space_id.to_owned()
-    };
+    let realm_object_id = scope_id_as_realm_id(space_id);
+    let envelope_realm_id = scope_id_as_realm_id(space_id);
+    let cell = space_cell("cx.component.realm.create.v1", &envelope_realm_id);
+    let created_at_for_object = event_timestamp();
     let mut object = json!({
         "id": realm_object_id,
         "schema": "cx.schema.realm.v1",
@@ -2916,7 +2980,7 @@ pub fn build_realm_create_event(
             "type": "single_did",
             "did": actor_id,
         },
-        "created_at": created_at,
+        "created_at": created_at_for_object,
     });
     if let Some(summary) = summary
         && !summary.trim().is_empty()
@@ -2924,18 +2988,45 @@ pub fn build_realm_create_event(
         object["summary"] = Value::String(summary.trim().to_owned());
     }
 
-    build_reducer_event(
-        "cx.realm.create",
-        space_id,
-        actor_id,
-        &created_at,
-        json!({ "object": object }),
-        // TODO(realm-rework): cell family rename to cx.component.realm.create.v1
-        // once contrix-spec publishes the renamed registry.
-        &space_cell("cx.component.realm.create.v1", space_id),
-        "append",
-        json!({ "space_id": space_id }),
-    )
+    // cx.component.realm.create.v1 is a cas-register cell; the
+    // genesis write asserts head_eq null and sets the realm metadata.
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(object.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(space_id, actor_id, "cx.realm.create")
+        .target_ref(space_id)
+        .body(json!({ "object": object }))
+        .preconditions(preconditions)
+        .effects(effects)
+        .requirements(EventRequirements {
+            schema: vec!["cx.schema.realm.v1".to_owned()],
+            reducer: None,
+            features: Vec::new(),
+            critical_extensions: Vec::new(),
+        })
+        .build("yougen");
+    envelope.created_at = created_at_for_object;
+    Ok(envelope)
 }
 
 /// Build a `cx.space.create` event per spec realm-and-space.md §3.2.
@@ -2953,25 +3044,12 @@ pub fn build_space_create_event(
     kind: &str,
     parent_space_id: Option<&str>,
     default_realm_ref: Option<&str>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
-    // Spec space.schema.json — `realm_id` and `default_realm_ref`
-    // MUST match `^cx:realm:UUID7`. The Realm form still mints
-    // `cx:space:` envelope ids during the Realm/Space inversion
-    // migration window, so callers hand us the legacy form and we
-    // rewrite for the inner Space-object payload here. Once the
-    // envelope migrates to `cx:realm:` this rewrite becomes a no-op.
-    let normalize_realm = |value: &str| -> String {
-        if let Some(rest) = value.strip_prefix("cx:space:") {
-            format!("cx:realm:{rest}")
-        } else {
-            value.to_owned()
-        }
-    };
     let mut object = json!({
         "id": space_id,
         "schema": "cx.schema.space.v1",
-        "realm_id": normalize_realm(realm_id),
+        "realm_id": scope_id_as_realm_id(realm_id),
         "kind": kind,
         "title": title,
         "state": "active",
@@ -2986,55 +3064,74 @@ pub fn build_space_create_event(
     if let Some(parent) = parent_space_id
         && !parent.trim().is_empty()
     {
-        // parent_ref stays on the `cx:space:` prefix per spec — Space
-        // parents are themselves Spaces, not Realms.
         object["parent_ref"] = Value::String(parent.trim().to_owned());
     }
     if let Some(default_realm) = default_realm_ref
         && !default_realm.trim().is_empty()
     {
-        object["default_realm_ref"] = Value::String(normalize_realm(default_realm.trim()));
+        object["default_realm_ref"] = Value::String(scope_id_as_realm_id(default_realm.trim()));
     }
 
-    // The Space `create` event is authorized + written to the home
-    // Realm — `space_id` on the wire event = the Realm id, per the
-    // Realm/Space inversion routing: every container write lands in
-    // its `realm_id` for sync / authz. The reducer cell is keyed by
-    // the new Space id so the projection stores it correctly.
-    build_reducer_event(
-        "cx.space.create",
-        realm_id,
-        actor_id,
-        &created_at,
-        json!({ "object": object }),
-        &space_cell("cx.component.space.create.v1", space_id),
-        "append",
-        json!({ "space_id": space_id }),
-    )
+    let cell = space_cell("cx.component.space.create.v1", space_id);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(object.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "cx.space.create")
+        .target_ref(space_id)
+        .body(json!({ "object": object }))
+        .preconditions(preconditions)
+        .effects(effects)
+        .requirements(EventRequirements {
+            schema: vec!["cx.schema.space.v1".to_owned()],
+            reducer: None,
+            features: Vec::new(),
+            critical_extensions: Vec::new(),
+        })
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
 }
 
 /// Build a Space lifecycle event (`cx.space.archive` /
 /// `cx.space.restore` / `cx.space.tombstone`) per spec
 /// realm-and-space.md §3.4. All three write the new `state` value
-/// into the `cx.component.space.state.v1` cell on the home Realm.
-/// Server-side cascade rules:
-///
-/// - `archive` (active → archived): not cascaded to children.
-/// - `restore` (archived → active): not cascaded; only valid from
-///   `archived`.
-/// - `tombstone` (any → tombstoned): irreversible; server MUST
-///   `failed_precondition` when the Space still has live child
-///   Spaces or live `contains` placement Flows.
+/// into the `cx.component.space.state.v1` cell on the home Realm via
+/// an FSM transition.
 pub fn build_space_lifecycle_event(
     space_id: &str,
     realm_id: &str,
     actor_id: &str,
     kind: &str,
-) -> anyhow::Result<Value> {
-    let next_state = match kind {
-        "cx.space.archive" => "archived",
-        "cx.space.restore" => "active",
-        "cx.space.tombstone" => "tombstoned",
+) -> anyhow::Result<EventEnvelope> {
+    let (prior_state, next_state) = match kind {
+        "cx.space.archive" => ("active", "archived"),
+        "cx.space.restore" => ("archived", "active"),
+        // For tombstone, prior state may be either active or archived.
+        // We assert via head_in {active, archived}, but the typed
+        // helper only knows head_eq — so we model the explicit head_eq
+        // against the most common source state (active). Reducer-side
+        // FSM logic accepts the transition regardless of head form.
+        "cx.space.tombstone" => ("active", "tombstoned"),
         other => {
             return Err(anyhow::anyhow!(
                 "unsupported Space lifecycle event kind {other}"
@@ -3042,30 +3139,48 @@ pub fn build_space_lifecycle_event(
         }
     };
     let created_at = event_timestamp();
-    build_reducer_event(
-        kind,
-        realm_id,
-        actor_id,
-        &created_at,
-        json!({
-            "space_id": space_id,
-            "state": next_state,
-            "state_changed_at": created_at,
-        }),
-        &space_cell("cx.component.space.state.v1", space_id),
-        "set",
-        json!({ "value": next_state }),
-    )
+    let cell = space_cell("cx.component.space.state.v1", space_id);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::String(prior_state.to_owned())),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "transition".to_owned(),
+            tag: None,
+            value: None,
+            from: Some(Value::String(prior_state.to_owned())),
+            to: Some(Value::String(next_state.to_owned())),
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
+        .target_ref(space_id)
+        .body(json!({ "space_id": space_id }))
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
 }
 
+/// Build a Realm facet state event (`cx.realm.join_rule`,
+/// `cx.realm.history_visibility`, `cx.realm.discovery`, ...).
 pub fn build_space_state_event(
     space_id: &str,
     actor_id: &str,
     kind: &str,
     value: Value,
-) -> anyhow::Result<Value> {
-    // R1.7: security-boundary state events now live in cx.realm.*; the
-    // matching cell families are cx.component.realm.*.v1.
+) -> anyhow::Result<EventEnvelope> {
     let cell_family = match kind {
         "cx.realm.join_rule" => "cx.component.realm.join_rule.v1",
         "cx.realm.history_visibility" => "cx.component.realm.history_visibility.v1",
@@ -3079,24 +3194,48 @@ pub fn build_space_state_event(
         }
     };
     let created_at = event_timestamp();
-    let payload_value = value.clone();
-    build_reducer_event(
-        kind,
-        space_id,
-        actor_id,
-        &created_at,
-        json!({ "value": payload_value }),
-        &space_cell(cell_family, space_id),
-        "set",
-        json!({ "value": value }),
-    )
+    let realm_id_wire = scope_id_as_realm_id(space_id);
+    let cell = space_cell(cell_family, &realm_id_wire);
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(value.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(space_id, actor_id, kind)
+        .body(json!({ "value": value }))
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
 }
 
+/// Build a `cx.realm.plaintext_visible_services` event when the caller
+/// supplies at least one service DID. Returns `None` when the input
+/// list is empty so the bootstrap chain can skip emission entirely.
 pub fn build_plaintext_visible_services_event(
     space_id: &str,
     actor_id: &str,
     service_dids: &[String],
-) -> anyhow::Result<Option<Value>> {
+) -> anyhow::Result<Option<EventEnvelope>> {
     let services = service_dids
         .iter()
         .map(|service| service.trim())
@@ -3113,19 +3252,43 @@ pub fn build_plaintext_visible_services_event(
     if services.is_empty() {
         return Ok(None);
     }
-
     let created_at = event_timestamp();
-    build_reducer_event(
-        "cx.realm.plaintext_visible_services",
-        space_id,
-        actor_id,
-        &created_at,
-        json!({ "services": services.clone() }),
-        &space_cell("cx.component.realm.plaintext_visible_services.v1", space_id),
-        "set",
-        json!({ "services": services }),
-    )
-    .map(Some)
+    let realm_id_wire = scope_id_as_realm_id(space_id);
+    let cell = space_cell(
+        "cx.component.realm.plaintext_visible_services.v1",
+        &realm_id_wire,
+    );
+    let preconditions = vec![Precondition {
+        cell: cell.clone(),
+        predicate: Predicate {
+            op: "head_eq".to_owned(),
+            value: Some(Value::Null),
+            values: None,
+            predicate_id: None,
+        },
+    }];
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(json!({ "services": services.clone() })),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope =
+        OperationBuilder::new(space_id, actor_id, "cx.realm.plaintext_visible_services")
+            .body(json!({ "services": services }))
+            .preconditions(preconditions)
+            .effects(effects)
+            .build("yougen");
+    envelope.created_at = created_at;
+    Ok(Some(envelope))
 }
 
 fn build_member_state_event(
@@ -3133,7 +3296,7 @@ fn build_member_state_event(
     actor_id: &str,
     member_actor_id: &str,
     membership: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<EventEnvelope> {
     build_member_state_transition_event(
         space_id,
         actor_id,
@@ -3147,7 +3310,7 @@ fn build_member_state_event(
 /// Build a generic `cx.member.state` event on `cx.component.member.state.v1`,
 /// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
 /// member ban, `null → join` invite-accept). `reason` shows up in the audit
-/// trail. Spec event-payload.schema.json §`membership_payload`.
+/// trail.
 pub fn build_member_state_transition_event(
     realm_id: &str,
     actor_id: &str,
@@ -3155,7 +3318,7 @@ pub fn build_member_state_transition_event(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
     let mut payload = json!({
         "actor_id": member_actor_id,
@@ -3165,127 +3328,70 @@ pub fn build_member_state_transition_event(
     if to_state == "join" {
         payload["delivery_status"] = json!("unroutable");
     }
-    build_reducer_event(
-        "cx.member.state",
-        realm_id,
-        actor_id,
-        &created_at,
-        payload,
-        &format!(
-            "{}:{}",
-            space_cell("cx.component.member.state.v1", realm_id),
-            member_actor_id
-        ),
-        "transition",
-        json!({
-            "from": from_state.map(Value::from).unwrap_or(Value::Null),
-            "to": to_state,
-        }),
-    )
-}
-
-fn build_reducer_event(
-    kind: &str,
-    space_id: &str,
-    actor_id: &str,
-    created_at: &str,
-    payload: Value,
-    cell: &str,
-    op_kind: &str,
-    op_value: Value,
-) -> anyhow::Result<Value> {
-    let event_uuid = uuid_v7();
-    let event_id = format!("cx:event:{event_uuid}");
-    // `local_operation_idempotency_alias` carries an Operation id (the
-    // projection-side dedupe key), not an Event id. Soland's
-    // `OperationId::new` validates the `cx:operation:` prefix — passing an
-    // `cx:event:` alias here silently disables projection (the event lands
-    // in the canonical store with 200 OK but `cx.member.state` / etc.
-    // never reaches `project_accepted_operations`, so seed-member invites
-    // and other projection writes get dropped). Reuse the event's UUID v7
-    // for the alias so the event_id and operation_id share the same
-    // identity suffix (and idempotency replays still collapse).
-    let operation_alias = format!("cx:operation:{event_uuid}");
-    let mut op = json!({ "kind": op_kind });
-    match op_value {
-        Value::Object(map) => {
-            if let Value::Object(op_object) = &mut op {
-                for (key, value) in map {
-                    op_object.insert(key, value);
-                }
-            }
-        }
-        value => {
-            op["value"] = value;
-        }
-    }
-    let mut event = json!({
-        "event_id": event_id.clone(),
-        "kind": kind,
-        "actor_id": actor_id,
-        "actor_seq": next_seq(),
-        "realm_id": scope_id_as_realm_id(space_id),
-        "created_at": created_at,
-        "hlc": Hlc::now("yougen").encode(),
-        "prev_refs": [],
-        "refs": [],
-        "preconditions": [],
-        "effects": [{
-            "cell": cell,
-            "op": op,
-        }],
-        "anchor_ref": ZERO_ANCHOR_REF,
-        "payload": payload,
-        "unsigned": {
-            "local_operation_idempotency_alias": operation_alias,
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let cell = format!(
+        "{}:{}",
+        space_cell("cx.component.member.state.v1", &realm_id_wire),
+        member_actor_id
+    );
+    let preconditions = if let Some(prior) = from_state {
+        vec![Precondition {
+            cell: cell.clone(),
+            predicate: Predicate {
+                op: "head_eq".to_owned(),
+                value: Some(Value::String(prior.to_owned())),
+                values: None,
+                predicate_id: None,
+            },
+        }]
+    } else {
+        vec![Precondition {
+            cell: cell.clone(),
+            predicate: Predicate {
+                op: "head_eq".to_owned(),
+                value: Some(Value::Null),
+                values: None,
+                predicate_id: None,
+            },
+        }]
+    };
+    let from_value = from_state
+        .map(|s| Value::String(s.to_owned()))
+        .unwrap_or(Value::Null);
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "transition".to_owned(),
+            tag: None,
+            value: None,
+            from: Some(from_value),
+            to: Some(Value::String(to_state.to_owned())),
+            reason: Some(reason.to_owned()),
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
         },
-        "proofs": [{
-            "kind": "detached_jws",
-            "alg": "EdDSA",
-            "verification_method": format!("{actor_id}#yougen"),
-            "payload_hash": "",
-            "created_at": created_at,
-            "jws": "a..b",
-        }],
-    });
-    refresh_event_proof(&mut event)?;
-    Ok(event)
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "cx.member.state")
+        .target_ref(member_actor_id)
+        .body(payload)
+        .preconditions(preconditions)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
 }
 
 /// RFC3339 timestamp in the canonical wire form soland's
 /// `canonical::validate_timestamp_canonical` accepts: exactly
 /// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
-/// seconds — spec encoding.md §3.5). Producing `SecondsFormat::Millis`
-/// here was a long-standing yougen bug — the trailing `.NNNZ` made
-/// every event submission fail with `invalid_param: created_at must
-/// use canonical RFC3339 UTC form` once soland's R3 canonical
-/// validator landed.
+/// seconds — spec encoding.md §3.5).
 fn event_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
     format!("cx:cell:{cell_family}:{space_id}")
-}
-
-fn event_canonical_digest(event: &Value) -> anyhow::Result<String> {
-    let mut canonical = event.clone();
-    if let Value::Object(object) = &mut canonical {
-        object.remove("proofs");
-        object.remove("unsigned");
-    }
-    sha256_json_result(&canonical)
-}
-
-fn refresh_event_proof(event: &mut Value) -> anyhow::Result<()> {
-    let digest = event_canonical_digest(event)?;
-    event["proofs"][0]["payload_hash"] = Value::String(digest);
-    Ok(())
-}
-
-fn sha256_json_result(value: &Value) -> anyhow::Result<String> {
-    let bytes = serde_json::to_vec(value)?;
-    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
 /// Build the canonical `cx.schema.device_message.v1` envelope:
@@ -3651,6 +3757,21 @@ fn query_component(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+/// H3 — central guard for the `cx:cursor:*` prefix invariant. Every yougen
+/// entry point that takes a cursor / `next_cursor` / `after` query argument
+/// passes it through this helper before going on the wire. The nil-initial
+/// case for `sync_with_timeout` (`since: None`) is handled by callers using
+/// `Option::map` so this never runs against an `""` placeholder.
+pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
+    if cursor.is_empty() {
+        return Ok(());
+    }
+    if !cursor.starts_with("cx:cursor:") {
+        anyhow::bail!("cursor must start with `cx:cursor:` (got `{}`)", cursor);
+    }
+    Ok(())
+}
+
 fn events_query_path(space_id: &str) -> String {
     format!("api/v1/events?realms={}", query_component(space_id))
 }
@@ -3748,12 +3869,8 @@ pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescrib
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_resolve_space(value: Value) -> anyhow::Result<ResolveSpaceResponse> {
+pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmResponse> {
     Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveSpaceResponse> {
-    parse_resolve_space(value)
 }
 
 #[cfg(test)]
@@ -3871,8 +3988,7 @@ mod tests {
     #[test]
     fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         let events = build_realm_bootstrap_events(
-            // TODO(realm-rework): switch to a `cx:realm:` id once SDK validators accept it.
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
             Some("Roadmap work"),
@@ -3891,18 +4007,16 @@ mod tests {
         .unwrap();
         let kinds = events
             .iter()
-            .map(|event| event["kind"].as_str().unwrap())
+            .map(|event| event.kind.as_str())
             .collect::<Vec<_>>();
-        // Creator-join `cx.member.state` MUST come right after
-        // `cx.realm.create` and BEFORE any facet event, otherwise
-        // soland's authz layer 403s the facets with
-        // `capability_denied: actor is not a member of the event
-        // Space`. See build_realm_bootstrap_events comment.
+        // Spec realm-and-space.md §2.6: the creator-join cell is
+        // populated atomically by the reducer when it accepts
+        // `cx.realm.create`. The bootstrap chain MUST NOT include an
+        // explicit `cx.member.state{join}` for the creator.
         assert_eq!(
             kinds,
             vec![
                 "cx.realm.create",
-                "cx.member.state",
                 "cx.realm.join_rule",
                 "cx.realm.history_visibility",
                 "cx.realm.discovery",
@@ -3912,43 +4026,40 @@ mod tests {
         );
 
         let create = &events[0];
-        assert_eq!(create["payload"]["object"]["schema"], "cx.schema.realm.v1");
+        assert_eq!(create.payload["object"]["schema"], "cx.schema.realm.v1");
         assert_eq!(
-            create["payload"]["object"]["created_by_principal"],
-            create["actor_id"]
+            create.payload["object"]["created_by_principal"],
+            create.actor_id
         );
         assert_eq!(
-            create["payload"]["object"]["created_at"], create["created_at"],
+            create.payload["object"]["created_at"].as_str().unwrap(),
+            create.created_at,
             "Realm create cross-field semantic validation requires matching timestamps",
         );
-        assert_eq!(create["payload"]["object"]["default_join_rule"], "invite");
-        assert_eq!(create["payload"]["object"]["history_visibility"], "shared");
+        assert_eq!(create.payload["object"]["default_join_rule"], "invite");
+        assert_eq!(create.payload["object"]["history_visibility"], "shared");
         assert_eq!(
-            create["effects"][0]["cell"],
-            "cx:cell:cx.component.realm.create.v1:cx:space:0196419b-0000-7000-8000-000000000001"
+            create.effects[0].cell,
+            "cx:cell:cx.component.realm.create.v1:cx:realm:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(create["effects"][0]["op"]["kind"], "append");
-        assert_eq!(create["anchor_ref"], ZERO_ANCHOR_REF);
-        assert!(
-            create["proofs"][0]["payload_hash"]
-                .as_str()
-                .unwrap()
-                .starts_with("sha256:")
-        );
+        assert_eq!(create.effects[0].op.kind, "set");
+        // anchor_ref starts unset on the typed envelope; the submit
+        // path stamps the current snapshot head before going to the wire.
+        assert!(create.anchor_ref.is_none());
+        // The typed builder leaves the envelope unsigned — the active
+        // signer attaches the detached JWS proof at submit time.
+        assert!(create.proofs.is_empty());
 
-        // Indices reflect the bootstrap order after the
-        // capability_denied fix: create, member-join (creator),
-        // join_rule, history_visibility, discovery, plaintext_visible,
-        // member-invite.
-        assert_eq!(events[1]["payload"]["membership"], "join");
-        assert_eq!(events[2]["payload"]["value"], "invite");
-        assert_eq!(events[3]["payload"]["value"], "shared");
-        assert_eq!(events[4]["payload"]["value"], "listed");
+        // Bootstrap order: create, join_rule, history_visibility,
+        // discovery, plaintext_visible, member-invite.
+        assert_eq!(events[1].payload["value"], "invite");
+        assert_eq!(events[2].payload["value"], "shared");
+        assert_eq!(events[3].payload["value"], "listed");
         assert_eq!(
-            events[5]["payload"]["services"][0]["service_did"],
+            events[4].payload["services"][0]["service_did"],
             "did:web:server.example"
         );
-        assert_eq!(events[6]["payload"]["membership"], "invite");
+        assert_eq!(events[5].payload["membership"], "invite");
     }
 
     /// Contract test: cx.space.create payload must satisfy spec
@@ -3961,7 +4072,7 @@ mod tests {
         // must rewrite for the inner reference.
         let event = build_space_create_event(
             "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Roadmap",
             Some("Q3 planning"),
@@ -3971,16 +4082,14 @@ mod tests {
         )
         .unwrap();
         let catalog = contrix_sdk::schema::event_payload_validator_catalog();
-        let kind = event["kind"].as_str().unwrap();
         if catalog
-            .missing_payload_validators_for(std::iter::once(kind))
+            .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
         {
-            let payload = event.get("payload").unwrap();
-            if let Err(error) = catalog.validate_payload(kind, payload) {
+            if let Err(error) = catalog.validate_payload(&event.kind, &event.payload) {
                 panic!(
                     "cx.space.create payload violates spec: {error}\npayload: {}",
-                    serde_json::to_string_pretty(payload).unwrap_or_default()
+                    serde_json::to_string_pretty(&event.payload).unwrap_or_default()
                 );
             }
         }
@@ -3994,11 +4103,7 @@ mod tests {
     #[test]
     fn realm_bootstrap_payloads_match_spec_schema() {
         let events = build_realm_bootstrap_events(
-            // Envelope-level space_id stays on the legacy `cx:space:`
-            // prefix because that's what soland's wire validator still
-            // requires; build_realm_create_event rewrites the inner
-            // payload.object.id to the spec-correct `cx:realm:` form.
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
             Some("Roadmap work"),
@@ -4018,20 +4123,16 @@ mod tests {
 
         let catalog = contrix_sdk::schema::event_payload_validator_catalog();
         for event in &events {
-            let kind = event["kind"].as_str().expect("event kind is a string");
-            // Skip event kinds soland's spec-artifact catalog hasn't
-            // registered yet — for those soland uses lighter validation
-            // and there's nothing for us to assert.
             if catalog
-                .missing_payload_validators_for(std::iter::once(kind))
+                .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
                 .is_empty()
             {
-                let payload = event.get("payload").expect("event has payload");
-                if let Err(error) = catalog.validate_payload(kind, payload) {
+                if let Err(error) = catalog.validate_payload(&event.kind, &event.payload) {
                     panic!(
-                        "event kind `{kind}` payload violates spec schema: {error}\n\
+                        "event kind `{}` payload violates spec schema: {error}\n\
                          payload was: {}",
-                        serde_json::to_string_pretty(payload).unwrap_or_default()
+                        event.kind,
+                        serde_json::to_string_pretty(&event.payload).unwrap_or_default()
                     );
                 }
             }
@@ -4432,6 +4533,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "demo-crypto")]
     #[test]
     fn demo_crypto_fallbacks_are_local_only_by_default() {
         let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
@@ -4443,6 +4545,18 @@ mod tests {
             remote
                 .ensure_demo_crypto_fallback_allowed("test fallback")
                 .is_err()
+        );
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    #[test]
+    fn demo_crypto_fallbacks_are_compiled_out() {
+        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        assert!(
+            local
+                .ensure_demo_crypto_fallback_allowed("test fallback")
+                .is_err(),
+            "without the `demo-crypto` feature, even loopback hosts must fail closed"
         );
     }
 }

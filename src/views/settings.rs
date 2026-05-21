@@ -762,9 +762,9 @@ pub fn SettingsPanel(
                                         div { class: "muted", "Organizations are principals, not servers" }
                                     }
                                     // T1.3 — show the active proof mode so
-                                    // the user can spot at a glance that
-                                    // they are about to send dev placeholder
-                                    // events against a production soland.
+                                    // the user can spot at a glance whether
+                                    // a real signer is wired before any
+                                    // event leaves the device.
                                     div { class: "metric", "data-testid": "settings-proof-mode",
                                         strong { {crate::i18n::tr("settings.proof_mode.label")} }
                                         span { {crate::operation::current_proof_mode().label_en()} }
@@ -824,7 +824,6 @@ pub fn SettingsPanel(
                                     {
                                         let mode = crate::operation::current_proof_mode();
                                         let badge_class = match mode {
-                                            crate::operation::ProofMode::PlaceholderDev => "badge amber",
                                             crate::operation::ProofMode::RealEd25519
                                             | crate::operation::ProofMode::ExternalSigner => "badge green",
                                             crate::operation::ProofMode::Production => "badge red",

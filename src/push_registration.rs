@@ -142,8 +142,11 @@ pub async fn register_via_chime(
     ensure_production_register_request(&request)
         .map_err(|err| PushRegistrationError::PlaceholderTokenRejected(err.to_string()))?;
 
-    let mut client = ContrixPushClient::new(ctx.principal_server_url.as_str())
-        .with_required_session_grant(false);
+    // Fail-closed on session grant — the chime server is expected to mint
+    // a grant before the device can register. TODO(chime): server must mint
+    // grant.
+    let mut client =
+        ContrixPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
     if let Some(token) = ctx.bearer_token.as_deref() {
         client = client.with_bearer_token(token);
     }

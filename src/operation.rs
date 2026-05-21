@@ -1,31 +1,18 @@
-//! Minimal event-envelope helpers for yougen's active write paths.
+//! Typed v1 Event Envelope used by yougen's active write paths.
 //!
-//! Active writes use the current operation/event surfaces directly.
+//! Spec source of truth: `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`.
 //!
-//! # Proof mode (T1.3)
+//! # Signing
 //!
-//! [`OperationBuilder::build`] historically attached a placeholder proof
-//! (`jws == "a..b"`) so dev fixtures and dev-mode soland round-trip
-//! cleanly. That is unsafe against a production soland (`SOLAND_DEVELOPMENT_MODE=false`)
-//! because the placeholder *looks* like a valid envelope until soland
-//! rejects it on the wire — and worse, lets a developer build that does
-//! not actually have a real signer ship envelopes that *appear* signed.
+//! All envelopes are produced with `proofs: Vec::new()`. The detached JWS
+//! proof is attached exclusively by [`crate::event_signer::sign_with_active`]
+//! from inside [`crate::api::ContrixApi::submit_event_envelope`]. There is
+//! NO placeholder proof: a submit without an installed signer is rejected
+//! locally with `no active signer configured` rather than shipped to the
+//! wire in any form.
 //!
-//! The runtime [`ProofMode`] now gates the placeholder attach behavior:
-//!
-//! - [`ProofMode::PlaceholderDev`] — default; `build()` attaches the
-//!   placeholder so existing dev flows work. Equivalent to the
-//!   historical behavior.
-//! - [`ProofMode::RealEd25519`] / [`ProofMode::ExternalSigner`] — the
-//!   builder still produces an envelope, but the placeholder is left
-//!   off so the signing path can fill in the real `jws`.
-//! - [`ProofMode::Production`] — no signer is configured. `build()`
-//!   leaves `proofs` empty; the submit guard in
-//!   [`crate::api::ContrixApi::submit_event_envelope`] refuses to send.
-//!
-//! The dev feature flag `dev_proof` enables `PlaceholderDev` as the
-//! compile-time default. Builds without the feature start in
-//! `Production`, forcing callers to opt into a real signer.
+//! Internal Rust field names match the wire JSON names exactly — there are
+//! no `#[serde(rename)]` rewrites on this struct.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -33,29 +20,21 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::canonical::{canonical_json_bytes, canonical_sha256};
+use crate::canonical::canonical_sha256;
 use crate::hlc::{Hlc, next_seq};
 
-/// Active client-side proof attachment mode. See module docs.
+/// Active client-side proof attachment mode. Retained so the settings UI
+/// can surface which signer backend is wired and so the signer bootstrap
+/// path can flip from `Production` (fail-closed) to `RealEd25519` /
+/// `ExternalSigner` once a real signer is installed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProofMode {
-    /// `attach_placeholder_proof` is invoked by [`OperationBuilder::build`].
-    /// Compatible with `SOLAND_DEVELOPMENT_MODE=true` soland instances and
-    /// the existing test suite. **Never safe to use against a
-    /// production soland** — the placeholder `jws == "a..b"` fails the
-    /// strict-JWS check and reveals the dev origin in the audit log.
-    PlaceholderDev,
     /// A real Ed25519 signing key is wired into the build pipeline.
-    /// `build()` produces an unsigned envelope; the signer fills in
-    /// `proofs[0].jws` before submit.
     RealEd25519,
     /// An external signer (OS keychain, WebAuthn, HSM) is wired in.
-    /// `build()` produces an unsigned envelope; the signer round-trip
-    /// happens out of process before submit.
     ExternalSigner,
-    /// No signer is configured. `build()` returns an envelope with no
-    /// proofs, and the submit guard refuses to ship it. This is the
-    /// fail-closed default when the `dev_proof` feature is disabled.
+    /// No signer is configured. The submit guard refuses to ship
+    /// anything; this is the fail-closed default.
     Production,
 }
 
@@ -63,7 +42,6 @@ impl ProofMode {
     /// i18n key suffix (lowercased) for status-bar/settings display.
     pub fn i18n_key(self) -> &'static str {
         match self {
-            ProofMode::PlaceholderDev => "settings.proof_mode.placeholder_dev",
             ProofMode::RealEd25519 => "settings.proof_mode.real_ed25519",
             ProofMode::ExternalSigner => "settings.proof_mode.external_signer",
             ProofMode::Production => "settings.proof_mode.production",
@@ -73,31 +51,14 @@ impl ProofMode {
     /// Human-readable English label (fallback when i18n is not wired up).
     pub fn label_en(self) -> &'static str {
         match self {
-            ProofMode::PlaceholderDev => "placeholder dev",
             ProofMode::RealEd25519 => "real Ed25519",
             ProofMode::ExternalSigner => "external signer",
             ProofMode::Production => "no signer (production)",
         }
     }
 
-    /// True when [`OperationBuilder::build`] should call
-    /// [`EventEnvelope::attach_placeholder_proof`].
-    pub fn attaches_placeholder(self) -> bool {
-        matches!(self, ProofMode::PlaceholderDev)
-    }
-
-    /// True when the submit guard should refuse to ship envelopes that
-    /// were never signed by a real (Ed25519 / external) signer.
-    pub fn enforces_real_signer(self) -> bool {
-        matches!(
-            self,
-            ProofMode::Production | ProofMode::RealEd25519 | ProofMode::ExternalSigner
-        )
-    }
-
     fn as_u8(self) -> u8 {
         match self {
-            ProofMode::PlaceholderDev => 0,
             ProofMode::RealEd25519 => 1,
             ProofMode::ExternalSigner => 2,
             ProofMode::Production => 3,
@@ -106,7 +67,6 @@ impl ProofMode {
 
     fn from_u8(value: u8) -> Self {
         match value {
-            0 => ProofMode::PlaceholderDev,
             1 => ProofMode::RealEd25519,
             2 => ProofMode::ExternalSigner,
             _ => ProofMode::Production,
@@ -114,16 +74,12 @@ impl ProofMode {
     }
 }
 
-#[cfg(feature = "dev_proof")]
-const DEFAULT_PROOF_MODE: ProofMode = ProofMode::PlaceholderDev;
-#[cfg(not(feature = "dev_proof"))]
 const DEFAULT_PROOF_MODE: ProofMode = ProofMode::Production;
 
 static PROOF_MODE: AtomicU8 = AtomicU8::new(0xFF);
 
-/// Returns the active [`ProofMode`]. Defaults to [`ProofMode::PlaceholderDev`]
-/// when the `dev_proof` cargo feature is enabled (so the existing dev
-/// fixtures keep working), otherwise [`ProofMode::Production`].
+/// Returns the active [`ProofMode`]. Defaults to [`ProofMode::Production`]
+/// (fail-closed) until the signer bootstrap installs a real signer.
 pub fn current_proof_mode() -> ProofMode {
     let raw = PROOF_MODE.load(Ordering::Relaxed);
     if raw == 0xFF {
@@ -134,40 +90,147 @@ pub fn current_proof_mode() -> ProofMode {
 }
 
 /// Set the active [`ProofMode`]. Called by the key-store / signer
-/// bootstrap when a real signing identity becomes available, and by
-/// settings UI / startup code to opt into the dev placeholder when
-/// connecting to a known dev soland.
+/// bootstrap when a real signing identity becomes available.
 pub fn set_proof_mode(mode: ProofMode) {
     PROOF_MODE.store(mode.as_u8(), Ordering::Relaxed);
 }
 
-/// `jws` value the placeholder proof uses. Exposed so the submit guard
-/// and tests can detect the unsafe shape.
-pub const PLACEHOLDER_PROOF_JWS: &str = "a..b";
-
-fn scope_id_as_realm_id(value: &str) -> String {
+pub(crate) fn scope_id_as_realm_id(value: &str) -> String {
     value
         .strip_prefix("cx:space:")
         .map(|suffix| format!("cx:realm:{suffix}"))
         .unwrap_or_else(|| value.to_owned())
 }
 
+/// Typed semantic reference per spec `event-schema.json $defs/semantic_ref`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SemanticRef {
+    pub id: String,
+    pub role: String,
+    #[serde(default = "default_true")]
+    pub critical: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<InclusionProof>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Typed inclusion-proof body per spec `event-schema.json $defs/semantic_ref.proof`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InclusionProof {
+    pub kind: String,
+    pub leaf_hash: String,
+    pub audit_path: Vec<String>,
+    pub leaf_index: u64,
+    pub tree_size: u64,
+}
+
+/// Typed precondition per spec `event-schema.json $defs/precondition`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Precondition {
+    pub cell: String,
+    pub predicate: Predicate,
+}
+
+/// Typed predicate per spec `event-schema.json $defs/predicate`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Predicate {
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate_id: Option<String>,
+}
+
+/// Typed effect per spec `event-schema.json $defs/effect`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Effect {
+    pub cell: String,
+    pub op: LatticeOp,
+}
+
+/// Typed lattice op per spec `event-schema.json $defs/lattice_op`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LatticeOp {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor: Option<String>,
+}
+
+/// Typed envelope requirements block per spec `event-schema.json
+/// properties.requirements`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EventRequirements {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schema: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reducer: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub critical_extensions: Vec<CriticalExtension>,
+}
+
+/// Typed critical-extension declaration per spec `event-schema.json
+/// $defs/criticalExtension`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CriticalExtension {
+    pub id: String,
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_ref: Option<String>,
+    pub fail_closed: bool,
+}
+
 /// Current v1 Event Envelope used by active write paths.
+///
+/// Field names match the wire JSON exactly per spec `event-schema.json` —
+/// no serde renames. `preconditions` / `effects` / `anchor_ref` are
+/// `Option<Vec<...>>` / `Option<String>` because reducer-input event kinds
+/// require them and non-reducer kinds (read marker, account_data, ...)
+/// must omit them entirely.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub event_id: String,
     pub kind: String,
+    pub realm_id: String,
     pub actor_id: String,
     pub actor_seq: u64,
-    #[serde(rename = "realm_id")]
-    pub space_id: String,
     pub created_at: String,
     pub hlc: String,
     #[serde(default)]
     pub prev_refs: Vec<String>,
     #[serde(default)]
-    pub refs: Vec<String>,
+    pub refs: Vec<SemanticRef>,
     pub payload: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Precondition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<Effect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<EventRequirements>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacts: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unsigned: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -185,102 +248,45 @@ pub struct EventProof {
     pub jws: String,
 }
 
-/// Legacy operation envelope kept only as an adapter input for persisted
-/// drafts/tests that have not been migrated yet.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OperationEnvelope {
-    /// Unique operation identifier (UUID v8 recommended).
-    pub operation_id: String,
-    /// The space this operation targets.
-    pub space_id: String,
-    /// The actor (DID) performing this operation.
-    pub actor: String,
-    /// Operation type in cx.<domain>.<verb> format.
-    #[serde(rename = "type")]
-    pub op_type: String,
-    /// Optional target entity/relation reference.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_ref: Option<String>,
-    /// Causal metadata.
-    pub causal: CausalMetadata,
-    /// Operation body (domain-specific payload).
-    pub body: Value,
-    /// Optional authorization reference.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authz_ref: Option<String>,
-    /// Pre-state assertions per `models/event-and-patch.md` reducer rules.
-    /// Empty when the envelope is a side-effect-only signal.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preconditions: Vec<Value>,
-    /// Post-state effects per `models/event-and-patch.md` reducer rules.
-    /// Empty when the envelope is a query / read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<Value>,
-    /// Anchor reference if this operation has been anchored to a Lattice
-    /// merge ordering anchor (`models/move-anchor-lattice.md`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub anchor_ref: Option<String>,
-    /// Detached JWS proof on the old operation DTO.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proof: Option<Proof>,
-}
-
-/// Detached JWS proof over the canonical body of a legacy [`OperationEnvelope`].
-///
-/// Mirrors `MoveSignature` from `contrix_core` but stays as a JSON-only DTO so
-/// yougen can serialize / deserialize proofs without dragging the SDK's
-/// `MoveSignature` typed surface into every call site.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Proof {
-    /// DID of the signing principal.
-    pub signer_did: String,
-    /// Verification method id (`<did>#<fragment>`).
-    pub key_id: String,
-    /// JWS `alg` parameter — `EdDSA` for Ed25519, per encoding.md §6.
-    pub alg: String,
-    /// `sha256:<hex>` digest over the canonical body.
-    pub payload_hash: String,
-    /// Detached JWS string `<protected>..<signature>` (RFC 7515 §3.7).
-    pub jws: String,
-    /// RFC 3339 UTC timestamp.
-    pub created_at: String,
-}
-
-/// Causal metadata for ordering and dependency tracking.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CausalMetadata {
-    /// IDs of operations this operation depends on.
-    #[serde(default)]
-    pub deps: Vec<String>,
-    /// Hybrid Logical Clock timestamp.
-    pub hlc: String,
-    /// Per-actor monotonic sequence number.
-    pub actor_seq: u64,
-}
-
-/// Builder for creating event envelopes.
+/// Builder for creating typed event envelopes. Callers attach
+/// preconditions / effects / anchor_ref / requirements after `new()`
+/// and before `build()`; `build()` produces an unsigned envelope and the
+/// `submit_event_envelope` path requires an active signer to attach the
+/// detached JWS proof before going on the wire.
 pub struct OperationBuilder {
-    space_id: String,
+    realm_id: String,
     actor: String,
     op_type: String,
     target_ref: Option<String>,
     body: Value,
     authz_ref: Option<String>,
+    preconditions: Vec<Precondition>,
+    effects: Vec<Effect>,
+    refs: Vec<SemanticRef>,
+    anchor_ref: Option<String>,
+    requirements: Option<EventRequirements>,
+    redacts: Option<String>,
 }
 
 impl OperationBuilder {
     pub fn new(
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         actor: impl Into<String>,
         op_type: impl Into<String>,
     ) -> Self {
         Self {
-            space_id: space_id.into(),
+            realm_id: realm_id.into(),
             actor: actor.into(),
             op_type: op_type.into(),
             target_ref: None,
             body: Value::Null,
             authz_ref: None,
+            preconditions: Vec::new(),
+            effects: Vec::new(),
+            refs: Vec::new(),
+            anchor_ref: None,
+            requirements: None,
+            redacts: None,
         }
     }
 
@@ -296,6 +302,36 @@ impl OperationBuilder {
 
     pub fn authz_ref(mut self, authz_ref: impl Into<String>) -> Self {
         self.authz_ref = Some(authz_ref.into());
+        self
+    }
+
+    pub fn preconditions(mut self, preconditions: Vec<Precondition>) -> Self {
+        self.preconditions = preconditions;
+        self
+    }
+
+    pub fn effects(mut self, effects: Vec<Effect>) -> Self {
+        self.effects = effects;
+        self
+    }
+
+    pub fn refs(mut self, refs: Vec<SemanticRef>) -> Self {
+        self.refs = refs;
+        self
+    }
+
+    pub fn anchor_ref(mut self, anchor_ref: impl Into<String>) -> Self {
+        self.anchor_ref = Some(anchor_ref.into());
+        self
+    }
+
+    pub fn requirements(mut self, requirements: EventRequirements) -> Self {
+        self.requirements = Some(requirements);
+        self
+    }
+
+    pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
+        self.redacts = Some(redacts.into());
         self
     }
 
@@ -318,91 +354,32 @@ impl OperationBuilder {
             unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
         }
         let actor_seq = next_seq();
-        let mut event = EventEnvelope {
+        // Normalise the wire `realm_id` field — callers may still hand in
+        // the legacy `cx:space:` form during the inversion migration.
+        let realm_id = scope_id_as_realm_id(&self.realm_id);
+        EventEnvelope {
             event_id: format!("cx:event:{}", uuid_v7()),
             kind: self.op_type,
             actor_id: self.actor,
             actor_seq,
-            space_id: self.space_id,
+            realm_id,
             created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             hlc: hlc.encode(),
             prev_refs: deps,
-            refs: Vec::new(),
+            refs: self.refs,
             payload: self.body,
+            preconditions: self.preconditions,
+            effects: self.effects,
+            anchor_ref: self.anchor_ref,
+            requirements: self.requirements,
+            redacts: self.redacts,
             unsigned,
             proofs: Vec::new(),
-        };
-        // Only the explicit dev mode attaches the placeholder. Real-signer
-        // and production modes leave `proofs` empty so the downstream
-        // signer (Ed25519, external) fills in a real `jws`, and the
-        // submit guard fails closed when nothing does.
-        if current_proof_mode().attaches_placeholder() {
-            event.attach_placeholder_proof();
         }
-        event
     }
 }
 
 impl EventEnvelope {
-    /// Convert a persisted legacy operation envelope into the current Event
-    /// Envelope. This is the only supported legacy adapter.
-    pub fn from_legacy_operation(operation: &OperationEnvelope) -> anyhow::Result<Self> {
-        let mut unsigned = BTreeMap::new();
-        unsigned.insert(
-            "local_operation_idempotency_alias".to_owned(),
-            Value::String(typed_operation_id(&operation.operation_id)),
-        );
-        if let Some(target_ref) = &operation.target_ref {
-            unsigned.insert(
-                "local_target_ref".to_owned(),
-                Value::String(target_ref.clone()),
-            );
-        }
-        if let Some(authz_ref) = &operation.authz_ref {
-            unsigned.insert(
-                "local_authz_ref".to_owned(),
-                Value::String(authz_ref.clone()),
-            );
-        }
-        if !operation.preconditions.is_empty() {
-            unsigned.insert(
-                "legacy_preconditions".to_owned(),
-                Value::Array(operation.preconditions.clone()),
-            );
-        }
-        if !operation.effects.is_empty() {
-            unsigned.insert(
-                "legacy_effects".to_owned(),
-                Value::Array(operation.effects.clone()),
-            );
-        }
-        if let Some(anchor_ref) = &operation.anchor_ref {
-            unsigned.insert(
-                "legacy_anchor_ref".to_owned(),
-                Value::String(anchor_ref.clone()),
-            );
-        }
-
-        let mut event = Self {
-            event_id: format!("cx:event:{}", uuid_v7()),
-            kind: operation.op_type.clone(),
-            actor_id: operation.actor.clone(),
-            actor_seq: operation.causal.actor_seq,
-            space_id: operation.space_id.clone(),
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            hlc: operation.causal.hlc.clone(),
-            prev_refs: operation.causal.deps.clone(),
-            refs: Vec::new(),
-            payload: operation.body.clone(),
-            unsigned,
-            proofs: Vec::new(),
-        };
-        if current_proof_mode().attaches_placeholder() {
-            event.attach_placeholder_proof();
-        }
-        Ok(event)
-    }
-
     pub fn local_operation_idempotency_alias(&self) -> Option<&str> {
         self.unsigned
             .get("local_operation_idempotency_alias")
@@ -437,33 +414,17 @@ impl EventEnvelope {
         Ok(())
     }
 
-    pub fn attach_placeholder_proof(&mut self) {
-        if self.proofs.is_empty() {
-            self.proofs.push(EventProof {
-                kind: "detached_jws".to_owned(),
-                alg: "EdDSA".to_owned(),
-                verification_method: format!("{}#yougen", self.actor_id),
-                payload_hash: String::new(),
-                created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                jws: "a..b".to_owned(),
-            });
-        }
-        let _ = self.refresh_proof_hashes();
-    }
-
     pub fn sign_ed25519(
         &mut self,
         signer_did: impl Into<String>,
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> anyhow::Result<()> {
-        // T5.2 — delegate to the SDK pipeline via
+        // Delegate to the SDK pipeline via
         // [`crate::event_signer::YougenEventSigner::sign_envelope`] so a
         // bug fix in the canonical-bytes / detached-JWS path lands in
         // one place (the SDK) instead of being mirrored across coauth,
-        // soland, and yougen. The signer is built per-call here because
-        // the legacy entry point hands in a SigningKey directly; the
-        // active-signer registry handles the runtime auto-sign path.
+        // soland, and yougen.
         use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
         use std::sync::Arc;
 
@@ -477,9 +438,6 @@ impl EventEnvelope {
         signer
             .sign_envelope(self)
             .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
-        // Preserve the historical contract: callers passed an explicit
-        // `key_id`, so even after `from_dyn_signer` derives the default
-        // `<did>#device` shape we restore the provided value.
         if let Some(proof) = self.proofs.first_mut() {
             proof.verification_method = key_id;
         }
@@ -501,111 +459,6 @@ fn typed_operation_id(operation_id: &str) -> String {
         operation_id.to_owned()
     } else {
         format!("cx:operation:{operation_id}")
-    }
-}
-
-/// Body shape we feed into canonical JSON before signing. Excludes the proof
-/// itself so the resulting digest is stable across signing rounds.
-#[derive(Serialize)]
-struct CanonicalView<'a> {
-    operation_id: &'a str,
-    space_id: &'a str,
-    actor: &'a str,
-    #[serde(rename = "type")]
-    op_type: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    target_ref: Option<&'a str>,
-    causal: &'a CausalMetadata,
-    body: &'a Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    authz_ref: Option<&'a str>,
-    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
-    preconditions: &'a [Value],
-    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
-    effects: &'a [Value],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    anchor_ref: Option<&'a str>,
-}
-
-impl OperationEnvelope {
-    /// Canonical JSON bytes used for hashing / signing. Excludes any present
-    /// proof so the digest is stable round-trip.
-    pub fn canonical_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let view = CanonicalView {
-            operation_id: &self.operation_id,
-            space_id: &self.space_id,
-            actor: &self.actor,
-            op_type: &self.op_type,
-            target_ref: self.target_ref.as_deref(),
-            causal: &self.causal,
-            body: &self.body,
-            authz_ref: self.authz_ref.as_deref(),
-            preconditions: &self.preconditions,
-            effects: &self.effects,
-            anchor_ref: self.anchor_ref.as_deref(),
-        };
-        canonical_json_bytes(&view)
-    }
-
-    /// `sha256:<hex>` digest of [`canonical_bytes`].
-    pub fn canonical_digest(&self) -> anyhow::Result<String> {
-        let view = CanonicalView {
-            operation_id: &self.operation_id,
-            space_id: &self.space_id,
-            actor: &self.actor,
-            op_type: &self.op_type,
-            target_ref: self.target_ref.as_deref(),
-            causal: &self.causal,
-            body: &self.body,
-            authz_ref: self.authz_ref.as_deref(),
-            preconditions: &self.preconditions,
-            effects: &self.effects,
-            anchor_ref: self.anchor_ref.as_deref(),
-        };
-        canonical_sha256(&view)
-    }
-
-    /// Sign the envelope with an Ed25519 key and attach a detached JWS [`Proof`].
-    ///
-    /// Mirrors the SDK's `Ed25519MoveSigner::sign_payload` JWS layout so the
-    /// receiver can verify with a `did:key`-derived public key.
-    pub fn sign_ed25519(
-        &mut self,
-        signer_did: impl Into<String>,
-        key_id: impl Into<String>,
-        signing_key: &ed25519_dalek::SigningKey,
-    ) -> anyhow::Result<()> {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-        use ed25519_dalek::Signer;
-
-        let canonical = self.canonical_bytes()?;
-        let payload_hash = crate::canonical::sha256_digest(&canonical);
-
-        let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
-        let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
-        let payload_b64 = URL_SAFE_NO_PAD.encode(&canonical);
-        let signing_input = format!("{header_b64}.{payload_b64}");
-        let signature = signing_key.sign(signing_input.as_bytes());
-        let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
-        let jws = format!("{header_b64}..{sig_b64}");
-
-        self.proof = Some(Proof {
-            signer_did: signer_did.into(),
-            key_id: key_id.into(),
-            alg: "EdDSA".to_owned(),
-            payload_hash,
-            jws,
-            created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        });
-        Ok(())
-    }
-
-    /// Returns `Ok(())` when a typed [`Proof`] is attached. Used by submit
-    /// paths that want to reject unsigned envelopes for durable event kinds.
-    pub fn require_proof(&self) -> anyhow::Result<&Proof> {
-        self.proof
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("operation envelope missing proof"))
     }
 }
 
@@ -1109,8 +962,7 @@ pub mod cx_ops {
     /// Build a `cx.space.archive` operation against a container Space. The
     /// Space transitions from `Active` to `Archived`; reversible via
     /// [`space_restore`]. Spec: `models/realm-and-space.md` §4.4. The wire
-    /// payload uses canonical `space_id`; legacy soland builds accepted
-    /// `place_id` as a migration alias only.
+    /// payload uses canonical `space_id` (no legacy alias).
     pub fn space_archive(
         realm_id: &str,
         actor: &str,
@@ -1119,16 +971,6 @@ pub mod cx_ops {
         OperationBuilder::new(realm_id, actor, "cx.space.archive")
             .target_ref(container_space_id)
             .body(json!({ "space_id": container_space_id }))
-    }
-
-    /// Compatibility alias for pre-R1.7 call sites. New production code
-    /// should call [`space_archive`].
-    pub fn place_archive(
-        realm_id: &str,
-        actor: &str,
-        container_space_id: &str,
-    ) -> OperationBuilder {
-        space_archive(realm_id, actor, container_space_id)
     }
 
     /// Build a `cx.space.restore` operation. Reverses [`space_archive`]
@@ -1143,16 +985,6 @@ pub mod cx_ops {
         OperationBuilder::new(realm_id, actor, "cx.space.restore")
             .target_ref(container_space_id)
             .body(json!({ "space_id": container_space_id }))
-    }
-
-    /// Compatibility alias for pre-R1.7 call sites. New production code
-    /// should call [`space_restore`].
-    pub fn place_restore(
-        realm_id: &str,
-        actor: &str,
-        container_space_id: &str,
-    ) -> OperationBuilder {
-        space_restore(realm_id, actor, container_space_id)
     }
 
     /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
@@ -1732,53 +1564,9 @@ mod tests {
             .collect()
     }
 
-    /// Guards mutations of the global [`PROOF_MODE`] so the proof-mode
-    /// tests cannot race the rest of the suite (which relies on the
-    /// default `PlaceholderDev` mode).
-    static PROOF_MODE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// T1.3 — switching the runtime proof mode to anything other than
-    /// `PlaceholderDev` MUST cause `OperationBuilder::build` to skip the
-    /// placeholder attach so the production submit guard fires.
-    #[test]
-    fn build_skips_placeholder_in_production_mode() {
-        let _guard = PROOF_MODE_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prior = current_proof_mode();
-        set_proof_mode(ProofMode::Production);
-        let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
-            .body(json!({"body": "hi"}))
-            .build("test_node");
-        set_proof_mode(prior);
-
-        assert!(
-            event.proofs.is_empty(),
-            "Production proof mode must not attach the placeholder: {:?}",
-            event.proofs
-        );
-    }
-
-    #[test]
-    fn build_attaches_placeholder_in_dev_mode() {
-        let _guard = PROOF_MODE_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prior = current_proof_mode();
-        set_proof_mode(ProofMode::PlaceholderDev);
-        let event = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
-            .body(json!({"body": "hi"}))
-            .build("test_node");
-        set_proof_mode(prior);
-
-        let proof = event.proofs.first().expect("dev proof attached");
-        assert_eq!(proof.jws, PLACEHOLDER_PROOF_JWS);
-    }
-
     #[test]
     fn proof_mode_labels_are_distinct() {
         let modes = [
-            ProofMode::PlaceholderDev,
             ProofMode::RealEd25519,
             ProofMode::ExternalSigner,
             ProofMode::Production,
@@ -1795,16 +1583,19 @@ mod tests {
 
     #[test]
     fn operation_builder_generates_valid_envelope() {
-        let op = OperationBuilder::new("cx:space:test", "did:web:alice", "cx.message.create")
+        let op = OperationBuilder::new("cx:realm:test", "did:web:alice", "cx.message.create")
             .body(json!({"body": "hello"}))
             .build("test_node");
 
         assert!(!op.local_operation_id().is_empty());
-        assert_eq!(op.space_id, "cx:space:test");
+        assert_eq!(op.realm_id, "cx:realm:test");
         assert_eq!(op.actor_id, "did:web:alice");
         assert_eq!(op.kind, "cx.message.create");
         assert!(!op.hlc.is_empty());
         assert!(op.actor_seq > 0);
+        // Spec compliance: build() never attaches a placeholder proof —
+        // the submit path requires an installed signer.
+        assert!(op.proofs.is_empty());
     }
 
     #[test]
@@ -2155,7 +1946,7 @@ mod tests {
             .body(json!({"b": 2, "a": 1}))
             .build("node");
         op_a.event_id = "fixed".into();
-        op_a.hlc = "0000000000000000-00000000-00000000".into();
+        op_a.hlc = "000000000000-0000-00000000".into();
         op_a.actor_seq = 1;
 
         let mut op_b = op_a.clone();

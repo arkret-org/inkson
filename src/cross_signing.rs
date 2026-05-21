@@ -520,7 +520,7 @@ impl CrossSigningSetupOutput {
     /// `space_id` of the principal's control space and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
     /// callers attach a `proof` via the standard signing pipeline before
-    /// `submit_operation_event`.
+    /// `submit_event_envelope`.
     pub fn build_publish_envelope(
         &self,
         space_id: &str,

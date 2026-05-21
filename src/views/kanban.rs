@@ -347,21 +347,21 @@ fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOpt
 }
 
 fn board_space_options_from_projection(
-    places: &[crate::api::SpaceContainerProjectionView],
+    containers: &[crate::api::SpaceContainerProjectionView],
 ) -> Vec<BoardSpaceOption> {
-    let mut options = places
+    let mut options = containers
         .iter()
-        .filter(|place| {
-            place.kind == "board" || (place.kind.trim().is_empty() && place.parent_ref.is_none())
+        .filter(|view| {
+            view.kind == "board" || (view.kind.trim().is_empty() && view.parent_ref.is_none())
         })
-        .map(|place| BoardSpaceOption {
-            id: place.container_space_id.clone(),
-            title: if place.title.trim().is_empty() {
-                place.container_space_id.clone()
+        .map(|view| BoardSpaceOption {
+            id: view.container_space_id.clone(),
+            title: if view.title.trim().is_empty() {
+                view.container_space_id.clone()
             } else {
-                place.title.clone()
+                view.title.clone()
             },
-            state: space_container_state_from_wire(&place.state),
+            state: space_container_state_from_wire(&view.state),
         })
         .collect::<Vec<_>>();
     options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
@@ -701,7 +701,7 @@ pub fn KanbanPanel(
     });
 
     // Hydrate Space-container / Flow lifecycle state from the soland
-    // `/api/v1/projection/{places|flows}` endpoints so
+    // `/api/v1/projection/{space_containers|flows}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -719,7 +719,7 @@ pub fn KanbanPanel(
             }
             lifecycle_bootstrapped.set(true);
             let api_token = lifecycle_token();
-            let places_res = {
+            let containers_res = {
                 let space = space.clone();
                 with_authed_api(&base, api_token.clone(), |api| async move {
                     api.list_space_container_projections(&space).await
@@ -734,11 +734,11 @@ pub fn KanbanPanel(
                 .await
             };
             let mut applied = 0_usize;
-            let places_ok = places_res.is_ok();
+            let containers_ok = containers_res.is_ok();
             let flows_ok = flows_res.is_ok();
-            if places_ok || flows_ok {
+            if containers_ok || flows_ok {
                 let mut cols = columns.write();
-                if let Ok(resp) = places_res {
+                if let Ok(resp) = containers_res {
                     let options = board_space_options_from_projection(&resp.items);
                     if !options.is_empty() {
                         let current_board = selected_board_space_id();
@@ -3356,7 +3356,7 @@ mod tests {
     }
 
     /// Wire state strings emitted by soland's
-    /// `/api/v1/projection/{places|flows}` round-trip into the
+    /// `/api/v1/projection/{space_containers|flows}` round-trip into the
     /// renderer enums. Unknown values stay at the safe `Active` default.
     #[test]
     fn lifecycle_wire_strings_decode_to_enums() {

@@ -1,8 +1,8 @@
 //! Hybrid Logical Clock (HLC) per contrix-spec section 6.4.
 //!
-//! Format: `<physical_hex_12>-<logical_hex_8>-<node_hex_8>`
+//! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)
-//! - 32-bit logical counter (8 hex chars)
+//! - 16-bit logical counter (4 hex chars)
 //! - 32-bit node hash (8 hex chars; SHA-256 prefix, see [`hash_node_id`])
 //!
 //! The node-id derivation MUST stay byte-compatible with the SDK's
@@ -61,6 +61,9 @@ impl Hlc {
             .map_err(|_| HlcError::InvalidPhysical(parts[0].to_owned()))?;
         if parts[0].len() != 12 {
             return Err(HlcError::InvalidPhysicalLength(parts[0].len()));
+        }
+        if parts[1].len() != 4 {
+            return Err(HlcError::InvalidLogicalLength(parts[1].len()));
         }
         let logical = u32::from_str_radix(parts[1], 16)
             .map_err(|_| HlcError::InvalidLogical(parts[1].to_owned()))?;
@@ -136,8 +139,10 @@ impl Hlc {
     /// Encode to canonical hex string format.
     pub fn encode(&self) -> String {
         format!(
-            "{:012x}-{:08x}-{:08x}",
-            self.physical_ms, self.logical, self.node_id
+            "{:012x}-{:04x}-{:08x}",
+            self.physical_ms,
+            self.logical.min(0xffff),
+            self.node_id
         )
     }
 }
@@ -199,6 +204,7 @@ pub enum HlcError {
     InvalidPhysical(String),
     InvalidPhysicalLength(usize),
     InvalidLogical(String),
+    InvalidLogicalLength(usize),
     InvalidNode(String),
 }
 
@@ -211,6 +217,9 @@ impl fmt::Display for HlcError {
                 write!(f, "physical component must be 12 hex chars, got {n}")
             }
             Self::InvalidLogical(s) => write!(f, "invalid logical component: {s}"),
+            Self::InvalidLogicalLength(n) => {
+                write!(f, "logical component must be 4 hex chars, got {n}")
+            }
             Self::InvalidNode(s) => write!(f, "invalid node component: {s}"),
         }
     }
@@ -226,7 +235,7 @@ mod tests {
     fn round_trip_encode_parse() {
         let hlc = Hlc::from_parts(0x0001_8ef0_1234, 0x0000_0005, 0xdead_beef);
         let encoded = hlc.encode();
-        assert_eq!(encoded.len(), 30); // 12 + 1 + 8 + 1 + 8
+        assert_eq!(encoded.len(), 26); // 12 + 1 + 4 + 1 + 8
         let parsed = Hlc::parse(&encoded).unwrap();
         assert_eq!(hlc, parsed);
     }
@@ -257,6 +266,7 @@ mod tests {
     fn parse_rejects_invalid_format() {
         assert!(Hlc::parse("not-an-hlc").is_err());
         assert!(Hlc::parse("000000000001-00000002").is_err());
+        assert!(Hlc::parse("000000000001-00000002-deadbeef").is_err());
     }
 
     #[test]
