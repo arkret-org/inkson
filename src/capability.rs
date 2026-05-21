@@ -127,7 +127,7 @@ pub enum Constraint {
     /// Limit scope to specific Realm-owned Space containers.
     ScopeLimitation {
         space_ids: Vec<String>,
-        #[serde(default, alias = "place_ids")]
+        #[serde(default)]
         space_container_ids: Vec<String>,
     },
     /// Control delegation depth and re-authorization.

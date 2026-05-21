@@ -3,10 +3,11 @@
 //! Several list views render the same shape when there is nothing to
 //! show:
 //!
-//!     div.event
-//!         div.event-head — title + status badge ("empty", "filtered",
-//!                          "error")
-//!         div.muted      — explanation message
+//! ```text
+//! div.event
+//!     div.event-head - title + status badge ("empty", "filtered", "error")
+//!     div.muted      - explanation message
+//! ```
 //!
 //! Before this module each view hand-rolled the markup with slightly
 //! different wording and div nesting. This component is the single

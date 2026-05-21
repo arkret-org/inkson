@@ -2565,10 +2565,10 @@ async fn run_device_revoke_from_snapshot(
             return;
         }
     };
-    let typed_space = match contrix_sdk::SpaceId::new(space_id.clone()) {
+    let typed_realm = match contrix_sdk::RealmId::new(space_id.clone()) {
         Ok(s) => s,
         Err(err) => {
-            status.set(format!("invalid space id: {err}"));
+            status.set(format!("invalid realm id: {err}"));
             return;
         }
     };
@@ -2585,7 +2585,7 @@ async fn run_device_revoke_from_snapshot(
         &passphrase,
         &typed_target,
         typed_op_id,
-        typed_space,
+        typed_realm,
     ) {
         Ok(full) => full,
         Err(err) => {

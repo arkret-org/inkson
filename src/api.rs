@@ -204,29 +204,20 @@ fn scope_id_as_realm_id(value: &str) -> String {
 /// hydrate path can pluck projection rows with the same code.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionResponse<T> {
-    #[serde(rename = "realm_id", alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub total: u32,
-    #[serde(
-        default = "Vec::new",
-        alias = "places",
-        alias = "space_containers",
-        alias = "flows"
-    )]
+    #[serde(default = "Vec::new", alias = "space_containers", alias = "flows")]
     pub items: Vec<T>,
 }
 
 /// Server-side Space-container projection row.
 ///
-/// Soland now serves these rows from
-/// `GET /api/v1/projection/space-containers`; legacy `places` / `place_id`
-/// fields remain accepted during migration.
+/// Soland serves these rows from
+/// `GET /api/v1/projection/space-containers`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
-    #[serde(rename = "container_space_id", alias = "place_id")]
     pub container_space_id: String,
-    #[serde(rename = "realm_id", alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub kind: String,
@@ -1951,16 +1942,9 @@ impl ContrixApi {
             .await
     }
 
-    // Pull the canonical Space-container / Flow lifecycle state for a Space so the
+    // Pull the canonical Space-container / Flow lifecycle state for a Realm so the
     // kanban view can hydrate `column.state` / `card.lifecycle` after a
     // refresh. Pairs with soland's `routing::events::projection_query`.
-    pub async fn list_place_projections(
-        &self,
-        space_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
-        self.list_space_container_projections(space_id).await
-    }
-
     pub async fn list_space_container_projections(
         &self,
         space_id: &str,
@@ -2257,7 +2241,7 @@ impl ContrixApi {
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<Value> {
         let body = contrix_sdk::EventsSubmitBatchRequest {
-            envelopes: envelopes.to_vec(),
+            events: envelopes.to_vec(),
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let value = serde_json::to_value(&body)?;

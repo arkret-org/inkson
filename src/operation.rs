@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::canonical::{canonical_json_bytes, canonical_sha256};
@@ -152,13 +152,6 @@ fn scope_id_as_realm_id(value: &str) -> String {
         .unwrap_or_else(|| value.to_owned())
 }
 
-fn serialize_scope_as_realm_id<S>(value: &String, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&scope_id_as_realm_id(value.as_str()))
-}
-
 /// Current v1 Event Envelope used by active write paths.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
@@ -166,11 +159,7 @@ pub struct EventEnvelope {
     pub kind: String,
     pub actor_id: String,
     pub actor_seq: u64,
-    #[serde(
-        rename = "realm_id",
-        alias = "space_id",
-        serialize_with = "serialize_scope_as_realm_id"
-    )]
+    #[serde(rename = "realm_id")]
     pub space_id: String,
     pub created_at: String,
     pub hlc: String,
@@ -1410,11 +1399,7 @@ pub mod cx_ops {
             value
                 .get(field)
                 .or_else(|| match field {
-                    "space_id" => value
-                .get("list_space_id")
-                // Compatibility for persisted local drafts from the
-                // pre-R1.7 Kanban implementation.
-                .or_else(|| value.get("list_place_id")),
+                    "space_id" => value.get("list_space_id"),
                     _ => None,
                 })
                 .and_then(Value::as_str)

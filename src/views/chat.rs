@@ -424,14 +424,14 @@ async fn run_mls_add_member_and_invite(
             return;
         }
     };
-    let typed_space = match contrix_sdk::SpaceId::new(space_id.clone()) {
+    let typed_realm = match contrix_sdk::RealmId::new(space_id.clone()) {
         Ok(s) => s,
         Err(err) => {
-            status.set(format!("MLS invite: invalid space id: {err:?}"));
+            status.set(format!("MLS invite: invalid realm id: {err:?}"));
             return;
         }
     };
-    let commit_operation = match add_result.commit_operation(typed_op_id, typed_space) {
+    let commit_operation = match add_result.commit_operation(typed_op_id, typed_realm) {
         Ok(op) => op,
         Err(err) => {
             status.set(format!(
