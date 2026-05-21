@@ -798,7 +798,6 @@ impl ContrixApi {
         // R1.7: the security boundary (formerly Space) is now Realm.
         let space_id = format!("cx:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        let anchor = self.current_anchor_for(&space_id).await?;
         let mut envelopes = build_realm_bootstrap_events(
             &space_id,
             actor_id,
@@ -816,13 +815,10 @@ impl ContrixApi {
             &invitees,
             &plaintext_visible_services,
         )?;
-        // Fill in a real anchor_ref for every reducer-input envelope in
-        // the batch — bootstrap events are all reducer-input kinds.
-        for envelope in envelopes.iter_mut() {
-            if envelope.anchor_ref.is_none() {
-                envelope.anchor_ref = Some(anchor.clone());
-            }
-        }
+        // Genesis Realm bootstrap has no prior snapshot head. The
+        // `cx.realm.create` precondition asserts `head_eq null`; follow-up
+        // facet events in the same batch are admitted after soland
+        // materialises the creator membership from the create event.
         // Sign every envelope before they reach the wire; the batch
         // submitter takes pre-signed typed envelopes.
         for envelope in envelopes.iter_mut() {
@@ -2316,8 +2312,11 @@ impl ContrixApi {
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         let request = self.with_write_request_headers(request, &idem);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
-            .await
+        let response: Value = self
+            .send_json_retryable(self.prepare_request(request), Method::POST)
+            .await?;
+        ensure_events_submit_batch_accepted(&response)?;
+        Ok(response)
     }
 
     /// Resolve the current anchor head for `realm_id` to be stamped onto
@@ -2639,6 +2638,48 @@ impl ContrixApi {
             .header("x-contrix-request-id", request_id)
             .header("idempotency-key", request_id)
     }
+}
+
+fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
+    let status = response
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("accepted");
+    let rejected = response
+        .get("rejected")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if rejected.is_empty() && matches!(status, "accepted" | "duplicate") {
+        return Ok(());
+    }
+
+    let details = rejected
+        .iter()
+        .map(|item| {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let reason = item
+                .get("reason_code")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let detail = item
+                .get("detail")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if detail.is_empty() {
+                format!("{id}:{reason}")
+            } else {
+                format!("{id}:{reason}:{detail}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    anyhow::bail!(
+        "events batch submit was not fully accepted: status={status}, rejected=[{details}]"
+    );
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for `cx.typing` / `cx.presence`
@@ -4057,8 +4098,9 @@ mod tests {
             "cx:cell:cx.component.realm.create.v1:cx:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(create.effects[0].op.kind, "set");
-        // anchor_ref starts unset on the typed envelope; the submit
-        // path stamps the current snapshot head before going to the wire.
+        // anchor_ref starts unset on the typed envelope. Realm genesis
+        // has no snapshot head yet, so the create event relies on its
+        // `head_eq null` precondition instead of a prior anchor.
         assert!(create.anchor_ref.is_none());
         // The typed builder leaves the envelope unsigned — the active
         // signer attaches the detached JWS proof at submit time.
@@ -4074,6 +4116,30 @@ mod tests {
             "did:web:server.example"
         );
         assert_eq!(events[5].payload["membership"], "invite");
+    }
+
+    #[test]
+    fn events_batch_response_rejects_partial_acceptance() {
+        ensure_events_submit_batch_accepted(&json!({
+            "status": "accepted",
+            "accepted": ["cx:event:1"],
+            "rejected": []
+        }))
+        .expect("fully accepted batch should pass");
+
+        let err = ensure_events_submit_batch_accepted(&json!({
+            "status": "partial",
+            "accepted": ["cx:event:1"],
+            "rejected": [
+                {
+                    "id": "cx:event:2",
+                    "reason_code": "capability_denied",
+                    "detail": "actor is not a member"
+                }
+            ]
+        }))
+        .expect_err("partial batch must fail fast");
+        assert!(err.to_string().contains("capability_denied"));
     }
 
     /// Contract test: cx.space.create payload must satisfy spec

@@ -231,10 +231,11 @@ impl YougenEventSigner {
         let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
         let jws = format!("{header_b64}..{sig_b64}");
 
+        let verification_method = self.verification_method_for_event(event);
         event.proofs = vec![EventProof {
             kind: "detached_jws".to_owned(),
             alg: self.algorithm().to_owned(),
-            verification_method: self.verification_method.clone(),
+            verification_method,
             payload_hash,
             jws,
             // Canonical RFC3339 UTC (no fractional seconds) per
@@ -251,6 +252,15 @@ impl YougenEventSigner {
         }
         let _proof_type = Self::proof_type_tag();
         Ok(())
+    }
+
+    fn verification_method_for_event(&self, event: &EventEnvelope) -> String {
+        let actor_id = event.actor_id.trim();
+        if actor_id.is_empty() {
+            self.verification_method.clone()
+        } else {
+            format!("{actor_id}#device")
+        }
     }
 
     /// The [`ProofType`] tag every proof emitted by this signer carries.
@@ -485,6 +495,26 @@ mod tests {
         assert!(!parts[2].is_empty());
 
         assert!(signer.last_signed_at_snapshot().is_some());
+    }
+
+    #[test]
+    fn sign_envelope_roots_proof_in_event_actor() {
+        let _g = reset();
+        let signer = build_ed25519_signer([9u8; 32], "did:key:zlocal");
+
+        let prior_mode = current_proof_mode();
+        set_proof_mode(ProofMode::RealEd25519);
+        let mut event =
+            OperationBuilder::new("cx:space:t", "did:web:alice.example", "cx.message.create")
+                .body(json!({"body": "actor-rooted"}))
+                .build("test_node");
+        set_proof_mode(prior_mode);
+
+        signer.sign_envelope(&mut event).expect("sign");
+
+        let proof = event.proofs.first().expect("proof");
+        assert_eq!(proof.verification_method, "did:web:alice.example#device");
+        assert_eq!(event.actor_id, "did:web:alice.example");
     }
 
     #[test]
