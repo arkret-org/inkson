@@ -648,6 +648,17 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/api/v1/account/profile") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        did: "did:web:alice.example",
+        handle: "alice.example",
+        display_name: body.display_name ?? "yougen",
+        bio: body.bio ?? null,
+        avatar_url: body.avatar_url ?? null,
+      });
+    }
+
     if (url.pathname === "/api/v1/auth/logout") {
       return json(route, { ok: true });
     }

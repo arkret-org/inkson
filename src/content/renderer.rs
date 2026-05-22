@@ -98,7 +98,9 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
     };
 
     for line in trimmed.split('\n') {
-        if let Some(block) = parse_attachment_line(line) {
+        if let Some(block) =
+            parse_attachment_line(line).or_else(|| parse_markdown_blob_image_line(line))
+        {
             flush_text(&mut text_buf, &mut blocks);
             blocks.push(block);
         } else {
@@ -159,6 +161,29 @@ fn parse_attachment_line(line: &str) -> Option<ContentBlock> {
 
     let kind = classify_blob_ref(&blob_ref);
     Some(kind)
+}
+
+/// Recognise Markdown image lines emitted by rich editors when the image
+/// target is one of our authenticated blob refs:
+/// `![alt](cx:blob:sha256:...#image/png)`.
+fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
+    let line = line.trim();
+    if !line.starts_with("![") || !line.ends_with(')') {
+        return None;
+    }
+    let split = line.find("](")?;
+    let alt = line[2..split].trim().to_owned();
+    let blob_ref = line[split + 2..line.len() - 1].trim();
+    if !blob_ref.starts_with("cx:blob:") {
+        return None;
+    }
+    match classify_blob_ref(blob_ref) {
+        ContentBlock::Image { blob_ref, .. } => Some(ContentBlock::Image {
+            blob_ref,
+            alt: if alt.is_empty() { None } else { Some(alt) },
+        }),
+        other => Some(other),
+    }
 }
 
 /// Map a blob ref to a [`ContentBlock`] using the extension hint that
@@ -743,6 +768,19 @@ mod tests {
                 assert_eq!(blob_ref, "cx:blob:abc#image/png");
             }
             other => panic!("expected Image (from media-type hint), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_message_body_recognizes_markdown_blob_image() {
+        let blocks = parse_message_body("![Launch image](cx:blob:abc#image/png)");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::Image { blob_ref, alt } => {
+                assert_eq!(blob_ref, "cx:blob:abc#image/png");
+                assert_eq!(alt.as_deref(), Some("Launch image"));
+            }
+            other => panic!("expected Image (from markdown blob image), got {other:?}"),
         }
     }
 

@@ -745,6 +745,17 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.upload", "Upload new avatar");
     dict.set("settings.avatar.clear", "Remove avatar");
     dict.set("settings.avatar.uploading", "Uploading avatar…");
+    dict.set("settings.avatar.processing", "Preparing avatar…");
+    dict.set("settings.avatar.crop_ready", "Adjust crop, then upload.");
+    dict.set(
+        "settings.avatar.invalid_image",
+        "Selected file is not an image.",
+    );
+    dict.set("settings.avatar.upload_cropped", "Upload cropped avatar");
+    dict.set("settings.avatar.cancel_crop", "Cancel crop");
+    dict.set("settings.avatar.zoom", "Zoom");
+    dict.set("settings.avatar.pan_x", "Horizontal");
+    dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
     // A6.1 — global cross-space message search.
     dict.set("search.title", "Search messages");
@@ -1416,6 +1427,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.avatar.upload", "上传新头像");
     dict.set("settings.avatar.clear", "清除头像");
     dict.set("settings.avatar.uploading", "上传中…");
+    dict.set("settings.avatar.processing", "正在准备头像…");
+    dict.set("settings.avatar.crop_ready", "调整裁剪后上传。");
+    dict.set("settings.avatar.invalid_image", "所选文件不是图片。");
+    dict.set("settings.avatar.upload_cropped", "上传裁剪后的头像");
+    dict.set("settings.avatar.cancel_crop", "取消裁剪");
+    dict.set("settings.avatar.zoom", "缩放");
+    dict.set("settings.avatar.pan_x", "水平");
+    dict.set("settings.avatar.pan_y", "垂直");
     dict.set("settings.avatar.error", "头像上传失败");
     // A6.1 — 全局跨空间消息搜索。
     dict.set("search.title", "搜索消息");

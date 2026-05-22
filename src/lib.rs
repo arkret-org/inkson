@@ -7,6 +7,7 @@ pub mod audit;
 /// `crate::dpop` (the pure JWS builder) and persists the key + JKT via
 /// `LocalStateStore::dpop_device_key`.
 pub mod auth_dpop;
+pub mod avatar_crop;
 pub mod blob;
 pub mod canonical;
 pub mod capability;

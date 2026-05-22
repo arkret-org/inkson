@@ -734,7 +734,8 @@ impl ContrixApi {
 
     /// A4b — resolve a `cx:blob:sha256:<hex>` reference to its
     /// authenticated download URL on this Principal Server. Returns the
-    /// `<base>/api/v1/blob/get?blob_ref=<…>` shape that soland's
+    /// `<base>/api/v1/blob/get?blob_ref=<…>&purpose=profile_avatar`
+    /// shape that soland's
     /// `/blob/get` handler answers — callers can plug this directly
     /// into `<img src=…>` or `cx.account.update_profile { avatar_url }`.
     pub fn blob_download_url(&self, blob_ref: &str) -> String {
@@ -1610,9 +1611,9 @@ impl ContrixApi {
     }
 
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
-        let request = self
-            .http
-            .get(self.endpoint(&format!("api/v1/blob/get?blob_ref={blob_ref}"))?);
+        let request = self.http.get(self.endpoint(&format!(
+            "api/v1/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
+        ))?);
         self.send_bytes(self.prepare_request(request), Method::GET)
             .await
     }
@@ -2907,7 +2908,7 @@ impl BlobPresignError {
 /// [`ContrixApi::blob_download_url`].
 pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    format!("{base}/api/v1/blob/get?blob_ref={blob_ref}")
+    format!("{base}/api/v1/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
 }
 
 #[allow(clippy::too_many_arguments)]

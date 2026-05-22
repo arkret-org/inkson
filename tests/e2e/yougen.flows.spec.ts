@@ -304,6 +304,41 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
 });
 
+test("settings avatar upload crops local image before publishing profile URL", async ({ page }) => {
+  await openSettings(page);
+  await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
+
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAYAAADN5B7xAAAAy0lEQVR4nBXLIRXEMBBAwRURHBwRK6I4OCJWRHFwRXwRxcH18u/d8IkIbIEjMAOvwBVYgXfgE0jgG/gFRnRsHUfH7Hh1XB2r493x6UjHt+PX/yGxJY7ETLwSV2Il3olPIolv4pf/MLFNHBNz4jVxTayJ98RnIhPfid/8h8JWOAqz8CpchVV4Fz6FFL6FX/3DxrZxbMyN18a1sTbeG5+NbHw3fvsfwAYOMMELXGCBN/iAgC/48Q8H28FxMA9eB9fBOngffA5y8D34HfwBl3vzwZTfUBgAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.getByTestId("settings-avatar-input").setInputFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: png,
+  });
+
+  await expect(page.getByTestId("settings-avatar-crop-editor")).toBeVisible();
+  await page.getByTestId("settings-avatar-crop-zoom").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "150";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
+  const profileRequest = page.waitForRequest("**/api/v1/account/profile");
+  await page.getByTestId("settings-avatar-upload-cropped").click();
+
+  const upload = await uploadRequest;
+  expect(upload.headers()["content-type"]).toContain("image/jpeg");
+  expect(upload.postDataBuffer()?.length ?? 0).toBeGreaterThan(100);
+
+  const profileBody = await profileRequest.then((request) => request.postDataJSON());
+  expect(profileBody.avatar_url).toContain("blob_ref=cx:blob:sha256:e2e");
+  expect(profileBody.avatar_url).toContain("purpose=profile_avatar");
+  await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
+});
+
 test("light theme renders the sidebar with light navigation colors", async ({ page }) => {
   await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();
@@ -346,6 +381,20 @@ test("kanban card detail exposes linked discussion and locked discussion boundar
   await expect(detailPopup).toContainText("Locked discussion");
   await expect(detailPopup).toContainText("card visibility != discussion visibility");
   await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
+  const popupBox = await detailPopup.boundingBox();
+  if (!popupBox) {
+    throw new Error("card detail modal bounding box was unavailable");
+  }
+  await page.mouse.move(popupBox.x + popupBox.width / 2, popupBox.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(12, 12, { steps: 4 });
+  await page.mouse.up();
+  await expect(detailPopup).toBeVisible();
+  await page.mouse.click(12, 12);
+  await expect(detailPopup).toHaveCount(0);
+
+  await page.getByTestId("kanban-card").first().click();
+  await expect(detailPopup).toBeVisible();
   await page.getByTestId("card-detail-close-button").click();
   await expect(detailPopup).toHaveCount(0);
 });
@@ -409,6 +458,10 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   await expect(page.getByTestId("board-status")).toContainText(
     /replay not available|no queued write to replay/,
   );
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.getByTestId("kanban-board-grid")).toContainText("Move-backed card");
 });
 
 test("kanban board selector swaps projected board columns", async ({ page }) => {

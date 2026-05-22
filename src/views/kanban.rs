@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
 
 use crate::{
     components::{EmptyState, EmptyStateKind, UiIcon},
     hlc::Hlc,
-    local_state::{LocalStateStore, MoveSubmissionState},
+    local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord},
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
@@ -31,6 +32,8 @@ const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 /// enough to feel "live", long enough that a single user's tab
 /// doesn't hammer the server.
 const KANBAN_LIVE_POLL_SECONDS: u64 = 5;
+
+const LOCAL_PENDING_CARD_DESCRIPTION: &str = "New local card waiting for reducer receipt.";
 
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanColumn {
@@ -158,6 +161,208 @@ enum CardDetailTrack {
     #[default]
     Synthesis,
     Discussion,
+}
+
+const TOAST_EDITOR_SCRIPT_URL: &str =
+    "https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js";
+const TOAST_EDITOR_CSS_URL: &str = "https://uicdn.toast.com/editor/latest/toastui-editor.min.css";
+
+#[component]
+fn CardMarkdownEditor(
+    value: String,
+    base_url: String,
+    token: String,
+    on_change: EventHandler<String>,
+) -> Element {
+    let host_id = "card-detail-description-toast-editor".to_owned();
+    let fallback_id = "card-detail-description-input".to_owned();
+
+    use_effect({
+        let host_id = host_id.clone();
+        let fallback_id = fallback_id.clone();
+        let value = value.clone();
+        let base_url = base_url.clone();
+        let token = token.clone();
+        move || {
+            if let Some(script) =
+                toast_editor_bootstrap_script(&host_id, &fallback_id, &value, &base_url, &token)
+            {
+                let _ = document::eval(&script);
+            }
+        }
+    });
+
+    rsx! {
+        div { class: "card-rich-editor",
+            div {
+                id: "{host_id}",
+                class: "card-rich-editor-host",
+                "data-testid": "card-detail-description-rich-editor",
+            }
+            textarea {
+                id: "{fallback_id}",
+                class: "textarea card-rich-editor-fallback",
+                "data-testid": "card-detail-description-input",
+                value: "{value}",
+                maxlength: "8192",
+                oninput: move |evt| on_change.call(evt.value()),
+            }
+            div { class: "muted card-rich-editor-hint", "Markdown supported. Images upload as authenticated blobs." }
+        }
+    }
+}
+
+fn toast_editor_bootstrap_script(
+    host_id: &str,
+    fallback_id: &str,
+    value: &str,
+    base_url: &str,
+    token: &str,
+) -> Option<String> {
+    let config = serde_json::to_string(&json!({
+        "hostId": host_id,
+        "fallbackId": fallback_id,
+        "value": value,
+        "baseUrl": base_url,
+        "token": token,
+        "scriptUrl": TOAST_EDITOR_SCRIPT_URL,
+        "cssUrl": TOAST_EDITOR_CSS_URL,
+    }))
+    .ok()?;
+    Some(format!(
+        r##"(async () => {{
+    const config = {config};
+    const host = document.getElementById(config.hostId);
+    const fallback = document.getElementById(config.fallbackId);
+    if (!host || !fallback) {{
+        return;
+    }}
+
+    const registry = window.__yougenToastEditors || (window.__yougenToastEditors = new Map());
+    const existing = registry.get(config.hostId);
+    if (existing && host.childElementCount > 0) {{
+        return;
+    }}
+
+    if (!window.__yougenLoadToastEditor) {{
+        window.__yougenLoadToastEditor = () => new Promise((resolve, reject) => {{
+            const cssId = "yougen-toast-editor-css";
+            if (!document.getElementById(cssId)) {{
+                const link = document.createElement("link");
+                link.id = cssId;
+                link.rel = "stylesheet";
+                link.href = config.cssUrl;
+                document.head.appendChild(link);
+            }}
+
+            if (window.toastui && window.toastui.Editor) {{
+                resolve();
+                return;
+            }}
+
+            const scriptId = "yougen-toast-editor-script";
+            const loadedScript = document.getElementById(scriptId);
+            if (loadedScript) {{
+                loadedScript.addEventListener("load", () => resolve(), {{ once: true }});
+                loadedScript.addEventListener("error", () => reject(new Error("Toast UI Editor failed to load")), {{ once: true }});
+                return;
+            }}
+
+            const script = document.createElement("script");
+            script.id = scriptId;
+            script.src = config.scriptUrl;
+            script.async = true;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error("Toast UI Editor failed to load"));
+            document.head.appendChild(script);
+        }});
+    }}
+
+    try {{
+        await window.__yougenLoadToastEditor();
+    }} catch (error) {{
+        console.warn("[yougen] Toast UI Editor unavailable; using textarea fallback", error);
+        fallback.classList.remove("toast-fallback-hidden");
+        return;
+    }}
+
+    if (!window.toastui || !window.toastui.Editor) {{
+        fallback.classList.remove("toast-fallback-hidden");
+        return;
+    }}
+
+    if (existing) {{
+        try {{ existing.destroy(); }} catch (_) {{}}
+        registry.delete(config.hostId);
+    }}
+
+    host.innerHTML = "";
+    fallback.classList.add("toast-fallback-hidden");
+
+    const sync = (editor) => {{
+        fallback.value = editor.getMarkdown();
+        fallback.dispatchEvent(new InputEvent("input", {{
+            bubbles: true,
+            inputType: "insertText",
+            data: null
+        }}));
+    }};
+
+    const uploadImage = async (blob, callback) => {{
+        try {{
+            const base = (config.baseUrl || window.location.origin).replace(/\/+$/, "");
+            const headers = {{
+                "content-type": blob.type || "application/octet-stream"
+            }};
+            if (config.token) {{
+                headers.authorization = `Bearer ${{config.token}}`;
+            }}
+            const response = await fetch(`${{base}}/api/v1/blob/upload`, {{
+                method: "POST",
+                headers,
+                body: blob
+            }});
+            if (!response.ok) {{
+                throw new Error(`upload failed: ${{response.status}}`);
+            }}
+            const body = await response.json();
+            const blobRef = body.blob_ref || body.blobRef || body.blob_id;
+            if (!blobRef) {{
+                throw new Error("upload response missing blob_ref");
+            }}
+            const mediaType = blob.type || body.media_type || "image/png";
+            const markdownTarget = blobRef.includes("#") ? blobRef : `${{blobRef}}#${{mediaType}}`;
+            callback(markdownTarget, blob.name || "image");
+        }} catch (error) {{
+            console.warn("[yougen] image upload failed", error);
+            window.alert("Image upload failed.");
+        }}
+        return false;
+    }};
+
+    const editor = new window.toastui.Editor({{
+        el: host,
+        height: "320px",
+        initialEditType: "wysiwyg",
+        previewStyle: "vertical",
+        initialValue: config.value || "",
+        usageStatistics: false,
+        toolbarItems: [
+            ["heading", "bold", "italic", "strike"],
+            ["hr", "quote"],
+            ["ul", "ol", "task"],
+            ["table", "image", "link"],
+            ["code", "codeblock"]
+        ],
+        hooks: {{
+            addImageBlobHook: uploadImage
+        }}
+    }});
+
+    editor.on("change", () => sync(editor));
+    registry.set(config.hostId, editor);
+}})();"##
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -572,15 +777,19 @@ fn columns_from_lifecycle_projection(
     }
 
     for column in &mut cols {
-        column.cards.sort_by(|left, right| {
-            left.rank
-                .cmp(&right.rank)
-                .then(left.title.cmp(&right.title))
-                .then(left.id.cmp(&right.id))
-        });
+        sort_kanban_cards(&mut column.cards);
     }
 
     (cols, board_options, Some(board_id))
+}
+
+fn sort_kanban_cards(cards: &mut [KanbanCard]) {
+    cards.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then(left.title.cmp(&right.title))
+            .then(left.id.cmp(&right.id))
+    });
 }
 
 fn flow_projection_field_string(
@@ -675,6 +884,165 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LocalCardCreate {
+    board_space_id: String,
+    list_space_id: String,
+    card: KanbanCard,
+}
+
+fn local_created_card(
+    flow_id: String,
+    title: String,
+    rank: String,
+    description: String,
+) -> KanbanCard {
+    KanbanCard {
+        id: flow_id,
+        rank,
+        title,
+        description,
+        labels: vec!["draft".to_owned()],
+        assignee: "yougen".to_owned(),
+        due: "unscheduled".to_owned(),
+        primary_flow_id: "cx:flow:launch-discussion".to_owned(),
+        primary_flow: "Launch discussion".to_owned(),
+        linked_flows: vec![FlowLink {
+            flow_id: "cx:flow:launch-discussion".to_owned(),
+            name: "Launch board discussion".to_owned(),
+            access_state: DiscussionAccessState::Readable,
+        }],
+        locked_flow: None,
+        external_visibility: "Not shared externally".to_owned(),
+        history_visibility: "board default".to_owned(),
+        activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
+        audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
+        state: CardState::Queued,
+        lifecycle: FlowLifecycleState::Active,
+    }
+}
+
+fn overlay_local_card_creates(
+    columns: Vec<KanbanColumn>,
+    state_store: &LocalStateStore,
+    board_space_id: &str,
+) -> Vec<KanbanColumn> {
+    let state = state_store.load();
+    overlay_local_card_create_records(columns, &state.raw_operations, board_space_id)
+}
+
+fn overlay_local_card_create_records(
+    mut columns: Vec<KanbanColumn>,
+    raw_operations: &[RawOperationRecord],
+    board_space_id: &str,
+) -> Vec<KanbanColumn> {
+    let board_space_id = board_space_id.trim();
+    if board_space_id.is_empty() {
+        return columns;
+    }
+
+    let mut existing_card_ids = columns
+        .iter()
+        .flat_map(|column| column.cards.iter().map(|card| card.id.clone()))
+        .collect::<BTreeSet<_>>();
+    for local_create in raw_operations
+        .iter()
+        .filter_map(local_card_create_from_raw_operation)
+    {
+        if local_create.board_space_id != board_space_id {
+            continue;
+        }
+        if existing_card_ids.contains(&local_create.card.id) {
+            continue;
+        }
+        let Some(column) = columns
+            .iter_mut()
+            .find(|column| column.id == local_create.list_space_id)
+        else {
+            continue;
+        };
+        existing_card_ids.insert(local_create.card.id.clone());
+        column.cards.push(local_create.card);
+        sort_kanban_cards(&mut column.cards);
+    }
+
+    columns
+}
+
+fn local_card_create_from_raw_operation(record: &RawOperationRecord) -> Option<LocalCardCreate> {
+    let payload = &record.payload;
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    if kind != "cx.flow.create" {
+        return None;
+    }
+    let write_state =
+        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
+    if matches!(
+        write_state.as_str(),
+        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
+    ) {
+        return None;
+    }
+
+    let effect = payload.get("effect");
+    let body = payload.get("body").or_else(|| payload.get("payload"));
+    let position_component = flow_position_component(body);
+    let flow_id = json_path_string(effect, &["flow_id"])
+        .or_else(|| json_path_string(body, &["flow_id"]))
+        .or_else(|| json_path_string(body, &["object", "id"]))?;
+    let board_space_id = json_path_string(effect, &["board_space_id"])
+        .or_else(|| json_path_string(position_component, &["board_space_id"]))
+        .or_else(|| json_path_string(body, &["object", "fields", "board_space_id"]))
+        .or_else(|| json_path_string(body, &["fields", "board_space_id"]))?;
+    let list_space_id = json_path_string(effect, &["list_space_id"])
+        .or_else(|| json_path_string(position_component, &["list_space_id"]))
+        .or_else(|| json_path_string(body, &["object", "fields", "list_space_id"]))
+        .or_else(|| json_path_string(body, &["fields", "list_space_id"]))?;
+    let title = json_path_string(effect, &["title"])
+        .or_else(|| json_path_string(body, &["object", "title"]))
+        .or_else(|| json_path_string(body, &["title"]))
+        .unwrap_or_else(|| flow_id.clone());
+    let rank = json_path_string(effect, &["rank"])
+        .or_else(|| json_path_string(position_component, &["rank"]))
+        .or_else(|| json_path_string(body, &["object", "fields", "rank"]))
+        .or_else(|| json_path_string(body, &["rank"]))
+        .unwrap_or_else(|| "U".to_owned());
+    let description = json_path_string(effect, &["description"])
+        .or_else(|| json_path_string(effect, &["summary"]))
+        .or_else(|| json_path_string(body, &["object", "summary"]))
+        .or_else(|| json_path_string(body, &["summary"]))
+        .unwrap_or_else(|| LOCAL_PENDING_CARD_DESCRIPTION.to_owned());
+
+    Some(LocalCardCreate {
+        board_space_id,
+        list_space_id,
+        card: local_created_card(flow_id, title, rank, description),
+    })
+}
+
+fn flow_position_component(body: Option<&Value>) -> Option<&Value> {
+    body?
+        .get("components")?
+        .as_array()?
+        .iter()
+        .find(|component| {
+            component.get("family").and_then(Value::as_str) == Some("cx.component.flow.position.v1")
+        })
+}
+
+fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
+    let mut current = value?;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 #[component]
 pub fn KanbanPanel(
     base_url: String,
@@ -710,6 +1078,10 @@ pub fn KanbanPanel(
         .first()
         .map(|option| option.id.clone())
         .unwrap_or_default();
+    let initial_columns = {
+        let store = state_store.read();
+        overlay_local_card_creates(initial_columns, &store, &initial_board_space_id)
+    };
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
@@ -732,6 +1104,8 @@ pub fn KanbanPanel(
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
     let mut card_detail_track = use_signal(CardDetailTrack::default);
+    let mut card_detail_overlay_press_started = use_signal(|| false);
+    let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
     let mut card_edit_labels = use_signal(String::new);
@@ -799,7 +1173,11 @@ pub fn KanbanPanel(
             .await
             {
                 Ok(projection) => {
-                    let cols = collection_projection_to_columns(&projection);
+                    let cols = overlay_local_card_creates(
+                        collection_projection_to_columns(&projection),
+                        &state_store.read(),
+                        &selected_board_space_id(),
+                    );
                     if !cols.is_empty() {
                         columns.set(cols);
                     }
@@ -862,7 +1240,11 @@ pub fn KanbanPanel(
                     })
                     .await
                     {
-                        let cols = collection_projection_to_columns(&projection);
+                        let cols = overlay_local_card_creates(
+                            collection_projection_to_columns(&projection),
+                            &state_store.read(),
+                            &selected_board_space_id(),
+                        );
                         // Only overwrite when the server actually
                         // returned a non-empty projection — an empty
                         // response shouldn't wipe a locally-queued
@@ -934,7 +1316,13 @@ pub fn KanbanPanel(
                     if !options.is_empty() {
                         board_space_options.set(options);
                     }
+                    let board_id_for_overlay = board_id.clone();
                     selected_board_space_id.set(board_id);
+                    let projected_columns = overlay_local_card_creates(
+                        projected_columns,
+                        &state_store.read(),
+                        &board_id_for_overlay,
+                    );
                     let list_count = projected_columns.len();
                     let card_count = projected_columns
                         .iter()
@@ -1038,6 +1426,11 @@ pub fn KanbanPanel(
                                     board_space_options.set(options);
                                 }
                                 if projected_board_id.as_deref() == Some(board_id.as_str()) {
+                                    let projected_columns = overlay_local_card_creates(
+                                        projected_columns,
+                                        &state_store.read(),
+                                        &board_id,
+                                    );
                                     let list_count = projected_columns.len();
                                     let card_count = projected_columns
                                         .iter()
@@ -1203,7 +1596,11 @@ pub fn KanbanPanel(
                                                     .await
                                                     {
                                                         Ok(projection) => {
-                                                            let cols = collection_projection_to_columns(&projection);
+                                                            let cols = overlay_local_card_creates(
+                                                                collection_projection_to_columns(&projection),
+                                                                &state_store.read(),
+                                                                &selected_board_space_id(),
+                                                            );
                                                             if !cols.is_empty() {
                                                                 columns.set(cols);
                                                             }
@@ -1216,7 +1613,12 @@ pub fn KanbanPanel(
                                                         }
                                                         Err(err) => {
                                                             if seed_fallback_allowed {
-                                                                columns.set(seed_columns());
+                                                                let cols = overlay_local_card_creates(
+                                                                    seed_columns(),
+                                                                    &state_store.read(),
+                                                                    &selected_board_space_id(),
+                                                                );
+                                                                columns.set(cols);
                                                                 projection_source.set(BoardProjectionSource::SeedFallback);
                                                                 board_status.set(format!(
                                                                     "Board data unavailable: {}; showing sample fallback",
@@ -1663,6 +2065,8 @@ pub fn KanbanPanel(
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
                                         card_detail_track.set(CardDetailTrack::Synthesis);
+                                        card_detail_overlay_press_started.set(false);
+                                        card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
                                     }
                                 },
@@ -1782,29 +2186,12 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
-                                                let card = KanbanCard {
-                                                    id: flow_id.clone(),
-                                                    rank: rank.clone(),
-                                                    title: title.clone(),
-                                                    description: "New local card waiting for reducer receipt.".to_owned(),
-                                                    labels: vec!["draft".to_owned()],
-                                                    assignee: "yougen".to_owned(),
-                                                    due: "unscheduled".to_owned(),
-                                                    primary_flow_id: "cx:flow:launch-discussion".to_owned(),
-                                                    primary_flow: "Launch discussion".to_owned(),
-                                                    linked_flows: vec![FlowLink {
-                                                        flow_id: "cx:flow:launch-discussion".to_owned(),
-                                                        name: "Launch board discussion".to_owned(),
-                                                        access_state: DiscussionAccessState::Readable,
-                                                    }],
-                                                    locked_flow: None,
-                                                    external_visibility: "Not shared externally".to_owned(),
-                                                    history_visibility: "board default".to_owned(),
-                                                    activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
-                                                    audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
-                                                    state: CardState::Queued,
-                                                    lifecycle: FlowLifecycleState::Active,
-                                                };
+                                                let card = local_created_card(
+                                                    flow_id.clone(),
+                                                    title.clone(),
+                                                    rank.clone(),
+                                                    LOCAL_PENDING_CARD_DESCRIPTION.to_owned(),
+                                                );
                                                 if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {
                                                     col.cards.push(card);
                                                 }
@@ -2048,15 +2435,37 @@ pub fn KanbanPanel(
                             class: "card-detail-overlay",
                             "data-testid": "card-detail-overlay",
                             role: "presentation",
+                            onmousedown: move |_| {
+                                card_detail_overlay_press_started.set(true);
+                                card_detail_overlay_press_ended.set(false);
+                            },
+                            onmouseup: move |_| {
+                                card_detail_overlay_press_ended.set(true);
+                            },
                             onclick: move |_| {
-                                selected_card.set(None);
-                                editing_card_detail.set(false);
+                                if card_detail_overlay_press_started()
+                                    && card_detail_overlay_press_ended()
+                                {
+                                    selected_card.set(None);
+                                    editing_card_detail.set(false);
+                                }
+                                card_detail_overlay_press_started.set(false);
+                                card_detail_overlay_press_ended.set(false);
                             },
                             div {
                                 class: "card-detail-popup",
                                 "data-testid": "card-detail-modal",
                                 role: "dialog",
                                 "aria-modal": "true",
+                                onmousedown: move |event: dioxus::events::MouseEvent| {
+                                    card_detail_overlay_press_started.set(false);
+                                    card_detail_overlay_press_ended.set(false);
+                                    event.stop_propagation();
+                                },
+                                onmouseup: move |event: dioxus::events::MouseEvent| {
+                                    card_detail_overlay_press_ended.set(false);
+                                    event.stop_propagation();
+                                },
                                 onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                 div { class: "card-detail-header",
                                     div { class: "card-detail-title-block",
@@ -2099,12 +2508,11 @@ pub fn KanbanPanel(
                                         }
                                         div { class: "field",
                                             label { "Description" }
-                                            textarea {
-                                                class: "textarea",
-                                                "data-testid": "card-detail-description-input",
-                                                value: "{card_edit_description}",
-                                                maxlength: "2048",
-                                                oninput: move |evt| card_edit_description.set(evt.value()),
+                                            CardMarkdownEditor {
+                                                value: card_edit_description(),
+                                                base_url: base_url.clone(),
+                                                token: token(),
+                                                on_change: move |value| card_edit_description.set(value),
                                             }
                                         }
                                         div { class: "card-detail-edit-grid",
@@ -2224,7 +2632,11 @@ pub fn KanbanPanel(
                                                 if card.description.trim().is_empty() {
                                                     div { class: "card-detail-empty", "No description" }
                                                 } else {
-                                                    p { class: "card-detail-description", "{card.description}" }
+                                                    div { class: "card-detail-description",
+                                                        {crate::content::render_blocks(
+                                                            &crate::content::parse_message_body(&card.description),
+                                                        )}
+                                                    }
                                                 }
                                             }
 
@@ -4187,6 +4599,69 @@ mod tests {
         assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
         assert_eq!(card.assignee, "Alice");
         assert_eq!(card.due, "2026-05-22");
+    }
+
+    #[test]
+    fn local_flow_create_overlay_restores_card_until_projection_catches_up() {
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let list_id = "cx:space:0196419b-0000-7000-8000-000000000002";
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000003";
+        let raw_operations = vec![RawOperationRecord {
+            operation_id: "sha256:local-create".to_owned(),
+            space_id: Some("cx:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "cx.flow.create",
+                "operation_id": "sha256:local-create",
+                "effect": {
+                    "flow_id": flow_id,
+                    "board_space_id": board_id,
+                    "list_space_id": list_id,
+                    "title": "Refresh-surviving card",
+                    "rank": "U",
+                    "flow_kind": "card"
+                },
+                "write_state": "queued"
+            }),
+        }];
+        let projected_columns = vec![KanbanColumn {
+            id: list_id.to_owned(),
+            title: "Todo".to_owned(),
+            rank: "U".to_owned(),
+            cards: Vec::new(),
+            state: SpaceContainerLifecycleState::Active,
+        }];
+
+        let overlaid =
+            overlay_local_card_create_records(projected_columns.clone(), &raw_operations, board_id);
+        assert_eq!(overlaid[0].cards.len(), 1);
+        assert_eq!(overlaid[0].cards[0].id, flow_id);
+        assert_eq!(overlaid[0].cards[0].title, "Refresh-surviving card");
+        assert_eq!(overlaid[0].cards[0].state, CardState::Queued);
+
+        let overlaid_again =
+            overlay_local_card_create_records(overlaid.clone(), &raw_operations, board_id);
+        assert_eq!(
+            overlaid_again[0].cards.len(),
+            1,
+            "overlay must be idempotent across repeated projection refreshes"
+        );
+
+        let mut projected_with_server_card = projected_columns;
+        projected_with_server_card[0]
+            .cards
+            .push(test_card(flow_id, "U"));
+        let de_duped = overlay_local_card_create_records(
+            projected_with_server_card,
+            &raw_operations,
+            board_id,
+        );
+        assert_eq!(
+            de_duped[0].cards.len(),
+            1,
+            "server projection wins once the reducer has materialized the card"
+        );
+        assert_eq!(de_duped[0].cards[0].state, CardState::Synced);
     }
 
     #[test]

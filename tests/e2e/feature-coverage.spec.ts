@@ -94,6 +94,9 @@ test.describe("feature coverage placeholders", () => {
     await expect(tabs).toBeVisible();
     await expect(tabs).toContainText("synthesis");
     await expect(tabs).toContainText("discussion");
+    await drawer.getByTestId("card-detail-edit-button").click();
+    await expect(drawer.getByTestId("card-detail-description-rich-editor")).toBeVisible();
+    await expect(drawer.getByTestId("card-detail-description-input")).toBeAttached();
   });
 
   // ---- Identity / Device — three independent concerns ----

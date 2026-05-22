@@ -1093,6 +1093,62 @@ body {
   overflow: auto;
   padding: 22px 24px 28px;
 }
+.card-rich-editor {
+  display: grid;
+  gap: 8px;
+}
+.card-rich-editor-host {
+  min-height: 320px;
+}
+.card-rich-editor-fallback {
+  min-height: 220px;
+  resize: vertical;
+}
+.card-rich-editor-fallback.toast-fallback-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.card-rich-editor-hint {
+  font-size: 12px;
+}
+.card-rich-editor .toastui-editor-defaultUI {
+  overflow: hidden;
+  border-color: var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface, var(--cx-surface));
+  color: var(--text, var(--cx-ink));
+}
+.card-rich-editor .toastui-editor-toolbar,
+.card-rich-editor .toastui-editor-defaultUI-toolbar,
+.card-rich-editor .toastui-editor-mode-switch {
+  background: var(--surface-2, var(--cx-surface));
+  border-color: var(--border, var(--cx-line));
+}
+.card-rich-editor .toastui-editor-md-container,
+.card-rich-editor .toastui-editor-ww-container,
+.card-rich-editor .toastui-editor-contents,
+.card-rich-editor .ProseMirror {
+  background: var(--surface, var(--cx-surface));
+  color: var(--text, var(--cx-ink));
+}
+.card-rich-editor .toastui-editor-contents p,
+.card-rich-editor .toastui-editor-contents li,
+.card-rich-editor .toastui-editor-contents table,
+.card-rich-editor .toastui-editor-md-preview,
+.card-rich-editor .toastui-editor-md-splitter,
+.card-rich-editor .toastui-editor-md-code {
+  color: var(--text, var(--cx-ink));
+}
+.card-rich-editor .toastui-editor-defaultUI button {
+  min-height: 0;
+  box-shadow: none;
+}
 .card-detail-edit-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

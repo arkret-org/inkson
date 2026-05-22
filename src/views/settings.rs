@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use dioxus::prelude::*;
 use dioxus_router::{Link, hooks::use_route};
 use serde_json::json;
@@ -30,6 +31,23 @@ pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 /// `cx.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
 pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "cx.account.blocklist";
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingAvatarCrop {
+    bytes: Vec<u8>,
+    media_type: String,
+    preview_data_url: String,
+    dimensions: (u32, u32),
+}
+
+fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
+    let media_type = if media_type.trim().is_empty() {
+        "application/octet-stream"
+    } else {
+        media_type
+    };
+    format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
+}
 
 /// A4a — push the current `client.ui` payload (theme + sidebar
 /// collapsed) to soland's `cx.account_data.set` endpoint so other
@@ -600,6 +618,10 @@ pub fn SettingsPanel(
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
     let mut avatar_cache_status = use_signal(String::new);
+    let mut pending_avatar_crop = use_signal(|| None::<PendingAvatarCrop>);
+    let mut avatar_crop_zoom = use_signal(|| 125_i32);
+    let mut avatar_crop_x = use_signal(|| 0_i32);
+    let mut avatar_crop_y = use_signal(|| 0_i32);
     let mut blocklist_snapshot = use_signal(|| state_store.read().client_blocklist());
     let mut blocklist_did_input = use_signal(String::new);
     let mut blocklist_reason_input = use_signal(String::new);
@@ -891,8 +913,6 @@ pub fn SettingsPanel(
                                             // via the blob endpoint + publish the
                                             // resulting blob URL to the profile.
                                             onchange: {
-                                                let base = base_url();
-                                                let api_token = token();
                                                 move |evt: Event<FormData>| {
                                                     let files = evt.files();
                                                     if files.is_empty() {
@@ -905,10 +925,8 @@ pub fn SettingsPanel(
                                                     let content_type = file
                                                         .content_type()
                                                         .unwrap_or_else(|| "application/octet-stream".to_owned());
-                                                    let base = base.clone();
-                                                    let api_token = api_token.clone();
                                                     avatar_upload_status.set(
-                                                        crate::i18n::tr("settings.avatar.uploading"),
+                                                        crate::i18n::tr("settings.avatar.processing"),
                                                     );
                                                     spawn(async move {
                                                         let bytes = match file.read_bytes().await {
@@ -921,8 +939,16 @@ pub fn SettingsPanel(
                                                                 return;
                                                             }
                                                         };
-                                                        let api = match crate::views::helpers::authed_api(&base, api_token.clone()) {
-                                                            Ok(api) => api,
+                                                        if !content_type.starts_with("image/") {
+                                                            avatar_upload_status.set(format!(
+                                                                "{}: {}",
+                                                                crate::i18n::tr("settings.avatar.error"),
+                                                                crate::i18n::tr("settings.avatar.invalid_image"),
+                                                            ));
+                                                            return;
+                                                        }
+                                                        let dimensions = match crate::avatar_crop::image_dimensions(&bytes) {
+                                                            Ok(dimensions) => dimensions,
                                                             Err(err) => {
                                                                 avatar_upload_status.set(format!(
                                                                     "{}: {err}",
@@ -931,58 +957,201 @@ pub fn SettingsPanel(
                                                                 return;
                                                             }
                                                         };
-                                                        match api.upload_blob_bytes(bytes, &content_type).await {
-                                                            Ok(resp) => {
-                                                                let blob_ref = resp.blob_ref.clone();
-                                                                let avatar_url = api.blob_download_url(&blob_ref);
-                                                                // 1) Mirror locally + push actor-private
-                                                                //    `client.ui.avatar_blob_ref` so other
-                                                                //    devices pick up the same upload.
-                                                                profile_avatar_blob_ref.set(blob_ref.clone());
-                                                                state_store.write().save_private_data(
-                                                                    &account_did(),
-                                                                    "avatar_blob_ref",
-                                                                    blob_ref.clone(),
-                                                                );
-                                                                push_client_ui_account_data_with_avatar(
-                                                                    base.clone(),
-                                                                    api_token.clone(),
-                                                                    theme(),
-                                                                    Some(blob_ref.clone()),
-                                                                );
-                                                                // 2) Publish publicly via
-                                                                //    `cx.account.update_profile`.
-                                                                //    Best-effort: log on failure but
-                                                                //    keep the local cache intact.
-                                                                match api
-                                                                    .update_profile(None, None, Some(&avatar_url))
-                                                                    .await
-                                                                {
-                                                                    Ok(_) => {
-                                                                        avatar_upload_status.set(String::new());
-                                                                        status.set(format!(
-                                                                            "Avatar updated ({blob_ref})"
-                                                                        ));
-                                                                    }
-                                                                    Err(err) => {
-                                                                        avatar_upload_status.set(format!(
-                                                                            "{}: {}",
-                                                                            crate::i18n::tr("settings.avatar.error"),
-                                                                            err,
-                                                                        ));
-                                                                    }
-                                                                }
-                                                            }
-                                                            Err(err) => {
-                                                                avatar_upload_status.set(format!(
-                                                                    "{}: {err}",
-                                                                    crate::i18n::tr("settings.avatar.error"),
-                                                                ));
-                                                            }
-                                                        }
+                                                        let preview_data_url = avatar_preview_data_url(&bytes, &content_type);
+                                                        pending_avatar_crop.set(Some(PendingAvatarCrop {
+                                                            bytes,
+                                                            media_type: content_type,
+                                                            preview_data_url,
+                                                            dimensions,
+                                                        }));
+                                                        avatar_crop_zoom.set(125);
+                                                        avatar_crop_x.set(0);
+                                                        avatar_crop_y.set(0);
+                                                        avatar_upload_status.set(
+                                                            crate::i18n::tr("settings.avatar.crop_ready"),
+                                                        );
                                                     });
                                                 }
                                             },
+                                        }
+                                        if let Some(selection) = pending_avatar_crop.read().clone() {
+                                            div {
+                                                "data-testid": "settings-avatar-crop-editor",
+                                                style: "display: grid; grid-template-columns: minmax(128px, 180px) minmax(220px, 1fr); gap: 16px; align-items: center; max-width: 560px;",
+                                                div {
+                                                    "data-testid": "settings-avatar-crop-stage",
+                                                    style: "position: relative; width: min(180px, 40vw); aspect-ratio: 1; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);",
+                                                    img {
+                                                        src: "{selection.preview_data_url}",
+                                                        alt: "Selected avatar",
+                                                        style: format!(
+                                                            "width: 100%; height: 100%; object-fit: cover; transform-origin: center; transform: translate({}% , {}%) scale({});",
+                                                            avatar_crop_x() / 4,
+                                                            avatar_crop_y() / 4,
+                                                            avatar_crop_zoom() as f32 / 100.0,
+                                                        ),
+                                                    }
+                                                }
+                                                div { style: "display: grid; gap: 10px;",
+                                                    div { class: "muted", "data-testid": "settings-avatar-source-size",
+                                                        {format!("{} x {} / {}", selection.dimensions.0, selection.dimensions.1, selection.media_type)}
+                                                    }
+                                                    label { class: "form-field",
+                                                        span { {crate::i18n::tr("settings.avatar.zoom")} }
+                                                        input {
+                                                            "data-testid": "settings-avatar-crop-zoom",
+                                                            r#type: "range",
+                                                            min: "100",
+                                                            max: "300",
+                                                            step: "5",
+                                                            value: "{avatar_crop_zoom()}",
+                                                            oninput: move |event| {
+                                                                if let Ok(value) = event.value().parse::<i32>() {
+                                                                    avatar_crop_zoom.set(value.clamp(100, 300));
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                    label { class: "form-field",
+                                                        span { {crate::i18n::tr("settings.avatar.pan_x")} }
+                                                        input {
+                                                            "data-testid": "settings-avatar-crop-x",
+                                                            r#type: "range",
+                                                            min: "-100",
+                                                            max: "100",
+                                                            step: "5",
+                                                            value: "{avatar_crop_x()}",
+                                                            oninput: move |event| {
+                                                                if let Ok(value) = event.value().parse::<i32>() {
+                                                                    avatar_crop_x.set(value.clamp(-100, 100));
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                    label { class: "form-field",
+                                                        span { {crate::i18n::tr("settings.avatar.pan_y")} }
+                                                        input {
+                                                            "data-testid": "settings-avatar-crop-y",
+                                                            r#type: "range",
+                                                            min: "-100",
+                                                            max: "100",
+                                                            step: "5",
+                                                            value: "{avatar_crop_y()}",
+                                                            oninput: move |event| {
+                                                                if let Ok(value) = event.value().parse::<i32>() {
+                                                                    avatar_crop_y.set(value.clamp(-100, 100));
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                    div { class: "actions",
+                                                        button {
+                                                            class: "secondary",
+                                                            "data-testid": "settings-avatar-upload-cropped",
+                                                            onclick: {
+                                                                let base = base_url();
+                                                                let api_token = token();
+                                                                move |_| {
+                                                                    let Some(selection) = pending_avatar_crop.read().clone() else {
+                                                                        avatar_upload_status.set(crate::i18n::tr("settings.avatar.error"));
+                                                                        return;
+                                                                    };
+                                                                    let crop = crate::avatar_crop::AvatarCrop {
+                                                                        zoom: avatar_crop_zoom() as f32 / 100.0,
+                                                                        pan_x: avatar_crop_x() as f32 / 100.0,
+                                                                        pan_y: avatar_crop_y() as f32 / 100.0,
+                                                                    };
+                                                                    let base = base.clone();
+                                                                    let api_token = api_token.clone();
+                                                                    avatar_upload_status.set(crate::i18n::tr("settings.avatar.uploading"));
+                                                                    spawn(async move {
+                                                                        let bytes = match crate::avatar_crop::crop_avatar_jpeg(&selection.bytes, crop) {
+                                                                            Ok(bytes) => bytes,
+                                                                            Err(err) => {
+                                                                                avatar_upload_status.set(format!(
+                                                                                    "{}: {err}",
+                                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                                ));
+                                                                                return;
+                                                                            }
+                                                                        };
+                                                                        let api = match crate::views::helpers::authed_api(&base, api_token.clone()) {
+                                                                            Ok(api) => api,
+                                                                            Err(err) => {
+                                                                                avatar_upload_status.set(format!(
+                                                                                    "{}: {err}",
+                                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                                ));
+                                                                                return;
+                                                                            }
+                                                                        };
+                                                                        match api.upload_blob_bytes(bytes, "image/jpeg").await {
+                                                                            Ok(resp) => {
+                                                                                let blob_ref = resp.blob_ref.clone();
+                                                                                let avatar_url = api.blob_download_url(&blob_ref);
+                                                                                // 1) Mirror locally + push actor-private
+                                                                                //    `client.ui.avatar_blob_ref` so other
+                                                                                //    devices pick up the same upload.
+                                                                                profile_avatar_blob_ref.set(blob_ref.clone());
+                                                                                state_store.write().save_private_data(
+                                                                                    &account_did(),
+                                                                                    "avatar_blob_ref",
+                                                                                    blob_ref.clone(),
+                                                                                );
+                                                                                push_client_ui_account_data_with_avatar(
+                                                                                    base.clone(),
+                                                                                    api_token.clone(),
+                                                                                    theme(),
+                                                                                    Some(blob_ref.clone()),
+                                                                                );
+                                                                                // 2) Publish publicly via
+                                                                                //    `cx.account.update_profile`.
+                                                                                //    Best-effort: log on failure but
+                                                                                //    keep the local cache intact.
+                                                                                match api
+                                                                                    .update_profile(None, None, Some(&avatar_url))
+                                                                                    .await
+                                                                                {
+                                                                                    Ok(_) => {
+                                                                                        pending_avatar_crop.set(None);
+                                                                                        avatar_upload_status.set(String::new());
+                                                                                        status.set(format!(
+                                                                                            "Avatar updated ({blob_ref})"
+                                                                                        ));
+                                                                                    }
+                                                                                    Err(err) => {
+                                                                                        avatar_upload_status.set(format!(
+                                                                                            "{}: {}",
+                                                                                            crate::i18n::tr("settings.avatar.error"),
+                                                                                            err,
+                                                                                        ));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            Err(err) => {
+                                                                                avatar_upload_status.set(format!(
+                                                                                    "{}: {err}",
+                                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                                ));
+                                                                            }
+                                                                        }
+                                                                    });
+                                                                }
+                                                            },
+                                                            {crate::i18n::tr("settings.avatar.upload_cropped")}
+                                                        }
+                                                        button {
+                                                            class: "secondary",
+                                                            "data-testid": "settings-avatar-crop-cancel",
+                                                            onclick: move |_| {
+                                                                pending_avatar_crop.set(None);
+                                                                avatar_upload_status.set(String::new());
+                                                            },
+                                                            {crate::i18n::tr("settings.avatar.cancel_crop")}
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         if !profile_avatar_blob_ref().trim().is_empty() {
                                             button {
@@ -995,6 +1164,7 @@ pub fn SettingsPanel(
                                                         let base = base.clone();
                                                         let api_token = api_token.clone();
                                                         profile_avatar_blob_ref.set(String::new());
+                                                        pending_avatar_crop.set(None);
                                                         state_store.write().save_private_data(
                                                             &account_did(),
                                                             "avatar_blob_ref",
