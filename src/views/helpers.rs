@@ -367,7 +367,7 @@ mod tests {
     fn short_protocol_id_compacts_long_did_without_a_long_tail() {
         assert_eq!(
             short_protocol_id("did:web:auth.local.host:users:01KCANONICAL"),
-            "did:web:auth.l...CANONICAL"
+            "did:web:auth.loc...ANONICAL"
         );
     }
 }

@@ -275,50 +275,54 @@ pub fn CapabilitiesSettingsCard(
 
             if let Some(capability_id) = detail_for.read().clone() {
                 if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
-                    let capability_id_label = short_protocol_id(&row.capability_id);
-                    div {
-                        class: "event modal",
-                        "data-testid": "capability-detail-modal",
-                        "data-capability-id": "{row.capability_id}",
-                        role: "dialog",
-                        "aria-modal": "true",
-                        div { class: "event-head",
-                            span { "Delegation chain" }
-                            button {
-                                class: "btn icon sm ghost",
-                                "data-testid": "capability-detail-close",
-                                "aria-label": "Close capability detail",
-                                onclick: move |_| detail_for.set(None),
-                                "×"
-                            }
-                        }
-                        div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
-                        if row.chain.is_empty() {
+                    {
+                        let capability_id_label = short_protocol_id(&row.capability_id);
+                        rsx! {
                             div {
-                                class: "muted",
-                                "data-testid": "capability-chain-empty",
-                                "No attenuation chain — capability is held directly from the root issuer."
-                            }
-                        } else {
-                            ol { class: "settings-list",
-                                for (idx, step) in row.chain.iter().enumerate() {
-                                    {
-                                        let issuer_did_label = short_protocol_id(&step.issuer_did);
-                                        let subject_did_label = short_protocol_id(&step.subject_did);
-                                        rsx! {
-                                            li {
-                                                class: "event",
-                                                "data-testid": "capability-chain-step",
-                                                "data-step-index": "{idx}",
-                                                div { class: "event-head",
-                                                    span { "Step {idx + 1}" }
-                                                    span {
-                                                        class: "mono",
-                                                        title: "{step.issuer_did} → {step.subject_did}",
-                                                        "{issuer_did_label} → {subject_did_label}"
+                                class: "event modal",
+                                "data-testid": "capability-detail-modal",
+                                "data-capability-id": "{row.capability_id}",
+                                role: "dialog",
+                                "aria-modal": "true",
+                                div { class: "event-head",
+                                    span { "Delegation chain" }
+                                    button {
+                                        class: "btn icon sm ghost",
+                                        "data-testid": "capability-detail-close",
+                                        "aria-label": "Close capability detail",
+                                        onclick: move |_| detail_for.set(None),
+                                        "×"
+                                    }
+                                }
+                                div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
+                                if row.chain.is_empty() {
+                                    div {
+                                        class: "muted",
+                                        "data-testid": "capability-chain-empty",
+                                        "No attenuation chain — capability is held directly from the root issuer."
+                                    }
+                                } else {
+                                    ol { class: "settings-list",
+                                        for (idx, step) in row.chain.iter().enumerate() {
+                                            {
+                                                let issuer_did_label = short_protocol_id(&step.issuer_did);
+                                                let subject_did_label = short_protocol_id(&step.subject_did);
+                                                rsx! {
+                                                    li {
+                                                        class: "event",
+                                                        "data-testid": "capability-chain-step",
+                                                        "data-step-index": "{idx}",
+                                                        div { class: "event-head",
+                                                            span { "Step {idx + 1}" }
+                                                            span {
+                                                                class: "mono",
+                                                                title: "{step.issuer_did} → {step.subject_did}",
+                                                                "{issuer_did_label} → {subject_did_label}"
+                                                            }
+                                                        }
+                                                        div { class: "muted mono", "constraints {step.constraints}" }
                                                     }
                                                 }
-                                                div { class: "muted mono", "constraints {step.constraints}" }
                                             }
                                         }
                                     }

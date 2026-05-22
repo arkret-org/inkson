@@ -2337,101 +2337,105 @@ pub fn SettingsPanel(
                         } else {
                             rsx! {
                                 for (actor_did, remark) in remarks {
-                                    let actor_did_label = short_protocol_id(&actor_did);
-                                    div {
-                                        class: "actions",
-                                        "data-testid": "contact-remark-row",
-                                        "data-actor-did": "{actor_did}",
-                                        span { class: "mono", title: "{actor_did}", "{actor_did_label}" }
-                                        input {
-                                            r#type: "text",
-                                            "data-testid": "contact-remark-input",
-                                            placeholder: "Local name (private)",
-                                            value: "{contact_remark_inputs().get(&actor_did).cloned().unwrap_or_else(|| remark.local_name.clone())}",
-                                            oninput: {
-                                                let did = actor_did.clone();
-                                                move |evt: FormEvent| {
-                                                    let mut current = contact_remark_inputs();
-                                                    current.insert(did.clone(), evt.value());
-                                                    contact_remark_inputs.set(current);
+                                    {
+                                        let actor_did_label = short_protocol_id(&actor_did);
+                                        rsx! {
+                                            div {
+                                                class: "actions",
+                                                "data-testid": "contact-remark-row",
+                                                "data-actor-did": "{actor_did}",
+                                                span { class: "mono", title: "{actor_did}", "{actor_did_label}" }
+                                                input {
+                                                    r#type: "text",
+                                                    "data-testid": "contact-remark-input",
+                                                    placeholder: "Local name (private)",
+                                                    value: "{contact_remark_inputs().get(&actor_did).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                                    oninput: {
+                                                        let did = actor_did.clone();
+                                                        move |evt: FormEvent| {
+                                                            let mut current = contact_remark_inputs();
+                                                            current.insert(did.clone(), evt.value());
+                                                            contact_remark_inputs.set(current);
+                                                        }
+                                                    },
                                                 }
-                                            },
-                                        }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "contact-remark-save",
-                                            onclick: {
-                                                let did = actor_did.clone();
-                                                let existing = remark.clone();
-                                                move |_| {
-                                                    let did = did.clone();
-                                                    let next_name = contact_remark_inputs()
-                                                        .get(&did)
-                                                        .cloned()
-                                                        .unwrap_or_default();
-                                                    let mut next = existing.clone();
-                                                    next.local_name = next_name.trim().to_owned();
-                                                    next.updated_at = Some(
-                                                        chrono::Utc::now()
-                                                            .to_rfc3339_opts(
-                                                                chrono::SecondsFormat::Secs,
-                                                                true,
-                                                            ),
-                                                    );
-                                                    state_store
-                                                        .write()
-                                                        .set_contact_remark(did.clone(), next.clone());
-                                                    contact_remarks_snapshot.set(
-                                                        state_store.read().contact_remarks(),
-                                                    );
-                                                    status.set(if next.is_empty() {
-                                                        format!(
-                                                            "Contact remark cleared for {}",
-                                                            short_protocol_id(&did)
-                                                        )
-                                                    } else {
-                                                        format!(
-                                                            "Contact remark saved: {} → {}",
-                                                            short_protocol_id(&did), next.local_name
-                                                        )
-                                                    });
-                                                    push_contact_remark_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        did,
-                                                        next,
-                                                    );
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "contact-remark-save",
+                                                    onclick: {
+                                                        let did = actor_did.clone();
+                                                        let existing = remark.clone();
+                                                        move |_| {
+                                                            let did = did.clone();
+                                                            let next_name = contact_remark_inputs()
+                                                                .get(&did)
+                                                                .cloned()
+                                                                .unwrap_or_default();
+                                                            let mut next = existing.clone();
+                                                            next.local_name = next_name.trim().to_owned();
+                                                            next.updated_at = Some(
+                                                                chrono::Utc::now()
+                                                                    .to_rfc3339_opts(
+                                                                        chrono::SecondsFormat::Secs,
+                                                                        true,
+                                                                    ),
+                                                            );
+                                                            state_store
+                                                                .write()
+                                                                .set_contact_remark(did.clone(), next.clone());
+                                                            contact_remarks_snapshot.set(
+                                                                state_store.read().contact_remarks(),
+                                                            );
+                                                            status.set(if next.is_empty() {
+                                                                format!(
+                                                                    "Contact remark cleared for {}",
+                                                                    short_protocol_id(&did)
+                                                                )
+                                                            } else {
+                                                                format!(
+                                                                    "Contact remark saved: {} → {}",
+                                                                    short_protocol_id(&did), next.local_name
+                                                                )
+                                                            });
+                                                            push_contact_remark_account_data(
+                                                                base_url(),
+                                                                token(),
+                                                                did,
+                                                                next,
+                                                            );
+                                                        }
+                                                    },
+                                                    "Save"
                                                 }
-                                            },
-                                            "Save"
-                                        }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "contact-remark-delete",
-                                            onclick: {
-                                                let did = actor_did.clone();
-                                                move |_| {
-                                                    let did = did.clone();
-                                                    state_store.write().remove_contact_remark(&did);
-                                                    let mut inputs = contact_remark_inputs();
-                                                    inputs.remove(&did);
-                                                    contact_remark_inputs.set(inputs);
-                                                    contact_remarks_snapshot.set(
-                                                        state_store.read().contact_remarks(),
-                                                    );
-                                                    status.set(format!(
-                                                        "Contact remark cleared for {}",
-                                                        short_protocol_id(&did)
-                                                    ));
-                                                    push_contact_remark_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        did,
-                                                        crate::account_data::ContactRemark::default(),
-                                                    );
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "contact-remark-delete",
+                                                    onclick: {
+                                                        let did = actor_did.clone();
+                                                        move |_| {
+                                                            let did = did.clone();
+                                                            state_store.write().remove_contact_remark(&did);
+                                                            let mut inputs = contact_remark_inputs();
+                                                            inputs.remove(&did);
+                                                            contact_remark_inputs.set(inputs);
+                                                            contact_remarks_snapshot.set(
+                                                                state_store.read().contact_remarks(),
+                                                            );
+                                                            status.set(format!(
+                                                                "Contact remark cleared for {}",
+                                                                short_protocol_id(&did)
+                                                            ));
+                                                            push_contact_remark_account_data(
+                                                                base_url(),
+                                                                token(),
+                                                                did,
+                                                                crate::account_data::ContactRemark::default(),
+                                                            );
+                                                        }
+                                                    },
+                                                    "Delete"
                                                 }
-                                            },
-                                            "Delete"
+                                            }
                                         }
                                     }
                                 }
@@ -2686,52 +2690,56 @@ pub fn SettingsPanel(
                     } else {
                         ul { class: "settings-list", "data-testid": "blocklist-entries",
                             for entry in blocklist_snapshot.read().iter() {
-                                let did_label = short_protocol_id(&entry.did);
-                                li { class: "settings-list-row", "data-testid": "blocklist-entry",
-                                    div {
-                                        strong { title: "{entry.did}", "{did_label}" }
-                                        if let Some(reason) = &entry.reason {
-                                            div { class: "muted", "{reason}" }
-                                        }
-                                        if let Some(blocked_at) = &entry.blocked_at {
-                                            div { class: "muted", "{blocked_at}" }
-                                        }
-                                    }
-                                    button {
-                                        class: "secondary",
-                                        "data-testid": "blocklist-unblock",
-                                        onclick: {
-                                            let did = entry.did.clone();
-                                            let base = base_url.clone();
-                                            move |_| {
-                                                let changed = state_store
-                                                    .write()
-                                                    .unblock_user(&did);
-                                                let entries = state_store.read().client_blocklist();
-                                                blocklist_snapshot.set(entries.clone());
-                                                if changed {
-                                                    let did_label = short_protocol_id(&did);
-                                                    blocklist_status.set(format!(
-                                                        "{} {did_label}",
-                                                        crate::i18n::tr(
-                                                            "settings.privacy.blocked_users.removed"
-                                                        )
-                                                    ));
-                                                    status.set(format!(
-                                                        "{} {did_label}",
-                                                        crate::i18n::tr(
-                                                            "settings.privacy.blocked_users.removed"
-                                                        )
-                                                    ));
-                                                    push_blocklist_account_data(
-                                                        base(),
-                                                        token(),
-                                                        entries,
-                                                    );
+                                {
+                                    let did_label = short_protocol_id(&entry.did);
+                                    rsx! {
+                                        li { class: "settings-list-row", "data-testid": "blocklist-entry",
+                                            div {
+                                                strong { title: "{entry.did}", "{did_label}" }
+                                                if let Some(reason) = &entry.reason {
+                                                    div { class: "muted", "{reason}" }
+                                                }
+                                                if let Some(blocked_at) = &entry.blocked_at {
+                                                    div { class: "muted", "{blocked_at}" }
                                                 }
                                             }
-                                        },
-                                        {crate::i18n::tr("settings.privacy.unblock")}
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "blocklist-unblock",
+                                                onclick: {
+                                                    let did = entry.did.clone();
+                                                    let base = base_url.clone();
+                                                    move |_| {
+                                                        let changed = state_store
+                                                            .write()
+                                                            .unblock_user(&did);
+                                                        let entries = state_store.read().client_blocklist();
+                                                        blocklist_snapshot.set(entries.clone());
+                                                        if changed {
+                                                            let did_label = short_protocol_id(&did);
+                                                            blocklist_status.set(format!(
+                                                                "{} {did_label}",
+                                                                crate::i18n::tr(
+                                                                    "settings.privacy.blocked_users.removed"
+                                                                )
+                                                            ));
+                                                            status.set(format!(
+                                                                "{} {did_label}",
+                                                                crate::i18n::tr(
+                                                                    "settings.privacy.blocked_users.removed"
+                                                                )
+                                                            ));
+                                                            push_blocklist_account_data(
+                                                                base(),
+                                                                token(),
+                                                                entries,
+                                                            );
+                                                        }
+                                                    }
+                                                },
+                                                {crate::i18n::tr("settings.privacy.unblock")}
+                                            }
+                                        }
                                     }
                                 }
                             }

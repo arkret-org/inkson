@@ -243,40 +243,45 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
 
                 if stage() == CallStage::IncomingRinging {
-                    let incoming_from_label = short_protocol_id(&incoming_from);
-                    div { class: "event",
-                        "data-testid": "webrtc-incoming-call-banner",
-                        role: "alert",
-                        div { class: "event-head",
-                            span { "Incoming call" }
-                            span { class: "mono", title: "{incoming_from}", "{incoming_from_label}" }
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "primary",
-                                "data-testid": "webrtc-call-accept-button",
-                                onclick: move |_| {
-                                    let _ok = maybe_setup_peer_connection();
-                                    participants.write().push(CallParticipant {
-                                        actor_did: incoming_from(),
-                                        display_name: incoming_from(),
-                                        stream_state: ParticipantStreamState::Active,
-                                    });
-                                    stage.set(CallStage::Active);
-                                    incoming_from.set(String::new());
-                                    last_action.set("accepted incoming call".to_owned());
-                                },
-                                "Accept"
-                            }
-                            button {
-                                class: "danger",
-                                "data-testid": "webrtc-call-decline-button",
-                                onclick: move |_| {
-                                    stage.set(CallStage::Idle);
-                                    incoming_from.set(String::new());
-                                    last_action.set("declined incoming call".to_owned());
-                                },
-                                "Decline"
+                    {
+                        let incoming_from_value = incoming_from();
+                        let incoming_from_label = short_protocol_id(&incoming_from_value);
+                        rsx! {
+                            div { class: "event",
+                                "data-testid": "webrtc-incoming-call-banner",
+                                role: "alert",
+                                div { class: "event-head",
+                                    span { "Incoming call" }
+                                    span { class: "mono", title: "{incoming_from_value}", "{incoming_from_label}" }
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "webrtc-call-accept-button",
+                                        onclick: move |_| {
+                                            let _ok = maybe_setup_peer_connection();
+                                            participants.write().push(CallParticipant {
+                                                actor_did: incoming_from(),
+                                                display_name: incoming_from(),
+                                                stream_state: ParticipantStreamState::Active,
+                                            });
+                                            stage.set(CallStage::Active);
+                                            incoming_from.set(String::new());
+                                            last_action.set("accepted incoming call".to_owned());
+                                        },
+                                        "Accept"
+                                    }
+                                    button {
+                                        class: "danger",
+                                        "data-testid": "webrtc-call-decline-button",
+                                        onclick: move |_| {
+                                            stage.set(CallStage::Idle);
+                                            incoming_from.set(String::new());
+                                            last_action.set("declined incoming call".to_owned());
+                                        },
+                                        "Decline"
+                                    }
+                                }
                             }
                         }
                     }

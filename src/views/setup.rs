@@ -1352,11 +1352,15 @@ pub fn SetupPanel(
                                             onchange: move |event| new_space_realm_id.set(event.value()),
                                             option { value: "", "— pick a Realm —" }
                                             for (id, title) in &available_realms {
-                                                let id_label = short_protocol_id(id);
-                                                option {
-                                                    value: "{id}",
-                                                    selected: new_space_realm_id_value == *id,
-                                                    "{title} ({id_label})"
+                                                {
+                                                    let id_label = short_protocol_id(id);
+                                                    rsx! {
+                                                        option {
+                                                            value: "{id}",
+                                                            selected: new_space_realm_id_value == *id,
+                                                            "{title} ({id_label})"
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1433,11 +1437,15 @@ pub fn SetupPanel(
                                             onchange: move |event| new_space_parent_id.set(event.value()),
                                             option { value: "", "(root — no parent)" }
                                             for (id, title) in &parent_candidates {
-                                                let id_label = short_protocol_id(id);
-                                                option {
-                                                    value: "{id}",
-                                                    selected: new_space_parent_id_value == *id,
-                                                    "{title} ({id_label})"
+                                                {
+                                                    let id_label = short_protocol_id(id);
+                                                    rsx! {
+                                                        option {
+                                                            value: "{id}",
+                                                            selected: new_space_parent_id_value == *id,
+                                                            "{title} ({id_label})"
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1466,11 +1474,15 @@ pub fn SetupPanel(
                                                 onchange: move |event| new_space_default_realm_ref.set(event.value()),
                                                 option { value: "", "(inherit — use home Realm)" }
                                                 for (id, title) in &available_realms {
-                                                    let id_label = short_protocol_id(id);
-                                                    option {
-                                                        value: "{id}",
-                                                        selected: new_space_default_realm_ref_value == *id,
-                                                        "{title} ({id_label})"
+                                                    {
+                                                        let id_label = short_protocol_id(id);
+                                                        rsx! {
+                                                            option {
+                                                                value: "{id}",
+                                                                selected: new_space_default_realm_ref_value == *id,
+                                                                "{title} ({id_label})"
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

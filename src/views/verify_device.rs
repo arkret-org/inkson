@@ -791,125 +791,129 @@ pub fn VerifyDevicePanel(
                     }
                 }
                 for entry in trust_devices() {
-                    let device_id_label = short_protocol_id(&entry.device_id);
-                    div { class: "event", "data-testid": "trust-row",
-                        div { class: "event-head",
-                            span { title: "{entry.device_id}", "{device_id_label}" }
-                            span { "{entry.trust_state}" }
-                        }
-                        if let Some(ref name) = entry.display_name {
-                            div { class: "muted", "{name}" }
-                        }
-                        if let Some(ref verified) = entry.verified_at {
-                            div { class: "muted", "Verified: {verified}" }
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "verify-action-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let dev_id = entry.device_id.clone();
-                                    let actor_for_verify = account_did.clone();
-                                    let from_device_for_verify = device_id.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let dev_id = dev_id.clone();
-                                        let api_token = token();
-                                        let actor = actor_for_verify.clone();
-                                        let from_device = from_device_for_verify.clone();
-                                        spawn(async move {
-                                            let identity = match state_store.write().ensure_local_identity() {
-                                                Ok(identity) => identity,
-                                                Err(error) => {
-                                                    verify_status.set(format!(
-                                                        "verify failed: secure device signing key unavailable: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            let proof = match crate::api::build_signed_device_verification_proof(
-                                                &actor,
-                                                &from_device,
-                                                &dev_id,
-                                                "sas",
-                                                None,
-                                                None,
-                                                None,
-                                                &identity.signing_key,
-                                            ) {
-                                                Ok(proof) => proof,
-                                                Err(error) => {
-                                                    verify_status.set(format!("verify failed: could not sign proof: {error}"));
-                                                    return;
-                                                }
-                                            };
-                                            let _ = crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.verify_device(&dev_id, "sas", proof).await
-                                                },
-                                            )
-                                            .await;
-                                        });
-                                    }
-                                },
-                                {crate::i18n::tr("verify_device.verify_action")}
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "revoke-action-button",
-                                onclick: {
-                                    let dev_id = entry.device_id.clone();
-                                    move |_| revoke_confirm.set(Some(dev_id.clone()))
-                                },
-                                {crate::i18n::tr("verify_device.revoke_action")}
-                            }
-                        }
-                        if revoke_confirm() == Some(entry.device_id.clone()) {
-                            div { class: "event", "data-testid": "revoke-confirm",
-                                div { class: "space-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
-                                div { class: "muted",
-                                    "Revoking removes the device from the authorized set and excludes it from future encrypted messages. This cannot be undone."
+                    {
+                        let device_id_label = short_protocol_id(&entry.device_id);
+                        rsx! {
+                            div { class: "event", "data-testid": "trust-row",
+                                div { class: "event-head",
+                                    span { title: "{entry.device_id}", "{device_id_label}" }
+                                    span { "{entry.trust_state}" }
+                                }
+                                if let Some(ref name) = entry.display_name {
+                                    div { class: "muted", "{name}" }
+                                }
+                                if let Some(ref verified) = entry.verified_at {
+                                    div { class: "muted", "Verified: {verified}" }
                                 }
                                 div { class: "actions",
                                     button {
-                                        class: "primary",
-                                        "data-testid": "confirm-revoke-button",
+                                        class: "secondary",
+                                        "data-testid": "verify-action-button",
                                         onclick: {
                                             let base = base_url.clone();
                                             let dev_id = entry.device_id.clone();
+                                            let actor_for_verify = account_did.clone();
+                                            let from_device_for_verify = device_id.clone();
                                             move |_| {
                                                 let base = base.clone();
                                                 let dev_id = dev_id.clone();
                                                 let api_token = token();
-                                                revoke_confirm.set(None);
+                                                let actor = actor_for_verify.clone();
+                                                let from_device = from_device_for_verify.clone();
                                                 spawn(async move {
-                                                    let dev_id_for_err = dev_id.clone();
-                                                    match crate::views::helpers::with_authed_api(
+                                                    let identity = match state_store.write().ensure_local_identity() {
+                                                        Ok(identity) => identity,
+                                                        Err(error) => {
+                                                            verify_status.set(format!(
+                                                                "verify failed: secure device signing key unavailable: {error}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let proof = match crate::api::build_signed_device_verification_proof(
+                                                        &actor,
+                                                        &from_device,
+                                                        &dev_id,
+                                                        "sas",
+                                                        None,
+                                                        None,
+                                                        None,
+                                                        &identity.signing_key,
+                                                    ) {
+                                                        Ok(proof) => proof,
+                                                        Err(error) => {
+                                                            verify_status.set(format!("verify failed: could not sign proof: {error}"));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let _ = crate::views::helpers::with_authed_api(
                                                         &base,
                                                         api_token,
-                                                        |api| async move { api.revoke_device(&dev_id).await },
+                                                        |api| async move {
+                                                            api.verify_device(&dev_id, "sas", proof).await
+                                                        },
                                                     )
-                                                    .await
-                                                    {
-                                                        Ok(_) => verify_status.set(format!("revoked {dev_id_for_err}")),
-                                                        Err(err) => verify_status.set(format!(
-                                                            "revoke {dev_id_for_err} failed: {}",
-                                                            err.display()
-                                                        )),
-                                                    }
+                                                    .await;
                                                 });
                                             }
                                         },
-                                        {crate::i18n::tr("verify_device.revoke_confirm_button")}
+                                        {crate::i18n::tr("verify_device.verify_action")}
                                     }
                                     button {
                                         class: "secondary",
-                                        "data-testid": "cancel-revoke-button",
-                                        onclick: move |_| revoke_confirm.set(None),
-                                        {crate::i18n::tr("common.cancel_button")}
+                                        "data-testid": "revoke-action-button",
+                                        onclick: {
+                                            let dev_id = entry.device_id.clone();
+                                            move |_| revoke_confirm.set(Some(dev_id.clone()))
+                                        },
+                                        {crate::i18n::tr("verify_device.revoke_action")}
+                                    }
+                                }
+                                if revoke_confirm() == Some(entry.device_id.clone()) {
+                                    div { class: "event", "data-testid": "revoke-confirm",
+                                        div { class: "space-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
+                                        div { class: "muted",
+                                            "Revoking removes the device from the authorized set and excludes it from future encrypted messages. This cannot be undone."
+                                        }
+                                        div { class: "actions",
+                                            button {
+                                                class: "primary",
+                                                "data-testid": "confirm-revoke-button",
+                                                onclick: {
+                                                    let base = base_url.clone();
+                                                    let dev_id = entry.device_id.clone();
+                                                    move |_| {
+                                                        let base = base.clone();
+                                                        let dev_id = dev_id.clone();
+                                                        let api_token = token();
+                                                        revoke_confirm.set(None);
+                                                        spawn(async move {
+                                                            let dev_id_for_err = dev_id.clone();
+                                                            match crate::views::helpers::with_authed_api(
+                                                                &base,
+                                                                api_token,
+                                                                |api| async move { api.revoke_device(&dev_id).await },
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(_) => verify_status.set(format!("revoked {dev_id_for_err}")),
+                                                                Err(err) => verify_status.set(format!(
+                                                                    "revoke {dev_id_for_err} failed: {}",
+                                                                    err.display()
+                                                                )),
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                {crate::i18n::tr("verify_device.revoke_confirm_button")}
+                                            }
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "cancel-revoke-button",
+                                                onclick: move |_| revoke_confirm.set(None),
+                                                {crate::i18n::tr("common.cancel_button")}
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1147,11 +1151,15 @@ pub fn VerifyDevicePanel(
                     }
                 }
                 if !cross_signing_publish_id().is_empty() {
-                    let publish_id = cross_signing_publish_id();
-                    let publish_id_label = short_protocol_id(&publish_id);
-                    div { class: "muted", "data-testid": "cross-signing-publish-id",
-                        title: "{publish_id}",
-                        "Last publish event id: {publish_id_label}"
+                    {
+                        let publish_id = cross_signing_publish_id();
+                        let publish_id_label = short_protocol_id(&publish_id);
+                        rsx! {
+                            div { class: "muted", "data-testid": "cross-signing-publish-id",
+                                title: "{publish_id}",
+                                "Last publish event id: {publish_id_label}"
+                            }
+                        }
                     }
                 }
             }

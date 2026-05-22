@@ -1104,18 +1104,22 @@ pub fn TimelinePanel(
                             }
 
                             if thread_open() == Some(idx) {
-                                let event_id_label = short_protocol_id(&event.id);
-                                div { class: "event", "data-testid": "thread-panel",
-                                    div { class: "event-head",
-                                        span { "Thread" }
-                                        span { title: "{event.id}", "{event_id_label}" }
-                                    }
-                                    div { class: "muted", "Thread messages would appear here." }
-                                    div { class: "actions",
-                                        button {
-                                            class: "secondary",
-                                            onclick: move |_| thread_open.set(None),
-                                            "Close Thread"
+                                {
+                                    let event_id_label = short_protocol_id(&event.id);
+                                    rsx! {
+                                        div { class: "event", "data-testid": "thread-panel",
+                                            div { class: "event-head",
+                                                span { "Thread" }
+                                                span { title: "{event.id}", "{event_id_label}" }
+                                            }
+                                            div { class: "muted", "Thread messages would appear here." }
+                                            div { class: "actions",
+                                                button {
+                                                    class: "secondary",
+                                                    onclick: move |_| thread_open.set(None),
+                                                    "Close Thread"
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1130,15 +1134,19 @@ pub fn TimelinePanel(
                             div { class: "section", "data-testid": "revision-chain",
                                 div { class: "muted", "Revision chain ({event.revisions.len()})" }
                                 for revision in &event.revisions {
-                                    let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
-                                    let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
-                                    div { class: "muted", "data-testid": "revision-entry",
-                                        "{revision.timestamp}: {revision.body}"
-                                        if let Some(operation_id) = &revision_operation_id_label {
-                                            " [{operation_id}]"
-                                        }
-                                        if let Some(event_id) = &revision_event_id_label {
-                                            " / {event_id}"
+                                    {
+                                        let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
+                                        let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
+                                        rsx! {
+                                            div { class: "muted", "data-testid": "revision-entry",
+                                                "{revision.timestamp}: {revision.body}"
+                                                if let Some(operation_id) = &revision_operation_id_label {
+                                                    " [{operation_id}]"
+                                                }
+                                                if let Some(event_id) = &revision_event_id_label {
+                                                    " / {event_id}"
+                                                }
+                                            }
                                         }
                                     }
                                 }

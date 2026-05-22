@@ -397,54 +397,62 @@ pub fn SpaceAdminPanel(
                         "Local Move/Anchor pipeline state for writes you've submitted from this device. Pending → Effective once anchored; failures expand inline."
                     }
                     for record in move_submissions.clone() {
-                        let move_id_label = short_protocol_id(&record.move_id);
-                        div { class: "event", "data-testid": "move-submission-row",
-                            div { class: "event-head",
-                                span { "{record.kind}" }
-                                span {
-                                    class: "{record.state.badge_class()}",
-                                    "data-testid": "move-state-badge",
-                                    "data-state-slug": "{record.state.slug()}",
-                                    "{record.state.label_zh()}"
-                                }
-                            }
-                            div { class: "muted", "data-testid": "move-submission-id",
-                                title: "{record.move_id}",
-                                "move {move_id_label}"
-                            }
-                            if record.state.is_failed() {
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "move-failure-detail-toggle",
-                                    onclick: {
-                                        let mid = record.move_id.clone();
-                                        move |_| {
-                                            let current = move_detail_open();
-                                            move_detail_open.set(if current.as_deref()
-                                                == Some(mid.as_str())
-                                            {
-                                                None
-                                            } else {
-                                                Some(mid.clone())
-                                            });
+                        {
+                            let move_id_label = short_protocol_id(&record.move_id);
+                            rsx! {
+                                div { class: "event", "data-testid": "move-submission-row",
+                                    div { class: "event-head",
+                                        span { "{record.kind}" }
+                                        span {
+                                            class: "{record.state.badge_class()}",
+                                            "data-testid": "move-state-badge",
+                                            "data-state-slug": "{record.state.slug()}",
+                                            "{record.state.label_zh()}"
                                         }
-                                    },
-                                    "Failure detail"
-                                }
-                                if move_detail_open().as_deref() == Some(record.move_id.as_str()) {
-                                    div {
-                                        class: "muted",
-                                        "data-testid": "move-failure-detail",
-                                        if let Some(reason) = &record.reason {
-                                            div { "reason: {reason}" }
-                                        } else {
-                                            div { "reason: (none reported)" }
+                                    }
+                                    div { class: "muted", "data-testid": "move-submission-id",
+                                        title: "{record.move_id}",
+                                        "move {move_id_label}"
+                                    }
+                                    if record.state.is_failed() {
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "move-failure-detail-toggle",
+                                            onclick: {
+                                                let mid = record.move_id.clone();
+                                                move |_| {
+                                                    let current = move_detail_open();
+                                                    move_detail_open.set(if current.as_deref()
+                                                        == Some(mid.as_str())
+                                                    {
+                                                        None
+                                                    } else {
+                                                        Some(mid.clone())
+                                                    });
+                                                }
+                                            },
+                                            "Failure detail"
                                         }
-                                        if let Some(anchor) = &record.anchor_ref {
-                                            let anchor_label = short_protocol_id(anchor);
-                                            div { title: "{anchor}", "bound anchor: {anchor_label}" }
+                                        if move_detail_open().as_deref() == Some(record.move_id.as_str()) {
+                                            div {
+                                                class: "muted",
+                                                "data-testid": "move-failure-detail",
+                                                if let Some(reason) = &record.reason {
+                                                    div { "reason: {reason}" }
+                                                } else {
+                                                    div { "reason: (none reported)" }
+                                                }
+                                                if let Some(anchor) = &record.anchor_ref {
+                                                    {
+                                                        let anchor_label = short_protocol_id(anchor);
+                                                        rsx! {
+                                                            div { title: "{anchor}", "bound anchor: {anchor_label}" }
+                                                        }
+                                                    }
+                                                }
+                                                div { "submitted_at: {record.submitted_at}" }
+                                            }
                                         }
-                                        div { "submitted_at: {record.submitted_at}" }
                                     }
                                 }
                             }
@@ -465,22 +473,30 @@ pub fn SpaceAdminPanel(
                         "One or more cells in this Space's projection are in the bottom-expose state — soland received concurrent Moves it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a head_in repair Move before downstream queries return a definitive value."
                     }
                     for (cell_ref, info) in &bottom_cells {
-                        let cell_ref_label = short_protocol_id(cell_ref);
-                        div { class: "muted", "data-testid": "bottom-cell-row",
-                            title: "{cell_ref}",
-                            "{cell_ref_label} · status={info.status}"
-                        }
-                        // Side-by-side render of the competing heads so the
-                        // operator can see what they're picking between
-                        // instead of pasting blind JSON.
-                        if !info.heads.is_empty() {
-                            div { class: "metric-grid", "data-testid": "bottom-cell-heads",
-                                for head in &info.heads {
-                                    let head_move_id_label = short_protocol_id(&head.move_id);
-                                    div { class: "metric", "data-testid": "bottom-cell-head",
-                                        strong { "data-testid": "bottom-cell-head-move-id", title: "{head.move_id}", "{head_move_id_label}" }
-                                        span { "data-testid": "bottom-cell-head-value",
-                                            "{serde_json::to_string(&head.value).unwrap_or_default()}"
+                        {
+                            let cell_ref_label = short_protocol_id(cell_ref);
+                            rsx! {
+                                div { class: "muted", "data-testid": "bottom-cell-row",
+                                    title: "{cell_ref}",
+                                    "{cell_ref_label} · status={info.status}"
+                                }
+                                // Side-by-side render of the competing heads so the
+                                // operator can see what they're picking between
+                                // instead of pasting blind JSON.
+                                if !info.heads.is_empty() {
+                                    div { class: "metric-grid", "data-testid": "bottom-cell-heads",
+                                        for head in &info.heads {
+                                            {
+                                                let head_move_id_label = short_protocol_id(&head.move_id);
+                                                rsx! {
+                                                    div { class: "metric", "data-testid": "bottom-cell-head",
+                                                        strong { "data-testid": "bottom-cell-head-move-id", title: "{head.move_id}", "{head_move_id_label}" }
+                                                        span { "data-testid": "bottom-cell-head-value",
+                                                            "{serde_json::to_string(&head.value).unwrap_or_default()}"
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1221,8 +1237,10 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 for member in members() {
-                    let member_label = short_protocol_id(&member);
-                    div { class: "event", "data-testid": "member-row",
+                    {
+                        let member_label = short_protocol_id(&member);
+                        rsx! {
+                            div { class: "event", "data-testid": "member-row",
                         div { class: "event-head",
                             // A4b — member avatar slot. Avatars are
                             // public via `cx.account.update_profile`
@@ -1455,6 +1473,8 @@ pub fn SpaceAdminPanel(
                                 }
                             }
                         }
+                            }
+                        }
                     }
                 }
                 if members().is_empty() {
@@ -1492,26 +1512,36 @@ pub fn SpaceAdminPanel(
             div { class: "event", "data-testid": "space-invites",
                 div { class: "event-head", span { "Invites" } span { "lifecycle" } }
                 for invite in space_invites() {
-                    let invite_target_label = short_protocol_id(&invite.target);
-                    let invite_id_label = short_protocol_id(&invite.invite_id);
-                    div { class: "event", "data-testid": "invite-row",
-                        div { class: "event-head",
-                            span { title: "{invite.target}", "{invite_target_label}" }
-                            span { "{invite.state}" }
-                        }
-                        div { class: "muted", "data-testid": "invite-id", title: "{invite.invite_id}", "{invite_id_label}" }
-                        if let Some(role) = &invite.role {
-                            div { class: "muted", "role {role}" }
-                        }
-                        if let Some(operation_id) = &invite.operation_id {
-                            let operation_id_label = short_protocol_id(operation_id);
-                            div { class: "muted", title: "{operation_id}", "fact {operation_id_label}" }
-                        }
-                        if let Some(event_id) = &invite.event_id {
-                            let event_id_label = short_protocol_id(event_id);
-                            div { class: "muted", title: "{event_id}", "event {event_id_label}" }
-                        }
-                        div { class: "actions",
+                    {
+                        let invite_target_label = short_protocol_id(&invite.target);
+                        let invite_id_label = short_protocol_id(&invite.invite_id);
+                        rsx! {
+                            div { class: "event", "data-testid": "invite-row",
+                                div { class: "event-head",
+                                    span { title: "{invite.target}", "{invite_target_label}" }
+                                    span { "{invite.state}" }
+                                }
+                                div { class: "muted", "data-testid": "invite-id", title: "{invite.invite_id}", "{invite_id_label}" }
+                                if let Some(role) = &invite.role {
+                                    div { class: "muted", "role {role}" }
+                                }
+                                if let Some(operation_id) = &invite.operation_id {
+                                    {
+                                        let operation_id_label = short_protocol_id(operation_id);
+                                        rsx! {
+                                            div { class: "muted", title: "{operation_id}", "fact {operation_id_label}" }
+                                        }
+                                    }
+                                }
+                                if let Some(event_id) = &invite.event_id {
+                                    {
+                                        let event_id_label = short_protocol_id(event_id);
+                                        rsx! {
+                                            div { class: "muted", title: "{event_id}", "event {event_id_label}" }
+                                        }
+                                    }
+                                }
+                                div { class: "actions",
                             button {
                                 class: "primary",
                                 "data-testid": "accept-invite-button",
@@ -1637,6 +1667,8 @@ pub fn SpaceAdminPanel(
                                     }
                                 },
                                 "Cancel"
+                            }
+                        }
                             }
                         }
                     }
@@ -2473,43 +2505,55 @@ pub fn SpaceAdminPanel(
                             }
                         }
                         for chain in chains {
-                            let group_id_label = short_protocol_id(&chain.group_id);
-                            div { class: "event", "data-testid": "mls-revoke-chain-row",
-                                div { class: "event-head",
-                                    span { title: "{chain.group_id}", "{group_id_label}" }
-                                    span { class: "badge", "{chain.status_summary()}" }
-                                }
-                                div { class: "metric-grid",
-                                    div { class: "metric",
-                                        strong { "MLS commit" }
-                                        span {
-                                            class: "{chain.commit_state.badge_class()}",
-                                            "{chain.commit_state.label()}"
+                            {
+                                let group_id_label = short_protocol_id(&chain.group_id);
+                                rsx! {
+                                    div { class: "event", "data-testid": "mls-revoke-chain-row",
+                                        div { class: "event-head",
+                                            span { title: "{chain.group_id}", "{group_id_label}" }
+                                            span { class: "badge", "{chain.status_summary()}" }
                                         }
-                                        if let Some(ref id) = chain.commit_move_id {
-                                            let id_label = short_protocol_id(id);
-                                            div { class: "muted", title: "{id}", "{id_label}" }
-                                        }
-                                        if let ChainMoveState::Failed { reason } =
-                                            &chain.commit_state
-                                        {
-                                            div { class: "muted", "reason: {reason}" }
-                                        }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Epoch advance" }
-                                        span {
-                                            class: "{chain.epoch_advance_state.badge_class()}",
-                                            "{chain.epoch_advance_state.label()}"
-                                        }
-                                        if let Some(ref id) = chain.epoch_advance_move_id {
-                                            let id_label = short_protocol_id(id);
-                                            div { class: "muted", title: "{id}", "{id_label}" }
-                                        }
-                                        if let ChainMoveState::Failed { reason } =
-                                            &chain.epoch_advance_state
-                                        {
-                                            div { class: "muted", "reason: {reason}" }
+                                        div { class: "metric-grid",
+                                            div { class: "metric",
+                                                strong { "MLS commit" }
+                                                span {
+                                                    class: "{chain.commit_state.badge_class()}",
+                                                    "{chain.commit_state.label()}"
+                                                }
+                                                if let Some(ref id) = chain.commit_move_id {
+                                                    {
+                                                        let id_label = short_protocol_id(id);
+                                                        rsx! {
+                                                            div { class: "muted", title: "{id}", "{id_label}" }
+                                                        }
+                                                    }
+                                                }
+                                                if let ChainMoveState::Failed { reason } =
+                                                    &chain.commit_state
+                                                {
+                                                    div { class: "muted", "reason: {reason}" }
+                                                }
+                                            }
+                                            div { class: "metric",
+                                                strong { "Epoch advance" }
+                                                span {
+                                                    class: "{chain.epoch_advance_state.badge_class()}",
+                                                    "{chain.epoch_advance_state.label()}"
+                                                }
+                                                if let Some(ref id) = chain.epoch_advance_move_id {
+                                                    {
+                                                        let id_label = short_protocol_id(id);
+                                                        rsx! {
+                                                            div { class: "muted", title: "{id}", "{id_label}" }
+                                                        }
+                                                    }
+                                                }
+                                                if let ChainMoveState::Failed { reason } =
+                                                    &chain.epoch_advance_state
+                                                {
+                                                    div { class: "muted", "reason: {reason}" }
+                                                }
+                                            }
                                         }
                                     }
                                 }
