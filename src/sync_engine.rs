@@ -361,7 +361,12 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     }
 
     let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.spaces);
-    timeline.set(synced_timeline);
+    let next_timeline = if is_full_sync {
+        synced_timeline
+    } else {
+        crate::app::merge_timeline_events(&timeline.read(), synced_timeline)
+    };
+    timeline.set(next_timeline);
 
     device_queue.set(response.to_device.len());
     sync_cursor.set(response.cursor.clone());

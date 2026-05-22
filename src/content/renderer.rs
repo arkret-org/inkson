@@ -112,19 +112,18 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
     blocks
 }
 
-/// Add a free-text chunk to `out`, lifting bare URLs into
-/// [`ContentBlock::LinkPreview`] entries and converting the rest into
-/// either [`ContentBlock::Markdown`] (if it contains markdown markers
-/// or a URL) or [`ContentBlock::Text`].
+/// Add a free-text chunk to `out`, generating [`ContentBlock::LinkPreview`]
+/// entries for bare URLs while keeping the original prose intact. The
+/// preview is supplemental UI; it must not remove bytes from the visible
+/// message text because tests and users both expect round-trip text.
 fn push_text_chunk(chunk: &str, out: &mut Vec<ContentBlock>) {
     let chunk = chunk.trim_matches('\n');
     if chunk.trim().is_empty() {
         return;
     }
 
-    // Pull out bare URLs first. Anything left is fed to markdown.
-    let (cleaned, urls) = extract_bare_urls(chunk);
-    let prose = cleaned.trim().to_owned();
+    let urls = extract_bare_urls(chunk);
+    let prose = chunk.trim().to_owned();
 
     if !prose.is_empty() {
         if looks_like_markdown(&prose) {
@@ -243,21 +242,17 @@ fn classify_blob_ref(blob_ref: &str) -> ContentBlock {
     }
 }
 
-/// Pull bare `http(s)://` URLs out of `chunk` and return the cleaned
-/// remainder plus the list of extracted URLs (in source order).
-fn extract_bare_urls(chunk: &str) -> (String, Vec<String>) {
+/// Return bare `http(s)://` URLs found in `chunk` in source order.
+/// Trailing punctuation is excluded from the preview URL but remains in
+/// the original visible text.
+fn extract_bare_urls(chunk: &str) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
-    let mut cleaned = String::with_capacity(chunk.len());
     for token in chunk.split_whitespace() {
         if is_bare_url(token) {
             urls.push(strip_trailing_punct(token).to_owned());
-            cleaned.push(' ');
-        } else {
-            cleaned.push_str(token);
-            cleaned.push(' ');
         }
     }
-    (cleaned.trim().to_owned(), urls)
+    urls
 }
 
 fn is_bare_url(token: &str) -> bool {
@@ -789,6 +784,12 @@ mod tests {
         let body = "check this https://example.com/post out";
         let blocks = parse_message_body(body);
         assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text(text) if text == body)),
+            "visible text did not preserve original body: {blocks:?}"
+        );
+        assert!(
             blocks.iter().any(|b| matches!(
                 b,
                 ContentBlock::LinkPreview { url, .. } if url == "https://example.com/post"
@@ -872,11 +873,28 @@ mod tests {
     }
 
     #[test]
-    fn extract_bare_urls_strips_trailing_punctuation() {
-        let (cleaned, urls) = extract_bare_urls("visit https://example.com/foo, please");
+    fn extract_bare_urls_strips_trailing_punctuation_for_preview_only() {
+        let urls = extract_bare_urls("visit https://example.com/foo, please");
         assert_eq!(urls, vec!["https://example.com/foo".to_owned()]);
-        assert!(cleaned.contains("visit"));
-        assert!(cleaned.contains("please"));
+    }
+
+    #[test]
+    fn parse_message_body_preserves_url_and_closing_punctuation_in_text() {
+        let body = "hub: https://corp.example/onboarding)";
+        let blocks = parse_message_body(body);
+        assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text(text) if text == body)),
+            "visible text did not preserve punctuation: {blocks:?}"
+        );
+        assert!(
+            blocks.iter().any(|b| matches!(
+                b,
+                ContentBlock::LinkPreview { url, .. } if url == "https://corp.example/onboarding"
+            )),
+            "preview URL should drop the closing parenthesis: {blocks:?}"
+        );
     }
 
     #[test]

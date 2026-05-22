@@ -523,11 +523,11 @@ fn chat_message_revise_operation(
     OperationBuilder::new(space_id, actor, "cx.message.revise")
         .target_ref(event_id)
         .body(json!({
-            "body": body,
             "content": {
-                "blocks": [{"kind": "text", "text": body}],
+                "kind": "cx.content.text",
                 "body": body,
             },
+            "target_ref": event_id,
             "target_event_id": event_id,
         }))
         .build("yougen")
@@ -1953,10 +1953,13 @@ async fn submit_chat_operation_with_plaintext_retry(
         Ok(response) => Ok(response),
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
             let mut services = plaintext_visible_services.to_vec();
-            if services.is_empty()
-                && let Ok(description) = api.describe().await
-            {
-                services.push(description.service_did.as_str().to_owned());
+            if let Ok(description) = api.describe().await {
+                let service_did = description.service_did.as_str().trim();
+                if !service_did.is_empty()
+                    && !services.iter().any(|existing| existing == service_did)
+                {
+                    services.push(service_did.to_owned());
+                }
             }
             if services.is_empty() {
                 return Err(error);
@@ -6404,5 +6407,27 @@ mod tests {
         });
         let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
+    }
+
+    #[test]
+    fn chat_message_revise_operation_uses_schema_content_and_target_ref() {
+        let op = chat_message_revise_operation(
+            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "edited",
+        );
+
+        assert_eq!(
+            op.payload["target_ref"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(
+            op.payload["target_event_id"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert_eq!(op.payload["content"]["body"], "edited");
+        assert!(op.payload.get("body").is_none());
     }
 }

@@ -8521,6 +8521,21 @@ pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec
     events
 }
 
+pub fn merge_timeline_events(
+    current: &[TimelineEvent],
+    incoming: Vec<TimelineEvent>,
+) -> Vec<TimelineEvent> {
+    let mut merged = current.to_vec();
+    for event in incoming {
+        if let Some(existing) = merged.iter_mut().find(|existing| existing.id == event.id) {
+            *existing = event;
+        } else {
+            merged.push(event);
+        }
+    }
+    merged
+}
+
 fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
     if let Some(items) = frontier.as_array() {
         return items
@@ -8862,6 +8877,27 @@ mod tests {
         );
         assert_eq!(previews[0].name, "Test");
         assert_eq!(previews[0].kind, SpacePreviewKind::Realm);
+    }
+
+    #[test]
+    fn merge_timeline_events_keeps_existing_messages_on_summary_only_delta() {
+        let mut summary = TimelineEvent::system_notice("summary-cx:realm:test", "server", "old");
+        summary.space_id = Some("cx:realm:test".to_owned());
+        let message = TimelineEvent {
+            id: "cx:event:message".to_owned(),
+            space_id: Some("cx:realm:test".to_owned()),
+            body: "welcome".to_owned(),
+            ..TimelineEvent::default()
+        };
+        let mut updated_summary =
+            TimelineEvent::system_notice("summary-cx:realm:test", "server", "new");
+        updated_summary.space_id = Some("cx:realm:test".to_owned());
+
+        let merged = merge_timeline_events(&[summary, message], vec![updated_summary]);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].body, "new");
+        assert_eq!(merged[1].body, "welcome");
     }
 
     #[test]

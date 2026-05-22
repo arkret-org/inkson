@@ -260,8 +260,8 @@ fn message_revise_operation(
     OperationBuilder::new(space_id, actor, "cx.message.revise")
         .target_ref(event_id)
         .body(json!({
-            "body": body,
             "content": text_content(body),
+            "target_ref": event_id,
             "target_event_id": event_id,
         }))
         .build("yougen")
@@ -276,6 +276,37 @@ fn pending_send_error_is_permanent(error: &str) -> bool {
         || lower.contains("forbidden")
         || lower.contains("403")
         || lower.contains("401")
+}
+
+async fn submit_timeline_message_with_plaintext_retry(
+    api: &crate::api::ContrixApi,
+    space_id: &str,
+    actor_did: &str,
+    operation: &EventEnvelope,
+) -> anyhow::Result<crate::models::SubmitEventResponse> {
+    match api.submit_event_envelope(operation).await {
+        Ok(response) => Ok(response),
+        Err(error) if crate::api::is_plaintext_visibility_policy_error(&error) => {
+            let description = api.describe().await?;
+            let service_did = description.service_did.as_str().trim();
+            if service_did.is_empty() {
+                return Err(error);
+            }
+            api.update_space(
+                space_id,
+                actor_did,
+                json!({"plaintext_visible_services": [service_did]}),
+            )
+            .await
+            .map_err(|update_error| {
+                anyhow::anyhow!(
+                    "plaintext policy update failed: {update_error}; original send failed: {error}"
+                )
+            })?;
+            api.submit_event_envelope(operation).await
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn message_redact_operation(
@@ -415,7 +446,8 @@ pub fn TimelinePanel(
             {
                 let events = timeline_events_from_sync_spaces(&sync.spaces);
                 if !events.is_empty() {
-                    timeline.set(events);
+                    let current = timeline();
+                    timeline.set(crate::app::merge_timeline_events(&current, events));
                 }
                 sync_cursor.set(sync.cursor);
             }
@@ -1436,7 +1468,12 @@ pub fn TimelinePanel(
                                         &body,
                                     );
                                     let op_id = op.local_operation_id().to_owned();
-                                    match api.submit_event_envelope(&op).await {
+                                    match submit_timeline_message_with_plaintext_retry(
+                                        &api,
+                                        &space,
+                                        &actor,
+                                        &op,
+                                    ).await {
                                         Ok(resp) => {
                                             if let Some(event) = timeline.write().iter_mut().find(|e| e.id == event_id) {
                                                 event.apply_send_ack(resp.event_id.clone(), op_id);
@@ -1684,7 +1721,12 @@ pub fn TimelinePanel(
                                             let op_id = op.local_operation_id().to_owned();
                                             let mut attempt = 0usize;
                                             loop {
-                                                match api.submit_event_envelope(&op).await {
+                                                match submit_timeline_message_with_plaintext_retry(
+                                                    &api,
+                                                    &space,
+                                                    &actor,
+                                                    &op,
+                                                ).await {
                                                     Ok(sent) => {
                                                         if let Some(found) = timeline
                                                             .write()
@@ -2019,5 +2061,27 @@ mod tests {
             op.payload["flow_id"],
             "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
+    }
+
+    #[test]
+    fn message_revise_operation_carries_schema_target_and_reducer_target() {
+        let op = message_revise_operation(
+            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "edited",
+        );
+
+        assert_eq!(
+            op.payload["target_ref"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(
+            op.payload["target_event_id"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert_eq!(op.payload["content"]["body"], "edited");
+        assert!(op.payload.get("body").is_none());
     }
 }

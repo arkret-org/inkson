@@ -91,6 +91,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
         "single_did",
         "sha256",
         "cx:trust_domain:server.example",
+        &[],
     )
     .expect("build_realm_create_event succeeds");
 

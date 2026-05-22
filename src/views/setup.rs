@@ -1048,12 +1048,15 @@ pub fn SetupPanel(
                                                             let mut plaintext_services = plaintext_services_for_policy(
                                                                 &configured_plaintext_service_did,
                                                             );
-                                                            if plaintext_services.is_empty()
-                                                                && let Ok(description) = api.describe().await
-                                                            {
-                                                                plaintext_services.push(
-                                                                    description.service_did.as_str().to_owned(),
-                                                                );
+                                                            if let Ok(description) = api.describe().await {
+                                                                let service_did = description.service_did.as_str().trim();
+                                                                if !service_did.is_empty()
+                                                                    && !plaintext_services
+                                                                        .iter()
+                                                                        .any(|existing| existing == service_did)
+                                                                {
+                                                                    plaintext_services.push(service_did.to_owned());
+                                                                }
                                                             }
                                                             // Spec realm.schema.json requires
                                                             // trust_domain on the create event.

@@ -312,6 +312,7 @@ fn build_realm_create_event_matches_event_schema() {
         "single_did",
         "sha256",
         "cx:trust_domain:server.example",
+        &[],
     )
     .expect("build_realm_create_event succeeds");
     stamp_wire_fields(&mut envelope);

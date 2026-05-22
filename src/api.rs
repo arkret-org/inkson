@@ -411,8 +411,11 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<ContrixApiError>()
         .is_some_and(|api_error| {
+            let code = api_error.error.code();
             api_error.status == StatusCode::FORBIDDEN
-                && api_error.error.code() == "policy_denied"
+                && (code == "policy_denied"
+                    || code == "capability_denied"
+                    || code.ends_with(".capability_denied"))
                 && api_error
                     .error
                     .message()
@@ -2949,6 +2952,7 @@ pub fn build_realm_bootstrap_events(
         anchor_profile,
         hash_profile,
         trust_domain,
+        plaintext_visible_services,
     )?);
     events.push(build_space_state_event(
         space_id,
@@ -3001,6 +3005,7 @@ pub fn build_realm_create_event(
     anchor_profile: &str,
     hash_profile: &str,
     trust_domain: &str,
+    plaintext_visible_services: &[String],
 ) -> anyhow::Result<EventEnvelope> {
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
@@ -3039,6 +3044,15 @@ pub fn build_realm_create_event(
         && !summary.trim().is_empty()
     {
         object["summary"] = Value::String(summary.trim().to_owned());
+    }
+    let plaintext_services = plaintext_visible_services
+        .iter()
+        .map(|service| service.trim())
+        .filter(|service| !service.is_empty())
+        .map(|service| Value::String(service.to_owned()))
+        .collect::<Vec<_>>();
+    if !plaintext_services.is_empty() {
+        object["plaintext_visible_services"] = Value::Array(plaintext_services);
     }
 
     // cx.component.realm.create.v1 is a cas-register cell; the
@@ -4569,6 +4583,16 @@ mod tests {
         }
         .into();
         assert!(is_plaintext_visibility_policy_error(&error));
+
+        let capability_error: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_plaintext_visibility_policy_error(&capability_error));
 
         let other_policy: anyhow::Error = ContrixApiError {
             status: StatusCode::FORBIDDEN,
