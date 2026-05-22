@@ -861,12 +861,9 @@ pub fn SpaceAdminPanel(
                             },
                             {crate::i18n::tr("space_admin.save_metadata")}
                         }
-                        // Alternate Move-flow path: build a cx.realm.update
-                        // Move targeting cx.component.realm.organization.v1
-                        // (cas-register) and POST /api/v1/moves. Soland's
-                        // LatticeRegistry routes this into the cell; the
-                        // direct-event button above stays available until
-                        // every deployment is on the new pipeline.
+                        // Alternate cell-update path: build a cx.realm.update
+                        // event targeting cx.component.realm.organization.v1
+                        // (cas-register) and submit it through cx.events.submit.
                         button {
                             class: "secondary",
                             "data-testid": "update-metadata-via-move-button",
@@ -1182,9 +1179,8 @@ pub fn SpaceAdminPanel(
                             move |_| {
                                 // Spec-canonical read path is the local sync
                                 // projection (driven by cx.events.subscribe).
-                                // The legacy GET /api/v1/spaces/{id} REST shim
-                                // is gone; members appear as the local store
-                                // applies cx.member.state events.
+                                // Members appear as the local store applies
+                                // cx.member.state events.
                                 let store = state_store.read();
                                 let snapshot = store.load();
                                 let projection = snapshot.space_projections.get(&space);
@@ -1826,12 +1822,12 @@ pub fn SpaceAdminPanel(
                 }
             }
 
-            // Capability grant / revoke Move-flow card (P0 M-capability).
+            // Capability grant / revoke anchored-cell card (P0 M-capability).
             // Mirrors the consent grant/revoke PoC but targets
             // cx.component.capability.grant.v1 (OrSet add/remove). Signed
             // with the demo session key (TODO real-key-management) and
-            // POST'd to /api/v1/moves. Anchor frontier is threaded from
-            // the local sync view.
+            // submitted through cx.events.submit. Anchor frontier is threaded
+            // from the local sync view.
             div { class: "event", "data-testid": "capability-grant-card",
                 div { class: "event-head",
                     span { "Capability grant / revoke (Move PoC)" }

@@ -2525,13 +2525,10 @@ pub fn SettingsPanel(
                     }
                 }
 
-                        // ── Move-flow PoC: Grant consent ────
-                        // First user-facing button on the Move/Anchor pipeline. Builds a
-                        // cx.consent.grant Move via move_builder, signs with a deterministic
-                        // demo ed25519 key (TODO real-key-management), POSTs /api/v1/moves.
-                        // Direct-event endpoints for messages / reactions / etc. stay in
-                        // place per spec — only events that declare a `cell_family` move
-                        // here.
+                        // ── Consent grant event PoC ────
+                        // First user-facing button on the anchored cell pipeline. Builds a
+                        // cx.consent.grant event, signs with a deterministic demo ed25519 key
+                        // (TODO real-key-management), and submits it through cx.events.submit.
                         crate::views::consent_demo::ConsentGrantDemoCard {
                             base_url,
                             token,

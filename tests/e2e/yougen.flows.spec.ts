@@ -110,7 +110,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await refreshServer(page);
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
-  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
+  await expect(page.getByTestId("sync-cursor")).toContainText("cx:cursor:e2e-2");
   await expect(page.getByTestId("space-list")).toContainText("Contrix Demo Space");
   await expect(page.getByTestId("space-list")).toContainText("Launch Child Space");
   await page.getByTestId("account-menu-button").click();
@@ -294,22 +294,25 @@ test("kanban card detail exposes linked discussion and locked discussion boundar
   await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
 });
 
-test("kanban queues Move submissions and replays through move API", async ({ page }) => {
+test("kanban queues canonical event submissions and quarantines manual replay", async ({ page }) => {
   await refreshServer(page);
   await page.getByRole("link", { name: "Kanban" }).click();
   await page.getByTestId("add-card-button").first().click();
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
+  const eventSubmit = page.waitForRequest(
+    (request) => request.url().includes("/api/v1/events") && request.method() === "POST",
+  );
   await page.getByTestId("save-card-button").click();
+  const eventBody = await eventSubmit.then((request) => request.postDataJSON());
+  expect(eventBody.kind).toBe("cx.flow.create");
+  expect(eventBody.payload?.components?.["cx.component.flow.position.v1"]?.family)
+    .toBe("cx.component.flow.position.v1");
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
 
-  const moveSubmit = page.waitForRequest("**/api/v1/moves");
   await page.getByTestId("replay-board-queue").click();
-  const moveBody = await moveSubmit.then((request) => request.postDataJSON());
-  expect(moveBody.id).toContain("sha256:");
-  expect(moveBody.body?.cell?.family).toBe("cx.component.flow.position.v1");
-  await expect(page.getByTestId("board-status")).toContainText("state=pending");
+  await expect(page.getByTestId("board-status")).toContainText("replay not available");
 });
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
@@ -436,14 +439,14 @@ test("notifications are derived from index projections and respect per-space mut
 
 test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText("sx:e2e:2");
+  await expect(page.getByTestId("sync-cursor")).toContainText("cx:cursor:e2e-2");
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await page.getByTestId("register-account-button").click();
   await expect(page.getByTestId("account-flow")).toContainText("registered alice.example");
 
-  await page.getByTestId("topbar-create-button").click();
+  await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
   await expect(page.getByTestId("space-title")).toContainText("New Realm");
@@ -462,16 +465,29 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
   await expect(setupPanel.getByRole("button", { name: "Create Realm" })).toBeVisible();
   await expect(setupPanel.getByRole("button", { name: "Create Space" })).toHaveCount(0);
-  const createSpaceRequest = page.waitForRequest(
-    (request) => request.url().endsWith("/api/v1/spaces") && request.method() === "POST",
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("cx.realm.create"),
+  );
+  const plaintextPolicyRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("cx.realm.plaintext_visible_services"),
   );
   await page.getByTestId("create-space-button").click();
-  const createSpaceBody = await createSpaceRequest.then((request) => request.postDataJSON());
-  expect(createSpaceBody.plaintext_visible_services).toContain("did:web:server.local");
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("created cx:space:01js0setupflow000000000000");
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("policy invite_only / shared");
+  const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
+    realmCreateRequest.then((request) => request.postDataJSON()),
+    plaintextPolicyRequest.then((request) => request.postDataJSON()),
+  ]);
+  expect(JSON.stringify(realmCreateBody)).toContain("cx.realm.create");
+  expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created cx:realm:/);
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
-  await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0setupflow000000000000");
+  await expect(page.getByTestId("space-lifecycle-flow").getByTestId("selected-space-id")).toContainText("cx:realm:");
 
   await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
@@ -819,13 +835,15 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   await openTimeline(page);
   await expect(page.getByTestId("timeline-event").first()).toBeVisible();
 
-  const receiptRequest = page.waitForRequest("**/api/v1/receipts");
+  const receiptRequest = page.waitForRequest("**/api/v1/ephemeral");
   await page.getByTestId("mark-read-button").first().click();
   const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
 
-  expect(receiptBody.space_id).toBe("cx:space:0196419b-0000-7000-8000-000000000000");
-  expect(receiptBody.receipt_type).toBe("cx.receipt.read");
-  expect(receiptBody.event_id).toContain("summary-cx:space");
+  expect(receiptBody.kind).toBe("cx.receipt.read");
+  expect(receiptBody.realm_id).toBe("cx:realm:0196419b-0000-7000-8000-000000000000");
+  expect(receiptBody.payload.receipt_type).toBe("read");
+  expect(receiptBody.payload.schema).toBe("cx.schema.read_receipt.v1");
+  expect(receiptBody.payload.event_id).toContain("summary-cx:space");
   await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
   await expect(page.getByTestId("read-marker-status")).toContainText("Read marker:");
   await expect(page.getByTestId("read-marker-badge")).toContainText("Read marker here");

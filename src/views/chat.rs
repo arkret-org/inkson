@@ -2171,19 +2171,19 @@ pub fn ChatPanel(
     if let Some(top_event) = highest_visible_event_id.as_ref() {
         if latest_read_marker().as_str() != top_event {
             latest_read_marker.set(top_event.clone());
-            // TODO(G3.Y2-followup): post `cx.read.marker` to soland
-            // via `POST /api/v1/spaces/{id}/read-marker` (or
-            // equivalent ephemeral fanout). The endpoint is not yet
-            // confirmed; until then we just track locally so the
-            // testid surface stays correct.
+            // Post the visible read receipt through the canonical
+            // ephemeral channel; local marker state keeps the rendered
+            // testid surface stable while server projection catches up.
             let base = base_url.clone();
             let space = selected_space.clone();
             let event_id = top_event.clone();
+            let actor = account_did.clone();
             let api_token = token();
             spawn(async move {
                 let _ =
                     crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_receipt(&space, &event_id, "cx.receipt.read").await
+                        api.send_receipt(&space, &actor, &event_id, "cx.receipt.read")
+                            .await
                     })
                     .await;
             });
@@ -3298,13 +3298,11 @@ pub fn ChatPanel(
                                                     }
                                                     pinned_messages.set(current);
                                                     message_context_menu.set(None);
-                                                    // TODO(soland): when the
-                                                    // pinning endpoint lands,
-                                                    // call
-                                                    // `POST /api/v1/spaces/{id}/pinned`
-                                                    // here and replace the
-                                                    // local-only Signal with
-                                                    // the projection.
+                                                    // TODO(soland): replace
+                                                    // the local-only Signal
+                                                    // with the canonical
+                                                    // pinning event projection
+                                                    // once the reducer lands.
                                                 },
                                                 if is_pinned {
                                                     {crate::i18n::tr("message.unpin")}
@@ -4471,9 +4469,7 @@ pub fn ChatPanel(
                                         spawn(async move {
                                             // TODO(G3.Y2-followup):
                                             // soland's discussion-promote
-                                            // endpoint
-                                            // (`POST /api/v1/spaces/{parent_id}/flows/{flow_id}/promote-to-space`
-                                            // per the spec) is partially
+                                            // reducer is partially
                                             // implemented. We submit each
                                             // envelope through the generic
                                             // event submit path here so

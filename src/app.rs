@@ -500,8 +500,36 @@ body {
 }
 .board-column {
   min-width: 0;
-  min-height: 220px;
+  min-height: 0;
   padding: 10px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.board-column > .event-head.board-column-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 10px;
+}
+.board-column-title {
+  min-width: 0;
+}
+.board-column-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--cx-muted);
+}
+.board-column-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.board-column-actions button,
+.board-card-footer button,
+.board-add-card-row button {
+  width: auto;
+  min-height: 34px;
+  padding: 6px 10px;
 }
 .board-card {
   cursor: grab;
@@ -512,6 +540,43 @@ body {
 }
 .board-card .event-head {
   align-items: flex-start;
+}
+.board-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.board-card-discussion {
+  min-width: 0;
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.board-add-card-row {
+  display: flex;
+  justify-content: flex-start;
+}
+.board-maintenance {
+  border-style: dashed;
+  box-shadow: none;
+}
+.board-maintenance > summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--cx-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.board-maintenance > summary span:last-child {
+  white-space: nowrap;
+}
+.board-maintenance > .muted,
+.board-maintenance > .event {
+  margin-top: 8px;
 }
 .card-detail-drawer { border-color: var(--cx-brand); }
 .chat-message-row {
@@ -6210,9 +6275,11 @@ fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
             Route::Quarantine,
         ),
         (
-            "Workspace setup",
-            "bootstrap a Space and policy",
-            Route::Setup,
+            "New Realm",
+            "create security boundary",
+            Route::SetupSection {
+                section: "realms".to_owned(),
+            },
         ),
     ]
 }
@@ -6545,7 +6612,7 @@ fn route_label(route: &Route) -> &'static str {
             "Timeline View"
         }
         Route::Directory => "Search",
-        Route::Setup => "Workspace Setup",
+        Route::Setup => "New Realm",
         Route::SetupSection { section } => match section.as_str() {
             "realms" | "spaces" => "New Realm",
             "new-space" => "New Space",
@@ -7524,6 +7591,7 @@ mod tests {
 
     #[test]
     fn setup_section_route_labels_match_realm_and_space_forms() {
+        assert_eq!(route_label(&Route::Setup), "New Realm");
         assert_eq!(
             route_label(&Route::SetupSection {
                 section: "realms".to_owned()

@@ -734,6 +734,7 @@ pub fn TimelinePanel(
                                                         match api
                                                             .send_receipt(
                                                                 &receipt_space,
+                                                                &actor_for_status,
                                                                 &receipt_event_id,
                                                                 "cx.receipt.read",
                                                             )

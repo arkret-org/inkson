@@ -938,9 +938,8 @@ impl ContrixApi {
 
     /// Member-state FSM transition (kick / ban / unban / leave) on the
     /// Realm's `cx.component.member.state.v1` cell. Submits a `cx.member.state`
-    /// event via `cx.events.submit` (spec-canonical path; the old
-    /// `DELETE /api/v1/spaces/{id}/members/{m}` and `POST /spaces/{id}/members/{m}/ban`
-    /// REST shims were deployment-local).
+    /// event via `cx.events.submit`; deployment-local member REST shims are
+    /// intentionally not used.
     pub async fn transition_member_state(
         &self,
         realm_id: &str,
@@ -1758,7 +1757,7 @@ impl ContrixApi {
     }
 
     /// Tombstone a Space via `cx.space.tombstone` event (spec-canonical).
-    /// Successor of the legacy `DELETE /api/v1/spaces/{id}` REST shim.
+    /// Successor of the old deployment-local Space delete REST shim.
     pub async fn delete_space(
         &self,
         space_id: &str,
@@ -1877,12 +1876,9 @@ impl ContrixApi {
     }
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
-    /// (`cx.typing`). They MUST flow through the broadcast ephemeral channel,
-    /// NOT through `cx.events.submit`. The REST `POST /api/v1/typing` shim
-    /// is retained for transports that don't yet expose the dedicated
-    /// ephemeral fanout (TODO(round23-T02): collapse to a single transport
-    /// once soland exposes it). The body is shaped as an
-    /// `EphemeralEnvelope` so the server can dispatch directly.
+    /// (`cx.typing`). They MUST flow through the canonical
+    /// `cx.ephemeral.send` operation (`POST /api/v1/ephemeral`), never
+    /// through `cx.events.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
         space_id: &str,
@@ -1891,57 +1887,34 @@ impl ContrixApi {
         typing: bool,
     ) -> anyhow::Result<TypingResponse> {
         let envelope = build_typing_envelope(space_id, actor, device_id, typing)?;
-        // Best-effort: route via the broadcast ephemeral channel first.
-        // If the server does not yet expose that endpoint, fall through
-        // to the typing-specific shim — but never to `cx.events.submit`.
-        // TODO(round23-T02): drop the legacy shim once soland exposes the
-        // dedicated ephemeral channel on every deployment.
-        match self.submit_ephemeral_envelope(&envelope).await {
-            Ok(_) => Ok(TypingResponse { ok: true }),
-            Err(error) => {
-                tracing::debug!(
-                    target: "yougen::ephemeral",
-                    %error,
-                    "broadcast ephemeral channel unavailable for cx.typing; using transport shim"
-                );
-                self.post_json(
-                    "api/v1/typing",
-                    json!({"space_id": space_id, "typing": typing}),
-                )
-                .await
-            }
-        }
+        let response = self.submit_ephemeral_envelope(&envelope).await?;
+        Ok(TypingResponse {
+            ok: response.accepted,
+        })
     }
 
     /// Round R2/R3 (T02) — read receipts (`cx.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST flow through the broadcast ephemeral channel.
-    /// The REST shim is retained as a transport fallback only; the
-    /// `cx.events.submit` durable path MUST NOT be used.
+    /// ephemeral. They MUST flow through `cx.ephemeral.send`; the
+    /// `cx.events.submit` durable path and deployment-local `/receipts`
+    /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
         space_id: &str,
+        actor: &str,
         event_id: &str,
         receipt_type: &str,
     ) -> anyhow::Result<ReceiptResponse> {
         // Only `cx.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
-        if receipt_type == "cx.receipt.read" {
-            let actor_did = event_id.to_owned(); // server fills the actor from the bearer token; payload only needs the event_id reference
-            let envelope = build_receipt_read_envelope(space_id, &actor_did, event_id)?;
-            if self.submit_ephemeral_envelope(&envelope).await.is_ok() {
-                return Ok(ReceiptResponse { ok: true });
-            }
-            tracing::debug!(
-                target: "yougen::ephemeral",
-                "broadcast ephemeral channel unavailable for cx.receipt.read; using transport shim"
-            );
+        if receipt_type != "cx.receipt.read" {
+            anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
-        self.post_json(
-            "api/v1/receipts",
-            json!({"space_id": space_id, "event_id": event_id, "receipt_type": receipt_type}),
-        )
-        .await
+        let envelope = build_receipt_read_envelope(space_id, actor, event_id)?;
+        let response = self.submit_ephemeral_envelope(&envelope).await?;
+        Ok(ReceiptResponse {
+            ok: response.accepted,
+        })
     }
 
     // ── Views — collection projection (T20) ─────────────────────────
@@ -2349,18 +2322,13 @@ impl ContrixApi {
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
-    /// dedicated ephemeral channel (`POST /api/v1/ephemeral`) instead of the
+    /// canonical ephemeral channel (`POST /api/v1/ephemeral`) instead of the
     /// durable `/api/v1/events` endpoint. The envelope MUST validate against
     /// `cx.schema.ephemeral_envelope.v1` (kind in
     /// {`cx.call.signal`, `cx.presence`, `cx.typing`, `cx.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
     /// signal kinds MUST NOT travel via `cx.events.submit`; this method is
     /// the single approved network path.
-    ///
-    /// TODO(round23-T02): once soland exposes a transport-specific ephemeral
-    /// channel (events subscribe live stream / presence fanout), wire this to
-    /// that endpoint. For now we POST to `api/v1/ephemeral` and fail fast
-    /// rather than fall back to `cx.events.submit`.
     pub async fn submit_ephemeral_envelope(
         &self,
         envelope: &contrix_sdk::EphemeralEnvelope,
@@ -2386,16 +2354,7 @@ impl ContrixApi {
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
             );
         }
-        // Wire schema id binding — soland's `/api/v1/ephemeral` handler
-        // expects an envelope tagged with the v1 schema id so it can
-        // dispatch to the right reducer-skipping channel.
-        let mut body = serde_json::to_value(envelope)?;
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "schema".to_owned(),
-                Value::String(contrix_sdk::EphemeralEnvelope::SCHEMA.to_owned()),
-            );
-        }
+        let body = serde_json::to_value(envelope)?;
         self.post_json("api/v1/ephemeral", body).await
     }
 
@@ -2700,7 +2659,8 @@ pub fn build_typing_envelope(
 ) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = contrix_sdk::RealmId::new(realm_id)
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm = contrix_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.typing: {err}"))?;
     let actor = contrix_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.typing: {err}"))?;
@@ -2718,7 +2678,14 @@ pub fn build_typing_envelope(
         device,
         now,
         expires_at,
-        json!({"actor_did": actor_did, "typing": typing}),
+        json!({
+            "actor_id": actor_did,
+            "actor_did": actor_did,
+            "realm_id": realm_id_wire,
+            "scope_id": realm_id,
+            "typing": typing,
+            "ttl_ms": EPHEMERAL_DEFAULT_TTL_SECS * 1000
+        }),
         None,
     )
     .map_err(|err| anyhow::anyhow!("typing envelope rejected: {err}"))
@@ -2732,7 +2699,8 @@ pub fn build_receipt_read_envelope(
 ) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = contrix_sdk::RealmId::new(realm_id)
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm = contrix_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.receipt.read: {err}"))?;
     let actor = contrix_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.receipt.read: {err}"))?;
@@ -2743,7 +2711,14 @@ pub fn build_receipt_read_envelope(
         None,
         now,
         expires_at,
-        json!({"event_id": event_id}),
+        json!({
+            "receipt_type": "read",
+            "schema": "cx.schema.read_receipt.v1",
+            "realm_id": realm_id_wire,
+            "actor_id": actor_did,
+            "event_id": event_id,
+            "created_at": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        }),
         None,
     )
     .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))
@@ -3946,6 +3921,70 @@ mod tests {
             .unwrap();
         assert_eq!(flows.items[0].space_id, flows.realm_id);
         assert_eq!(flows.items[0].state, "archived");
+    }
+
+    #[test]
+    fn typing_envelope_uses_spec_ephemeral_shape() {
+        let envelope = build_typing_envelope(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            Some("cx:device:01904100-0000-7000-8000-a11ce0000001"),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(envelope.kind, "cx.typing");
+        assert_eq!(
+            envelope.realm_id.to_string(),
+            "cx:realm:0196419b-0000-7000-8000-000000000000"
+        );
+        assert_eq!(
+            envelope.payload["scope_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000000"
+        );
+        assert_eq!(
+            envelope.payload["realm_id"],
+            "cx:realm:0196419b-0000-7000-8000-000000000000"
+        );
+        assert_eq!(envelope.payload["actor_did"], "did:web:alice.example");
+        assert_eq!(envelope.payload["typing"], true);
+        assert!(
+            !serde_json::to_value(&envelope)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("schema")
+        );
+    }
+
+    #[test]
+    fn read_receipt_envelope_uses_actor_not_event_as_sender() {
+        let envelope = build_receipt_read_envelope(
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "did:web:alice.example",
+            "cx:event:01904100-0000-7000-8000-4a4116cba4e8",
+        )
+        .unwrap();
+
+        assert_eq!(envelope.kind, "cx.receipt.read");
+        assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
+        assert_eq!(
+            envelope.realm_id.to_string(),
+            "cx:realm:0196419b-0000-7000-8000-000000000000"
+        );
+        assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
+        assert_eq!(
+            envelope.payload["event_id"],
+            "cx:event:01904100-0000-7000-8000-4a4116cba4e8"
+        );
+        assert_eq!(envelope.payload["schema"], "cx.schema.read_receipt.v1");
+        assert!(
+            !serde_json::to_value(&envelope)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("schema")
+        );
     }
 
     #[test]

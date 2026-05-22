@@ -1144,9 +1144,12 @@ pub fn KanbanPanel(
                                 );
                             }
                         },
-                        div { class: "event-head",
-                            span { class: "space-title", "{column.title}" }
-                            span { "rank {column.rank} / {column.cards.len()}" }
+                        div { class: "event-head board-column-head",
+                            div { class: "board-column-title",
+                                span { class: "space-title", "{column.title}" }
+                                div { class: "board-column-meta", "rank {column.rank} / {column.cards.len()}" }
+                            }
+                            div { class: "board-column-actions",
                             {
                                 let gate = capability_gate_for_space_container(
                                     &capability_engine,
@@ -1190,6 +1193,7 @@ pub fn KanbanPanel(
                                         {crate::i18n::tr("kanban.archive_action")}
                                     }
                                 }
+                            }
                             }
                         }
 
@@ -1303,10 +1307,12 @@ pub fn KanbanPanel(
                                 }
                                 div { class: "muted", "{card.description}" }
                                 div { class: "space-meta", "assignee {card.assignee} / due {card.due}" }
-                                div { class: "actions",
-                                    span { class: "badge blue", "Discussion: {card.primary_flow}" }
-                                if card.locked_flow.is_some() {
-                                        span { class: "badge amber", "Locked discussion hidden" }
+                                div { class: "board-card-footer",
+                                    div { class: "board-card-discussion",
+                                        span { class: "badge blue", "Discussion: {card.primary_flow}" }
+                                        if card.locked_flow.is_some() {
+                                            span { class: "badge amber", "Locked discussion hidden" }
+                                        }
                                     }
                                     {
                                         let gate = capability_gate_for_flow(
@@ -1468,7 +1474,7 @@ pub fn KanbanPanel(
                                 }
                             }
                         } else {
-                            div { class: "actions",
+                            div { class: "board-add-card-row",
                                 button {
                                     class: "secondary",
                                     "data-testid": "add-card-button",
@@ -1497,8 +1503,8 @@ pub fn KanbanPanel(
                     .collect();
                 let archived_count = archived.len();
                 rsx! {
-                    div { class: "event", "data-testid": "kanban-archived-lists",
-                        div { class: "event-head",
+                    details { class: "event board-maintenance", "data-testid": "kanban-archived-lists",
+                        summary {
                             span { {crate::i18n::tr("kanban.archived_lists_header")} }
                             span { "{archived_count} list(s)" }
                         }
@@ -1593,8 +1599,8 @@ pub fn KanbanPanel(
                     .collect();
                 let archived_count = archived_cards.len();
                 rsx! {
-                    div { class: "event", "data-testid": "kanban-archived-cards",
-                        div { class: "event-head",
+                    details { class: "event board-maintenance", "data-testid": "kanban-archived-cards",
+                        summary {
                             span { {crate::i18n::tr("kanban.archived_cards_header")} }
                             span { "{archived_count} card(s)" }
                         }
@@ -1661,8 +1667,8 @@ pub fn KanbanPanel(
                 }
             }
 
-            div { class: "event", "data-testid": "board-offline-queue",
-                div { class: "event-head", span { {crate::i18n::tr("kanban.move_queue_header")} } span { "{write_records().len()} move(s)" } }
+            details { class: "event board-maintenance", "data-testid": "board-offline-queue",
+                summary { span { {crate::i18n::tr("kanban.move_queue_header")} } span { "{write_records().len()} move(s)" } }
                 div { class: "muted", "data-testid": "board-status", "{board_status}" }
                 for record in write_records() {
                     div { class: "event", "data-testid": "board-event-record",
@@ -3196,12 +3202,10 @@ fn locate_flow_position_in_projection(
     FlowPositionExpectation::Initial
 }
 
-/// Marks the first queued / soft-failed write as Quarantined. The
-/// legacy Move replay path (which re-POSTed a signed Move blob to
-/// `/api/v1/moves`) is gone — events.submit is the only write surface
-/// now, and a failed event needs the UI to reconstruct the equivalent
-/// envelope (TODO: wire that through cx_ops::flow_position_*) rather
-/// than replay the original bytes.
+/// Marks the first queued / soft-failed write as Quarantined. Event
+/// submit is the only write surface now, and a failed event needs the UI
+/// to reconstruct the equivalent envelope (TODO: wire that through
+/// cx_ops::flow_position_*) rather than replay stale bytes.
 fn replay_first_move(
     _base_url: String,
     _token: Signal<String>,

@@ -226,6 +226,8 @@ enum SetupSection {
 impl SetupSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
+            "" => Self::Spaces,
+            "overview" => Self::Overview,
             // Canonical slug for the Realm bootstrap surface — the
             // form actually creates a Realm (cx.realm.create), so the
             // URL should say "realms". `spaces` is kept as a legacy
@@ -239,7 +241,7 @@ impl SetupSection {
 
     fn slug(self) -> &'static str {
         match self {
-            Self::Overview => "",
+            Self::Overview => "overview",
             Self::Spaces => "realms",
             Self::NewSpace => "new-space",
         }

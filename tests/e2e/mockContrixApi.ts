@@ -6,10 +6,8 @@ const CHILD_SPACE = "cx:space:01launchchild0000000000000";
 const GRANDCHILD_SPACE = "cx:space:01launchdeep00000000000000";
 
 export async function mockContrixApi(page: Page) {
-  let setupSpaceDeleted = false;
-  let setupMembers = ["did:web:alice.example", "did:web:bob.example"];
   let messageCounter = 0;
-  let submitCounter = 0;
+  const createdRealms: Array<{ id: string; title: string; summary: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
 
   await page.route("**/*", async (route) => {
@@ -89,6 +87,7 @@ export async function mockContrixApi(page: Page) {
           "directory.search_realms",
           "directory.resolve_realm",
           "authz.check",
+          "realm.create",
           "space.create",
           "space.manage_members",
           "message.create",
@@ -103,7 +102,6 @@ export async function mockContrixApi(page: Page) {
           "push.register_device",
           "mimi_provider_facade",
           "events.submit",
-          "moves.submit",
         ],
         supported_operations: [
           "cx.account.subscribe",
@@ -112,7 +110,12 @@ export async function mockContrixApi(page: Page) {
           "cx.directory.search_realms",
           "cx.directory.resolve_realm",
           "cx.authz.check",
-          "cx.extension.soland.spaces.create",
+          "cx.realm.create",
+          "cx.space.create",
+          "cx.member.state",
+          "cx.invite.create",
+          "cx.invite.accept",
+          "cx.invite.cancel",
           "cx.events.submit",
           "cx.message.create",
           "cx.message.revise",
@@ -127,7 +130,6 @@ export async function mockContrixApi(page: Page) {
           "cx.mimi.provider_directory",
           "cx.events.describe",
           "cx.events.submit",
-          "cx.moves.submit",
         ],
         supported_schema_profiles: ["cx.schema.core.v1"],
         supported_reducer_profiles: ["cx.reducer.v1"],
@@ -215,6 +217,33 @@ export async function mockContrixApi(page: Page) {
         }, 428);
       }
       let syncToken = "sx:e2e:event";
+      const submittedEvents = Array.isArray(body.events) ? body.events : [body];
+      for (const event of submittedEvents) {
+        if (event.kind !== "cx.realm.create") {
+          continue;
+        }
+        const raw = JSON.stringify(event);
+        const id =
+          event.realm_id ??
+          event.space_id ??
+          event.payload?.realm_id ??
+          event.payload?.object?.realm_id ??
+          raw.match(/cx:realm:[0-9a-f-]+/)?.[0] ??
+          SETUP_SPACE;
+        const title =
+          event.payload?.object?.title ??
+          event.payload?.title ??
+          event.payload?.fields?.title ??
+          "Setup Flow Space";
+        const summary =
+          event.payload?.object?.summary ??
+          event.payload?.summary ??
+          event.payload?.fields?.summary ??
+          "Created from yougen workspace setup";
+        if (!createdRealms.some((realm) => realm.id === id)) {
+          createdRealms.push({ id, title, summary });
+        }
+      }
       if (body.kind === "cx.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
@@ -254,16 +283,6 @@ export async function mockContrixApi(page: Page) {
           reducer_profile: "cx.reducer.v1",
           projection_source: body.event_id,
         },
-      });
-    }
-
-    if (url.pathname === "/api/v1/moves" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      submitCounter += 1;
-      return json(route, {
-        move_id: body.id ?? `sha256:e2e-${submitCounter}`,
-        state: "pending",
-        reason: null,
       });
     }
 
@@ -438,106 +457,9 @@ export async function mockContrixApi(page: Page) {
       return json(route, { ok: true });
     }
 
-    if (url.pathname === "/api/v1/spaces" && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      setupSpaceDeleted = false;
-      setupMembers = ["did:web:alice.example", ...(body.invitees ?? [])];
-      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted), 201);
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+$/) && route.request().method() === "PATCH") {
-      const spaceId = decodeURIComponent(url.pathname.split("/").pop() ?? DEMO_SPACE);
-      return json(route, { ok: true, space_id: spaceId });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/policy$/) && route.request().method() === "PUT") {
-      const body = await route.request().postDataJSON();
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        ok: true,
-        space_id: spaceId,
-        join_rule: body.join_rule,
-        history_visibility: body.history_visibility,
-      });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite$/) && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        ok: true,
-        invite_id: "cx:invite:e2e",
-        space_id: spaceId,
-        target: body.target,
-        state: "pending",
-      });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite\/accept$/) && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        ok: true,
-        invite_id: body.invite_id,
-        space_id: spaceId,
-        target: "did:web:carol.example",
-        state: "accepted",
-      });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/invite\/reject$/) && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, {
-        ok: true,
-        invite_id: body.invite_id,
-        space_id: spaceId,
-        target: "did:web:carol.example",
-        state: "canceled",
-      });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/archive$/) && route.request().method() === "POST") {
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, { ok: true, space_id: spaceId, archived: true });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/leave$/) && route.request().method() === "POST") {
-      const spaceId = decodeURIComponent(url.pathname.split("/")[4]);
-      return json(route, { ok: true, space_id: spaceId });
-    }
-
-    if (url.pathname.match(/^\/api\/v1\/spaces\/[^/]+\/members\/.+\/ban$/) && route.request().method() === "POST") {
-      const parts = url.pathname.split("/");
-      return json(route, {
-        ok: true,
-        space_id: decodeURIComponent(parts[4]),
-        member: decodeURIComponent(parts[6]),
-        banned: true,
-      });
-    }
-
     if (url.pathname === "/api/v1/mls/rotate") {
       const body = await route.request().postDataJSON();
       return json(route, { ok: true, epoch: 2, group_id: body.group_id });
-    }
-
-    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}/members` && route.request().method() === "POST") {
-      const body = await route.request().postDataJSON();
-      if (!setupMembers.includes(body.member)) {
-        setupMembers.push(body.member);
-      }
-      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
-    }
-
-    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}/members/did:web:bob.example` && route.request().method() === "DELETE") {
-      setupMembers = setupMembers.filter((member) => member !== "did:web:bob.example");
-      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
-    }
-
-    if (url.pathname === `/api/v1/spaces/${SETUP_SPACE}` && route.request().method() === "DELETE") {
-      setupSpaceDeleted = true;
-      return json(route, spaceLifecycle(SETUP_SPACE, setupMembers, setupSpaceDeleted));
     }
 
     if (url.pathname === "/api/v1/account/subscribe") {
@@ -547,6 +469,25 @@ export async function mockContrixApi(page: Page) {
         cursor: "cx:cursor:e2e-2",
         realms: {
           join: {
+            ...Object.fromEntries(
+              createdRealms.map((realm) => [
+                realm.id,
+                {
+                  summary: {
+                    title: realm.title,
+                    summary: realm.summary,
+                    child_space_ids: [],
+                  },
+                  timeline: {
+                    events: timelineEvents.filter((event) => event.space_id === realm.id),
+                    limited: false,
+                  },
+                  state: { events: [] },
+                  ephemeral: { events: [] },
+                  unread: { notification_count: 0, highlight_count: 0 },
+                },
+              ]),
+            ),
             [DEMO_SPACE]: {
               summary: {
                 title: "Contrix Demo Space",
@@ -673,10 +614,7 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
-    if (
-      url.pathname === "/api/v1/directory/resolve-space" ||
-      url.pathname === "/api/v1/directory/resolve-realm"
-    ) {
+    if (url.pathname === "/api/v1/directory/resolve-realm") {
       return json(route, {
         space_preview: spacePreview(),
         stripped_state: [],
@@ -813,15 +751,20 @@ export async function mockContrixApi(page: Page) {
       return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
     }
 
-    if (url.pathname === "/api/v1/receipts") {
+    if (url.pathname === "/api/v1/ephemeral") {
       const body = await route.request().postDataJSON();
-      if (body.receipt_type !== "cx.receipt.read") {
+      if (!["cx.receipt.read", "cx.typing", "cx.presence", "cx.call.signal"].includes(body.kind)) {
         return json(route, {
           ok: false,
-          error: { code: "invalid_receipt_type", message: "expected cx.receipt.read" },
+          error: { code: "invalid_param", message: "expected broadcast ephemeral kind" },
         }, 400);
       }
-      return json(route, { ok: true });
+      return json(route, {
+        accepted: true,
+        kind: body.kind,
+        realm_id: body.realm_id,
+        server_received_at: new Date().toISOString(),
+      });
     }
 
     if (url.pathname === "/api/v1/push/register-device") {
@@ -914,16 +857,6 @@ function spacePreview() {
     tags: ["demo"],
     public: true,
     category: "collaboration",
-  };
-}
-
-function spaceLifecycle(spaceId: string, members: string[], deleted: boolean) {
-  return {
-    ok: true,
-    space_id: spaceId,
-    owner: "did:web:alice.example",
-    members,
-    deleted,
   };
 }
 
