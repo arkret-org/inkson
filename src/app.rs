@@ -1095,7 +1095,17 @@ body {
 }
 .card-rich-editor {
   display: grid;
-  gap: 8px;
+  --editor-bg: color-mix(in srgb, var(--surface, var(--cx-surface, #fff)) 92%, var(--bg, var(--cx-bg, #eef3ed)) 8%);
+  --editor-bg-soft: color-mix(in srgb, var(--surface-2, var(--cx-bg-soft, #f7faf7)) 84%, var(--surface, var(--cx-surface, #fff)) 16%);
+  --editor-bg-raised: color-mix(in srgb, var(--surface-3, var(--cx-surface, #fff)) 78%, var(--accent, var(--cx-brand, #2b6b4f)) 10%);
+  --editor-line: var(--border, var(--cx-line, #d6e1d7));
+  --editor-line-strong: var(--border-strong, var(--cx-line-strong, #c0cec2));
+  --editor-ink: var(--text, var(--cx-ink, #142018));
+  --editor-muted: var(--text-2, var(--cx-muted, #627065));
+  --editor-accent: var(--accent, var(--cx-teal, #3a8a67));
+  --editor-code-bg: color-mix(in srgb, var(--surface-inv, #18212f) 8%, var(--surface-2, var(--cx-bg-soft, #f7faf7)) 92%);
+  --editor-code-ink: var(--accent-ink, var(--editor-accent));
+  gap: 0;
 }
 .card-rich-editor-host {
   min-height: 320px;
@@ -1119,35 +1129,219 @@ body {
 }
 .card-rich-editor .toastui-editor-defaultUI {
   overflow: hidden;
-  border-color: var(--border, var(--cx-line));
+  border: 1px solid var(--editor-line);
   border-radius: 8px;
-  background: var(--surface, var(--cx-surface));
-  color: var(--text, var(--cx-ink));
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+  font-family: inherit;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 .card-rich-editor .toastui-editor-toolbar,
-.card-rich-editor .toastui-editor-defaultUI-toolbar,
-.card-rich-editor .toastui-editor-mode-switch {
-  background: var(--surface-2, var(--cx-surface));
-  border-color: var(--border, var(--cx-line));
+.card-rich-editor .toastui-editor-defaultUI-toolbar {
+  height: auto;
+  min-height: 44px;
+  padding: 6px 10px;
+  align-items: center;
+  background: linear-gradient(180deg, var(--editor-bg-soft) 0%, var(--editor-bg) 100%);
+  border-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.card-rich-editor .toastui-editor-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+}
+.card-rich-editor .toastui-editor-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 7px;
+  background: var(--editor-line);
 }
 .card-rich-editor .toastui-editor-md-container,
 .card-rich-editor .toastui-editor-ww-container,
+.card-rich-editor .toastui-editor-main,
+.card-rich-editor .toastui-editor-main-container,
 .card-rich-editor .toastui-editor-contents,
 .card-rich-editor .ProseMirror {
-  background: var(--surface, var(--cx-surface));
-  color: var(--text, var(--cx-ink));
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-defaultUI .ProseMirror,
+.card-rich-editor .toastui-editor-ww-container .toastui-editor-contents,
+.card-rich-editor .toastui-editor-md-container .toastui-editor,
+.card-rich-editor .toastui-editor-md-container .toastui-editor-md-preview {
+  padding: 18px 24px;
+}
+.card-rich-editor .toastui-editor-md-container .toastui-editor-md-preview {
+  border-left: 1px solid var(--editor-line);
+}
+.card-rich-editor .toastui-editor-md-tab-style > .toastui-editor-md-preview {
+  border-left: 0;
 }
 .card-rich-editor .toastui-editor-contents p,
 .card-rich-editor .toastui-editor-contents li,
 .card-rich-editor .toastui-editor-contents table,
+.card-rich-editor .toastui-editor-contents h1,
+.card-rich-editor .toastui-editor-contents h2,
+.card-rich-editor .toastui-editor-contents h3,
+.card-rich-editor .toastui-editor-contents h4,
+.card-rich-editor .toastui-editor-contents h5,
+.card-rich-editor .toastui-editor-contents h6,
 .card-rich-editor .toastui-editor-md-preview,
 .card-rich-editor .toastui-editor-md-splitter,
 .card-rich-editor .toastui-editor-md-code {
-  color: var(--text, var(--cx-ink));
+  color: var(--editor-ink);
 }
-.card-rich-editor .toastui-editor-defaultUI button {
+.card-rich-editor .toastui-editor-contents h1,
+.card-rich-editor .toastui-editor-contents h2 {
+  border-bottom-color: var(--editor-line-strong);
+}
+.card-rich-editor .toastui-editor-contents a {
+  color: var(--editor-accent);
+}
+.card-rich-editor .toastui-editor-contents blockquote {
+  border-left-color: var(--editor-line-strong);
+  color: #c9d5e6;
+}
+.card-rich-editor .toastui-editor-contents code,
+.card-rich-editor .toastui-editor-contents pre,
+.card-rich-editor .toastui-editor-md-code,
+.card-rich-editor .toastui-editor-md-code-block,
+.card-rich-editor .toastui-editor-md-code-block-line-background {
+  background: var(--editor-code-bg);
+  color: var(--editor-code-ink);
+}
+.card-rich-editor .toastui-editor-contents th,
+.card-rich-editor .toastui-editor-contents td {
+  border-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-contents th {
+  background: var(--editor-bg-soft);
+}
+.card-rich-editor .toastui-editor-md-container .toastui-editor,
+.card-rich-editor .toastui-editor-md-container .toastui-editor * {
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-md-delimiter,
+.card-rich-editor .toastui-editor-md-meta,
+.card-rich-editor .toastui-editor-md-block-quote,
+.card-rich-editor .toastui-editor-md-table,
+.card-rich-editor .toastui-editor-md-thematic-break {
+  color: var(--editor-muted);
+}
+.card-rich-editor .toastui-editor-md-link,
+.card-rich-editor .toastui-editor-md-link-url,
+.card-rich-editor .toastui-editor-md-link-desc {
+  color: var(--editor-accent);
+}
+.card-rich-editor .toastui-editor-md-splitter {
+  background: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-defaultUI button,
+.card-rich-editor .toastui-editor-defaultUI-toolbar button {
   min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background-color: transparent;
+  color: var(--editor-ink);
   box-shadow: none;
+}
+.card-rich-editor .toastui-editor-defaultUI-toolbar button {
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  opacity: 0.82;
+}
+.card-rich-editor .toastui-editor-defaultUI-toolbar button:not(:disabled):hover,
+.card-rich-editor .toastui-editor-defaultUI-toolbar button.active {
+  border-color: var(--editor-line-strong);
+  background-color: var(--editor-bg-raised);
+  opacity: 1;
+}
+.card-rich-editor .toastui-editor-defaultUI-toolbar button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(125,211,252,0.18);
+}
+.card-rich-editor .toastui-editor-mode-switch {
+  height: 34px;
+  padding: 4px 8px;
+  background: var(--editor-bg-soft);
+  border-top: 1px solid var(--editor-line);
+  text-align: right;
+}
+.card-rich-editor .toastui-editor-mode-switch .tab-item {
+  width: auto;
+  min-width: 86px;
+  height: 24px;
+  margin: 0 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--editor-muted);
+  line-height: 22px;
+}
+.card-rich-editor .toastui-editor-mode-switch .tab-item.active {
+  border-color: var(--editor-line-strong);
+  background: var(--editor-bg-raised);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-defaultUI .toastui-editor-md-tab-container {
+  height: 38px;
+  background: var(--editor-bg-soft);
+  border-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-md-tab-container .toastui-editor-tabs {
+  margin-left: 10px;
+}
+.card-rich-editor .toastui-editor-md-tab-container .tab-item {
+  width: auto;
+  min-width: 72px;
+  height: 28px;
+  margin-top: 10px;
+  border-color: var(--editor-line);
+  border-radius: 6px 6px 0 0;
+  background: color-mix(in srgb, var(--editor-bg-soft) 84%, var(--editor-bg-raised) 16%);
+  color: var(--editor-muted);
+  line-height: 27px;
+}
+.card-rich-editor .toastui-editor-md-tab-container .tab-item.active {
+  border-bottom-color: var(--editor-bg);
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup,
+.card-rich-editor .toastui-editor-dropdown-toolbar {
+  border-color: var(--editor-line);
+  background: var(--editor-bg-soft);
+  color: var(--editor-ink);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+}
+.card-rich-editor .toastui-editor-popup-body label,
+.card-rich-editor .toastui-editor-popup-body .toastui-editor-table-description {
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup-body input[type="text"],
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-file-name {
+  border-color: var(--editor-line);
+  background: var(--editor-bg);
+  color: var(--editor-ink);
+}
+.card-rich-editor .toastui-editor-popup-body input[type="text"]:focus {
+  outline: 1px solid var(--editor-accent);
+}
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item {
+  color: var(--editor-muted);
+  border-bottom-color: var(--editor-line);
+}
+.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item.active {
+  color: var(--editor-accent);
+  border-bottom-color: var(--editor-accent);
 }
 .card-detail-edit-grid {
   display: grid;
@@ -3254,6 +3448,24 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   vertical-align: 0;
 }
 
+.sidebar-nav-icon.realm-security-secure {
+  color: var(--success, #1f7a4d);
+}
+
+.sidebar-nav-icon.realm-security-unsafe {
+  color: var(--danger, #b42318);
+}
+
+.sidebar-nav-item:hover .sidebar-nav-icon.realm-security-secure,
+.sidebar-nav-item.is-active .sidebar-nav-icon.realm-security-secure {
+  color: var(--success, #1f7a4d);
+}
+
+.sidebar-nav-item:hover .sidebar-nav-icon.realm-security-unsafe,
+.sidebar-nav-item.is-active .sidebar-nav-icon.realm-security-unsafe {
+  color: var(--danger, #b42318);
+}
+
 .sidebar-collapse-toggle,
 .panel-collapse-toggle,
 .theme-toggle-button {
@@ -4664,6 +4876,114 @@ fn string_array_field(value: &Value, keys: &[&str]) -> Vec<String> {
         .collect()
 }
 
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| value.get(*key)?.as_bool())
+}
+
+fn encryption_profile_is_encrypted(profile: &str) -> bool {
+    let normalized = profile.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    !matches!(
+        normalized.as_str(),
+        "" | "none" | "plain" | "plaintext" | "unencrypted" | "disabled" | "off" | "false"
+    )
+}
+
+fn plaintext_visibility_is_encrypted(visibility: &str) -> bool {
+    let normalized = visibility
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_");
+    matches!(
+        normalized.as_str(),
+        "encrypted" | "e2ee" | "private_encrypted" | "mls" | "mls_rfc9420"
+    )
+}
+
+fn plaintext_visibility_value(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| string_field(value, &["default", "mode", "visibility"]))
+}
+
+fn realm_projection_is_encrypted(body: &Value) -> bool {
+    let summary = body.get("summary").unwrap_or(&Value::Null);
+    for container in [
+        body,
+        summary,
+        body.get("object").unwrap_or(&Value::Null),
+        body.get("realm").unwrap_or(&Value::Null),
+        body.get("metadata").unwrap_or(&Value::Null),
+    ] {
+        if let Some(encrypted) = bool_field(
+            container,
+            &["encrypted", "is_encrypted", "e2ee", "end_to_end_encrypted"],
+        ) {
+            return encrypted;
+        }
+        if let Some(profile) = string_field(
+            container,
+            &["encryption_profile", "encryptionProfile", "encryption"],
+        ) {
+            return encryption_profile_is_encrypted(&profile);
+        }
+        if let Some(visibility) = container
+            .get("plaintext_visibility")
+            .and_then(plaintext_visibility_value)
+        {
+            return plaintext_visibility_is_encrypted(&visibility);
+        }
+    }
+
+    for event in body
+        .get("state")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            body.get("state_after")
+                .and_then(|state| state.get("events"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+    {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !kind.contains("realm.create") && !kind.contains("encryption") {
+            continue;
+        }
+        for container in [
+            event.get("payload").unwrap_or(&Value::Null),
+            event
+                .get("payload")
+                .and_then(|payload| payload.get("object"))
+                .unwrap_or(&Value::Null),
+            event.get("content").unwrap_or(&Value::Null),
+            event
+                .get("content")
+                .and_then(|content| content.get("object"))
+                .unwrap_or(&Value::Null),
+            event.get("object").unwrap_or(&Value::Null),
+            event,
+        ] {
+            if let Some(profile) = string_field(
+                container,
+                &["encryption_profile", "encryptionProfile", "encryption"],
+            ) {
+                return encryption_profile_is_encrypted(&profile);
+            }
+        }
+    }
+
+    false
+}
+
 fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
     let summary = body.get("summary").unwrap_or(&Value::Null);
     for container in [
@@ -5485,6 +5805,7 @@ pub fn RouterView() -> Element {
         )
     };
     let space_tree = space_tree_items(&loaded_spaces);
+    let space_projections = state_store.read().load().space_projections;
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -6098,6 +6419,31 @@ pub fn RouterView() -> Element {
                                     SpacePreviewKind::Realm => "Create a new Space at the root of this Realm",
                                     SpacePreviewKind::Space => "Create a new Space under this one (this Space becomes the parent)",
                                 };
+                                let (icon_name, icon_class, icon_title) = match item_space.kind {
+                                    SpacePreviewKind::Realm => {
+                                        let is_encrypted = space_projections
+                                            .get(&item_space.space_id)
+                                            .is_some_and(realm_projection_is_encrypted);
+                                        if is_encrypted {
+                                            (
+                                                "lock",
+                                                "sidebar-nav-icon realm-security-secure",
+                                                "Encrypted Realm",
+                                            )
+                                        } else {
+                                            (
+                                                "unlock",
+                                                "sidebar-nav-icon realm-security-unsafe",
+                                                "Unencrypted Realm",
+                                            )
+                                        }
+                                    }
+                                    SpacePreviewKind::Space => (
+                                        "folder",
+                                        "sidebar-nav-icon",
+                                        "Space",
+                                    ),
+                                };
                                 rsx! {
                             div { class: "sidebar-row",
                             Link {
@@ -6110,7 +6456,11 @@ pub fn RouterView() -> Element {
                                     let id = item_space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
                                 },
-                                span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
+                                span {
+                                    class: "{icon_class}",
+                                    title: "{icon_title}",
+                                    UiIcon { name: icon_name.to_owned() }
+                                }
                                 span { class: "grow truncate", "{display_name}" }
                                 if has_remark {
                                     span {
@@ -7489,9 +7839,9 @@ fn route_label(route: &Route) -> &'static str {
         Route::Login | Route::AuthCallback => "Login",
         // Route::Space resolves either a Realm or a Space projection
         // depending on the id prefix — see the sidebar two-tier
-        // classification. "Workspace" is the neutral umbrella label
-        // for the breadcrumb until a separate Realm view splits off.
-        Route::Space { .. } => "Workspace",
+        // classification. Keep both protocol terms visible until a
+        // separate Realm view splits off.
+        Route::Space { .. } => "Realm / Space",
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }
@@ -7500,7 +7850,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::SetupSection { section } => match section.as_str() {
             "realms" | "spaces" => "New Realm",
             "new-space" => "New Space",
-            _ => "Workspace Setup",
+            _ => "Setup",
         },
         Route::Settings | Route::SettingsSection { .. } => "Settings",
         Route::VerifyDevice => "Verify Device",
@@ -8747,6 +9097,22 @@ mod tests {
         assert_eq!(child.kind, SpacePreviewKind::Space);
         assert_eq!(child.realm_id, "cx:realm:root");
         assert_eq!(child.parent_space_id.as_deref(), Some("cx:realm:root"));
+    }
+
+    #[test]
+    fn realm_projection_encryption_state_uses_profile_and_visibility() {
+        assert!(realm_projection_is_encrypted(&json!({
+            "summary": {"encryption_profile": "mls_rfc9420"}
+        })));
+        assert!(realm_projection_is_encrypted(&json!({
+            "plaintext_visibility": {"default": "encrypted"}
+        })));
+        assert!(!realm_projection_is_encrypted(&json!({
+            "encryption_profile": "none"
+        })));
+        assert!(!realm_projection_is_encrypted(&json!({
+            "summary": {"title": "Legacy projection without encryption metadata"}
+        })));
     }
 
     #[test]

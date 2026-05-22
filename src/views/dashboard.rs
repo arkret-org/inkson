@@ -159,9 +159,9 @@ pub fn DashboardPanel(
                         class: "metric",
                         to: Route::Setup,
                         onclick: move |_| view.set(super::View::Setup),
-                        div { class: "lbl", "Workspace Setup" }
+                        div { class: "lbl", "Realm Setup" }
                         div { class: "val", if has_session { "Ready" } else { "Sign in" } }
-                        div { class: "delta", "Bootstrap your first Space and initial policy" }
+                        div { class: "delta", "Bootstrap your first Realm and initial policy" }
                     }
                     Link {
                         class: "metric",

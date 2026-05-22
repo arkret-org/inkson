@@ -30,6 +30,7 @@ pub mod event_signer;
 pub mod federation;
 pub mod hlc;
 pub mod i18n;
+pub mod identity_handle;
 /// Round 4 (spec a77b995) — invite-claim flow (subject_proof +
 /// binding_proof transcript + 5 terminal states UI).
 pub mod invite_claim;

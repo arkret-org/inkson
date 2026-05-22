@@ -18,7 +18,7 @@ pub struct StructuredMention {
     #[serde(default)]
     pub display_snapshot: String,
     /// T7.3: original handle URI as typed by the author (e.g.
-    /// `handle://alice@example.com`). Empty when only a DID was supplied.
+    /// `contrix://example.com/users/alice`). Empty when only a DID was supplied.
     #[serde(default)]
     pub handle_uri: String,
     /// T7.3: ISO-8601 timestamp the mention was resolved at compose
@@ -228,14 +228,25 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
         }
         if let Some(handle) = normalized.strip_prefix('@') {
             if !handle.is_empty() {
-                mentions.push(StructuredMention {
-                    kind: "actor".to_owned(),
-                    target: format!("did:web:{handle}"),
-                    token: normalized.to_owned(),
-                    display_snapshot: handle.to_owned(),
-                    handle_uri: format!("handle://{handle}"),
-                    resolved_at: String::new(),
-                });
+                if let Some(parsed) = crate::identity_handle::parse_user_handle(handle) {
+                    mentions.push(StructuredMention {
+                        kind: "actor".to_owned(),
+                        target: parsed.subject_did,
+                        token: normalized.to_owned(),
+                        display_snapshot: parsed.display,
+                        handle_uri: parsed.handle_uri,
+                        resolved_at: String::new(),
+                    });
+                } else {
+                    mentions.push(StructuredMention {
+                        kind: "actor".to_owned(),
+                        target: format!("did:web:{handle}"),
+                        token: normalized.to_owned(),
+                        display_snapshot: handle.to_owned(),
+                        handle_uri: String::new(),
+                        resolved_at: String::new(),
+                    });
+                }
             }
             continue;
         }
@@ -280,7 +291,7 @@ mod tests {
     #[test]
     fn parses_actor_and_entity_mentions() {
         let mentions = parse_structured_mentions(
-            "ping @did:web:bob.example and @carol.example about #cx:task:123 and #topic-demo",
+            "ping @did:web:bob.example and @carol:example.com about #cx:task:123 and #topic-demo",
         );
 
         assert_eq!(mentions.len(), 4);
@@ -292,7 +303,7 @@ mod tests {
         assert!(
             mentions
                 .iter()
-                .any(|mention| mention.target == "did:web:carol.example")
+                .any(|mention| mention.target == "did:web:example.com:users:carol")
         );
         assert!(
             mentions

@@ -36,7 +36,7 @@ type FlowProjection = {
 
 export async function mockContrixApi(page: Page) {
   let messageCounter = 0;
-  const createdRealms: Array<{ id: string; title: string; summary: string }> = [];
+  const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
   const boardSpaceContainers: SpaceContainerProjection[] = [
     {
@@ -392,8 +392,12 @@ export async function mockContrixApi(page: Page) {
           event.payload?.summary ??
           event.payload?.fields?.summary ??
           "Created from yougen workspace setup";
+        const encryptionProfile =
+          event.payload?.object?.encryption_profile ??
+          event.payload?.encryption_profile ??
+          "mls_rfc9420";
         if (!createdRealms.some((realm) => realm.id === id)) {
-          createdRealms.push({ id, title, summary });
+          createdRealms.push({ id, title, summary, encryption_profile: encryptionProfile });
         }
       }
       if (body.kind === "cx.space.create") {
@@ -682,6 +686,7 @@ export async function mockContrixApi(page: Page) {
                   summary: {
                     title: realm.title,
                     summary: realm.summary,
+                    encryption_profile: realm.encryption_profile,
                     child_space_ids: [],
                   },
                   timeline: {
@@ -698,6 +703,7 @@ export async function mockContrixApi(page: Page) {
               summary: {
                 title: "Contrix Demo Space",
                 summary: "Shared demo Space served by mocked server",
+                encryption_profile: "mls_rfc9420",
                 child_space_ids: [CHILD_SPACE],
               },
               timeline: { events: demoTimelineEvents, limited: false },

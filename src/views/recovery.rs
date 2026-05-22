@@ -772,12 +772,12 @@ pub fn RecoveryPanel(
                         placeholder: "e.g. Mei / Backup HSM",
                         oninput: move |evt| new_guardian_label.set(evt.value()),
                     }
-                    label { r#for: "guardian-did", "Handle or email" }
+                    label { r#for: "guardian-did", "Handle or DID" }
                     input {
                         id: "guardian-did",
                         "data-testid": "guardian-did",
                         value: "{new_guardian_did}",
-                        placeholder: "alice@example.com or @alice",
+                        placeholder: "alice:example.com or did:web:...",
                         oninput: move |evt| new_guardian_did.set(evt.value()),
                     }
                     label { r#for: "guardian-note", "Note (optional)" }
@@ -801,10 +801,16 @@ pub fn RecoveryPanel(
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
                             move |_| {
+                                let raw_guardian = new_guardian_did();
+                                let guardian_did =
+                                    crate::identity_handle::principal_did_from_identifier(
+                                        &raw_guardian,
+                                    )
+                                    .unwrap_or_else(|| raw_guardian.trim().to_owned());
                                 let mut next = guardians();
                                 next.push(Guardian {
                                     label: new_guardian_label().trim().to_owned(),
-                                    did: new_guardian_did().trim().to_owned(),
+                                    did: guardian_did,
                                     note: new_guardian_note().trim().to_owned(),
                                     confirmed: false,
                                 });

@@ -58,7 +58,7 @@ pub fn DirectoryPanel(
     let base_url_key = base_url.clone();
 
     rsx! {
-        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search workspace",
+        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search realms and spaces",
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
                 button {
@@ -345,7 +345,7 @@ pub fn DirectoryPanel(
                             DirectoryTab::Spaces => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
-                            DirectoryTab::Handles => "Enter handle (e.g. alice.example)",
+                            DirectoryTab::Handles => "Enter handle (e.g. alice:example.com)",
                         },
                         oninput: move |event| query.set(event.value()),
                         onkeydown: move |event| {

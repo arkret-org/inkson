@@ -342,10 +342,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("dashboard.spaces_delta_search", "Search or join a Space");
     dict.set("dashboard.spaces_delta_signin", "Sign in to load spaces");
     dict.set("dashboard.current_space", "Current Space");
-    dict.set("dashboard.workspace_setup", "Workspace Setup");
+    dict.set("dashboard.workspace_setup", "Realm Setup");
     dict.set(
         "dashboard.workspace_setup_delta",
-        "Bootstrap your first Space and initial policy",
+        "Bootstrap your first Realm and initial policy",
     );
     dict.set("dashboard.onboarding", "Onboarding");
     dict.set("dashboard.onboarding_steps", "4 steps");
@@ -436,7 +436,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.mls_publish_key_package", "Publish key package");
     dict.set(
         "chat.mls_invite_actor_placeholder",
-        "alice@example.com or @alice",
+        "alice:example.com or did:web:...",
     );
     dict.set("chat.mls_invite_device_placeholder", "Device id");
     dict.set("chat.mls_invite_member", "Invite to encrypted group");
@@ -566,7 +566,7 @@ pub fn english_translations() -> TranslationDict {
     // T7.2 watcher pill picker.
     dict.set(
         "chat.watchers.placeholder",
-        "alice@example.com or did:web:… (comma to add)",
+        "alice:example.com or did:web:… (comma to add)",
     );
     dict.set("chat.watchers.valid", "valid");
     dict.set("chat.watchers.invalid", "invalid");
@@ -575,7 +575,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.watchers.invalid_did", "Malformed DID");
     dict.set(
         "chat.watchers.unresolved",
-        "Type a DID, a handle (alice@example.com), or pick from suggestions.",
+        "Type a DID, a handle (alice:example.com), or pick from suggestions.",
     );
     dict.set("common.remove", "Remove");
     // T7.2 watch level fast switcher.
@@ -799,18 +799,18 @@ pub fn english_translations() -> TranslationDict {
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
         "friendly.identifier.placeholder",
-        "john@example.com or @john",
+        "john:example.com or did:web:...",
     );
     dict.set(
         "friendly.identifier.placeholder_multiline",
-        "alice@example.com\nbob@example.com",
+        "alice:example.com\nbob:example.com",
     );
     dict.set("friendly.identifier.label", "Member identifier");
     dict.set(
         "friendly.identifier.hint",
-        "Enter an email-style handle, @name, or paste a full identifier.",
+        "Enter a handle like user:domain.com, or paste a full DID.",
     );
-    dict.set("friendly.identifier.handle_or_email", "Handle or email");
+    dict.set("friendly.identifier.handle_or_email", "Handle or DID");
     dict.set("friendly.member.automated", "Automated member");
     dict.set("friendly.member.bot", "Bot");
     dict.set("friendly.member.human", "Person");
@@ -834,8 +834,8 @@ pub fn english_translations() -> TranslationDict {
 
     // R1.7 realm/space inversion — friendly labels for the security
     // boundary (Realm) and container Space split.
-    dict.set("friendly.realm", "Workspace");
-    dict.set("friendly.realm.short", "Workspace");
+    dict.set("friendly.realm", "Realm");
+    dict.set("friendly.realm.short", "Realm");
     dict.set("friendly.realm.description", "Security boundary — membership, policy, federation, and encryption are governed at this level.");
     dict.set("friendly.realm.security_class", "Security boundary");
     dict.set(
@@ -846,18 +846,18 @@ pub fn english_translations() -> TranslationDict {
         "friendly.realm.security_class.high_assurance",
         "High assurance",
     );
-    dict.set("friendly.realm.settings", "Workspace settings");
+    dict.set("friendly.realm.settings", "Realm settings");
     dict.set(
         "friendly.realm.settings.subtitle",
         "Policy, membership, federation, and E2EE",
     );
-    dict.set("friendly.realm.switcher", "Switch workspace");
-    dict.set("friendly.realm.ref_label", "Workspace");
+    dict.set("friendly.realm.switcher", "Switch Realm");
+    dict.set("friendly.realm.ref_label", "Realm");
     dict.set("friendly.space", "Space");
     dict.set("friendly.space.short", "Space");
     dict.set(
         "friendly.space.description",
-        "Navigation container — boards, lists, and sections live inside a workspace.",
+        "Navigation container — boards, lists, and sections live inside a Realm.",
     );
     dict.set("friendly.space.container_class", "Navigation container");
     dict.set("friendly.space.settings", "Space settings");
@@ -865,24 +865,24 @@ pub fn english_translations() -> TranslationDict {
         "friendly.space.settings.subtitle",
         "Navigation, sort, and display",
     );
-    dict.set("friendly.discussion.realm_ref", "Workspace");
+    dict.set("friendly.discussion.realm_ref", "Realm");
     dict.set(
         "friendly.discussion.realm_ref.hint",
-        "Which workspace this discussion belongs to (security boundary).",
+        "Which Realm this discussion belongs to (security boundary).",
     );
 
     // Profile gate (friendly version of ProfileGateNotice).
     dict.set("profile_gate.title", "Feature not available on this server");
     dict.set(
         "profile_gate.body",
-        "This server does not yet support the capabilities needed for this view. Try a different workspace or contact your administrator.",
+        "This server does not yet support the capabilities needed for this view. Try a different server or contact your administrator.",
     );
-    dict.set("profile_gate.friendly.minimal_client", "Basic workspace");
+    dict.set("profile_gate.friendly.minimal_client", "Basic client");
     dict.set("profile_gate.friendly.kanban_mvp", "Boards");
     dict.set("profile_gate.friendly.chat_mvp", "Discussions");
-    dict.set("profile_gate.friendly.full_client", "Full workspace");
+    dict.set("profile_gate.friendly.full_client", "Full client");
     dict.set("profile_gate.friendly.e2ee_client", "Encrypted messaging");
-    dict.set("profile_gate.friendly.unknown", "Workspace feature");
+    dict.set("profile_gate.friendly.unknown", "Client feature");
 
     // Developer Tools / Diagnostics entry points used to expose the
     // protocol-level details that used to leak into the main flow.
@@ -1072,10 +1072,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.spaces_delta_search", "搜索或加入空间");
     dict.set("dashboard.spaces_delta_signin", "登录后加载空间");
     dict.set("dashboard.current_space", "当前空间");
-    dict.set("dashboard.workspace_setup", "工作区设置");
+    dict.set("dashboard.workspace_setup", "Realm 设置");
     dict.set(
         "dashboard.workspace_setup_delta",
-        "创建第一个空间与初始策略",
+        "创建第一个 Realm 与初始策略",
     );
     dict.set("dashboard.onboarding", "引导");
     dict.set("dashboard.onboarding_steps", "4 步");
@@ -1147,7 +1147,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.mls_publish_key_package", "发布 Key Package");
     dict.set(
         "chat.mls_invite_actor_placeholder",
-        "alice@example.com 或 @alice",
+        "alice:example.com 或 did:web:...",
     );
     dict.set("chat.mls_invite_device_placeholder", "设备 id");
     dict.set("chat.mls_invite_member", "邀请加入加密群组");
@@ -1272,7 +1272,7 @@ pub fn chinese_translations() -> TranslationDict {
     // T7.2 关注者多选 pill
     dict.set(
         "chat.watchers.placeholder",
-        "alice@example.com 或 did:web:…（用逗号添加）",
+        "alice:example.com 或 did:web:…（用逗号添加）",
     );
     dict.set("chat.watchers.valid", "有效");
     dict.set("chat.watchers.invalid", "无效");
@@ -1281,7 +1281,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.watchers.invalid_did", "DID 格式无效");
     dict.set(
         "chat.watchers.unresolved",
-        "请输入 DID、handle（alice@example.com），或从建议列表中选择。",
+        "请输入 DID、handle（alice:example.com），或从建议列表中选择。",
     );
     dict.set("common.remove", "移除");
     // T7.2 watch level 快捷切换
@@ -1466,18 +1466,18 @@ pub fn chinese_translations() -> TranslationDict {
     // T7.1 — 友好产品语言术语（中文）。
     dict.set(
         "friendly.identifier.placeholder",
-        "john@example.com 或 @john",
+        "john:example.com 或 did:web:...",
     );
     dict.set(
         "friendly.identifier.placeholder_multiline",
-        "alice@example.com\nbob@example.com",
+        "alice:example.com\nbob:example.com",
     );
     dict.set("friendly.identifier.label", "成员标识");
     dict.set(
         "friendly.identifier.hint",
-        "输入邮箱样式的句柄、@名称，或粘贴完整标识符。",
+        "输入 user:domain.com 形式的句柄，或粘贴完整 DID。",
     );
-    dict.set("friendly.identifier.handle_or_email", "句柄或邮箱");
+    dict.set("friendly.identifier.handle_or_email", "句柄或 DID");
     dict.set("friendly.member.automated", "自动化成员");
     dict.set("friendly.member.bot", "机器人");
     dict.set("friendly.member.human", "成员");
@@ -1494,8 +1494,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("friendly.sync.frontier", "同步状态");
 
     // R1.7：Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
-    dict.set("friendly.realm", "工作区");
-    dict.set("friendly.realm.short", "工作区");
+    dict.set("friendly.realm", "Realm");
+    dict.set("friendly.realm.short", "Realm");
     dict.set(
         "friendly.realm.description",
         "安全边界 — 成员、策略、联邦与加密都在这一层治理。",
@@ -1503,39 +1503,39 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("friendly.realm.security_class", "安全边界");
     dict.set("friendly.realm.security_class.standard", "标准安全");
     dict.set("friendly.realm.security_class.high_assurance", "高保障");
-    dict.set("friendly.realm.settings", "工作区设置");
+    dict.set("friendly.realm.settings", "Realm 设置");
     dict.set(
         "friendly.realm.settings.subtitle",
         "策略、成员、联邦与端到端加密",
     );
-    dict.set("friendly.realm.switcher", "切换工作区");
-    dict.set("friendly.realm.ref_label", "工作区");
+    dict.set("friendly.realm.switcher", "切换 Realm");
+    dict.set("friendly.realm.ref_label", "Realm");
     dict.set("friendly.space", "空间");
     dict.set("friendly.space.short", "空间");
     dict.set(
         "friendly.space.description",
-        "导航容器 — 看板、列表与分区都在工作区之内。",
+        "导航容器 — 看板、列表与分区都在 Realm 之内。",
     );
     dict.set("friendly.space.container_class", "导航容器");
     dict.set("friendly.space.settings", "空间设置");
     dict.set("friendly.space.settings.subtitle", "导航、排序与展示");
-    dict.set("friendly.discussion.realm_ref", "工作区");
+    dict.set("friendly.discussion.realm_ref", "Realm");
     dict.set(
         "friendly.discussion.realm_ref.hint",
-        "该讨论所属的工作区（安全边界）。",
+        "该讨论所属的 Realm（安全边界）。",
     );
 
     dict.set("profile_gate.title", "此服务器暂不支持该功能");
     dict.set(
         "profile_gate.body",
-        "当前服务器尚未提供该视图所需的能力。请尝试其他工作区或联系管理员。",
+        "当前服务器尚未提供该视图所需的能力。请尝试其他服务器或联系管理员。",
     );
-    dict.set("profile_gate.friendly.minimal_client", "基础工作区");
+    dict.set("profile_gate.friendly.minimal_client", "基础客户端");
     dict.set("profile_gate.friendly.kanban_mvp", "看板");
     dict.set("profile_gate.friendly.chat_mvp", "讨论");
-    dict.set("profile_gate.friendly.full_client", "完整工作区");
+    dict.set("profile_gate.friendly.full_client", "完整客户端");
     dict.set("profile_gate.friendly.e2ee_client", "加密通讯");
-    dict.set("profile_gate.friendly.unknown", "工作区功能");
+    dict.set("profile_gate.friendly.unknown", "客户端功能");
 
     dict.set("nav.developer", "开发者工具");
     dict.set("developer.title", "开发者工具");

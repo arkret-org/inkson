@@ -426,7 +426,7 @@ pub fn AgentsPanel(
                     input {
                         "data-testid": "agent-register-did",
                         value: "{agent_did}",
-                        placeholder: "bot handle (e.g. assistant@example.com)",
+                        placeholder: "bot handle (e.g. assistant:example.com)",
                         oninput: move |evt| agent_did.set(evt.value()),
                     }
                     input {

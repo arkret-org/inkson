@@ -122,6 +122,12 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("sync-cursor")).toContainText("cx:cursor:e2e-2");
   await expect(page.getByTestId("space-list")).toContainText("Contrix Demo Space");
   await expect(page.getByTestId("space-list")).toContainText("Launch Child Space");
+  await expect(
+    page.getByTestId("space-button").filter({ hasText: "Contrix Demo Space" }).locator(".sidebar-nav-icon"),
+  ).toHaveAttribute("title", "Encrypted Realm");
+  await expect(
+    page.getByTestId("space-button").filter({ hasText: "Launch Child Space" }).locator(".sidebar-nav-icon"),
+  ).toHaveAttribute("title", "Space");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();

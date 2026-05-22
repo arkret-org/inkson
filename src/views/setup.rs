@@ -349,8 +349,13 @@ fn parse_seed_members(seed_members: &str) -> Vec<String> {
 
     let push_unique = |value: &str, members: &mut Vec<String>| {
         let trimmed = value.trim();
-        if !trimmed.is_empty() && !members.iter().any(|existing| existing == trimmed) {
-            members.push(trimmed.to_owned());
+        if trimmed.is_empty() {
+            return;
+        }
+        let normalized = crate::identity_handle::normalize_user_handle_display(trimmed)
+            .unwrap_or_else(|| trimmed.to_owned());
+        if !members.iter().any(|existing| existing == &normalized) {
+            members.push(normalized);
         }
     };
 
@@ -991,10 +996,10 @@ pub fn SetupPanel(
                                             "data-testid": "seed-members-input",
                                             value: "{seed_members_value}",
                                             rows: "4",
-                                            placeholder: "alice@example.com\nbob@example.com",
+                                            placeholder: "alice:example.com\nbob:example.com",
                                             oninput: move |event| seed_members.set(event.value())
                                         }
-                                        div { class: "muted", "One handle or email per line, or comma-separated." }
+                                        div { class: "muted", "One handle (user:domain.com) or DID per line, or comma-separated." }
                                     }
                                     div { class: "setup-field setup-field-span-2",
                                         label { "Seed preview" }
@@ -1130,6 +1135,7 @@ pub fn SetupPanel(
                                                                         "owner": actor.clone(),
                                                                         "admins": projection_admins.clone(),
                                                                         "members": projection_members.clone(),
+                                                                        "encryption_profile": encryption_profile.clone(),
                                                                         "plaintext_visible_services": plaintext_services.clone(),
                                                                         "summary": {
                                                                             "title": title.clone(),
@@ -1137,6 +1143,7 @@ pub fn SetupPanel(
                                                                             "category": "collaboration",
                                                                             "tags": [],
                                                                             "discoverability": discoverability.clone(),
+                                                                            "encryption_profile": encryption_profile.clone(),
                                                                             "plaintext_visible_services": plaintext_services.clone(),
                                                                             "owner": actor.clone(),
                                                                             "admins": projection_admins,

@@ -1027,8 +1027,13 @@ fn parse_discussion_principals(input: &str) -> Vec<String> {
     let mut principals = Vec::new();
     for candidate in input.split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';')) {
         let trimmed = candidate.trim();
-        if !trimmed.is_empty() && !principals.iter().any(|existing| existing == trimmed) {
-            principals.push(trimmed.to_owned());
+        if trimmed.is_empty() {
+            continue;
+        }
+        let principal = crate::identity_handle::principal_did_from_identifier(trimmed)
+            .unwrap_or_else(|| trimmed.to_owned());
+        if !principals.iter().any(|existing| existing == &principal) {
+            principals.push(principal);
         }
     }
     principals
@@ -1036,7 +1041,7 @@ fn parse_discussion_principals(input: &str) -> Vec<String> {
 
 /// T7.2: validate a single watcher entry token. Accepts:
 ///   * DIDs (`did:web:foo.example` / `did:key:...`)
-///   * Handles (`alice@example.com` or `@alice@example.com`)
+///   * Handles (`alice:example.com` or `@alice:example.com`)
 ///   * Bare display-name lookups are resolved against the participant list
 ///     (returns the matching DID when unique).
 ///
@@ -1073,19 +1078,18 @@ fn classify_watcher_entry(
             return WatcherEntryKind::InvalidDid;
         }
         stripped.to_owned()
-    } else if stripped.contains('@') {
-        // alice@example.com -> did:web:example.com:alice
-        let mut parts = stripped.splitn(2, '@');
-        let local = parts.next().unwrap_or_default();
-        let host = parts.next().unwrap_or_default();
+    } else if let Some(handle) = crate::identity_handle::parse_user_handle(stripped) {
+        // alice:example.com -> did:web:example.com:users:alice
+        let local = handle.localpart.clone();
+        let host = handle.domain.clone();
+        let candidate = handle.subject_did;
         if local.is_empty() || host.is_empty() {
             return WatcherEntryKind::UnknownHandle;
         }
-        let candidate = format!("did:web:{host}:{local}");
         // If candidate matches a known participant, prefer that exact DID.
         let known = participants.iter().find(|p| {
             p.did.eq_ignore_ascii_case(&candidate)
-                || p.did.ends_with(&format!(":{local}")) && p.did.contains(host)
+                || p.did.ends_with(&format!(":users:{local}")) && p.did.contains(&host)
         });
         match known {
             Some(p) => p.did.clone(),
@@ -4662,7 +4666,7 @@ pub fn ChatPanel(
                     textarea {
                         "data-testid": "chat-input",
                         value: "{chat_draft}",
-                        placeholder: "Message this discussion. Use @alice to mention a member or #task-123 to link a card.",
+                        placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
                         oninput: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -5474,7 +5478,12 @@ pub fn ChatPanel(
                                 let base = base.clone();
                                 let space = space.clone();
                                 let api_token = token();
-                                let target_actor = mls_invite_actor_draft().trim().to_owned();
+                                let target_actor_input = mls_invite_actor_draft();
+                                let target_actor =
+                                    crate::identity_handle::principal_did_from_identifier(
+                                        &target_actor_input,
+                                    )
+                                    .unwrap_or_else(|| target_actor_input.trim().to_owned());
                                 let target_device = mls_invite_device_draft().trim().to_owned();
                                 let passphrase: String = mls_passphrase_store
                                     .read()
@@ -6322,15 +6331,29 @@ mod tests {
     fn watcher_entry_handle_resolves_to_did_web() {
         let participants: Vec<SpaceParticipant> = Vec::new();
         let already: Vec<String> = Vec::new();
-        let kind = classify_watcher_entry("alice@example.com", &participants, &already);
+        let kind = classify_watcher_entry("alice:example.com", &participants, &already);
         match kind {
             WatcherEntryKind::Valid(did) => {
                 assert!(did.starts_with("did:web:"));
                 assert!(did.contains("example.com"));
-                assert!(did.contains("alice"));
+                assert!(did.ends_with(":users:alice"));
             }
             other => panic!("expected Valid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn discussion_seed_principals_normalize_handles() {
+        let principals = parse_discussion_principals(
+            "alice:example.com, did:web:bob.example, alice@example.com",
+        );
+        assert_eq!(
+            principals,
+            vec![
+                "did:web:example.com:users:alice".to_owned(),
+                "did:web:bob.example".to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -6374,7 +6397,7 @@ mod tests {
     fn parse_watcher_pills_marks_duplicates_after_first() {
         let participants: Vec<SpaceParticipant> = Vec::new();
         let pills = parse_watcher_pills(
-            "did:web:alice.example, did:web:alice.example, alice@example.com",
+            "did:web:alice.example, did:web:alice.example, alice:example.com",
             &participants,
         );
         assert_eq!(pills.len(), 3);

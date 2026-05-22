@@ -99,6 +99,7 @@ impl Default for CancellationToken {
 }
 
 use crate::config::validate_server_url;
+use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
     ClientSyncResponse, ContactResponse, ContactsResponse, DevLoginResponse,
@@ -854,12 +855,12 @@ impl ContrixApi {
         self.submit_events_batch(&envelopes, Some(&idempotency_key))
             .await?;
 
+        let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
         let mut members = Vec::new();
         members.push(actor_id.to_owned());
-        for invitee in invitees {
-            let invitee = invitee.trim();
-            if !invitee.is_empty() && !members.iter().any(|member| member == invitee) {
-                members.push(invitee.to_owned());
+        for invitee in resolved_invitees {
+            if !members.iter().any(|member| member == &invitee.actor_id) {
+                members.push(invitee.actor_id);
             }
         }
 
@@ -2914,6 +2915,69 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     format!("{base}/api/v1/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RealmBootstrapMember {
+    actor_id: String,
+    handle_uri: Option<String>,
+    delivery_binding: Option<Value>,
+}
+
+impl RealmBootstrapMember {
+    fn from_did(did: &str) -> Self {
+        Self {
+            actor_id: did.trim().to_owned(),
+            handle_uri: None,
+            delivery_binding: None,
+        }
+    }
+
+    fn from_handle(handle: ParsedUserHandle) -> Self {
+        let resolved_at = event_timestamp();
+        Self {
+            actor_id: handle.subject_did,
+            handle_uri: Some(handle.handle_uri),
+            delivery_binding: Some(json!({
+                "recipient_service_did": handle.principal_server_did,
+                "recipient_service_type": "principal_server",
+                "binding_scope": "realm",
+                "binding_source": "invite",
+                "delivery_modes": ["events", "sync", "to_device", "push", "key_packages"],
+                "resolved_at": resolved_at,
+            })),
+        }
+    }
+}
+
+fn parse_realm_bootstrap_member(input: &str) -> anyhow::Result<RealmBootstrapMember> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("seed member is empty"));
+    }
+    if trimmed.starts_with("did:") {
+        return Ok(RealmBootstrapMember::from_did(trimmed));
+    }
+    if let Some(handle) = parse_user_handle(trimmed) {
+        return Ok(RealmBootstrapMember::from_handle(handle));
+    }
+    Err(anyhow::anyhow!(
+        "seed member must be a DID or handle like alice:example.com"
+    ))
+}
+
+fn parse_realm_bootstrap_members(inputs: &[String]) -> anyhow::Result<Vec<RealmBootstrapMember>> {
+    let mut members = Vec::new();
+    for input in inputs {
+        let member = parse_realm_bootstrap_member(input)?;
+        if !members
+            .iter()
+            .any(|existing: &RealmBootstrapMember| existing.actor_id == member.actor_id)
+        {
+            members.push(member);
+        }
+    }
+    Ok(members)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_bootstrap_events(
     space_id: &str,
@@ -2938,6 +3002,7 @@ pub fn build_realm_bootstrap_events(
     // the creator — the reducer writes that cell atomically with the
     // create event.
     let mut events: Vec<EventEnvelope> = Vec::new();
+    let invitees = parse_realm_bootstrap_members(invitees)?;
     events.push(build_realm_create_event(
         space_id,
         actor_id,
@@ -2979,9 +3044,8 @@ pub fn build_realm_bootstrap_events(
         events.push(event);
     }
 
-    for invitee in invitees {
-        let invitee = invitee.trim();
-        if !invitee.is_empty() && invitee != actor_id {
+    for invitee in invitees.iter() {
+        if invitee.actor_id != actor_id {
             events.push(build_member_state_event(
                 space_id, actor_id, invitee, "invite",
             )?);
@@ -3361,16 +3425,18 @@ pub fn build_plaintext_visible_services_event(
 fn build_member_state_event(
     space_id: &str,
     actor_id: &str,
-    member_actor_id: &str,
+    member: &RealmBootstrapMember,
     membership: &str,
 ) -> anyhow::Result<EventEnvelope> {
-    build_member_state_transition_event(
+    build_member_state_transition_event_with_binding(
         space_id,
         actor_id,
-        member_actor_id,
+        &member.actor_id,
         None,
         membership,
         "space_create",
+        member.handle_uri.as_deref(),
+        member.delivery_binding.clone(),
     )
 }
 
@@ -3386,6 +3452,28 @@ pub fn build_member_state_transition_event(
     to_state: &str,
     reason: &str,
 ) -> anyhow::Result<EventEnvelope> {
+    build_member_state_transition_event_with_binding(
+        realm_id,
+        actor_id,
+        member_actor_id,
+        from_state,
+        to_state,
+        reason,
+        None,
+        None,
+    )
+}
+
+fn build_member_state_transition_event_with_binding(
+    realm_id: &str,
+    actor_id: &str,
+    member_actor_id: &str,
+    from_state: Option<&str>,
+    to_state: &str,
+    reason: &str,
+    handle_uri: Option<&str>,
+    delivery_binding: Option<Value>,
+) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
     let mut payload = json!({
         "actor_id": member_actor_id,
@@ -3394,6 +3482,14 @@ pub fn build_member_state_transition_event(
     });
     if to_state == "join" {
         payload["delivery_status"] = json!("unroutable");
+    }
+    if let Some(handle_uri) = handle_uri
+        && !handle_uri.trim().is_empty()
+    {
+        payload["handle_uri"] = json!(handle_uri);
+    }
+    if let Some(delivery_binding) = delivery_binding {
+        payload["delivery_binding"] = delivery_binding;
     }
     let realm_id_wire = scope_id_as_realm_id(realm_id);
     let cell = format!(
@@ -4228,6 +4324,47 @@ mod tests {
             "did:web:server.example"
         );
         assert_eq!(events[5].payload["membership"], "invite");
+    }
+
+    #[test]
+    fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
+        let events = build_realm_bootstrap_events(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "cx:trust_domain:server.example",
+            &["bob:example.com".to_owned()],
+            &[],
+        )
+        .unwrap();
+        let member = events
+            .iter()
+            .find(|event| event.kind == "cx.member.state")
+            .expect("member state invite");
+
+        assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
+        assert_eq!(
+            member.payload["handle_uri"],
+            "contrix://example.com/users/bob"
+        );
+        assert_eq!(
+            member.payload["delivery_binding"]["recipient_service_did"],
+            "did:web:example.com"
+        );
+        assert_eq!(
+            member.payload["delivery_binding"]["recipient_service_type"],
+            "principal_server"
+        );
+        assert_eq!(member.payload["delivery_binding"]["binding_scope"], "realm");
     }
 
     #[test]

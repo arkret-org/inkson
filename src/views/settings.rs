@@ -718,7 +718,7 @@ pub fn SettingsPanel(
                     div { class: "event", "data-testid": "settings-setup-recovery-hub",
                         div { class: "event-head",
                             span { "Setup & recovery" }
-                            HelpTip { text: "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary workspace navigation." }
+                            HelpTip { text: "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary Realm / Space navigation." }
                         }
                         div { class: "actions",
                             Link {
@@ -2408,7 +2408,7 @@ pub fn SettingsPanel(
                         input {
                             r#type: "text",
                             "data-testid": "contact-remark-add-did",
-                            placeholder: "alice@example.com or @alice",
+                            placeholder: "alice:example.com or did:web:...",
                             value: "{new_contact_remark_did()}",
                             oninput: move |evt| new_contact_remark_did.set(evt.value()),
                         }
@@ -2423,16 +2423,21 @@ pub fn SettingsPanel(
                             class: "secondary",
                             "data-testid": "contact-remark-add-save",
                             onclick: move |_| {
-                                let actor_did = new_contact_remark_did().trim().to_owned();
-                                let local_name = new_contact_remark_name().trim().to_owned();
-                                if actor_did.is_empty() || local_name.is_empty() {
+                                let raw_actor = new_contact_remark_did();
+                                let Some(actor_did) =
+                                    crate::identity_handle::principal_did_from_identifier(&raw_actor)
+                                else {
                                     status.set(
-                                        "Enter both an actor DID and a local name".to_owned(),
+                                        "Enter an actor DID or handle like alice:example.com"
+                                            .to_owned(),
                                     );
                                     return;
-                                }
-                                if !actor_did.starts_with("did:") {
-                                    status.set("Actor DID must start with did:".to_owned());
+                                };
+                                let local_name = new_contact_remark_name().trim().to_owned();
+                                if local_name.is_empty() {
+                                    status.set(
+                                        "Enter both an actor identifier and a local name".to_owned(),
+                                    );
                                     return;
                                 }
                                 let now_rfc3339 = chrono::Utc::now()

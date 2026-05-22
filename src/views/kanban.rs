@@ -207,7 +207,6 @@ fn CardMarkdownEditor(
                 maxlength: "8192",
                 oninput: move |evt| on_change.call(evt.value()),
             }
-            div { class: "muted card-rich-editor-hint", "Markdown supported. Images upload as authenticated blobs." }
         }
     }
 }
@@ -344,7 +343,7 @@ fn toast_editor_bootstrap_script(
         el: host,
         height: "320px",
         initialEditType: "wysiwyg",
-        previewStyle: "vertical",
+        previewStyle: "tab",
         initialValue: config.value || "",
         usageStatistics: false,
         toolbarItems: [
@@ -2532,7 +2531,7 @@ pub fn KanbanPanel(
                                                     class: "input",
                                                     "data-testid": "card-detail-assignee-input",
                                                     value: "{card_edit_assignee}",
-                                                    placeholder: "alice@example.com or @alice",
+                                                    placeholder: "alice:example.com or did:web:...",
                                                     oninput: move |evt| card_edit_assignee.set(evt.value()),
                                                 }
                                             }

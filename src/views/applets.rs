@@ -254,7 +254,7 @@ pub fn AppletsPanel(
                     input {
                         "data-testid": "applet-register-service-did",
                         value: "{service_did}",
-                        placeholder: "applet handle (e.g. applet@example.com)",
+                        placeholder: "applet handle (e.g. applet:example.com)",
                         oninput: move |evt| service_did.set(evt.value()),
                     }
                     input {

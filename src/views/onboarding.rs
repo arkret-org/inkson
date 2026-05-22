@@ -5,8 +5,9 @@
 //! DID/device/recovery decisions into four small steps.
 //!
 //! Spec sources:
-//! - `identity/identity-did.md` §3 — v1 core default principal DID method is
-//!   `did:web`.
+//! - `identity/identity-did.md` §3 — the default principal DID method is
+//!   `did:webvh`; `did:web` is kept for testing/local flows and is not
+//!   recommended for production.
 //! - `identity/identity-handles.md` — handles are only human-readable entry
 //!   points.
 //! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant;
@@ -16,8 +17,8 @@
 //!   recovery key.
 //!
 //! Steps:
-//!   1. Choose a DID method (v1 core: did:web; high-trust: did:webvh; other
-//!      methods are v1.1+ extensions).
+//!   1. Choose a DID method (default: did:webvh; did:web is test/local only;
+//!      placeholder methods are visible but not selectable).
 //!   2. Bind a handle.
 //!   3. Generate the local device key + cx.device.authorized.
 //!   4. Configure a recovery policy (vault passphrase / SSS guardian /
@@ -35,6 +36,8 @@ use crate::{
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
+const DEFAULT_PRINCIPAL_DID_METHOD: &str = "did:webvh";
+const TEST_ONLY_DID_METHOD: &str = "did:web";
 
 /// Render a `did:key:zXXXX...XX` shorthand for display. Keeps the
 /// `ed25519/` prefix style so the metric tile remains compact.
@@ -112,7 +115,7 @@ pub fn OnboardingPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut step = use_signal(|| OnboardingStep::DidMethod);
-    let mut did_method = use_signal(|| "did:web".to_owned());
+    let mut did_method = use_signal(|| DEFAULT_PRINCIPAL_DID_METHOD.to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
     let mut handle_domain = use_signal(|| "users.contrix.social".to_owned());
 
@@ -163,7 +166,7 @@ pub fn OnboardingPanel(
                     span { "account / session checks" }
                 }
                 div { class: "muted",
-                    "Account bootstrap moved out of Workspace Setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
+                    "Account bootstrap moved out of Realm setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
                 }
                 div { class: "muted", "{account_state}" }
                 div { class: "workflow-form",
@@ -264,42 +267,42 @@ pub fn OnboardingPanel(
                         span { "identity-did.md §3" }
                     }
                     div { class: "muted",
-                        "v1 core defaults to did:web for the principal identifier. did:webvh raises trust with an audit-log chain; did:plc / did:key / did:pkh / KERI / TSP are v1.1+ interop extensions."
+                        "Default principal identifiers now use did:webvh. did:web is kept for testing/local flows and is not recommended for production. did:plc and did:keri are placeholders only; placeholder methods cannot be selected here."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { "did:web" }
-                            span { class: if did_method() == "did:web" { "badge accent" } else { "badge" }, "v1 core default" }
-                            div { class: "muted", "HTTPS + domain; the Auth Server can host on a subdomain" }
-                        }
-                        div { class: "metric",
                             strong { "did:webvh" }
-                            span { class: if did_method() == "did:webvh" { "badge accent" } else { "badge" }, "high-trust" }
+                            span { class: if did_method() == DEFAULT_PRINCIPAL_DID_METHOD { "badge accent" } else { "badge green" }, "current default" }
                             div { class: "muted", "did:web + did.jsonl history + SCID + witness" }
                         }
                         div { class: "metric",
+                            strong { "did:web" }
+                            span { class: if did_method() == TEST_ONLY_DID_METHOD { "badge accent" } else { "badge amber" }, "test only" }
+                            div { class: "muted", "HTTPS + domain; kept for local/test coverage, not recommended for production" }
+                        }
+                        div { class: "metric",
                             strong { "did:plc" }
-                            span { class: "badge amber", "v1.1+ extension" }
-                            div { class: "muted", "AT Protocol interop only" }
+                            span { class: "badge amber", "placeholder" }
+                            div { class: "muted", "Reserved for future AT Protocol interop; not selectable" }
                         }
                         div { class: "metric",
                             strong { "did:key / did:pkh / did:keri" }
-                            span { class: "badge muted", "Limited / extension" }
-                            div { class: "muted", "Ephemeral / wallet / KERI interop" }
+                            span { class: "badge amber", "interop / placeholder" }
+                            div { class: "muted", "did:key and did:pkh are interop references; did:keri is not supported yet and is not selectable" }
                         }
                     }
                     div { class: "actions",
                         button {
-                            class: if did_method() == "did:web" { "primary" } else { "secondary" },
-                            "data-testid": "did-method-web",
-                            onclick: move |_| did_method.set("did:web".to_owned()),
-                            "Use did:web (default)"
+                            class: if did_method() == DEFAULT_PRINCIPAL_DID_METHOD { "primary" } else { "secondary" },
+                            "data-testid": "did-method-webvh",
+                            onclick: move |_| did_method.set(DEFAULT_PRINCIPAL_DID_METHOD.to_owned()),
+                            "Use did:webvh (default)"
                         }
                         button {
-                            class: if did_method() == "did:webvh" { "primary" } else { "secondary" },
-                            "data-testid": "did-method-webvh",
-                            onclick: move |_| did_method.set("did:webvh".to_owned()),
-                            "Use did:webvh (high-trust)"
+                            class: if did_method() == TEST_ONLY_DID_METHOD { "primary" } else { "secondary" },
+                            "data-testid": "did-method-web",
+                            onclick: move |_| did_method.set(TEST_ONLY_DID_METHOD.to_owned()),
+                            "Use did:web (test only)"
                         }
                         button { class: "secondary", "data-testid": "next-handle", onclick: move |_| step.set(OnboardingStep::Handle), "Next →" }
                     }
@@ -331,7 +334,7 @@ pub fn OnboardingPanel(
                         }
                     }
                     div { class: "muted",
-                        "= @{handle_local}@{handle_domain} → {did_method}:{handle_domain}:{handle_local}"
+                        "= {handle_local}:{handle_domain} → {did_method}:{handle_domain}:users:{handle_local}"
                     }
                     div { class: "muted",
                         "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
@@ -513,5 +516,12 @@ mod tests {
                 "labels are human strings, not event kinds: got `{label}`"
             );
         }
+    }
+
+    #[test]
+    fn onboarding_default_did_method_is_webvh() {
+        assert_eq!(DEFAULT_PRINCIPAL_DID_METHOD, "did:webvh");
+        assert_eq!(TEST_ONLY_DID_METHOD, "did:web");
+        assert_ne!(DEFAULT_PRINCIPAL_DID_METHOD, TEST_ONLY_DID_METHOD);
     }
 }
