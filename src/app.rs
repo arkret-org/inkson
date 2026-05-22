@@ -788,35 +788,348 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 48px 16px 24px;
+  padding: 42px 16px 24px;
   background: rgba(8, 16, 12, 0.52);
   overflow: auto;
 }
 .card-detail-popup {
-  width: min(900px, 100%);
-  max-height: calc(100vh - 72px);
-  overflow: auto;
-  border-color: var(--cx-brand);
-  box-shadow: var(--shadow-md, var(--cx-shadow));
+  width: min(1080px, 100%);
+  max-height: calc(100vh - 68px);
+  min-height: min(620px, calc(100vh - 68px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface, var(--cx-surface));
+  color: var(--text, var(--cx-ink));
+  box-shadow: var(--shadow-lg, var(--cx-shadow));
 }
 .card-detail-header {
-  position: sticky;
-  top: -14px;
-  z-index: 1;
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
-  padding: 0 0 10px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--border, var(--cx-line));
   background: var(--surface, var(--cx-surface));
 }
-.card-detail-header > div {
+.card-detail-title-block {
+  min-width: 0;
   display: grid;
+  align-content: start;
   gap: 2px;
+}
+.card-detail-kicker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 18px;
+}
+.card-detail-title-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   min-width: 0;
 }
+.card-detail-title-row h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.18;
+  font-weight: 800;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.card-detail-status-dot {
+  width: 16px;
+  height: 16px;
+  margin-top: 5px;
+  border: 2px solid var(--text-3);
+  border-radius: 999px;
+}
+.card-detail-id {
+  max-width: 720px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
 .card-detail-close {
-  width: auto;
+  flex: 0 0 auto;
+  border-radius: 8px;
   min-height: 34px;
+  box-shadow: none;
+}
+.card-detail-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  overflow: hidden;
+}
+.card-detail-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  padding: 22px 24px 28px;
+  overflow: auto;
+}
+.card-detail-sidebar {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px;
+  overflow: auto;
+  border-left: 1px solid var(--border, var(--cx-line));
+  background: color-mix(in srgb, var(--surface-2) 58%, transparent);
+}
+.card-detail-section {
+  display: grid;
+  gap: 10px;
+}
+.card-detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-detail-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-2, var(--cx-muted));
+  font-size: 13px;
+  font-weight: 800;
+}
+.card-detail-mini-action {
+  min-height: 32px;
+  padding: 5px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.card-detail-description {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text, var(--cx-ink));
+  line-height: 1.58;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.card-detail-empty {
+  color: var(--text-3, var(--cx-muted));
+  font-size: 13px;
+}
+.card-detail-track-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255,255,255,0.04));
+}
+.card-detail-track-tab {
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2, var(--cx-muted));
+  font-weight: 800;
+}
+.card-detail-track-tab small {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+.card-detail-track-tab.active {
+  border-color: var(--border-strong, var(--cx-line-strong));
+  background: var(--surface, var(--cx-surface));
+  color: var(--text, var(--cx-ink));
+  box-shadow: var(--shadow-xs, none);
+}
+.card-detail-track-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+.card-detail-track-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.card-detail-track-summary > div,
+.card-detail-side-section {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface, var(--cx-surface));
+  box-shadow: none;
+}
+.card-detail-track-summary strong,
+.card-detail-discussion-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-detail-discussion-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.card-detail-open-discussion,
+.card-detail-track-actions .secondary,
+.card-detail-side-actions .secondary {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.card-detail-linked-flow-list,
+.card-detail-track-actions,
+.card-detail-side-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.card-detail-side-actions .secondary {
+  width: 100%;
+}
+.card-detail-visibility-note,
+.card-detail-policy-note {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-soft) 28%, var(--surface));
+}
+.card-detail-visibility-note {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  color: var(--text-2, var(--cx-muted));
+}
+.card-detail-policy-note > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.card-detail-side-section h3 {
+  margin: 0 0 4px;
+  color: var(--text-2, var(--cx-muted));
+  font-size: 12px;
+  font-weight: 850;
+}
+.card-detail-field-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.card-detail-field-list > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.card-detail-field-list dt {
+  color: var(--text-3, var(--cx-muted));
+  font-size: 12px;
+  font-weight: 750;
+}
+.card-detail-field-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+.card-detail-activity {
+  gap: 9px;
+}
+.card-detail-activity-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.card-detail-activity-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.card-detail-edit-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 22px 24px 28px;
+}
+.card-detail-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.card-detail-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .card-detail-overlay {
+    padding: 16px 10px;
+  }
+  .card-detail-popup {
+    min-height: 0;
+    max-height: calc(100vh - 32px);
+  }
+  .card-detail-layout {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .card-detail-main,
+  .card-detail-sidebar {
+    overflow: visible;
+  }
+  .card-detail-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--border, var(--cx-line));
+  }
+  .card-detail-track-summary,
+  .card-detail-edit-grid {
+    grid-template-columns: 1fr;
+  }
+  .card-detail-discussion-head {
+    grid-template-columns: 1fr;
+  }
 }
 .chat-message-row {
   padding: 10px 12px;
@@ -4819,6 +5132,7 @@ pub fn RouterView() -> Element {
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
+    let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
@@ -4943,6 +5257,7 @@ pub fn RouterView() -> Element {
         let session = token();
         if !base.trim().is_empty() && !session.trim().is_empty() {
             bootstrap_pending.set(false);
+            sync_bootstrap_complete.set(false);
             connect(
                 base,
                 account_did(),
@@ -4966,6 +5281,7 @@ pub fn RouterView() -> Element {
                     server_probe_status,
                     theme,
                     sync_generation,
+                    sync_bootstrap_complete,
                     navigator,
                 },
             );
@@ -4985,7 +5301,7 @@ pub fn RouterView() -> Element {
         let current_gen = sync_generation();
         let base = base_url();
         let session = token();
-        if base.trim().is_empty() || session.trim().is_empty() {
+        if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete() {
             return;
         }
         let ctx = crate::sync_engine::SyncEngineContext {
@@ -5384,32 +5700,37 @@ pub fn RouterView() -> Element {
                         "data-testid": "mobile-connect-button",
                         title: "Refresh server metadata and sync state",
                         "aria-label": "Refresh server metadata and sync state",
-                        onclick: move |_| connect(
-                            base_url(),
-                            account_did(),
-                            device_id(),
-                            ConnectContext {
-                                status,
-                                sync_cursor,
-                                token,
-                                account_did,
-                                selected_space,
-                                spaces,
-                                timeline,
-                                device_queue,
-                                frontier_state,
-                                crypto_state,
-                                config_store,
-                                state_store,
-                                network_state,
-                                last_error,
-                                server_description,
-                                server_probe_status,
-                                theme,
-                                sync_generation,
-                                navigator,
-                            },
-                        ),
+                        onclick: move |_| {
+                            sync_generation.set(sync_generation() + 1);
+                            sync_bootstrap_complete.set(false);
+                            connect(
+                                base_url(),
+                                account_did(),
+                                device_id(),
+                                ConnectContext {
+                                    status,
+                                    sync_cursor,
+                                    token,
+                                    account_did,
+                                    selected_space,
+                                    spaces,
+                                    timeline,
+                                    device_queue,
+                                    frontier_state,
+                                    crypto_state,
+                                    config_store,
+                                    state_store,
+                                    network_state,
+                                    last_error,
+                                    server_description,
+                                    server_probe_status,
+                                    theme,
+                                    sync_generation,
+                                    sync_bootstrap_complete,
+                                    navigator,
+                                },
+                            )
+                        },
                         "Refresh"
                     }
                 }
@@ -5546,6 +5867,7 @@ pub fn RouterView() -> Element {
                                                     sync_generation,
                                                 });
                                                 server_menu_open.set(false);
+                                                sync_bootstrap_complete.set(false);
                                                 connect(
                                                     next_url,
                                                     account_did(),
@@ -5569,6 +5891,7 @@ pub fn RouterView() -> Element {
                                                         server_probe_status,
                                                         theme,
                                                         sync_generation,
+                                                        sync_bootstrap_complete,
                                                         navigator,
                                                     },
                                                 );
@@ -7325,6 +7648,10 @@ struct ConnectContext {
     /// (account swap on the same device) so any in-flight engine for
     /// the previous account exits before applying its response.
     sync_generation: Signal<u64>,
+    /// Set when the explicit bootstrap/manual connect attempt has completed.
+    /// The background SyncEngine waits for this so it does not race the
+    /// first full account-subscribe snapshot on the same render.
+    sync_bootstrap_complete: Signal<bool>,
     navigator: Navigator,
 }
 
@@ -7335,6 +7662,7 @@ fn redirect_to_login(navigator: Navigator) {
 fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
     let device = normalize_device_id(&device);
     spawn(async move {
+        let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
         let mut status = ctx.status;
         let mut sync_cursor = ctx.sync_cursor;
         let mut token = ctx.token;
@@ -7376,6 +7704,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             last_error.set(Some(message.clone()));
                             server_probe_status.set(message);
                             server_description.set(None);
+                            sync_bootstrap_complete.set(true);
                             return;
                         }
                         status.set(format!(
@@ -7442,6 +7771,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         device.clone(),
                         String::new(),
                     );
+                    sync_bootstrap_complete.set(true);
                     return;
                 }
 
@@ -7484,6 +7814,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
                         redirect_to_login(navigator);
+                        sync_bootstrap_complete.set(true);
                         return;
                     }
                     Err(error) => {
@@ -7768,6 +8099,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
                         redirect_to_login(navigator);
+                        sync_bootstrap_complete.set(true);
                         return;
                     }
                     Err(error) => {
@@ -7831,6 +8163,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
                         redirect_to_login(navigator);
+                        sync_bootstrap_complete.set(true);
                         return;
                     }
                     Err(error) => {
@@ -7849,6 +8182,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 server_description.set(None);
             }
         }
+        sync_bootstrap_complete.set(true);
     });
 }
 

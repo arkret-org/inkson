@@ -51,7 +51,7 @@ export function mockContrixContract(req) {
   }
 
   if (method === "GET" && path === "/api/v1/events") {
-    return json({ events: [], next_cursor: null, limited: false });
+    return json({ events: [], next_cursor: null });
   }
 
   if (method === "GET" && path === "/api/v1/account/me") {
@@ -60,6 +60,15 @@ export function mockContrixContract(req) {
       handle: "alice.example",
       display_name: "yougen",
       created_at: "2026-04-28T12:00:00Z",
+    });
+  }
+
+  if (method === "GET" && path === "/api/v1/directory/describe") {
+    return json({
+      service_did: "did:web:server.local",
+      resource_types: ["space", "organization", "actor"],
+      discovery_profiles: ["cx.profile.directory_service.v1"],
+      restricted_query_proof: false,
     });
   }
 
@@ -105,15 +114,19 @@ export function mockContrixContract(req) {
   return undefined;
 }
 
+// Short-form aliases for callers that pass a path without the `/api/v1/`
+// prefix. Each alias MUST resolve to a path with a matching branch above;
+// `/realm/create` and `/space/create` were dropped together with the legacy
+// realm/space creation surface forbidden by yougen/tests/server_contract.rs.
+// `/account/me` (read) and `/account/profile` (update) are distinct
+// endpoints — no alias collapses one onto the other.
 export function canonicalPath(path) {
   const clean = path.startsWith("/api/v1/") ? path : path.replace(/\/+$/, "");
   const aliases = {
     "/server/describe": "/api/v1/server/describe",
     "/events/submit": "/api/v1/events",
     "/events/list": "/api/v1/events",
-    "/account/profile": "/api/v1/account/me",
-    "/realm/create": "/api/v1/spaces",
-    "/space/create": "/api/v1/spaces",
+    "/account/me": "/api/v1/account/me",
     "/directory/search-realms": "/api/v1/directory/search-realms",
     "/keys/backups": "/api/v1/keys/backups",
     "/devices/pairing-challenge": "/api/v1/devices/pairing-challenge",
@@ -130,15 +143,18 @@ function json(body, status = 200) {
   return { status, body };
 }
 
+// Mirrors the shape soland's `/api/v1/directory/search-realms` actually emits
+// (see `soland/src/routing/spaces/directory.rs::search_realms`). The fields
+// here MUST stay aligned with that endpoint — the cotest parity test runs
+// this response against a live soland process.
 function spacePreview() {
   return {
-    space_id: DEMO_SPACE,
     realm_id: DEMO_SPACE.replace(/^cx:space:/, "cx:realm:"),
     name: "Contrix Demo Space",
-    title: "Contrix Demo Space",
     description: "Shared demo Space served by mocked server",
-    discoverability: "public",
-    join_rule: "public",
-    history_visibility: "world_readable",
+    public: true,
+    category: null,
+    members: ["did:web:alice.example"],
+    tags: [],
   };
 }

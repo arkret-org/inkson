@@ -447,6 +447,7 @@ fn protocol_migration_fixtures_do_not_reintroduce_legacy_surface_names() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let checked_files = [
         "tests/e2e/mockContrixApi.ts",
+        "tests/e2e/mockContrixContract.ts",
         "src/views/directory.rs",
         "src/views/kanban.rs",
     ];
