@@ -297,8 +297,10 @@ pub fn AgentsPanel(
                     {
                         Ok(r) => r,
                         Err(err) => {
-                            incoming_status
-                                .set(format!("agent results fetch failed: {}", err.display()));
+                            incoming_status.set(format!(
+                                "Agent result polling is unavailable. Check the agent bridge configuration, then retry. ({})",
+                                err.display()
+                            ));
                             crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
                             continue;
                         }

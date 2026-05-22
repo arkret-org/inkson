@@ -471,10 +471,194 @@ body {
   top: 0;
   z-index: 1;
 }
-.board-grid {
+
+.workspace-body:has(> .kanban-panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px 0;
+}
+
+.workspace-body > .kanban-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.board-toolbar {
+  flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.board-toolbar-main,
+.board-toolbar-secondary,
+.board-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.board-toolbar-main {
+  justify-content: space-between;
+}
+
+.board-title-block {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  flex: 1 1 auto;
+}
+
+.board-kicker {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.board-toolbar-controls,
+.board-list-compose,
+.board-renderer-tabs,
+.board-source-pill,
+.board-queue-actions {
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.board-renderer-tab {
+  appearance: none;
+  border: 0;
+  cursor: default;
+  font: inherit;
+  line-height: 1.2;
+}
+
+.board-renderer-tab.is-disabled {
+  opacity: 0.58;
+}
+
+.board-toolbar-secondary {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.board-list-compose {
+  flex: 1 1 280px;
+}
+
+.board-list-compose input {
+  max-width: 360px;
+}
+
+.board-control-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.board-select {
+  min-width: 180px;
+  max-width: 260px;
+}
+
+.board-create-menu,
+.board-projection-menu,
+.board-queue-menu {
+  position: relative;
+}
+
+.board-create-menu > summary,
+.board-projection-menu > summary,
+.board-queue-menu > summary {
+  list-style: none;
+}
+
+.board-create-menu > summary::-webkit-details-marker,
+.board-projection-menu > summary::-webkit-details-marker,
+.board-queue-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.board-popover-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: min(360px, calc(100vw - 48px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.board-projection-panel {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.board-queue-panel {
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(460px, calc(100vh - 170px));
+  overflow: auto;
+}
+
+.board-inline-field {
+  margin: 0;
+}
+
+.board-status-row {
+  min-height: 20px;
+  justify-content: space-between;
+}
+
+.board-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.board-conflict-alert {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-color: color-mix(in srgb, var(--warning) 46%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface));
+}
+
+.board-maintenance.is-empty {
+  display: none;
+}
+
+.board-grid {
+  display: flex;
   gap: 12px;
+  align-items: flex-start;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 14px;
+  scroll-snap-type: x proximity;
+}
+.board-empty-state {
+  flex: 1 0 100%;
+  min-width: min(680px, 100%);
+}
+.board-empty-state > .event {
+  max-width: 680px;
+  box-shadow: none;
   align-items: start;
 }
 .board-header {
@@ -499,12 +683,18 @@ body {
   margin-top: 8px;
 }
 .board-column {
-  min-width: 0;
+  flex: 0 0 300px;
+  width: 300px;
+  min-width: 300px;
+  max-height: 100%;
   min-height: 0;
+  overflow-y: auto;
   padding: 10px;
   display: grid;
   gap: 10px;
   align-content: start;
+  border-radius: 8px;
+  scroll-snap-align: start;
 }
 .board-column > .event-head.board-column-head {
   display: grid;
@@ -534,6 +724,8 @@ body {
 .board-card {
   cursor: grab;
   padding: 10px 12px;
+  border-radius: 8px;
+  box-shadow: none;
 }
 .board-card:active {
   cursor: grabbing;
@@ -820,7 +1012,8 @@ body {
 }
 @media (max-width: 900px) {
   .dashboard-layout { grid-template-columns: 1fr; }
-  .board-grid { grid-template-columns: 1fr; }
+  .board-grid { margin-inline: -4px; padding-inline: 4px; }
+  .board-column { flex-basis: min(82vw, 320px); width: min(82vw, 320px); min-width: min(82vw, 320px); }
   .home-card-list.compact { grid-template-columns: 1fr; }
   .settings-shell,
   .settings-card-grid,
@@ -990,15 +1183,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --page-glow-b: rgba(198, 91, 114, 0.08);
   --page-glow-c: rgba(88, 111, 203, 0.07);
 
-  --nav-bg: #161c28;
-  --nav-bg-2: #202a39;
-  --nav-soft: rgba(255, 255, 255, 0.05);
-  --nav-border: rgba(217, 119, 6, 0.18);
-  --nav-text: #f8f2ee;
-  --nav-muted: #cbbab1;
-  --nav-label: #a89389;
-  --nav-input-bg: rgba(10, 15, 25, 0.42);
-  --nav-input-border: rgba(203, 186, 177, 0.18);
+  --nav-bg: #fff9f3;
+  --nav-bg-2: #f2e8df;
+  --nav-soft: rgba(255, 255, 255, 0.68);
+  --nav-border: #dfcec1;
+  --nav-text: #2f2723;
+  --nav-muted: #7a6c64;
+  --nav-label: #9b8c84;
+  --nav-input-bg: rgba(255, 250, 245, 0.86);
+  --nav-input-border: #d8c7bb;
 }
 
 [data-theme="dark"],
@@ -3222,9 +3415,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: #fffaf5;
   color: var(--text);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 24px 64px rgba(49, 35, 24, 0.22);
+  backdrop-filter: none;
+  isolation: isolate;
+}
+
+[data-theme="dark"] .account-menu,
+[data-theme="night"] .account-menu {
+  background: #1b2430;
 }
 
 .shell.rtl .account-menu {
@@ -3267,7 +3467,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 8px;
-  align-items: baseline;
+  align-items: center;
   font-size: 12px;
 }
 
@@ -3277,8 +3477,26 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   letter-spacing: 0.06em;
 }
 
-.account-menu__row span {
-  overflow-wrap: anywhere;
+.account-menu__row > span,
+.account-menu__value span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-menu__copy {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .account-menu__section {
@@ -3349,12 +3567,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .main.workspace {
   padding: 0;
   display: flex;
+  flex-direction: column;
   gap: 0;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .topbar.workspace-header {
+  flex: 0 0 auto;
   margin: 0;
   border-radius: 0;
   box-shadow: none;
@@ -3364,10 +3585,35 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow: visible;
 }
 
+.workspace-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
 .workspace-body > .timeline {
   overflow: visible;
   align-content: start;
   gap: 16px;
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) > .composer[data-testid="composer"] {
+  flex: 0 0 auto;
+  margin-top: 16px;
 }
 
 .event {
@@ -3471,9 +3717,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
 }
 
-.shell.app.theme-light,
+.shell.app.theme-light {
+  color-scheme: light;
+}
+
 .shell.app.theme-night {
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 
 .sidebar {
@@ -3726,6 +3975,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   .mobile-shellbar .brand {
     font-size: 14px;
     font-weight: 700;
+    color: var(--text);
   }
 
   .mobile-drawer {
@@ -3771,6 +4021,82 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   }
 
   .dashboard-two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-body:has(> .kanban-panel) {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+  }
+
+  .workspace-body > .kanban-panel {
+    overflow: visible;
+  }
+
+  .board-toolbar-main,
+  .board-toolbar-secondary,
+  .board-status-row,
+  .board-toolbar-controls,
+  .board-list-compose,
+  .board-renderer-tabs,
+  .board-source-pill {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .board-toolbar-controls > *,
+  .board-list-compose > *,
+  .board-renderer-tabs > *,
+  .board-source-pill > * {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .board-select,
+  .board-list-compose input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .board-renderer-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .board-renderer-tabs .board-control-label {
+    grid-column: 1 / -1;
+  }
+
+  .board-status-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .discussion-shell,
+  .discussion-shell.left-collapsed,
+  .discussion-shell.right-collapsed,
+  .discussion-shell.left-collapsed.right-collapsed {
+    grid-template-rows: minmax(0, 190px) minmax(180px, 28vh) auto;
+  }
+
+  .discussion-sidebar-panel {
+    max-height: 190px;
+  }
+
+  .discussion-main-panel {
+    min-height: 180px;
+  }
+
+  .discussion-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+  }
+
+  .compose-security-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -4226,6 +4552,72 @@ fn space_tree_items(spaces: &[SpacePreview]) -> Vec<SpaceTreeItem> {
     items
 }
 
+fn browser_prefers_dark_theme() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| {
+                window
+                    .match_media("(prefers-color-scheme: dark)")
+                    .ok()
+                    .flatten()
+            })
+            .map(|query| query.matches())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+fn browser_shell_color_scheme_is_dark() -> Option<bool> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window()?;
+        let document = window.document()?;
+        let shell = document
+            .query_selector("[data-testid=\"client-shell\"]")
+            .ok()
+            .flatten()?;
+        let styles = window.get_computed_style(&shell).ok().flatten()?;
+        let color_scheme = styles
+            .get_property_value("color-scheme")
+            .ok()?
+            .to_ascii_lowercase();
+        let has_dark = color_scheme.split_whitespace().any(|token| token == "dark");
+        let has_light = color_scheme
+            .split_whitespace()
+            .any(|token| token == "light");
+        if has_dark && !has_light {
+            Some(true)
+        } else if has_light && !has_dark {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -> bool {
+    theme == "night" || (theme == "system" && system_theme_is_night)
+}
+
+fn next_manual_theme(theme: &str) -> String {
+    let is_night = if theme == "system" {
+        browser_shell_color_scheme_is_dark().unwrap_or_else(browser_prefers_dark_theme)
+    } else {
+        theme == "night"
+    };
+    if is_night { "light" } else { "night" }.to_owned()
+}
+
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
@@ -4341,6 +4733,17 @@ pub fn RouterView() -> Element {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
     let mut theme = use_signal(move || initial_theme);
+    let system_theme_is_night = use_signal(browser_prefers_dark_theme);
+    {
+        let mut system_theme_is_night = system_theme_is_night;
+        use_effect(move || {
+            if theme() == "system" {
+                if let Some(is_night) = browser_shell_color_scheme_is_dark() {
+                    system_theme_is_night.set(is_night);
+                }
+            }
+        });
+    }
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
     let mut sidebar_collapsed = use_signal(|| false);
@@ -4655,7 +5058,7 @@ pub fn RouterView() -> Element {
     let server_options = server_options_for(&base_url());
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
     let theme_attr = active_theme.as_str();
-    let theme_is_night = active_theme == "night";
+    let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
     let theme_toggle_icon = if theme_is_night { "sun" } else { "moon" };
     let theme_toggle_title = if theme_is_night {
         "Switch to light theme"
@@ -4880,7 +5283,8 @@ pub fn RouterView() -> Element {
                     title: "{theme_toggle_title}",
                     "aria-label": "{theme_toggle_title}",
                     onclick: move |_| {
-                        let next = if theme() == "night" { "light" } else { "night" }.to_owned();
+                        let current_theme = theme();
+                        let next = next_manual_theme(&current_theme);
                         theme.set(next.clone());
                         state_store.write().save_private_data(&account_did(), "theme", next.clone());
                         // A4a — best-effort cross-device sync via
@@ -5379,7 +5783,8 @@ pub fn RouterView() -> Element {
                             title: "{theme_toggle_title}",
                             "aria-label": "{theme_toggle_title}",
                             onclick: move |_| {
-                                let next = if theme() == "night" { "light" } else { "night" }.to_owned();
+                                let current_theme = theme();
+                                let next = next_manual_theme(&current_theme);
                                 theme.set(next.clone());
                                 state_store.write().save_private_data(&account_did(), "theme", next.clone());
                                 // A4a — best-effort cross-device sync
@@ -5536,11 +5941,43 @@ pub fn RouterView() -> Element {
                                     div { class: "account-menu__rows",
                                         div { class: "account-menu__row",
                                             strong { "DID" }
-                                            span { class: "mono", "data-testid": "account-menu-did", "{account_did_value}" }
+                                            div { class: "account-menu__value",
+                                                span { class: "mono", "data-testid": "account-menu-did", title: "{account_did_value}", "{account_did_value}" }
+                                                button {
+                                                    class: "btn icon sm ghost account-menu__copy",
+                                                    "data-testid": "account-menu-copy-did",
+                                                    title: "Copy DID",
+                                                    "aria-label": "Copy DID",
+                                                    onclick: {
+                                                        let value = account_did_value.clone();
+                                                        move |_| {
+                                                            copy_text_to_clipboard(&value);
+                                                            account_session_state.set("DID copied".to_owned());
+                                                        }
+                                                    },
+                                                    UiIcon { name: "copy" }
+                                                }
+                                            }
                                         }
                                         div { class: "account-menu__row",
                                             strong { "Device" }
-                                            span { class: "mono", "data-testid": "account-menu-device", "{device_id_value}" }
+                                            div { class: "account-menu__value",
+                                                span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_value}" }
+                                                button {
+                                                    class: "btn icon sm ghost account-menu__copy",
+                                                    "data-testid": "account-menu-copy-device",
+                                                    title: "Copy device ID",
+                                                    "aria-label": "Copy device ID",
+                                                    onclick: {
+                                                        let value = device_id_value.clone();
+                                                        move |_| {
+                                                            copy_text_to_clipboard(&value);
+                                                            account_session_state.set("Device ID copied".to_owned());
+                                                        }
+                                                    },
+                                                    UiIcon { name: "copy" }
+                                                }
+                                            }
                                         }
                                         div { class: "account-menu__row",
                                             strong { "Server" }
@@ -7081,6 +7518,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // returns the canonical SpaceRemark JSON in
                             // `content`. Entries for other namespaces are
                             // ignored here.
+                            let notification_projection = sync
+                                .account_data
+                                .iter()
+                                .filter(|entry| {
+                                    crate::views::notifications::is_notification_account_data(entry)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            if !notification_projection.is_empty() {
+                                store.save_notification_projection(notification_projection);
+                            }
                             for entry in &sync.account_data {
                                 let Some(data_type) =
                                     entry.get("data_type").and_then(serde_json::Value::as_str)
@@ -7332,6 +7780,32 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
             }
         }
     });
+}
+
+fn copy_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
 }
 
 pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {

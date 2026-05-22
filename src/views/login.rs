@@ -261,84 +261,88 @@ pub fn LoginPanel(
                         .map(|record| record.jkt)
                         .unwrap_or_default();
                     drop(store_snapshot);
+                    let show_session_diagnostics =
+                        session_status != "signed-out" || !jkt_display.is_empty();
                     rsx! {
-                        div { class: "auth-session-state", "data-testid": "session-state-card",
-                            div {
-                                "data-testid": "session-status",
-                                "data-status": session_status,
-                                "{session_status}"
-                            }
-                            div {
-                                "data-testid": "session-device-id",
-                                "{device_value}"
-                            }
-                            div {
-                                "data-testid": "session-actor-did",
-                                "{actor_value}"
-                            }
-                            if !jkt_display.is_empty() {
+                        if show_session_diagnostics {
+                            div { class: "auth-session-state", "data-testid": "session-state-card",
                                 div {
-                                    "data-testid": "session-dpop-jkt",
-                                    "{jkt_display}"
+                                    "data-testid": "session-status",
+                                    "data-status": session_status,
+                                    "{session_status}"
                                 }
-                            }
-                            button {
-                                class: "ghost",
-                                "data-testid": "refresh-now-button",
-                                disabled: is_busy(),
-                                onclick: move |_| {
-                                    is_busy.set(true);
-                                    auth_status.set("Refreshing session...".to_owned());
-                                    spawn(async move {
-                                        let prepared = {
-                                            let mut store = state_store_write.write();
-                                            crate::session_refresh::prepare_refresh(&mut store)
-                                        };
-                                        let outcome = match prepared {
-                                            crate::session_refresh::RefreshPrepared::Done(o) => o,
-                                            crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-                                                let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+                                div {
+                                    "data-testid": "session-device-id",
+                                    "{device_value}"
+                                }
+                                div {
+                                    "data-testid": "session-actor-did",
+                                    "{actor_value}"
+                                }
+                                if !jkt_display.is_empty() {
+                                    div {
+                                        "data-testid": "session-dpop-jkt",
+                                        "{jkt_display}"
+                                    }
+                                }
+                                button {
+                                    class: "ghost",
+                                    "data-testid": "refresh-now-button",
+                                    disabled: is_busy(),
+                                    onclick: move |_| {
+                                        is_busy.set(true);
+                                        auth_status.set("Refreshing session...".to_owned());
+                                        spawn(async move {
+                                            let prepared = {
                                                 let mut store = state_store_write.write();
-                                                crate::session_refresh::commit_refresh(&mut store, result)
+                                                crate::session_refresh::prepare_refresh(&mut store)
+                                            };
+                                            let outcome = match prepared {
+                                                crate::session_refresh::RefreshPrepared::Done(o) => o,
+                                                crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
+                                                    let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+                                                    let mut store = state_store_write.write();
+                                                    crate::session_refresh::commit_refresh(&mut store, result)
+                                                }
+                                            };
+                                            match outcome {
+                                                crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+                                                    token.set(access_token.clone());
+                                                    persist_config(
+                                                        config_store,
+                                                        base_url(),
+                                                        account_did(),
+                                                        device_id(),
+                                                        access_token,
+                                                    );
+                                                    auth_status.set("Session refreshed".to_owned());
+                                                }
+                                                crate::session_refresh::RefreshOutcome::Fresh => {
+                                                    auth_status.set("Session still fresh".to_owned());
+                                                }
+                                                crate::session_refresh::RefreshOutcome::NoGrant => {
+                                                    auth_status.set("No persisted session grant; sign in first".to_owned());
+                                                }
+                                                crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
+                                                    token.set(String::new());
+                                                    persist_config(
+                                                        config_store,
+                                                        base_url(),
+                                                        account_did(),
+                                                        device_id(),
+                                                        String::new(),
+                                                    );
+                                                    auth_status.set(format!("Session expired: {reason}"));
+                                                }
+                                                crate::session_refresh::RefreshOutcome::Transient { reason } => {
+                                                    auth_status.set(format!("Refresh failed transiently: {reason}"));
+                                                }
                                             }
-                                        };
-                                        match outcome {
-                                            crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
-                                                token.set(access_token.clone());
-                                                persist_config(
-                                                    config_store,
-                                                    base_url(),
-                                                    account_did(),
-                                                    device_id(),
-                                                    access_token,
-                                                );
-                                                auth_status.set("Session refreshed".to_owned());
-                                            }
-                                            crate::session_refresh::RefreshOutcome::Fresh => {
-                                                auth_status.set("Session still fresh".to_owned());
-                                            }
-                                            crate::session_refresh::RefreshOutcome::NoGrant => {
-                                                auth_status.set("No persisted session grant; sign in first".to_owned());
-                                            }
-                                            crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
-                                                token.set(String::new());
-                                                persist_config(
-                                                    config_store,
-                                                    base_url(),
-                                                    account_did(),
-                                                    device_id(),
-                                                    String::new(),
-                                                );
-                                                auth_status.set(format!("Session expired: {reason}"));
-                                            }
-                                            crate::session_refresh::RefreshOutcome::Transient { reason } => {
-                                                auth_status.set(format!("Refresh failed transiently: {reason}"));
-                                            }
-                                        }
-                                        is_busy.set(false);
-                                    });
-                                },
-                                "Refresh now"
+                                            is_busy.set(false);
+                                        });
+                                    },
+                                    "Refresh now"
+                                }
                             }
                         }
                     }

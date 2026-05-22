@@ -22,9 +22,26 @@ import { mockContrixApi } from "./mockContrixApi";
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
     await mockContrixApi(page);
+    await page.addInitScript(() => {
+      if (localStorage.getItem("yougen.config.v1")) {
+        return;
+      }
+      localStorage.setItem(
+        "yougen.config.v1",
+        JSON.stringify({
+          server_url: "https://local.host",
+          account_did: "did:web:alice.example",
+          device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+          session_token: "sx:e2e-token",
+        }),
+      );
+    });
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-    await page.getByTestId("connect-button").click();
+    const connectButton = page.getByTestId("connect-button");
+    if (await connectButton.count()) {
+      await connectButton.click();
+    }
   });
 
   // ---- Board / Flow / cx.flow.move drag conflict ----
@@ -44,7 +61,7 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("board-offline-queue")).toBeVisible();
     await expect(page.getByTestId("board-status")).toBeVisible();
     // At least one card MUST render so the drop target exists; the
-    // fully-mocked sync round returns seed-fallback columns.
+    // fully-mocked server returns persisted board projections.
     await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 30_000 });
   });
 
@@ -207,7 +224,7 @@ test.describe("feature coverage placeholders", () => {
     // them they have somewhere to write to.
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
-    // The seed cards include a `discussion.visibility == "locked"` row,
+    // The mocked persisted board includes a locked-discussion row,
     // which renders the fail-closed banner inside `card-detail-modal`.
     // The test passes when at least one card-with-locked-discussion is
     // rendered such that the badge would show after click; the badge

@@ -3,7 +3,7 @@ use dioxus_router::Link;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    components::HelpTip,
+    components::{EmptyState, EmptyStateKind, HelpTip},
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
@@ -13,10 +13,9 @@ use crate::{
     views::helpers::with_authed_api,
 };
 
-/// Fallback Board Space id used by the demo seed data. Production
-/// kanban routes resolve this from the URL / saved View; until that
-/// wiring lands the seed columns and offline-queued Moves share this
-/// constant so CAS cell keys are stable across reloads.
+/// Board Space id used only when the explicit demo seed fallback is
+/// enabled. Normal kanban routes render server projections instead of
+/// hard-coded cards.
 const DEMO_BOARD_SPACE_ID: &str = "cx:space:0196419b-0000-7000-8000-00000000b0a0";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
@@ -234,12 +233,10 @@ struct BoardWriteRecord {
 
 /// T20 — Where the board projection data comes from.
 ///
-/// Once `client.collection_projection(view_id)` ships in the SDK and soland's
-/// `POST /api/v1/views/:id/projection` endpoint goes live, the UI will prefer
-/// the API-derived board state; if the endpoint is unavailable or the probe
-/// fails, the UI falls back to local seed data. The board header surfaces
-/// the current source explicitly so demo data is never mistaken for real
-/// data.
+/// The UI prefers API-derived board state from either the collection view
+/// projection or the server's Space-container / Flow projection endpoints.
+/// The local seed path is explicit demo-only so hard-coded cards are never
+/// mistaken for persisted board data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BoardProjectionSource {
     /// Sourced from the Principal Server's collection projection response.
@@ -258,9 +255,9 @@ enum BoardProjectionSource {
 impl BoardProjectionSource {
     fn label(self) -> &'static str {
         match self {
-            Self::ApiDerived => "API-derived (collection projection)",
-            Self::SeedFallback => "seed fallback (demo)",
-            Self::Unavailable => "projection unavailable",
+            Self::ApiDerived => "Live board data",
+            Self::SeedFallback => "Sample data",
+            Self::Unavailable => "Board data unavailable",
         }
     }
 
@@ -275,19 +272,19 @@ impl BoardProjectionSource {
     fn explanation(self) -> &'static str {
         match self {
             Self::ApiDerived => {
-                "Data is derived from the Principal Server view-projection endpoint and aligned with the current sync frontier."
+                "Data is loaded from the Principal Server and aligned with the current sync frontier."
             }
             Self::SeedFallback => {
-                "The view-projection endpoint is unavailable, so we are showing local seed data. Drag-and-drop edits still emit cx.flow.move / cx.flow.reorder and queue offline."
+                "Sample fallback is enabled, so local demo data is visible while writes still queue normally."
             }
             Self::Unavailable => {
-                "The view-projection endpoint is unavailable and demo seed fallback is disabled for this server profile."
+                "Board data is unavailable and sample fallback is disabled for this server profile."
             }
         }
     }
 }
 
-fn kanban_seed_fallback_allowed(base_url: &str) -> bool {
+fn kanban_seed_fallback_allowed(_base_url: &str) -> bool {
     if truthy_env_value(option_env!("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK"))
         || std::env::var("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK")
             .ok()
@@ -296,17 +293,12 @@ fn kanban_seed_fallback_allowed(base_url: &str) -> bool {
     {
         return true;
     }
-    kanban_seed_fallback_allowed_for_url(base_url)
+    false
 }
 
-fn kanban_seed_fallback_allowed_for_url(base_url: &str) -> bool {
-    let Ok(url) = url::Url::parse(base_url) else {
-        return false;
-    };
-    matches!(
-        url.host_str().unwrap_or_default(),
-        "localhost" | "127.0.0.1" | "::1" | "local.host"
-    )
+#[cfg(test)]
+fn kanban_seed_fallback_allowed_for_url(_base_url: &str) -> bool {
+    false
 }
 
 fn truthy_env_value(value: Option<&str>) -> bool {
@@ -328,9 +320,8 @@ fn truthy_env_value(value: Option<&str>) -> bool {
 #[allow(dead_code)]
 fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     // Synchronous init context — always returns None. UI starts with
-    // SeedFallback and the user (or the auto-refresh-on-mount handler)
-    // promotes to ApiDerived via [`fetch_api_columns`] once the async
-    // call returns.
+    // Unavailable unless explicit demo seed is enabled; async projection
+    // hydrate promotes the board to ApiDerived once the server returns data.
     None
 }
 
@@ -508,6 +499,166 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
     }
 }
 
+fn columns_from_lifecycle_projection(
+    containers: &[crate::api::SpaceContainerProjectionView],
+    flows: &[crate::api::FlowProjectionView],
+    preferred_board_id: &str,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    let board_options = board_space_options_from_projection(containers);
+    let selected_board_id = if !preferred_board_id.trim().is_empty()
+        && board_options
+            .iter()
+            .any(|option| option.id == preferred_board_id)
+    {
+        Some(preferred_board_id.to_owned())
+    } else {
+        board_options.first().map(|option| option.id.clone())
+    };
+    let Some(board_id) = selected_board_id else {
+        return (Vec::new(), board_options, None);
+    };
+
+    let mut cols = containers
+        .iter()
+        .filter(|view| view.kind == "list" && view.parent_ref.as_deref() == Some(board_id.as_str()))
+        .map(|view| KanbanColumn {
+            id: view.container_space_id.clone(),
+            title: if view.title.trim().is_empty() {
+                view.container_space_id.clone()
+            } else {
+                view.title.clone()
+            },
+            rank: view.rank.clone().unwrap_or_default(),
+            cards: Vec::new(),
+            state: space_container_state_from_wire(&view.state),
+        })
+        .collect::<Vec<_>>();
+    cols.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then(left.title.cmp(&right.title))
+            .then(left.id.cmp(&right.id))
+    });
+
+    for flow in flows.iter().filter(|flow| {
+        flow_projection_field_string(flow, flow.board_space_id.as_deref(), &["board_space_id"])
+            .as_deref()
+            == Some(board_id.as_str())
+    }) {
+        let Some(list_space_id) =
+            flow_projection_field_string(flow, flow.list_space_id.as_deref(), &["list_space_id"])
+        else {
+            continue;
+        };
+        if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
+            column.cards.push(card_from_flow_projection(flow));
+        }
+    }
+
+    for column in &mut cols {
+        column.cards.sort_by(|left, right| {
+            left.rank
+                .cmp(&right.rank)
+                .then(left.title.cmp(&right.title))
+                .then(left.id.cmp(&right.id))
+        });
+    }
+
+    (cols, board_options, Some(board_id))
+}
+
+fn flow_projection_field_string(
+    flow: &crate::api::FlowProjectionView,
+    top_level: Option<&str>,
+    field_names: &[&str],
+) -> Option<String> {
+    top_level
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            field_names.iter().find_map(|field_name| {
+                flow.fields
+                    .get(*field_name)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(ToOwned::to_owned)
+            })
+        })
+}
+
+fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> Vec<String> {
+    match flow.fields.get("labels") {
+        Some(Value::Array(labels)) => labels
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+        Some(Value::String(labels)) => parse_card_labels(labels),
+        _ => Vec::new(),
+    }
+}
+
+fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCard {
+    let title = if flow.title.trim().is_empty() {
+        flow.flow_id.clone()
+    } else {
+        flow.title.clone()
+    };
+    let description =
+        flow_projection_field_string(flow, flow.summary.as_deref(), &["summary", "description"])
+            .unwrap_or_default();
+    let discussion_visibility =
+        flow_projection_field_string(flow, None, &["discussion_visibility", "visibility"]);
+    let locked_flow = if discussion_visibility.as_deref() == Some("locked") {
+        Some(LockedFlow {
+            flow_id_hash: flow_projection_field_string(flow, None, &["discussion_ref_hash"])
+                .unwrap_or_else(|| format!("sha256:{}", flow.flow_id)),
+            reason: flow_projection_field_string(flow, None, &["locked_reason"]).unwrap_or_else(
+                || "Locked discussion: title and members are not disclosed.".to_owned(),
+            ),
+        })
+    } else {
+        None
+    };
+    let external_visibility = if locked_flow.is_some() {
+        "Locked discussion (lazy_link)".to_owned()
+    } else {
+        "No external discussions linked".to_owned()
+    };
+    let history_visibility = flow_projection_field_string(flow, None, &["history_visibility"])
+        .unwrap_or_else(|| {
+            if locked_flow.is_some() {
+                "lazy_link (cross-Space)".to_owned()
+            } else {
+                "Managed by board".to_owned()
+            }
+        });
+    KanbanCard {
+        id: flow.flow_id.clone(),
+        rank: flow_projection_field_string(flow, flow.rank.as_deref(), &["rank"])
+            .unwrap_or_default(),
+        title: title.clone(),
+        description,
+        labels: flow_projection_labels(flow),
+        assignee: flow_projection_field_string(flow, None, &["assignee"])
+            .unwrap_or_else(|| "—".to_owned()),
+        due: flow_projection_field_string(flow, None, &["due_at", "due"])
+            .unwrap_or_else(|| "—".to_owned()),
+        primary_flow_id: flow.flow_id.clone(),
+        primary_flow: title,
+        linked_flows: Vec::new(),
+        locked_flow,
+        external_visibility,
+        history_visibility,
+        activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
+        audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
+        state: CardState::Synced,
+        lifecycle: flow_lifecycle_from_wire(&flow.state),
+    }
+}
+
 #[component]
 pub fn KanbanPanel(
     base_url: String,
@@ -521,8 +672,8 @@ pub fn KanbanPanel(
     event_write_ready: bool,
 ) -> Element {
     // T20 — load board projection from API when available, otherwise seed.
-    // Source signal lets the UI surface "API-derived" vs "seed fallback" in
-    // the board header; refresh button (added below) re-runs the probe.
+    // Source signal lets the UI surface persisted API projection vs
+    // explicit demo seed in the board header.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
     let initial_api_columns = try_load_api_columns("");
     let initial_source = match initial_api_columns {
@@ -546,6 +697,9 @@ pub fn KanbanPanel(
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
     let mut board_view_id = use_signal(String::new);
+    let mut lifecycle_container_projection =
+        use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
+    let mut lifecycle_flow_projection = use_signal(Vec::<crate::api::FlowProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still
@@ -568,7 +722,7 @@ pub fn KanbanPanel(
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if initial_source == BoardProjectionSource::Unavailable {
-            "API projection unavailable; demo seed fallback disabled for this server".to_owned()
+            "Board data unavailable; sample fallback disabled for this server".to_owned()
         } else if event_write_ready {
             "Event write plane ready".to_owned()
         } else {
@@ -590,10 +744,11 @@ pub fn KanbanPanel(
             .unwrap_or_else(|| crate::i18n::tr("kanban.board_title"))
     };
 
-    // T20 — auto-refresh-on-mount. The component renders SeedFallback
-    // synchronously, then immediately fires a single async fetch against
-    // soland's `/api/v1/views/:id/projection`. Success promotes the board
-    // to ApiDerived; failure leaves the seed in place with a status note.
+    // T20 — auto-refresh-on-mount. The component renders empty or explicit
+    // SeedFallback synchronously, then fires an async fetch against soland's
+    // `/api/v1/views/:id/projection` when a View id is provided. Success
+    // promotes the board to ApiDerived; failure leaves the current server
+    // projection / empty state in place with a status note.
     // The `bootstrapped` guard ensures we run this only once per mount —
     // matching the login view's `auto_capture_bootstrapped` pattern so a
     // second render (e.g. from a parent signal) doesn't re-trigger the
@@ -631,7 +786,7 @@ pub fn KanbanPanel(
                     }
                     projection_source.set(BoardProjectionSource::ApiDerived);
                     board_status.set(format!(
-                        "API projection · {} groups · view={}",
+                        "Board view loaded: {} group(s) · view={}",
                         projection.groups.len(),
                         projection.view_id.as_str()
                     ));
@@ -640,14 +795,14 @@ pub fn KanbanPanel(
                     if auto_seed_fallback_allowed {
                         projection_source.set(BoardProjectionSource::SeedFallback);
                         board_status.set(format!(
-                            "API projection unavailable on mount: {}; showing local seed fallback",
+                            "Board data unavailable on mount: {}; showing sample fallback",
                             err.display()
                         ));
                     } else {
                         columns.set(Vec::new());
                         projection_source.set(BoardProjectionSource::Unavailable);
                         board_status.set(format!(
-                            "API projection unavailable on mount: {}; seed fallback disabled",
+                            "Board data unavailable on mount: {}; sample fallback disabled",
                             err.display()
                         ));
                     }
@@ -742,22 +897,46 @@ pub fn KanbanPanel(
                 .await
             };
             let mut applied = 0_usize;
+            let mut server_projection_applied = false;
             let containers_ok = containers_res.is_ok();
             let flows_ok = flows_res.is_ok();
             if containers_ok || flows_ok {
-                let mut cols = columns.write();
-                if let Ok(resp) = containers_res {
-                    let options = board_space_options_from_projection(&resp.items);
+                let container_items = containers_res
+                    .ok()
+                    .map(|resp| resp.items)
+                    .unwrap_or_default();
+                let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
+                lifecycle_container_projection.set(container_items.clone());
+                lifecycle_flow_projection.set(flow_items.clone());
+                let current_board = selected_board_space_id();
+                let (projected_columns, options, projected_board_id) =
+                    columns_from_lifecycle_projection(
+                        &container_items,
+                        &flow_items,
+                        &current_board,
+                    );
+                if let Some(board_id) = projected_board_id {
                     if !options.is_empty() {
-                        let current_board = selected_board_space_id();
-                        if current_board.trim().is_empty()
-                            || !options.iter().any(|option| option.id == current_board)
-                        {
-                            selected_board_space_id.set(options[0].id.clone());
-                        }
                         board_space_options.set(options);
                     }
-                    for view in &resp.items {
+                    selected_board_space_id.set(board_id);
+                    let list_count = projected_columns.len();
+                    let card_count = projected_columns
+                        .iter()
+                        .map(|column| column.cards.len())
+                        .sum::<usize>();
+                    if columns() != projected_columns {
+                        columns.set(projected_columns);
+                        applied += list_count.max(1);
+                    }
+                    projection_source.set(BoardProjectionSource::ApiDerived);
+                    server_projection_applied = true;
+                    board_status.set(format!(
+                        "Board loaded: {list_count} list(s), {card_count} card(s)"
+                    ));
+                } else {
+                    let mut cols = columns.write();
+                    for view in &container_items {
                         if let Some(col) = cols.iter_mut().find(|c| c.id == view.container_space_id)
                         {
                             let new_state = space_container_state_from_wire(&view.state);
@@ -767,9 +946,7 @@ pub fn KanbanPanel(
                             }
                         }
                     }
-                }
-                if let Ok(resp) = flows_res {
-                    for view in &resp.items {
+                    for view in &flow_items {
                         for col in cols.iter_mut() {
                             if let Some(card) = col.cards.iter_mut().find(|c| c.id == view.flow_id)
                             {
@@ -783,35 +960,73 @@ pub fn KanbanPanel(
                     }
                 }
             }
-            if applied > 0 {
-                board_status.set(format!(
-                    "lifecycle hydrate · {applied} object(s) reconciled from server projection"
-                ));
+            if applied > 0 && !server_projection_applied {
+                board_status.set(format!("Board refreshed: {applied} item(s) reconciled"));
             }
         }
     });
 
+    let write_record_count = write_records().len();
+    let manual_review_count = write_records()
+        .iter()
+        .filter(|record| matches!(record.state, CardState::Conflict | CardState::Quarantined))
+        .count();
     rsx! {
-        div { class: "timeline", "data-testid": "kanban-panel",
-            div { class: "event board-header",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("kanban.board_header")} }
-                    span {
-                        title: "writes to {selected_space}",
-                        "{scope_label}"
+        div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
+            div { class: "event board-header board-toolbar",
+                div { class: "board-toolbar-main",
+                    div { class: "board-title-block",
+                        div { class: "event-head board-kicker",
+                            span { {crate::i18n::tr("kanban.board_header")} }
+                            span {
+                                title: "writes to {selected_space}",
+                                "{scope_label}"
+                            }
+                        }
+                        div { class: "space-title", "{selected_board_label}" }
                     }
-                }
-                div { class: "space-title", "{selected_board_label}" }
-                div { class: "muted",
-                    {crate::i18n::tr("kanban.board_hint")}
-                }
-
-                div { class: "actions", "data-testid": "board-space-selector",
-                    span { class: "muted", "Board" }
+                    div { class: "actions board-toolbar-controls", "data-testid": "board-space-selector",
+                    span { class: "muted board-control-label", "Board" }
                     select {
+                        class: "board-select",
                         "data-testid": "board-space-select",
                         value: "{selected_board_space_id}",
-                        onchange: move |event| selected_board_space_id.set(event.value()),
+                        onchange: move |event| {
+                            let board_id = event.value();
+                            selected_board_space_id.set(board_id.clone());
+                            let containers = lifecycle_container_projection();
+                            let flows = lifecycle_flow_projection();
+                            if containers.is_empty() && flows.is_empty() {
+                                board_status.set(format!("Board selected · {board_id}"));
+                                return;
+                            }
+                            let (projected_columns, options, projected_board_id) =
+                                columns_from_lifecycle_projection(
+                                    &containers,
+                                    &flows,
+                                    &board_id,
+                                );
+                            if !options.is_empty() {
+                                board_space_options.set(options);
+                            }
+                            if projected_board_id.as_deref() == Some(board_id.as_str()) {
+                                let list_count = projected_columns.len();
+                                let card_count = projected_columns
+                                    .iter()
+                                    .map(|column| column.cards.len())
+                                    .sum::<usize>();
+                                columns.set(projected_columns);
+                                projection_source.set(BoardProjectionSource::ApiDerived);
+                                board_status.set(format!(
+                                    "Board loaded: {list_count} list(s), {card_count} card(s)"
+                                ));
+                            } else {
+                                columns.set(Vec::new());
+                                board_status.set(format!(
+                                    "No list projection available for selected Board · {board_id}"
+                                ));
+                            }
+                        },
                         option {
                             value: "",
                             selected: selected_board_space_id().is_empty(),
@@ -825,166 +1040,206 @@ pub fn KanbanPanel(
                             }
                         }
                     }
-                    input {
-                        "data-testid": "board-view-id-input",
-                        value: "{board_view_id}",
-                        placeholder: "cx:view:...",
-                        oninput: move |evt| board_view_id.set(evt.value()),
-                    }
-                    input {
-                        "data-testid": "new-board-title-input",
-                        value: "{new_board_title}",
-                        placeholder: "Board title",
-                        oninput: move |evt| new_board_title.set(evt.value()),
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "create-board-space-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let space = selected_space.clone();
-                            let actor = account_did.clone();
-                            move |_| {
-                                let title = new_board_title().trim().to_owned();
-                                if title.is_empty() {
-                                    board_status.set("board title is required".to_owned());
-                                    return;
+                        details { class: "board-create-menu",
+                            summary { class: "btn sm secondary", "New board" }
+                            div { class: "board-popover-panel",
+                                input {
+                                    "data-testid": "new-board-title-input",
+                                    value: "{new_board_title}",
+                                    placeholder: "Board title",
+                                    oninput: move |evt| new_board_title.set(evt.value()),
                                 }
-                                if actor.trim().is_empty() {
-                                    board_status.set("sign in before creating a Board".to_owned());
-                                    return;
-                                }
-                                let board_space_id = format!("cx:space:{}", uuid_v7());
-                                board_space_options.write().push(BoardSpaceOption {
-                                    id: board_space_id.clone(),
-                                    title: title.clone(),
-                                    state: SpaceContainerLifecycleState::Active,
-                                });
-                                selected_board_space_id.set(board_space_id.clone());
-                                let op = crate::operation::cx_ops::space_create(
-                                    &space,
-                                    &actor,
-                                    &board_space_id,
-                                    "board",
-                                    &title,
-                                    None,
-                                    None,
-                                )
-                                .build("yougen");
-                                submit_kanban_operation_event(
-                                    base.clone(),
-                                    token,
-                                    space.clone(),
-                                    op,
-                                    state_store,
-                                    board_status,
-                                );
-                                new_board_title.set("Board".to_owned());
-                            }
-                        },
-                        "Create Board"
-                    }
-                }
-
-                div { class: "actions", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
-                    span { class: "muted", "View" }
-                    span { class: "badge blue", "data-testid": "renderer-board", role: "tab", "aria-selected": "true", "board" }
-                    span { class: "badge", "data-testid": "renderer-list", role: "tab", "list" }
-                    span { class: "badge", "data-testid": "renderer-table", role: "tab", "table" }
-                    span { class: "badge", "data-testid": "renderer-calendar", role: "tab", "calendar" }
-                    span { class: "badge", "data-testid": "renderer-timeline", role: "tab", "timeline" }
-                    span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
-                }
-                div { class: "actions", "data-testid": "board-projection-source",
-                    span { class: "muted", "Source" }
-                    span {
-                        class: "{projection_source().class_name()}",
-                        "data-testid": "board-projection-source-pill",
-                        "title": "{projection_source().explanation()}",
-                        "{projection_source().label()}"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "board-projection-refresh",
-                        onclick: {
-                            // T20 — real API call to soland's
-                            // POST /api/v1/views/:id/projection. Falls back to seed
-                            // on any error so the user always sees something.
-                            let base = base_url.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let api_token = token();
-                                let view = board_view_id();
-                                if view.trim().is_empty() {
-                                    board_status.set(
-                                        "enter a Board View ID before refreshing collection projection"
-                                            .to_owned(),
-                                    );
-                                    return;
-                                }
-                                spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.collection_projection(&view).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(projection) => {
-                                            let cols = collection_projection_to_columns(&projection);
-                                            if !cols.is_empty() {
-                                                columns.set(cols);
+                                button {
+                                    class: "primary",
+                                    "data-testid": "create-board-space-button",
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let space = selected_space.clone();
+                                        let actor = account_did.clone();
+                                        move |_| {
+                                            let title = new_board_title().trim().to_owned();
+                                            if title.is_empty() {
+                                                board_status.set("board title is required".to_owned());
+                                                return;
                                             }
-                                            projection_source.set(BoardProjectionSource::ApiDerived);
-                                            board_status.set(format!(
-                                                "API projection · {} groups · view={}",
-                                                projection.groups.len(),
-                                                projection.view_id.as_str()
-                                            ));
+                                            if actor.trim().is_empty() {
+                                                board_status.set("sign in before creating a Board".to_owned());
+                                                return;
+                                            }
+                                            let board_space_id = format!("cx:space:{}", uuid_v7());
+                                            board_space_options.write().push(BoardSpaceOption {
+                                                id: board_space_id.clone(),
+                                                title: title.clone(),
+                                                state: SpaceContainerLifecycleState::Active,
+                                            });
+                                            selected_board_space_id.set(board_space_id.clone());
+                                            let op = crate::operation::cx_ops::space_create(
+                                                &space,
+                                                &actor,
+                                                &board_space_id,
+                                                "board",
+                                                &title,
+                                                None,
+                                                None,
+                                            )
+                                            .build("yougen");
+                                            submit_kanban_operation_event(
+                                                base.clone(),
+                                                token,
+                                                space.clone(),
+                                                op,
+                                                state_store,
+                                                board_status,
+                                            );
+                                            new_board_title.set("Board".to_owned());
                                         }
-                                        Err(err) => {
-                                            if seed_fallback_allowed {
-                                                columns.set(seed_columns());
-                                                projection_source.set(BoardProjectionSource::SeedFallback);
-                                                board_status.set(format!(
-                                                    "API projection unavailable: {}; showing local seed fallback",
-                                                    err.display()
-                                                ));
-                                            } else {
-                                                columns.set(Vec::new());
-                                                projection_source.set(BoardProjectionSource::Unavailable);
-                                                board_status.set(format!(
-                                                    "API projection unavailable: {}; seed fallback disabled",
-                                                    err.display()
-                                                ));
+                                    },
+                                    "Create Board"
+                                }
+                            }
+                        }
+                        details { class: "board-projection-menu",
+                            summary { class: "btn sm secondary", "Projection" }
+                            div { class: "board-popover-panel board-projection-panel",
+                                label { class: "field board-inline-field",
+                                    span { "View ID" }
+                                    input {
+                                        "data-testid": "board-view-id-input",
+                                        value: "{board_view_id}",
+                                        placeholder: "cx:view:...",
+                                        oninput: move |evt| board_view_id.set(evt.value()),
+                                    }
+                                }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "board-projection-refresh",
+                                    onclick: {
+                                        // T20 — real API call to soland's
+                                        // POST /api/v1/views/:id/projection. Demo seed is
+                                        // opt-in so normal boards never show fake cards.
+                                        let base = base_url.clone();
+                                        move |_| {
+                                            let base = base.clone();
+                                            let api_token = token();
+                                            let view = board_view_id();
+                                            if view.trim().is_empty() {
+                                                board_status.set(
+                                                    "enter a Board View ID before refreshing collection projection"
+                                                        .to_owned(),
+                                                );
+                                                return;
                                             }
+                                            spawn(async move {
+                                                match with_authed_api(&base, api_token, |api| async move {
+                                                    api.collection_projection(&view).await
+                                                })
+                                                .await
+                                                {
+                                                    Ok(projection) => {
+                                                        let cols = collection_projection_to_columns(&projection);
+                                                        if !cols.is_empty() {
+                                                            columns.set(cols);
+                                                        }
+                                                        projection_source.set(BoardProjectionSource::ApiDerived);
+                                                        board_status.set(format!(
+                                                            "API projection · {} groups · view={}",
+                                                            projection.groups.len(),
+                                                            projection.view_id.as_str()
+                                                        ));
+                                                    }
+                                                    Err(err) => {
+                                                        if seed_fallback_allowed {
+                                                            columns.set(seed_columns());
+                                                            projection_source.set(BoardProjectionSource::SeedFallback);
+                                                            board_status.set(format!(
+                                                                "Board data unavailable: {}; showing sample fallback",
+                                                                err.display()
+                                                            ));
+                                                        } else {
+                                                            columns.set(Vec::new());
+                                                            projection_source.set(BoardProjectionSource::Unavailable);
+                                                            board_status.set(format!(
+                                                                "Board data unavailable: {}; sample fallback disabled",
+                                                                err.display()
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    {crate::i18n::tr("kanban.refresh_from_api")}
+                                }
+                                details { class: "board-diagnostics", "data-testid": "board-diagnostics",
+                                    summary { "Diagnostics" }
+                                    div { class: "actions", "data-testid": "board-write-states",
+                                        for state in write_state_samples() {
+                                            span { class: state.class_name(), "{state.label()}" }
                                         }
                                     }
-                                });
+                                    div { class: "metric-grid", "data-testid": "board-projection-model",
+                                        div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
+                                        div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
+                                        div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
+                                        div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
+                                        div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
+                                    }
+                                    div { class: "muted",
+                                        "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires YOUGEN_ALLOW_KANBAN_SEED_FALLBACK=1."
+                                    }
+                                }
                             }
-                        },
-                        {crate::i18n::tr("kanban.refresh_from_api")}
+                        }
+                        details { class: "board-queue-menu", "data-testid": "board-offline-queue",
+                            summary { class: "btn sm secondary",
+                                "Queue {write_record_count}"
+                            }
+                            div { class: "board-popover-panel board-queue-panel",
+                                div { class: "actions board-queue-actions",
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "replay-board-queue",
+                                        onclick: {
+                                            // Replay path resubmits a queued Move via
+                                            // api.submit_move.
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                replay_first_move(
+                                                    base.clone(),
+                                                    token,
+                                                    write_records,
+                                                    board_status,
+                                                );
+                                            }
+                                        },
+                                        "Replay Queue"
+                                    }
+                                    span { class: "muted", "{manual_review_count} review / {write_record_count} total" }
+                                }
+                                div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
+                                for record in write_records() {
+                                    div { class: "event", "data-testid": "board-event-record",
+                                        div { class: "event-head",
+                                            span { "{record.kind}" }
+                                            span { class: record.state.class_name(), "{record.state.label()}" }
+                                        }
+                                        div { class: "muted", "move_id {record.move_id}" }
+                                        div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
+                                        div { class: "muted", "anchor_ref {record.anchor_ref}" }
+                                        div { class: "muted", "effect {record.effect_summary}" }
+                                        div { class: "muted", "{record.note}" }
+                                    }
+                                }
+                                if write_records().is_empty() {
+                                    div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
+                                }
+                            }
+                        }
                     }
                 }
 
-                details { class: "board-diagnostics", "data-testid": "board-diagnostics",
-                    summary { "Details" }
-                    div { class: "actions", "data-testid": "board-write-states",
-                        for state in write_state_samples() {
-                            span { class: state.class_name(), "{state.label()}" }
-                        }
-                    }
-                    div { class: "metric-grid", "data-testid": "board-projection-model",
-                        div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
-                        div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
-                        div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                        div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
-                        div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
-                    }
-                    div { class: "muted",
-                        "View lifecycle: create, update, reconcile. Refresh uses collection projection and falls back to seed data when needed."
-                    }
-                }
-                div { class: "workflow-form",
-                    div { class: "actions",
+                div { class: "board-toolbar-secondary",
+                    div { class: "actions board-list-compose",
                         input {
                             "data-testid": "new-column-input",
                             value: "{new_column_title}",
@@ -1048,24 +1303,50 @@ pub fn KanbanPanel(
                             },
                             {crate::i18n::tr("kanban.add_list")}
                         }
+                    }
+                    div { class: "actions board-renderer-tabs", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
+                    span { class: "muted board-control-label", "View" }
+                    button {
+                        class: "badge blue board-renderer-tab",
+                        "data-testid": "renderer-board",
+                        role: "tab",
+                        "aria-selected": "true",
+                        title: "Board view is active",
+                        "board"
+                    }
+                    for renderer in ["list", "table", "calendar", "timeline", "graph"] {
                         button {
-                            class: "secondary",
-                            "data-testid": "replay-board-queue",
-                            onclick: {
-                                // Replay path resubmits a queued Move via
-                                // api.submit_move.
-                                let base = base_url.clone();
-                                move |_| {
-                                    replay_first_move(
-                                        base.clone(),
-                                        token,
-                                        write_records,
-                                        board_status,
-                                    );
-                                }
-                            },
-                            "Replay Queue"
+                            class: "badge board-renderer-tab is-disabled",
+                            "data-testid": "renderer-{renderer}",
+                            role: "tab",
+                            "aria-selected": "false",
+                            "aria-disabled": "true",
+                            disabled: true,
+                            title: "{renderer} view is not available yet",
+                            "{renderer}"
                         }
+                    }
+                }
+                }
+                div { class: "board-status-row",
+                    div { class: "actions board-source-pill", "data-testid": "board-projection-source",
+                    span { class: "muted board-control-label", "Source" }
+                    span {
+                        class: "{projection_source().class_name()}",
+                        "data-testid": "board-projection-source-pill",
+                        "title": "{projection_source().explanation()}",
+                        "{projection_source().label()}"
+                    }
+                    }
+                    span { class: "muted board-status-text", "data-testid": "board-status", "{board_status}" }
+                }
+            }
+
+            if manual_review_count > 0 {
+                div { class: "event board-conflict-alert", "data-testid": "board-conflict-alert",
+                    div {
+                        strong { "Board admin review required" }
+                        div { class: "muted", "{manual_review_count} queued write(s) need manual conflict resolution before replay." }
                     }
                 }
             }
@@ -1094,9 +1375,24 @@ pub fn KanbanPanel(
                 } else {
                     "event board-column"
                 };
+                let visible_columns = columns()
+                    .into_iter()
+                    .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+                    .collect::<Vec<_>>();
                 rsx! {
             div { class: "{board_grid_class}", "data-testid": "kanban-board-grid",
-                for column in columns().iter().filter(|c| c.state == SpaceContainerLifecycleState::Active) {
+                if visible_columns.is_empty() {
+                    div { class: "board-empty-state",
+                        EmptyState {
+                            title: "Board".to_owned(),
+                            kind: EmptyStateKind::Empty,
+                            message: Some("No persisted Board/List/Card projection is available for this Space.".to_owned()),
+                            badge_override: Some("no persisted data".to_owned()),
+                            test_id: Some("kanban-empty-board".to_owned()),
+                        }
+                    }
+                } else {
+                for column in visible_columns.iter() {
                     div {
                         class: "{board_column_class}",
                         "data-testid": "kanban-column",
@@ -1376,14 +1672,12 @@ pub fn KanbanPanel(
                                         class: "primary",
                                         "data-testid": "save-card-button",
                                         onclick: {
-                                            // Card create submits a
-                                            // flow.position Move (subject =
-                                            // flow_id) carrying the canonical
-                                            // position record
-                                            // {list_space_id, rank, title}.
-                                            // Soland's reducer treats
-                                            // it as cas-register set on the
-                                            // flow.position cell.
+                                            // Card create submits a real
+                                            // cx.flow.create envelope. The
+                                            // initial Board/List placement
+                                            // rides in the flow.position
+                                            // component so the projection can
+                                            // materialise it in this column.
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let space = selected_space.clone();
@@ -1488,6 +1782,7 @@ pub fn KanbanPanel(
                         }
                     }
                 }
+                }
             }
 
             // Archived lists panel — container Space lifecycle `archived` state.
@@ -1503,7 +1798,9 @@ pub fn KanbanPanel(
                     .collect();
                 let archived_count = archived.len();
                 rsx! {
-                    details { class: "event board-maintenance", "data-testid": "kanban-archived-lists",
+                    details {
+                        class: if archived_count == 0 { "event board-maintenance is-empty" } else { "event board-maintenance" },
+                        "data-testid": "kanban-archived-lists",
                         summary {
                             span { {crate::i18n::tr("kanban.archived_lists_header")} }
                             span { "{archived_count} list(s)" }
@@ -1599,7 +1896,9 @@ pub fn KanbanPanel(
                     .collect();
                 let archived_count = archived_cards.len();
                 rsx! {
-                    details { class: "event board-maintenance", "data-testid": "kanban-archived-cards",
+                    details {
+                        class: if archived_count == 0 { "event board-maintenance is-empty" } else { "event board-maintenance" },
+                        "data-testid": "kanban-archived-cards",
                         summary {
                             span { {crate::i18n::tr("kanban.archived_cards_header")} }
                             span { "{archived_count} card(s)" }
@@ -1664,27 +1963,6 @@ pub fn KanbanPanel(
                             }
                         }
                     }
-                }
-            }
-
-            details { class: "event board-maintenance", "data-testid": "board-offline-queue",
-                summary { span { {crate::i18n::tr("kanban.move_queue_header")} } span { "{write_records().len()} move(s)" } }
-                div { class: "muted", "data-testid": "board-status", "{board_status}" }
-                for record in write_records() {
-                    div { class: "event", "data-testid": "board-event-record",
-                        div { class: "event-head",
-                            span { "{record.kind}" }
-                            span { class: record.state.class_name(), "{record.state.label()}" }
-                        }
-                        div { class: "muted", "move_id {record.move_id}" }
-                        div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
-                        div { class: "muted", "anchor_ref {record.anchor_ref}" }
-                        div { class: "muted", "effect {record.effect_summary}" }
-                        div { class: "muted", "{record.note}" }
-                    }
-                }
-                if write_records().is_empty() {
-                    div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
                 }
             }
 
@@ -2038,11 +2316,10 @@ pub fn KanbanPanel(
                             class: "secondary",
                             "data-testid": "queue-link-discussion-event",
                             onclick: {
-                                // Flow track member goes through the Move
-                                // pipeline. We record a flow.position Move
-                                // whose payload carries the track binding -
-                                // soland's reducer treats this as a
-                                // metadata update on the same cell.
+                                // This legacy metadata path still uses a
+                                // schema-valid cx.flow.update patch; card
+                                // create and drag/drop use the canonical
+                                // create/move event families.
                                 let base = base_url.clone();
                                 let flow_id = card.id.clone();
                                 let track_id = card.primary_flow_id.clone();
@@ -2129,15 +2406,6 @@ fn display_optional_card_field(value: &str) -> String {
     }
 }
 
-fn set_or_unset_patch(value: &str) -> Value {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed == "—" {
-        json!({ "$op": "unset" })
-    } else {
-        json!({ "$op": "set", "value": trimmed })
-    }
-}
-
 fn card_detail_update_patch(
     current: &KanbanCard,
     draft: &CardDetailDraft,
@@ -2168,24 +2436,26 @@ fn card_detail_update_patch(
         patch.insert("summary".to_owned(), op);
     }
 
-    if current.labels != draft.labels {
-        patch.insert(
-            "fields.labels".to_owned(),
-            json!({ "$op": "set", "value": draft.labels.clone() }),
-        );
-    }
-
     let current_assignee = editor_value_for_optional_card_field(&current.assignee);
-    if current_assignee != draft.assignee.trim() {
-        patch.insert(
-            "fields.assignee".to_owned(),
-            set_or_unset_patch(&draft.assignee),
-        );
-    }
-
     let current_due = editor_value_for_optional_card_field(&current.due);
-    if current_due != draft.due.trim() {
-        patch.insert("fields.due_at".to_owned(), set_or_unset_patch(&draft.due));
+    let fields_changed = current.labels != draft.labels
+        || current_assignee != draft.assignee.trim()
+        || current_due != draft.due.trim();
+    if fields_changed {
+        let mut fields = Map::new();
+        fields.insert("labels".to_owned(), json!(draft.labels.clone()));
+        let assignee = draft.assignee.trim();
+        if !assignee.is_empty() && assignee != "—" {
+            fields.insert("assignee".to_owned(), json!(assignee));
+        }
+        let due = draft.due.trim();
+        if !due.is_empty() && due != "—" {
+            fields.insert("due_at".to_owned(), json!(due));
+        }
+        patch.insert(
+            "fields".to_owned(),
+            json!({ "$op": "set", "value": Value::Object(fields) }),
+        );
     }
 
     if patch.is_empty() {
@@ -2201,7 +2471,7 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.assignee = display_optional_card_field(&draft.assignee);
     card.due = display_optional_card_field(&draft.due);
     card.state = CardState::Queued;
-    card.activity_hint = "Local cx.flow.update pending server projection.".to_owned();
+    card.activity_hint = "Local card update pending server sync.".to_owned();
     card.audit_hint = "Card detail edit submitted as cx.flow.update payload.patch.".to_owned();
 }
 
@@ -2296,11 +2566,10 @@ fn submit_kanban_operation_event(
     });
 }
 
-/// Build + submit a `cx.flow.update` event carrying the new position
-/// for the `cx.component.flow.position.v1` cell. Records a
-/// [`BoardWriteRecord`] regardless of outcome. `subject` is the Flow id;
-/// `kind` is the classifier the MoveSubmissionState tracker uses to
-/// decorate state pills.
+/// Build + submit a Kanban event and record it in the board write queue.
+/// Card creates emit real `cx.flow.create` envelopes with an initial
+/// `cx.component.flow.position.v1` component; legacy metadata writes still
+/// go through the compatibility `cx.flow.update` patch helper.
 fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -2319,16 +2588,54 @@ fn submit_kanban_move(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
-    let envelope = crate::operation::cx_ops::flow_position_update(
-        &space_id,
-        &actor_did,
-        &subject,
-        value.clone(),
-    )
-    .build("yougen");
+    let envelope = if kind == "cx.flow.create" {
+        let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
+            board_status.set("cannot create card: missing board_space_id".to_owned());
+            return;
+        };
+        let Some(list_space_id) = value.get("list_space_id").and_then(Value::as_str) else {
+            board_status.set("cannot create card: missing list_space_id".to_owned());
+            return;
+        };
+        let Some(title) = value.get("title").and_then(Value::as_str) else {
+            board_status.set("cannot create card: missing title".to_owned());
+            return;
+        };
+        let Some(rank) = value.get("rank").and_then(Value::as_str) else {
+            board_status.set("cannot create card: missing rank".to_owned());
+            return;
+        };
+        crate::operation::cx_ops::kanban_card_flow_create(
+            &space_id,
+            &actor_did,
+            &subject,
+            board_space_id,
+            list_space_id,
+            title,
+            rank,
+        )
+        .build("yougen")
+    } else {
+        crate::operation::cx_ops::flow_position_update(
+            &space_id,
+            &actor_did,
+            &subject,
+            value.clone(),
+        )
+        .build("yougen")
+    };
+    let wire_kind = envelope.kind.clone();
     let op_id = envelope.local_operation_id().to_owned();
-    let cell_id = format!("cx:cell:cx.component.flow.position.v1:{subject}");
-    let effect_summary = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned());
+    let cell_id = value
+        .get("board_space_id")
+        .and_then(Value::as_str)
+        .map(|board_space_id| flow_position_cell_id(board_space_id, &subject))
+        .unwrap_or_else(|| format!("cx:cell:cx.component.flow.position.v1:{subject}"));
+    let effect_summary = if kind == "cx.flow.create" {
+        serde_json::to_string(&envelope.payload).unwrap_or_else(|_| "{}".to_owned())
+    } else {
+        serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
+    };
     let record = BoardWriteRecord {
         state: CardState::Queued,
         move_id: op_id.clone(),
@@ -2337,7 +2644,7 @@ fn submit_kanban_move(
         effect_summary: effect_summary.clone(),
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
-        note: "submitting cx.flow.update event via cx.events.submit".to_owned(),
+        note: format!("submitting {wire_kind} event via cx.events.submit"),
         signed_move_json: None,
         rebase_attempts: 0,
     };
@@ -2350,10 +2657,12 @@ fn submit_kanban_move(
             "operation_id": op_id,
             "cell": cell_id,
             "effect": value,
+            "wire_kind": wire_kind.clone(),
+            "body": envelope.payload.clone(),
             "write_state": "queued",
         }),
     );
-    board_status.set(format!("submitting {kind} event {op_id}"));
+    board_status.set(format!("submitting {wire_kind} event {op_id}"));
     let api_token = token();
     let space_for_record = space_id.clone();
     let anchor_for_record = anchor_ref.clone();
@@ -3360,9 +3669,9 @@ mod tests {
     /// `try_load_api_columns` is the synchronous-init probe. Real API
     /// fetching now lives in the async refresh handler that calls
     /// `ContrixApi::collection_projection`. This test still pins the
-    /// init-time behaviour as None so UI startup goes via SeedFallback
-    /// and the user (or auto-refresh) promotes to ApiDerived once the
-    /// HTTP call returns.
+    /// init-time behaviour as None so UI startup stays empty unless explicit
+    /// demo seed is enabled; async projection hydrate promotes to ApiDerived
+    /// once the HTTP call returns.
     #[test]
     fn try_load_api_columns_returns_none_in_sync_init_context() {
         let result = try_load_api_columns("");
@@ -3644,12 +3953,12 @@ mod tests {
             BoardProjectionSource::SeedFallback.label(),
             BoardProjectionSource::Unavailable.label()
         );
+        assert!(BoardProjectionSource::ApiDerived.label().contains("Live"));
         assert!(
-            BoardProjectionSource::ApiDerived
+            BoardProjectionSource::SeedFallback
                 .label()
-                .contains("API-derived")
+                .contains("Sample")
         );
-        assert!(BoardProjectionSource::SeedFallback.label().contains("seed"));
         assert!(
             BoardProjectionSource::Unavailable
                 .label()
@@ -3704,9 +4013,65 @@ mod tests {
     }
 
     #[test]
-    fn kanban_seed_fallback_is_dev_only_by_default() {
-        assert!(kanban_seed_fallback_allowed_for_url("https://local.host"));
-        assert!(kanban_seed_fallback_allowed_for_url(
+    fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let list_id = "cx:space:0196419b-0000-7000-8000-000000000002";
+        let containers = vec![
+            crate::api::SpaceContainerProjectionView {
+                container_space_id: board_id.to_owned(),
+                realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+                kind: "board".to_owned(),
+                title: "Release".to_owned(),
+                state: "active".to_owned(),
+                rank: None,
+                parent_ref: None,
+            },
+            crate::api::SpaceContainerProjectionView {
+                container_space_id: list_id.to_owned(),
+                realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+                kind: "list".to_owned(),
+                title: "Todo".to_owned(),
+                state: "active".to_owned(),
+                rank: Some("U".to_owned()),
+                parent_ref: Some(board_id.to_owned()),
+            },
+        ];
+        let flows = vec![crate::api::FlowProjectionView {
+            flow_id: "cx:flow:0196419b-0000-7000-8000-000000000003".to_owned(),
+            space_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            title: "Persisted card".to_owned(),
+            summary: Some("Loaded from projection".to_owned()),
+            board_space_id: Some(board_id.to_owned()),
+            list_space_id: Some(list_id.to_owned()),
+            rank: Some("U".to_owned()),
+            fields: Map::from_iter([
+                ("labels".to_owned(), json!(["demo", "db"])),
+                ("assignee".to_owned(), json!("Alice")),
+                ("due_at".to_owned(), json!("2026-05-22")),
+            ]),
+            state: "active".to_owned(),
+        }];
+
+        let (columns, options, selected_board) =
+            columns_from_lifecycle_projection(&containers, &flows, "");
+
+        assert_eq!(selected_board.as_deref(), Some(board_id));
+        assert_eq!(options.len(), 1);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].title, "Todo");
+        assert_eq!(columns[0].cards.len(), 1);
+        let card = &columns[0].cards[0];
+        assert_eq!(card.title, "Persisted card");
+        assert_eq!(card.description, "Loaded from projection");
+        assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
+        assert_eq!(card.assignee, "Alice");
+        assert_eq!(card.due, "2026-05-22");
+    }
+
+    #[test]
+    fn kanban_seed_fallback_requires_explicit_opt_in() {
+        assert!(!kanban_seed_fallback_allowed_for_url("https://local.host"));
+        assert!(!kanban_seed_fallback_allowed_for_url(
             "http://127.0.0.1:8787"
         ));
         assert!(!kanban_seed_fallback_allowed_for_url(
@@ -3745,10 +4110,13 @@ mod tests {
         let patch = card_detail_update_patch(&current, &draft).unwrap();
         assert_eq!(patch["title"]["value"], "Launch checklist");
         assert_eq!(patch["summary"]["value"], "Ship blockers only");
-        assert_eq!(patch["fields.labels"]["value"][0], "release");
-        assert_eq!(patch["fields.assignee"]["value"], "did:web:alice.example");
-        assert_eq!(patch["fields.due_at"]["value"], "2026-05-20");
-        assert!(patch.get("fields.due").is_none());
+        assert_eq!(patch["fields"]["value"]["labels"][0], "release");
+        assert_eq!(
+            patch["fields"]["value"]["assignee"],
+            "did:web:alice.example"
+        );
+        assert_eq!(patch["fields"]["value"]["due_at"], "2026-05-20");
+        assert!(patch["fields"]["value"].get("due").is_none());
     }
 
     #[test]
@@ -3768,8 +4136,8 @@ mod tests {
 
         let patch = card_detail_update_patch(&current, &draft).unwrap();
         assert_eq!(patch["summary"]["$op"], "unset");
-        assert_eq!(patch["fields.assignee"]["$op"], "unset");
-        assert_eq!(patch["fields.due_at"]["$op"], "unset");
+        assert!(patch["fields"]["value"].get("assignee").is_none());
+        assert!(patch["fields"]["value"].get("due_at").is_none());
     }
 
     #[test]

@@ -65,6 +65,7 @@ pub fn UiIcon(name: String) -> Element {
         "chevron-left" => "m15 18-6-6 6-6",
         "chevron-right" => "m9 18 6-6-6-6",
         "chevron-up" => "m18 15-6-6-6 6",
+        "copy" => "M8 4h8l4 4v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V4Zm8 0v4h4M4 8v12a2 2 0 0 0 2 2h8",
         "file" => "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6",
         "folder" => "M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
         "globe" => {

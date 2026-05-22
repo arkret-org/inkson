@@ -1,7 +1,17 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
-const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
+const LIVE_E2E = process.env.YOUGEN_E2E_LIVE === "1";
+const LIVE_SERVER_URL = process.env.YOUGEN_E2E_LIVE_SERVER_URL ?? "http://127.0.0.1:8008";
+const LIVE_ACCOUNT_DID = process.env.YOUGEN_E2E_LIVE_ACCOUNT_DID ?? "did:web:alice.example";
+const LIVE_DEVICE_ID = process.env.YOUGEN_E2E_LIVE_DEVICE_ID ?? "dev_alice";
+const LIVE_SESSION_TOKEN = process.env.YOUGEN_E2E_LIVE_SESSION_TOKEN ?? "sx:e2e-token";
+const DEMO_SPACE =
+  process.env.YOUGEN_E2E_LIVE_SPACE_ID ?? "cx:space:0196419b-0000-7000-8000-000000000000";
+
+function isLiveSmoke(title: string) {
+  return title.startsWith("live smoke ");
+}
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -17,6 +27,9 @@ async function openServerSwitcher(page: import("@playwright/test").Page) {
 }
 
 async function refreshServer(page: import("@playwright/test").Page) {
+  if (LIVE_E2E) {
+    return;
+  }
   await openServerSwitcher(page);
   await page.getByTestId("server-option").filter({ hasText: "https://local.host" }).click();
 }
@@ -35,6 +48,12 @@ async function openDiscussion(page: import("@playwright/test").Page) {
   await page.goto(`/chat/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
   await refreshServer(page);
   await expect(page.getByTestId("chat-panel")).toBeVisible();
+}
+
+async function openKanban(page: import("@playwright/test").Page) {
+  await refreshServer(page);
+  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
 }
 
 async function createDiscussion(
@@ -84,11 +103,16 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  await mockContrixApi(page);
+  if (LIVE_E2E && !isLiveSmoke(testInfo.title)) {
+    test.skip(true, "mock-only flow; YOUGEN_E2E_LIVE=1 runs the live smoke subset");
+  }
+  if (!LIVE_E2E) {
+    await mockContrixApi(page);
+  }
   if (testInfo.title.startsWith("login page")) {
     return;
   }
-  await page.addInitScript(() => {
+  await page.addInitScript((liveConfig) => {
     if (localStorage.getItem("yougen.config.v1")) {
       return;
     }
@@ -99,11 +123,52 @@ test.beforeEach(async ({ page }, testInfo) => {
         account_did: "did:web:alice.example",
         device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
         session_token: "sx:e2e-token",
+        ...(liveConfig ?? {}),
       }),
     );
-  });
+  }, LIVE_E2E
+    ? {
+        server_url: LIVE_SERVER_URL,
+        account_did: LIVE_ACCOUNT_DID,
+        device_id: LIVE_DEVICE_ID,
+        session_token: LIVE_SESSION_TOKEN,
+      }
+    : {});
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+});
+
+test("live smoke server describe reaches true soland", async ({ request }) => {
+  test.skip(!LIVE_E2E, "live-only smoke");
+  const response = await request.get(`${LIVE_SERVER_URL}/api/v1/server/describe`);
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.service_type).toBe("principal_server");
+  expect(body.supported_operations ?? []).toContain("cx.events.submit");
+});
+
+test("live smoke shell boots with configured session", async ({ page }) => {
+  test.skip(!LIVE_E2E, "live-only smoke");
+  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await expect(page.getByTestId("principal-context")).toContainText(LIVE_SERVER_URL);
+});
+
+test("live smoke account menu uses configured principal", async ({ page }) => {
+  test.skip(!LIVE_E2E, "live-only smoke");
+  await page.getByTestId("account-menu-button").click();
+  await expect(page.getByTestId("account-menu")).toContainText(LIVE_ACCOUNT_DID);
+});
+
+test("live smoke settings route renders", async ({ page }) => {
+  test.skip(!LIVE_E2E, "live-only smoke");
+  await page.goto("/settings", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+});
+
+test("live smoke timeline route renders configured space", async ({ page }) => {
+  test.skip(!LIVE_E2E, "live-only smoke");
+  await page.goto(`/timeline/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("timeline")).toBeVisible();
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {
@@ -130,11 +195,23 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
 });
 
+test("dashboard summarizes unread notifications from sync projection", async ({ page }) => {
+  await refreshServer(page);
+
+  await expect(page.getByTestId("dashboard-unread-notifications")).toHaveText("2");
+  await expect(page.getByTestId("pinned-notifications")).toContainText("New message");
+  await expect(page.getByTestId("pinned-notifications")).toContainText("New invite");
+});
+
 test("topbar account menu shows identity and sync state", async ({ page }) => {
   await refreshServer(page);
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
   await expect(page.getByTestId("account-menu")).toContainText("cx:device:");
+  await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
+  await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
+  await page.getByTestId("account-menu-copy-did").click();
+  await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
 });
@@ -283,10 +360,40 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
 });
 
+test("light theme renders the sidebar with light navigation colors", async ({ page }) => {
+  await openSettings(page);
+  await page.getByTestId("settings-nav-item-theme").click();
+  await page.getByTestId("theme-light").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "light");
+
+  const sidebarVars = await page.getByTestId("sidebar").evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      navBg: styles.getPropertyValue("--nav-bg").trim().toLowerCase(),
+      navText: styles.getPropertyValue("--nav-text").trim().toLowerCase(),
+    };
+  });
+  expect(sidebarVars).toEqual({
+    navBg: "#fff9f3",
+    navText: "#2f2723",
+  });
+});
+
+test("topbar theme toggle takes effect on the first click from system dark", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "system");
+
+  const toggle = page.getByTestId("theme-toggle");
+  await expect(toggle).toHaveAttribute("title", "Switch to light theme");
+  await toggle.click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "light");
+  await expect(toggle).toHaveAttribute("title", "Switch to night theme");
+});
+
 test("kanban card detail exposes linked discussion and locked discussion boundaries", async ({ page }) => {
-  await refreshServer(page);
-  await page.getByRole("link", { name: "Kanban" }).click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   await expect(page.getByTestId("card-detail-modal")).toContainText("Primary discussion");
   await expect(page.getByTestId("card-detail-modal")).toContainText("Locked discussion");
@@ -295,8 +402,7 @@ test("kanban card detail exposes linked discussion and locked discussion boundar
 });
 
 test("kanban queues canonical event submissions and quarantines manual replay", async ({ page }) => {
-  await refreshServer(page);
-  await page.getByRole("link", { name: "Kanban" }).click();
+  await openKanban(page);
   await page.getByTestId("add-card-button").first().click();
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
   const eventSubmit = page.waitForRequest(
@@ -305,14 +411,34 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   await page.getByTestId("save-card-button").click();
   const eventBody = await eventSubmit.then((request) => request.postDataJSON());
   expect(eventBody.kind).toBe("cx.flow.create");
-  expect(eventBody.payload?.components?.["cx.component.flow.position.v1"]?.family)
-    .toBe("cx.component.flow.position.v1");
+  const positionComponent = eventBody.payload?.components?.find(
+    (component: { family?: string }) => component.family === "cx.component.flow.position.v1",
+  );
+  expect(positionComponent?.family).toBe("cx.component.flow.position.v1");
+  await page.locator('[data-testid="board-offline-queue"] > summary').click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
+  await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
 
   await page.getByTestId("replay-board-queue").click();
-  await expect(page.getByTestId("board-status")).toContainText("replay not available");
+  await expect(page.getByTestId("board-status")).toContainText(
+    /replay not available|no queued write to replay/,
+  );
+});
+
+test("kanban board selector swaps projected board columns", async ({ page }) => {
+  await openKanban(page);
+  await expect(page.getByTestId("renderer-board")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("renderer-list")).toBeDisabled();
+  await expect(page.getByTestId("renderer-calendar")).toBeDisabled();
+  await expect(page.getByTestId("kanban-board-grid")).toContainText("Legal review for public beta");
+
+  await page.getByTestId("board-space-select").selectOption({ label: "Secondary planning board" });
+
+  await expect(page.getByTestId("kanban-column")).toHaveCount(1);
+  await expect(page.getByTestId("kanban-board-grid")).toContainText("Secondary board card");
+  await expect(page.getByTestId("kanban-board-grid")).not.toContainText("Legal review for public beta");
 });
 
 test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
@@ -354,9 +480,40 @@ test("mobile viewport collapses shell chrome and keeps timeline usable", async (
   await expect(page.getByTestId("sidebar")).toBeHidden();
   await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
   await page.getByTestId("mobile-nav-toggle").click();
-  await expect(page.getByTestId("mobile-nav-drawer")).toContainText("Board");
+  await expect(page.getByTestId("mobile-nav-drawer")).toContainText("Spaces");
   await expect(page.getByTestId("main-view")).toBeVisible();
   await expect(page.getByTestId("composer-input")).toBeVisible();
+});
+
+test("timeline keeps auxiliary panels above the message input", async ({ page }) => {
+  await openTimeline(page);
+  await expect(page.getByTestId("composer")).toBeVisible();
+  await expect(page.getByTestId("moderation-appeal-entrypoint")).toHaveCount(0);
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+
+  const metrics = await page.evaluate(() => {
+    const timeline = document.querySelector('[data-testid="timeline"]')?.getBoundingClientRect();
+    const workspace = document.querySelector(".workspace-body")?.getBoundingClientRect();
+    const composer = document.querySelector('[data-testid="composer"]')?.getBoundingClientRect();
+    const input = document.querySelector('[data-testid="composer-input"]')?.getBoundingClientRect();
+
+    return timeline && workspace && composer && input
+      ? {
+          timelineTop: timeline.top,
+          workspaceBottom: workspace.bottom,
+          composerTop: composer.top,
+          composerBottom: composer.bottom,
+          inputTop: input.top,
+        }
+      : null;
+  });
+
+  expect(metrics).not.toBeNull();
+  expect(metrics!.composerTop).toBeGreaterThanOrEqual(metrics!.timelineTop);
+  expect(metrics!.inputTop).toBeGreaterThanOrEqual(metrics!.composerTop);
+  expect(metrics!.composerBottom).toBeGreaterThan(metrics!.inputTop);
+  expect(metrics!.composerBottom).toBeLessThanOrEqual(metrics!.workspaceBottom);
+  expect(metrics!.workspaceBottom - metrics!.composerBottom).toBeLessThanOrEqual(72);
 });
 
 test("accessibility smoke exposes landmarks and live timeline feed", async ({ page }) => {
@@ -416,6 +573,21 @@ test("directory search resolve and space selection flow works", async ({ page })
   await expect(page.getByTestId("directory-search-input")).toHaveValue("contrix.example");
 });
 
+test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {
+  await page.goto("/directory", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("directory-panel")).toBeVisible();
+  await expect(page.getByTestId("directory-three-axes-banner")).not.toHaveAttribute("open", "");
+  await expect(page.getByTestId("directory-advanced-diagnostics")).not.toHaveAttribute("open", "");
+
+  await page.goto("/agents", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("agents-panel")).toBeVisible();
+  await expect(page.getByTestId("agent-incoming-results")).not.toContainText("error decoding response body");
+
+  await page.goto("/call", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("call-panel")).toContainText("Controls ready");
+  await expect(page.getByTestId("call-panel")).not.toContainText("signaling-only");
+});
+
 test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
   await refreshServer(page);
   await page.getByTestId("topbar-notifications-button").click();
@@ -449,6 +621,28 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  const setupLayout = await page.evaluate(() => {
+    const rectOf = (selector: string) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect
+        ? { left: rect.left, right: rect.right, top: rect.top, width: rect.width }
+        : null;
+    };
+    return {
+      sidebar: rectOf('[data-testid="sidebar"]'),
+      main: rectOf('[data-testid="main-view"]'),
+      setup: rectOf('[data-testid="setup-panel"]'),
+      header: rectOf(".workspace-header"),
+    };
+  });
+  expect(setupLayout.sidebar).not.toBeNull();
+  expect(setupLayout.main).not.toBeNull();
+  expect(setupLayout.setup).not.toBeNull();
+  expect(setupLayout.header).not.toBeNull();
+  expect(setupLayout.setup!.left).toBeGreaterThanOrEqual(setupLayout.main!.left);
+  expect(setupLayout.setup!.left).toBeGreaterThan(setupLayout.sidebar!.right - 2);
+  expect(setupLayout.setup!.top).toBeGreaterThan(setupLayout.header!.top);
+  expect(setupLayout.setup!.width).toBeGreaterThan(640);
   await expect(page.getByTestId("space-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
@@ -777,6 +971,7 @@ test("kanban card drag queues a flow move", async ({ page }) => {
 
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
 
+  await page.locator('[data-testid="board-offline-queue"] > summary').click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.move");
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
 });

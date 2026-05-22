@@ -499,6 +499,47 @@ pub mod cx_ops {
     use super::{OperationBuilder, scope_id_as_realm_id};
     use serde_json::{Value, json};
 
+    fn object_patch_payload_value(
+        object_ref: &str,
+        legacy_id_field: &str,
+        patch: contrix_sdk::Patch,
+    ) -> Value {
+        let mut payload = contrix_sdk::ObjectPatchPayload::for_target(object_ref, patch)
+            .and_then(|payload| payload.to_value())
+            .unwrap_or_else(|err| {
+                panic!("invalid object_patch_payload for {object_ref}: {err}");
+            });
+        payload
+            .as_object_mut()
+            .expect("object_patch_payload serializes as an object")
+            .insert(legacy_id_field.to_owned(), json!(object_ref));
+        payload
+    }
+
+    fn flow_object_patch_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
+        object_patch_payload_value(flow_id, "flow_id", patch)
+    }
+
+    fn patch_set(path: &str, value: Value) -> contrix_sdk::Patch {
+        let mut patch = contrix_sdk::Patch::new();
+        patch
+            .insert_op(path, contrix_sdk::PatchOp::set(value))
+            .unwrap_or_else(|err| {
+                panic!("invalid cx.patch.v1 path {path:?}: {err}");
+            });
+        patch
+    }
+
+    fn patch_from_value(patch: Value) -> contrix_sdk::Patch {
+        let patch: contrix_sdk::Patch = serde_json::from_value(patch).unwrap_or_else(|err| {
+            panic!("cx.flow.update patch must match cx.patch.v1: {err}");
+        });
+        patch.validate().unwrap_or_else(|err| {
+            panic!("cx.flow.update patch must match cx.patch.v1: {err}");
+        });
+        patch
+    }
+
     /// Build a canonical `cx.flow.create` discussion operation with the full
     /// typed Flow payload expected by the current reducers.
     ///
@@ -594,12 +635,10 @@ pub mod cx_ops {
         flow_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.flow.tracks.update")
             .target_ref(flow_id)
-            .body(json!({
-                "flow_id": flow_id,
-                "patch": patch,
-            }))
+            .body(flow_object_patch_payload_value(flow_id, patch))
     }
 
     /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
@@ -742,6 +781,63 @@ pub mod cx_ops {
             }))
     }
 
+    /// Build a `cx.flow.create` for a Kanban card Flow and include the
+    /// initial Board/List position component used by board projections.
+    pub fn kanban_card_flow_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        board_space_id: &str,
+        list_space_id: &str,
+        title: &str,
+        rank: &str,
+    ) -> OperationBuilder {
+        let realm_id = scope_id_as_realm_id(space_id);
+        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let position_cell_id =
+            format!("cx:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}");
+        let object = json!({
+            "schema": "cx.schema.flow.v1",
+            "id": flow_id,
+            "realm_id": realm_id,
+            "space_id": space_id,
+            "title": title,
+            "tracks": {
+                "synthesis": {
+                    "is_primary": true,
+                    "profile": "kanban_card"
+                }
+            },
+            "fields": {
+                "flow_kind": "card",
+                "board_space_id": board_space_id,
+                "list_space_id": list_space_id,
+                "rank": rank
+            },
+            "created_by": actor,
+            "created_at": created_at,
+        });
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(flow_id)
+            .body(json!({
+                "space_id": space_id,
+                "flow_id": flow_id,
+                "title": title,
+                "rank": rank,
+                "object": object,
+                "components": [
+                    {
+                        "family": "cx.component.flow.position.v1",
+                        "cell_id": position_cell_id,
+                        "board_space_id": board_space_id,
+                        "flow_id": flow_id,
+                        "list_space_id": list_space_id,
+                        "rank": rank
+                    }
+                ]
+            }))
+    }
+
     /// Build a `cx.flow.update` carrying a new document body on the
     /// synthesis track. `flow_id` must already exist on the server (i.e.
     /// the corresponding `cx.flow.create` has been accepted).
@@ -751,14 +847,11 @@ pub mod cx_ops {
         flow_id: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
+        let payload =
+            flow_object_patch_payload_value(flow_id, patch_set("fields.document", document_body));
         OperationBuilder::new(space_id, actor, "cx.flow.update")
             .target_ref(flow_id)
-            .body(json!({
-                "flow_id": flow_id,
-                "fields": {
-                    "document": document_body,
-                },
-            }))
+            .body(payload)
     }
 
     /// Build a `cx.flow.update` delta operation using the canonical
@@ -771,12 +864,10 @@ pub mod cx_ops {
         flow_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.flow.update")
             .target_ref(flow_id)
-            .body(json!({
-                "flow_id": flow_id,
-                "patch": patch,
-            }))
+            .body(flow_object_patch_payload_value(flow_id, patch))
     }
 
     /// Build a `cx.morph.update` patch operation. Mirrors
@@ -789,12 +880,10 @@ pub mod cx_ops {
         morph_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.morph.update")
             .target_ref(morph_id)
-            .body(json!({
-                "morph_id": morph_id,
-                "patch": patch,
-            }))
+            .body(object_patch_payload_value(morph_id, "morph_id", patch))
     }
 
     /// Build a `cx.policy.update` patch operation. The reducer-side
@@ -1186,31 +1275,32 @@ pub mod cx_ops {
         actor: &str,
         value: Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(value);
         OperationBuilder::new(realm_id, actor, "cx.realm.update")
             .target_ref(realm_id)
-            .body(json!({
-                "realm_id": realm_id,
-                "patch": value,
-            }))
+            .body(object_patch_payload_value(realm_id, "realm_id", patch))
     }
 
     /// Legacy flow position update (kanban card position).
     ///
     /// Current protocol writes new position changes through
     /// `cx.flow.move` / `cx.flow.reorder`; this helper remains for old
-    /// local drafts that still carry a generic `position` object.
+    /// local drafts that still carry a generic `position` object, but it
+    /// still emits the canonical `object_patch_payload` shape.
     pub fn flow_position_update(
         realm_id: &str,
         actor: &str,
         flow_id: &str,
         position_value: Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.flow.update")
-            .target_ref(flow_id)
-            .body(json!({
-                "flow_id": flow_id,
-                "position": position_value,
-            }))
+        flow_update_patch(
+            realm_id,
+            actor,
+            flow_id,
+            json!({
+                "position": { "$op": "set", "value": position_value },
+            }),
+        )
     }
 
     /// Flow position CAS update — same cell as
@@ -1243,24 +1333,28 @@ pub mod cx_ops {
         let effect_rank = position_field(&effect_position, "rank");
 
         let Some(effect_space) = effect_space else {
+            let mut payload =
+                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
+            let object = payload
+                .as_object_mut()
+                .expect("object_patch_payload serializes as an object");
+            object.insert("board_space_id".to_owned(), json!(board_space_id));
+            object.insert("expected_position".to_owned(), expected_position);
             return OperationBuilder::new(realm_id, actor, "cx.flow.update")
                 .target_ref(flow_id)
-                .body(json!({
-                    "flow_id": flow_id,
-                    "board_space_id": board_space_id,
-                    "expected_position": expected_position,
-                    "position": effect_position,
-                }));
+                .body(payload);
         };
         let Some(effect_rank) = effect_rank else {
+            let mut payload =
+                flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
+            let object = payload
+                .as_object_mut()
+                .expect("object_patch_payload serializes as an object");
+            object.insert("board_space_id".to_owned(), json!(board_space_id));
+            object.insert("expected_position".to_owned(), expected_position);
             return OperationBuilder::new(realm_id, actor, "cx.flow.update")
                 .target_ref(flow_id)
-                .body(json!({
-                    "flow_id": flow_id,
-                    "board_space_id": board_space_id,
-                    "expected_position": expected_position,
-                    "position": effect_position,
-                }));
+                .body(payload);
         };
 
         let mut body = serde_json::Map::new();
@@ -1518,7 +1612,7 @@ pub mod cx_ops {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::path::Path;
 
     fn spec_schema(name: &str) -> serde_json::Value {
@@ -1530,6 +1624,52 @@ mod tests {
         serde_json::from_str(&text).unwrap_or_else(|err| {
             panic!("parse spec schema {}: {err}", path.display());
         })
+    }
+
+    fn assert_registered_payload_valid(event: &EventEnvelope) {
+        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        catalog
+            .validate_payload(&event.kind, &event.payload)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{} payload violates registered spec schema: {err}\npayload: {}",
+                    event.kind,
+                    serde_json::to_string_pretty(&event.payload).unwrap()
+                );
+            });
+    }
+
+    fn assert_payload_field_names_are_soland_canonical(value: &serde_json::Value) {
+        fn check(value: &serde_json::Value) -> Result<(), String> {
+            match value {
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        check(value)?;
+                    }
+                }
+                serde_json::Value::Object(object) => {
+                    for (key, value) in object {
+                        let name_part = key.strip_prefix('$').unwrap_or(key);
+                        if name_part.is_empty()
+                            || !name_part
+                                .chars()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                            || name_part.starts_with('_')
+                            || name_part.ends_with('_')
+                            || name_part.contains("__")
+                        {
+                            return Err(format!("non-canonical field name {key:?}"));
+                        }
+                        check(value)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        check(value).unwrap_or_else(|err| {
+            panic!("payload violates soland canonical JSON gate: {err}\npayload: {value}")
+        });
     }
 
     // R1.7 (realm-rework): kept as local schema-test helpers for cases that
@@ -1629,18 +1769,61 @@ mod tests {
     }
 
     #[test]
+    fn kanban_card_flow_create_carries_position_component() {
+        let op = cx_ops::kanban_card_flow_create(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:flow:0196419b-0000-7000-8000-000000000004",
+            "cx:space:0196419b-0000-7000-8000-000000000002",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "Move-backed card",
+            "h1",
+        )
+        .build("node");
+        let flow_schema = spec_schema("flow.schema.json");
+
+        assert_eq!(op.kind, "cx.flow.create");
+        assert_eq!(op.realm_id, "cx:realm:0196419b-0000-7000-8000-000000000001");
+        assert_eq!(
+            op.payload["object"]["realm_id"],
+            "cx:realm:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_required_fields_present(&flow_schema, &op.payload["object"]);
+        assert_eq!(
+            op.payload["object"]["tracks"]["synthesis"]["profile"],
+            "kanban_card"
+        );
+        assert_eq!(
+            op.payload["components"][0]["family"],
+            "cx.component.flow.position.v1"
+        );
+        assert_eq!(
+            op.payload["components"][0]["cell_id"],
+            "cx:cell:cx.component.flow.position.v1:cx:space:0196419b-0000-7000-8000-000000000002:cx:flow:0196419b-0000-7000-8000-000000000004"
+        );
+        assert!(op.payload.get("patch").is_none());
+        assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
+    }
+
+    #[test]
     fn document_flow_update_targets_existing_flow_id() {
         let op = cx_ops::document_flow_update(
-            "cx:space:doc-test",
-            "did:web:alice",
-            "cx:flow:doc-1",
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:flow:0196419b-0000-7000-8000-000000000002",
             json!({"blocks": []}),
         )
         .build("test_node");
 
         assert_eq!(op.kind, "cx.flow.update");
-        assert_eq!(op.payload["flow_id"], "cx:flow:doc-1");
-        assert!(op.payload["fields"]["document"]["blocks"].is_array());
+        assert_eq!(
+            op.payload["flow_id"],
+            "cx:flow:0196419b-0000-7000-8000-000000000002"
+        );
+        assert!(op.payload.get("fields").is_none());
+        assert!(op.payload["patch"]["fields.document"]["value"]["blocks"].is_array());
+        assert_registered_payload_valid(&op);
     }
 
     #[test]
@@ -1671,10 +1854,11 @@ mod tests {
 
     #[test]
     fn flow_tracks_update_primary_uses_is_primary_patch_key() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000001";
         let op = cx_ops::flow_tracks_update_set_primary(
-            "cx:space:s1",
-            "did:web:alice",
-            "cx:flow:f1",
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            flow_id,
             "discussion",
         )
         .build("node");
@@ -1692,10 +1876,11 @@ mod tests {
 
     #[test]
     fn flow_update_patch_uses_canonical_payload_patch() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
         let op = cx_ops::flow_update_patch(
-            "cx:space:s1",
-            "did:web:alice",
-            "cx:flow:f1",
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            flow_id,
             json!({
                 "title": { "$op": "set", "value": "Launch checklist" },
                 "fields.due_at": { "$op": "set", "value": "2026-05-20" },
@@ -1703,10 +1888,113 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "cx.flow.update");
-        assert_eq!(op.local_target_ref(), Some("cx:flow:f1"));
-        assert_eq!(op.payload["flow_id"], "cx:flow:f1");
+        assert_eq!(op.local_target_ref(), Some(flow_id));
+        assert_eq!(op.payload["flow_id"], flow_id);
         assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
         assert!(op.payload.get("fields").is_none());
+    }
+
+    #[test]
+    fn flow_update_builders_match_registered_object_patch_schema() {
+        let space_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let actor = "did:web:alice.example";
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let board_space_id = "cx:space:0196419b-0000-7000-8000-000000000010";
+        let list_space_id = "cx:space:0196419b-0000-7000-8000-000000000011";
+
+        let events = [
+            cx_ops::document_flow_update(space_id, actor, flow_id, json!({"blocks": []}))
+                .build("node"),
+            cx_ops::flow_update_patch(
+                space_id,
+                actor,
+                flow_id,
+                json!({
+                    "title": { "$op": "set", "value": "Launch checklist" },
+                    "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+                }),
+            )
+            .build("node"),
+            cx_ops::flow_position_update(
+                space_id,
+                actor,
+                flow_id,
+                json!({
+                    "flow_id": flow_id,
+                    "board_space_id": board_space_id,
+                    "list_space_id": list_space_id,
+                    "rank": "U",
+                }),
+            )
+            .build("node"),
+            // Null effect_position triggers the legacy cx.flow.update fallback
+            // inside flow_position_cas_update. It still must satisfy
+            // object_patch_payload instead of leaking top-level `position`.
+            cx_ops::flow_position_cas_update(
+                space_id,
+                actor,
+                "cx.flow.move",
+                board_space_id,
+                flow_id,
+                json!({"list_space_id": list_space_id, "rank": "U"}),
+                Value::Null,
+            )
+            .build("node"),
+        ];
+
+        for event in &events {
+            assert_eq!(event.kind, "cx.flow.update");
+            assert!(event.payload.get("patch").is_some());
+            assert!(event.payload.get("fields").is_none());
+            assert!(event.payload.get("position").is_none());
+            assert_registered_payload_valid(event);
+        }
+
+        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        assert!(
+            catalog
+                .validate_payload(
+                    "cx.flow.update",
+                    &json!({
+                        "flow_id": flow_id,
+                        "fields": { "document": { "blocks": [] } },
+                    }),
+                )
+                .is_err(),
+            "legacy top-level fields must not validate as cx.flow.update"
+        );
+    }
+
+    #[test]
+    fn object_patch_family_builders_match_registered_payload_schema() {
+        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let actor = "did:web:alice.example";
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let morph_id = "cx:morph:0196419b-0000-7000-8000-000000000003";
+
+        let events = [
+            cx_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
+                .build("node"),
+            cx_ops::morph_update_patch(
+                realm_id,
+                actor,
+                morph_id,
+                json!({ "title": { "$op": "set", "value": "Spec note" } }),
+            )
+            .build("node"),
+            cx_ops::realm_organization_update(
+                realm_id,
+                actor,
+                json!({ "title": { "$op": "set", "value": "Engineering" } }),
+            )
+            .build("node"),
+        ];
+
+        for event in &events {
+            assert!(event.payload.get("patch").is_some(), "{}", event.kind);
+            assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
+            assert_registered_payload_valid(event);
+        }
     }
 
     #[test]

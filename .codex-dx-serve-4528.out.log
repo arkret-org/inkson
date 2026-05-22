@@ -1,0 +1,10 @@
+  0.63s  INFO -----------------------------------------------------------------
+                Serving your app: yougen! 🚀
+                • Press [33m`ctrl+c`[0m to exit the server
+                • Press [33m`r`[0m to rebuild the app
+                • Press [33m`p`[0m to toggle automatic rebuilds
+                • Press [33m`v`[0m to toggle verbose logging
+                • Press [33m`/`[0m for more commands and shortcuts
+                Learn more at [34mhttps://dioxuslabs.com/learn/0.7/getting_started[0m
+               ----------------------------------------------------------------
+  3.22s  INFO Build completed successfully in [33m1.32s[0m, launching app! 💫

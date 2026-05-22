@@ -1,9 +1,7 @@
-//! Call view — minimal honest landing page for WebRTC signaling.
+//! Call view — compact status surface for call controls.
 //!
-//! Yougen does NOT bundle a WebRTC stack; the durable signaling envelope
-//! builders live in `crate::webrtc` and are intended for a host renderer
-//! (mobile / Tauri shell) to plug in.  This view states clearly what is
-//! wired and what is pending so the URL is not a dead end.
+//! The actual controls live in `webrtc.rs`; this panel keeps the stable
+//! `call-panel` / `call-signal-count` handles and summarizes signal state.
 
 use dioxus::prelude::*;
 
@@ -30,17 +28,17 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
             div { class: "event",
                 div { class: "event-head",
                     span { "Calls" }
-                    span { class: "badge", "Signaling-only preview" }
-                    HelpTip { text: "Yougen exposes the call event builders (cx.call.signal / cx.call.state / cx.call.recording.start) but does not bundle a WebRTC stack. The host renderer (mobile app, Tauri shell, browser embed) is responsible for the SDP / ICE / SFU plumbing." }
+                    span { class: "badge green", "Controls ready" }
+                    HelpTip { text: "Use the WebRTC controls below to start, accept, decline, mute, share, record, and leave calls. This summary shows the durable call signal state observed locally." }
                 }
                 div { class: "muted",
-                    "This is the durable signaling surface. A scannable media UI (incoming-call toast, in-call controls, screen share) lands once the platform-specific WebRTC bridge ships."
+                    "Call controls are available below; this summary keeps protocol signal health visible without blocking the user flow."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Observed signals" }
                         span { "data-testid": "call-signal-count", "{signal_count}" }
-                        div { class: "muted", "cx.call.signal / state / recording.start" }
+                        div { class: "muted", "Call signal, state, and recording events" }
                     }
                     div { class: "metric",
                         strong { "Signal envelope" }
@@ -49,13 +47,13 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                     div { class: "metric",
                         strong { "Media transport" }
-                        span { "Renderer-provided" }
-                        div { class: "muted", "Not bundled in the Rust crate" }
+                        span { "Browser bridge" }
+                        div { class: "muted", "Peer setup is handled by the active renderer" }
                     }
                     div { class: "metric",
                         strong { "Recording" }
-                        span { "Opt-in marker only" }
-                        div { class: "muted", "cx.call.recording.start; capture pipeline is host-side" }
+                        span { "User controlled" }
+                        div { class: "muted", "Recording controls require explicit user action" }
                     }
                 }
             }

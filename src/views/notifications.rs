@@ -430,7 +430,7 @@ fn refresh_notifications(
     });
 }
 
-fn is_notification_account_data(value: &Value) -> bool {
+pub(crate) fn is_notification_account_data(value: &Value) -> bool {
     matches!(
         value
             .get("kind")

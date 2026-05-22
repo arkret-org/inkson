@@ -369,6 +369,14 @@ pub fn TimelinePanel(
         .collect();
     let events_for_reply_lookup = timeline_snapshot.clone();
     let events_for_composer_lookup = timeline_snapshot;
+    let moderation_appeal_target = events_data
+        .iter()
+        .find(|(_, event)| timeline_event_has_moderation_decision(event))
+        .map(|(_, event)| {
+            let target_ref = event.event_id.clone().unwrap_or_else(|| event.id.clone());
+            let decision_event_id = event.event_id.clone().unwrap_or_else(|| event.id.clone());
+            (decision_event_id, target_ref)
+        });
     let plaintext_service = plaintext_visible_service(&base_url);
     let plaintext_boundary = PlaintextBoundary {
         allowed_services: vec![plaintext_service.clone()],
@@ -1076,6 +1084,35 @@ pub fn TimelinePanel(
             }
         }
 
+        if let Some((decision_event_id, target_ref)) = moderation_appeal_target.clone() {
+            crate::views::moderation_appeal::AppealEntrypoint {
+                realm_id: selected_space_c.clone(),
+                appellant: account_did_c.clone(),
+                decision_event_id,
+                target_ref,
+                base_url: base_url.clone(),
+                api_token: token(),
+                current_state: crate::views::moderation_appeal::AppealState::None,
+            }
+        }
+
+        if !write_status().is_empty() {
+            div { class: "muted", "data-testid": "write-status", "{write_status}" }
+        }
+
+        if !blob_status().is_empty() {
+            div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
+        }
+
+        div { class: "muted", "data-testid": "read-marker-status", "{read_marker_status}" }
+        div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
+
+        if !read_receipts().is_empty() {
+            div { class: "muted", "data-testid": "read-receipts",
+                "Read by: {read_receipts:?}"
+            }
+        }
+
         div { class: "{composer_class}", "data-testid": "composer",
             div {
                 class: "event",
@@ -1718,44 +1755,6 @@ pub fn TimelinePanel(
                     "Report / Queue"
                 }
             }
-
-            // Round R2/R3 (T06) — Appeal entrypoint. Surfaced near the
-            // moderation report button (where moderation decisions affecting
-            // the user surface). The full review surface is admin scope and
-            // lives in space_admin.rs.
-            crate::views::moderation_appeal::AppealEntrypoint {
-                realm_id: selected_space_c.clone(),
-                appellant: account_did_c.clone(),
-                // TODO(round23-T06): once the timeline projection surfaces
-                // the most recent `cx.moderation.decision` event_id that
-                // names the local actor as `target`, thread it through here.
-                // The current placeholder uses the local actor's account
-                // did so the wire schema validator passes; reducers will
-                // reject `appeal_id` collisions but the round-trip exercises
-                // the new event kind.
-                decision_event_id: "cx:event:01904100-0000-7000-8000-000000000000".to_owned(),
-                target_ref: account_did_c.clone(),
-                base_url: base_url.clone(),
-                api_token: token(),
-                current_state: crate::views::moderation_appeal::AppealState::None,
-            }
-
-            if !write_status().is_empty() {
-                div { class: "muted", "data-testid": "write-status", "{write_status}" }
-            }
-
-            if !blob_status().is_empty() {
-                div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
-            }
-
-            div { class: "muted", "data-testid": "read-marker-status", "{read_marker_status}" }
-            div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
-
-            if !read_receipts().is_empty() {
-                div { class: "muted", "data-testid": "read-receipts",
-                    "Read by: {read_receipts:?}"
-                }
-            }
         }
     }
 }
@@ -1858,6 +1857,18 @@ fn timeline_reply_quote_preview(
         quoted.body.clone()
     };
     Some((quoted.sender_display.clone(), body))
+}
+
+fn timeline_event_has_moderation_decision(event: &TimelineEvent) -> bool {
+    let body = event.body.to_ascii_lowercase();
+    let tombstone = event
+        .tombstone_reason
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    body.contains("moderation decision")
+        || body.contains("moderation blocked")
+        || tombstone.contains("moderation")
 }
 
 fn timestamp_now() -> String {

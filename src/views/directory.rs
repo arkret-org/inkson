@@ -95,11 +95,12 @@ pub fn DirectoryPanel(
                 }
             }
 
-            div { class: "event directory-axis-card", "data-testid": "directory-three-axes-banner",
-                div { class: "event-head",
+            details { class: "event directory-axis-card", "data-testid": "directory-three-axes-banner",
+                summary { class: "event-head",
                     span { "Search Policy Axes" }
                     span { "independent decisions" }
                 }
+                div { class: "muted", "Discoverability, join rules, and history visibility are available here when you need policy detail." }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Discoverability" }

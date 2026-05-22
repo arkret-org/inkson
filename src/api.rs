@@ -172,6 +172,16 @@ pub struct FlowProjectionView {
     pub space_id: String,
     #[serde(default)]
     pub title: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub board_space_id: Option<String>,
+    #[serde(default)]
+    pub list_space_id: Option<String>,
+    #[serde(default)]
+    pub rank: Option<String>,
+    #[serde(default)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
     /// `active` / `archived` / `deleted` / `redacted` per spec
     /// `common-fields.md §5.1`. yougen folds the two terminal states
     /// into `FlowLifecycleState::Tombstoned`.
@@ -2222,6 +2232,7 @@ impl ContrixApi {
         if signed.proofs.is_empty() {
             anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
         }
+        validate_outgoing_registered_payload(&signed)?;
 
         let idempotency_key = signed
             .local_operation_idempotency_alias()
@@ -2261,6 +2272,7 @@ impl ContrixApi {
                     envelope.kind
                 );
             }
+            validate_outgoing_registered_payload(envelope)?;
         }
 
         // H1 — capability gate. When the server advertises
@@ -2606,6 +2618,25 @@ impl ContrixApi {
             .header("x-contrix-request-id", request_id)
             .header("idempotency-key", request_id)
     }
+}
+
+fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result<()> {
+    let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+    if !catalog
+        .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
+        .is_empty()
+    {
+        return Ok(());
+    }
+
+    catalog
+        .validate_payload(&event.kind, &event.payload)
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "outgoing event kind '{}' payload violates registered payload schema: {err}",
+                event.kind
+            )
+        })
 }
 
 fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
@@ -3915,12 +3946,21 @@ mod tests {
                     "flow_id": "cx:flow:01904100-0000-7000-8000-f20dc0000001",
                     "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
                     "title": "Card",
+                    "summary": "Projection-backed card",
+                    "board_space_id": "cx:space:01904100-0000-7000-8000-b0ard0000001",
+                    "list_space_id": "cx:space:01904100-0000-7000-8000-l15t00000001",
+                    "rank": "U",
+                    "fields": { "labels": ["demo"] },
                     "state": "archived"
                 }]
             }))
             .unwrap();
         assert_eq!(flows.items[0].space_id, flows.realm_id);
         assert_eq!(flows.items[0].state, "archived");
+        assert_eq!(
+            flows.items[0].board_space_id.as_deref(),
+            Some("cx:space:01904100-0000-7000-8000-b0ard0000001")
+        );
     }
 
     #[test]
@@ -4197,6 +4237,58 @@ mod tests {
         }))
         .expect_err("partial batch must fail fast");
         assert!(err.to_string().contains("capability_denied"));
+    }
+
+    #[test]
+    fn outgoing_payload_schema_gate_rejects_legacy_flow_update_shape() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000001";
+        let event = OperationBuilder::new(
+            "cx:realm:0196419b-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            "cx.flow.update",
+        )
+        .target_ref(flow_id)
+        .body(json!({
+            "flow_id": flow_id,
+            "fields": {
+                "document": { "blocks": [] }
+            }
+        }))
+        .build("yougen");
+
+        let err = validate_outgoing_registered_payload(&event)
+            .expect_err("legacy top-level fields must fail before submit");
+        assert!(err.to_string().contains("registered payload schema"));
+    }
+
+    #[test]
+    fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let mut patch = contrix_sdk::Patch::new();
+        patch
+            .insert_op(
+                "fields.document",
+                contrix_sdk::PatchOp::set(json!({ "blocks": [] })),
+            )
+            .unwrap();
+        let mut payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+            .unwrap()
+            .to_value()
+            .unwrap();
+        payload
+            .as_object_mut()
+            .unwrap()
+            .insert("flow_id".to_owned(), json!(flow_id));
+        let event = OperationBuilder::new(
+            "cx:realm:0196419b-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            "cx.flow.update",
+        )
+        .target_ref(flow_id)
+        .body(payload)
+        .build("yougen");
+
+        validate_outgoing_registered_payload(&event).unwrap();
     }
 
     /// Contract test: cx.space.create payload must satisfy spec

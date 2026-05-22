@@ -1,14 +1,148 @@
 import type { Page, Route } from "@playwright/test";
+import { mockContrixContract } from "./mockContrixContract";
 
 const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
 const SETUP_SPACE = "cx:space:01js0setupflow000000000000";
 const CHILD_SPACE = "cx:space:01launchchild0000000000000";
 const GRANDCHILD_SPACE = "cx:space:01launchdeep00000000000000";
+const DEMO_BOARD_SPACE = "cx:space:0196419b-0000-7000-8000-00000000b0a0";
+const DEMO_SECOND_BOARD_SPACE = "cx:space:0196419b-0000-7000-8000-00000000b0b0";
+const DEMO_TODO_LIST = "cx:space:01list-todo000000000000000000";
+const DEMO_PROGRESS_LIST = "cx:space:01list-progress00000000000000";
+const DEMO_DONE_LIST = "cx:space:01list-done00000000000000000";
+const DEMO_SECOND_LIST = "cx:space:01list-secondary000000000000";
+
+type SpaceContainerProjection = {
+  container_space_id: string;
+  realm_id: string;
+  kind: string;
+  title: string;
+  state: string;
+  rank?: string;
+  parent_ref?: string;
+};
+
+type FlowProjection = {
+  flow_id: string;
+  realm_id: string;
+  title: string;
+  summary?: string;
+  state: string;
+  board_space_id?: string;
+  list_space_id?: string;
+  rank?: string;
+  fields?: Record<string, unknown>;
+};
 
 export async function mockContrixApi(page: Page) {
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
+  const boardSpaceContainers: SpaceContainerProjection[] = [
+    {
+      container_space_id: DEMO_BOARD_SPACE,
+      realm_id: DEMO_SPACE,
+      kind: "board",
+      title: "Persisted demo board",
+      state: "active",
+    },
+    {
+      container_space_id: DEMO_SECOND_BOARD_SPACE,
+      realm_id: DEMO_SPACE,
+      kind: "board",
+      title: "Secondary planning board",
+      state: "active",
+    },
+    {
+      container_space_id: DEMO_TODO_LIST,
+      realm_id: DEMO_SPACE,
+      kind: "list",
+      title: "To Do",
+      state: "active",
+      rank: "U",
+      parent_ref: DEMO_BOARD_SPACE,
+    },
+    {
+      container_space_id: DEMO_PROGRESS_LIST,
+      realm_id: DEMO_SPACE,
+      kind: "list",
+      title: "In Progress",
+      state: "active",
+      rank: "f",
+      parent_ref: DEMO_BOARD_SPACE,
+    },
+    {
+      container_space_id: DEMO_DONE_LIST,
+      realm_id: DEMO_SPACE,
+      kind: "list",
+      title: "Done",
+      state: "active",
+      rank: "p",
+      parent_ref: DEMO_BOARD_SPACE,
+    },
+    {
+      container_space_id: DEMO_SECOND_LIST,
+      realm_id: DEMO_SPACE,
+      kind: "list",
+      title: "Selected Backlog",
+      state: "active",
+      rank: "U",
+      parent_ref: DEMO_SECOND_BOARD_SPACE,
+    },
+  ];
+  const boardFlowProjections: FlowProjection[] = [
+    {
+      flow_id: "cx:flow:legal-review",
+      realm_id: DEMO_SPACE,
+      title: "Legal review for public beta",
+      summary: "Finalize external processor wording before launch checklist can move.",
+      state: "active",
+      board_space_id: DEMO_BOARD_SPACE,
+      list_space_id: DEMO_TODO_LIST,
+      rank: "U",
+      fields: {
+        labels: ["legal", "beta"],
+        assignee: "Alice",
+        due_at: "May 08",
+        discussion_visibility: "locked",
+        discussion_ref_hash: "sha256:locked-private-decision",
+        locked_reason: "You can see that a restricted discussion is linked, but not its name or members.",
+      },
+    },
+    {
+      flow_id: "cx:flow:onboarding-copy",
+      realm_id: DEMO_SPACE,
+      title: "Onboarding copy",
+      summary: "Waiting on discussion-scoped feedback from support and docs reviewers.",
+      state: "active",
+      board_space_id: DEMO_BOARD_SPACE,
+      list_space_id: DEMO_PROGRESS_LIST,
+      rank: "U",
+      fields: { labels: ["copy", "support"], assignee: "Bob", due_at: "May 10" },
+    },
+    {
+      flow_id: "cx:flow:security-signoff",
+      realm_id: DEMO_SPACE,
+      title: "Security sign-off",
+      summary: "Projection detected a stale column head after an offline move.",
+      state: "active",
+      board_space_id: DEMO_BOARD_SPACE,
+      list_space_id: DEMO_DONE_LIST,
+      rank: "U",
+      fields: { labels: ["security", "reviewed"], assignee: "Carol", due_at: "May 01" },
+    },
+    {
+      flow_id: "cx:flow:secondary-card",
+      realm_id: DEMO_SPACE,
+      title: "Secondary board card",
+      summary: "Only visible after the Board selector switches projection scope.",
+      state: "active",
+      board_space_id: DEMO_SECOND_BOARD_SPACE,
+      list_space_id: DEMO_SECOND_LIST,
+      rank: "U",
+      fields: { labels: ["planning"], assignee: "Dana", due_at: "May 12" },
+    },
+  ];
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -193,6 +327,24 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/api/v1/projection/spaces") {
+      const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
+      return json(route, {
+        realm_id: realmId,
+        total: boardSpaceContainers.length,
+        spaces: boardSpaceContainers,
+      });
+    }
+
+    if (url.pathname === "/api/v1/projection/flows") {
+      const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
+      return json(route, {
+        realm_id: realmId,
+        total: boardFlowProjections.length,
+        flows: boardFlowProjections,
+      });
+    }
+
     if (url.pathname === "/api/v1/events/describe") {
       return json(route, {
         service_did: "did:web:server.local",
@@ -244,6 +396,22 @@ export async function mockContrixApi(page: Page) {
           createdRealms.push({ id, title, summary });
         }
       }
+      if (body.kind === "cx.space.create") {
+        const object = body.payload?.object ?? {};
+        const containerId =
+          object.id ?? body.payload?.space_id ?? body.payload?.container_space_id ?? body.target_ref;
+        if (typeof containerId === "string" && !boardSpaceContainers.some((row) => row.container_space_id === containerId)) {
+          boardSpaceContainers.push({
+            container_space_id: containerId,
+            realm_id: object.realm_id ?? body.space_id ?? DEMO_SPACE,
+            kind: object.kind ?? "list",
+            title: object.title ?? containerId,
+            state: "active",
+            rank: object.rank,
+            parent_ref: object.parent_ref,
+          });
+        }
+      }
       if (body.kind === "cx.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
@@ -261,6 +429,33 @@ export async function mockContrixApi(page: Page) {
       if (body.kind === "cx.flow.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:flow-${messageCounter}`;
+        const object = body.payload?.object ?? {};
+        const component = Array.isArray(body.payload?.components)
+          ? body.payload.components.find(
+              (candidate: { family?: string }) => candidate.family === "cx.component.flow.position.v1",
+            )
+          : undefined;
+        const flowId = body.payload?.flow_id ?? object.id;
+        if (typeof flowId === "string") {
+          const fields = object.fields ?? {};
+          const nextProjection: FlowProjection = {
+            flow_id: flowId,
+            realm_id: object.realm_id ?? body.space_id ?? DEMO_SPACE,
+            title: object.title ?? body.payload?.title ?? flowId,
+            summary: object.summary,
+            state: "active",
+            board_space_id: component?.board_space_id ?? fields.board_space_id,
+            list_space_id: component?.list_space_id ?? fields.list_space_id,
+            rank: component?.rank ?? fields.rank ?? body.payload?.rank,
+            fields,
+          };
+          const existing = boardFlowProjections.findIndex((row) => row.flow_id === flowId);
+          if (existing >= 0) {
+            boardFlowProjections[existing] = nextProjection;
+          } else {
+            boardFlowProjections.push(nextProjection);
+          }
+        }
         timelineEvents.push({
           ...(body.payload ?? {}),
           event_id: body.event_id,
@@ -845,8 +1040,35 @@ export async function mockContrixApi(page: Page) {
       return json(route, { backups: [] });
     }
 
+    const contractResponse = mockContrixContract({
+      method: route.request().method(),
+      path: url.pathname,
+      query: Object.fromEntries(url.searchParams.entries()),
+      headers: route.request().headers(),
+      body: await contractRequestBody(route),
+    });
+    if (contractResponse) {
+      return json(route, contractResponse.body, contractResponse.status);
+    }
+
     return json(route, { ok: false, error: { code: "not_found", message: `No e2e mock for ${url.pathname}` } }, 404);
   });
+}
+
+async function contractRequestBody(route: Route) {
+  const method = route.request().method().toUpperCase();
+  if (method === "GET" || method === "HEAD") {
+    return undefined;
+  }
+  const raw = route.request().postData();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
 
 function spacePreview() {

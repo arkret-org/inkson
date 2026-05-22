@@ -4,10 +4,21 @@ use dioxus_router::Link;
 use crate::{
     components::{HelpTip, UiIcon},
     i18n::tr,
-    local_state::LocalStateStore,
+    local_state::{ClientLocalState, LocalStateStore},
     models::SpacePreview,
     routes::Route,
+    views::helpers::with_authed_api,
 };
+
+#[derive(Clone, Debug, PartialEq)]
+struct DashboardNotificationSummary {
+    id: String,
+    title: String,
+    body: String,
+    kind: String,
+    timestamp: String,
+    read: bool,
+}
 
 #[component]
 pub fn DashboardPanel(
@@ -23,6 +34,9 @@ pub fn DashboardPanel(
 ) -> Element {
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
+    let mut recent_flows = use_signal(Vec::<crate::api::FlowProjectionView>::new);
+    let mut recent_flows_loaded_for = use_signal(String::new);
+    let mut recent_flows_status = use_signal(String::new);
     let has_session = !token().trim().is_empty();
     let active_space = spaces()
         .iter()
@@ -30,30 +44,60 @@ pub fn DashboardPanel(
         .cloned()
         .or_else(|| spaces().first().cloned());
 
-    let unread_notifications: usize = {
+    let notification_summaries = {
         let snapshot = state_store.read().load();
-        snapshot
-            .notification_projection
-            .iter()
-            .filter(|value| {
-                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                let client_state = snapshot
-                    .notification_client_state
-                    .get(id)
-                    .cloned()
-                    .unwrap_or_default();
-                let read = value
-                    .get("read")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(client_state.read);
-                let archived = value
-                    .get("archived")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(client_state.archived);
-                !read && !archived
-            })
-            .count()
+        dashboard_notification_summaries(&snapshot)
     };
+    let unread_notifications = notification_summaries
+        .iter()
+        .filter(|notification| !notification.read)
+        .count();
+
+    let active_space_id = active_space
+        .as_ref()
+        .map(|space| space.space_id.clone())
+        .unwrap_or_else(|| selected_space());
+    if has_session
+        && !active_space_id.trim().is_empty()
+        && recent_flows_loaded_for() != active_space_id
+    {
+        recent_flows_loaded_for.set(active_space_id.clone());
+        let base = base_url.clone();
+        let api_token = token();
+        let space = active_space_id.clone();
+        spawn(async move {
+            match with_authed_api(&base, api_token, |api| async move {
+                api.list_flow_projections(&space).await
+            })
+            .await
+            {
+                Ok(response) => {
+                    let flow_count = response.items.len();
+                    recent_flows.set(response.items);
+                    recent_flows_status.set(format!(
+                        "{flow_count} flow(s) loaded from Board projection."
+                    ));
+                }
+                Err(err) => {
+                    recent_flows.set(Vec::new());
+                    recent_flows_status.set(format!("Recent flows unavailable: {}", err.display()));
+                }
+            }
+        });
+    }
+
+    let visible_recent_flows = recent_flows()
+        .into_iter()
+        .filter(|flow| {
+            flow.state != "archived" && flow.state != "deleted" && flow.state != "redacted"
+        })
+        .take(5)
+        .collect::<Vec<_>>();
+    let visible_notifications = notification_summaries
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>();
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
             div { class: "mb-24", "data-testid": "dashboard-hero",
@@ -66,7 +110,7 @@ pub fn DashboardPanel(
                     to: Route::Notifications,
                     onclick: move |_| view.set(super::View::Notifications),
                     div { class: "lbl", {tr("dashboard.notifications_label")} }
-                    div { class: "val", "{unread_notifications}" }
+                    div { class: "val", "data-testid": "dashboard-unread-notifications", "{unread_notifications}" }
                     div { class: "delta", if has_session { {tr("dashboard.notifications_delta_unread")} } else { {tr("dashboard.notifications_delta_signin")} } }
                 }
                 Link {
@@ -94,17 +138,17 @@ pub fn DashboardPanel(
                     }
                     Link {
                         class: "metric",
-                        to: Route::Space { space_id: space.space_id.clone() },
+                        to: Route::KanbanSpace { space_id: space.space_id.clone() },
                         onclick: {
                             let id = space.space_id.clone();
                             move |_| {
                                 selected_space.set(id.clone());
-                                view.set(super::View::Timeline);
+                                view.set(super::View::Kanban);
                             }
                         },
-                        div { class: "lbl", "Space id" }
-                        div { class: "val mono", style: "font-size: 14px;", "{space.space_id}" }
-                        div { class: "delta", "Current space identifier" }
+                        div { class: "lbl", "Active flows" }
+                        div { class: "val", "{visible_recent_flows.len()}" }
+                        div { class: "delta", "Open the current Board" }
                     }
                 } else {
                     Link {
@@ -193,7 +237,9 @@ pub fn DashboardPanel(
                                             span { class: "avatar org", "{avatar_seed}" }
                                             span { class: "grow",
                                                 span { class: "title", "{display_name}" }
-                                                span { class: "sub mono", "{space.space_id}" }
+                                                span { class: "sub",
+                                                    {space.description.as_deref().unwrap_or("Open timeline")}
+                                                }
                                             }
                                             if has_remark {
                                                 span {
@@ -226,12 +272,33 @@ pub fn DashboardPanel(
                                 }
                             }
                             tbody {
-                                tr {
-                                    td { class: "dim", colspan: "5",
-                                        if has_session { "No recent flows loaded" } else { "Sign in to load recent flows" }
+                                if visible_recent_flows.is_empty() {
+                                    tr {
+                                        td { class: "dim", colspan: "5",
+                                            if has_session { "No recent flows loaded" } else { "Sign in to load recent flows" }
+                                        }
+                                    }
+                                } else {
+                                    for flow in visible_recent_flows.iter() {
+                                        tr {
+                                            td { class: "dim", "" }
+                                            td { "{flow.title}" }
+                                            td { "Current Board" }
+                                            td { "{flow.state}" }
+                                            td {
+                                                {flow.fields
+                                                    .get("due_at")
+                                                    .or_else(|| flow.fields.get("due"))
+                                                    .and_then(|value| value.as_str())
+                                                    .unwrap_or("-")}
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        }
+                        if !recent_flows_status().is_empty() {
+                            div { class: "muted", style: "padding: 0 16px 12px;", "{recent_flows_status}" }
                         }
                     }
 
@@ -265,13 +332,31 @@ pub fn DashboardPanel(
                             }
                         }
                         div { class: "stack-sm", style: "padding: 8px 12px 12px;",
-                            div { class: "m-list-item",
-                                span { class: "avatar xs", "0" }
-                                span { class: "grow",
-                                    span { class: "title f-13",
-                                        {crate::i18n::tr(if has_session { "dashboard.no_notifications" } else { "dashboard.notifications_signin" })}
+                            if visible_notifications.is_empty() {
+                                div { class: "m-list-item",
+                                    span { class: "avatar xs", "0" }
+                                    span { class: "grow",
+                                        span { class: "title f-13",
+                                            {crate::i18n::tr(if has_session { "dashboard.no_notifications" } else { "dashboard.notifications_signin" })}
+                                        }
+                                        span { class: "sub", {crate::i18n::tr("dashboard.notifications_empty_sub")} }
                                     }
-                                    span { class: "sub", {crate::i18n::tr("dashboard.notifications_empty_sub")} }
+                                }
+                            } else {
+                                for notification in visible_notifications.iter() {
+                                    Link {
+                                        class: "m-list-item",
+                                        "data-testid": "dashboard-notification-card",
+                                        key: "{notification.id}",
+                                        to: Route::Notifications,
+                                        onclick: move |_| view.set(super::View::Notifications),
+                                        span { class: "avatar xs", if notification.read { "✓" } else { "!" } }
+                                        span { class: "grow",
+                                            span { class: "title f-13", "{notification.title}" }
+                                            span { class: "sub", "{notification.body}" }
+                                        }
+                                        span { class: "pill muted xs", "{notification.kind}" }
+                                    }
                                 }
                             }
                         }
@@ -389,5 +474,66 @@ pub fn DashboardPanel(
                 }
             }
         }
+    }
+}
+
+fn dashboard_notification_summaries(
+    snapshot: &ClientLocalState,
+) -> Vec<DashboardNotificationSummary> {
+    let mut notifications = snapshot
+        .notification_projection
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let id = value_string(value, &["notification_id", "id"])
+                .unwrap_or_else(|| format!("notification-{index}"));
+            let client_state = snapshot
+                .notification_client_state
+                .get(&id)
+                .cloned()
+                .unwrap_or_default();
+            let archived = value
+                .get("archived")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(client_state.archived);
+            if archived {
+                return None;
+            }
+            let kind = value_string(value, &["notification_kind", "type", "kind"])
+                .unwrap_or_else(|| "message".to_owned());
+            Some(DashboardNotificationSummary {
+                id,
+                title: value_string(value, &["title"])
+                    .unwrap_or_else(|| default_notification_title(&kind)),
+                body: value_string(value, &["body", "preview", "summary"])
+                    .unwrap_or_else(|| "Notification".to_owned()),
+                kind,
+                timestamp: value_string(value, &["timestamp", "created_at"]).unwrap_or_default(),
+                read: value
+                    .get("read")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(client_state.read),
+            })
+        })
+        .collect::<Vec<_>>();
+    notifications.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    notifications
+}
+
+fn value_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(|field| field.as_str())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn default_notification_title(kind: &str) -> String {
+    match kind {
+        "invite" => "Space invite".to_owned(),
+        "reaction" => "New reaction".to_owned(),
+        "mention" => "You were mentioned".to_owned(),
+        _ => "New message".to_owned(),
     }
 }

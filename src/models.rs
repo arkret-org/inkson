@@ -325,6 +325,7 @@ pub struct BackfillResBody {
     pub events: Vec<Value>,
     pub prev_cursor: Option<String>,
     pub next_cursor: Option<String>,
+    #[serde(default)]
     pub limited: bool,
 }
 

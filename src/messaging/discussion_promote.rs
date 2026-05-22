@@ -125,12 +125,28 @@ pub fn build_flow_discussion_ref_op(
     flow_id: &str,
     child_space_id: &str,
 ) -> EventEnvelope {
+    let mut patch = contrix_sdk::Patch::new();
+    patch
+        .insert_op(
+            "discussion_space_ref",
+            contrix_sdk::PatchOp::set(child_space_id),
+        )
+        .unwrap_or_else(|err| {
+            panic!("invalid cx.patch.v1 discussion_space_ref patch: {err}");
+        });
+    let mut payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+        .and_then(|payload| payload.to_value())
+        .unwrap_or_else(|err| {
+            panic!("invalid cx.flow.update object_patch_payload: {err}");
+        });
+    payload
+        .as_object_mut()
+        .expect("object_patch_payload serializes as an object")
+        .insert("flow_id".to_owned(), json!(flow_id));
+
     OperationBuilder::new(parent_space_id, actor, "cx.flow.update")
         .target_ref(flow_id)
-        .body(json!({
-            "flow_id": flow_id,
-            "discussion_space_ref": child_space_id,
-        }))
+        .body(payload)
         .build("yougen")
 }
 
@@ -198,9 +214,9 @@ mod tests {
     fn promote_ops_emits_four_events_when_flow_known() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
-            "cx:space:parent",
+            "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            Some("cx:flow:1"),
+            Some("cx:flow:0196419b-0000-7000-8000-000000000002"),
             &ids,
             "Child",
         );
@@ -215,6 +231,30 @@ mod tests {
                 "cx.flow.update"
             ]
         );
+    }
+
+    #[test]
+    fn flow_discussion_ref_update_matches_registered_payload_schema() {
+        let event = build_flow_discussion_ref_op(
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:flow:0196419b-0000-7000-8000-000000000002",
+            "cx:space:0196419b-0000-7000-8000-000000000003",
+        );
+        assert_eq!(event.kind, "cx.flow.update");
+        assert!(event.payload.get("discussion_space_ref").is_none());
+        assert_eq!(
+            event.payload["patch"]["discussion_space_ref"]["value"],
+            "cx:space:0196419b-0000-7000-8000-000000000003"
+        );
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&event.kind, &event.payload)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "discussion promote cx.flow.update payload violates spec: {err}\npayload: {}",
+                    serde_json::to_string_pretty(&event.payload).unwrap()
+                );
+            });
     }
 
     #[test]
