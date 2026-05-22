@@ -319,6 +319,129 @@ pub struct SpacePreview {
     pub realm_id: String,
 }
 
+impl SpacePreview {
+    pub fn projection_realm_id(&self) -> &str {
+        if self.kind == SpacePreviewKind::Space && !self.realm_id.trim().is_empty() {
+            self.realm_id.trim()
+        } else {
+            self.space_id.as_str()
+        }
+    }
+}
+
+pub fn projection_realm_id_for_space(spaces: &[SpacePreview], space_id: &str) -> String {
+    let requested = space_id.trim();
+    projection_realm_id_for_known_space(spaces, requested).unwrap_or_else(|| requested.to_owned())
+}
+
+pub fn projection_realm_id_for_known_space(
+    spaces: &[SpacePreview],
+    space_id: &str,
+) -> Option<String> {
+    let requested = space_id.trim();
+    if requested.is_empty() {
+        return Some(String::new());
+    }
+    let by_id: std::collections::BTreeMap<&str, &SpacePreview> = spaces
+        .iter()
+        .map(|space| (space.space_id.as_str(), space))
+        .collect();
+    let mut current = requested;
+    let mut visited = std::collections::BTreeSet::new();
+
+    while visited.insert(current.to_owned()) {
+        let space = by_id.get(current).copied()?;
+        let projection_realm_id = space.projection_realm_id();
+        if projection_realm_id != space.space_id || space.kind == SpacePreviewKind::Realm {
+            return Some(projection_realm_id.to_owned());
+        }
+        if let Some(parent) = space
+            .parent_space_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|parent| !parent.is_empty())
+        {
+            current = parent;
+        } else {
+            return None;
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SpacePreview, SpacePreviewKind, projection_realm_id_for_known_space,
+        projection_realm_id_for_space,
+    };
+
+    fn preview(
+        id: &str,
+        kind: SpacePreviewKind,
+        realm_id: &str,
+        parent: Option<&str>,
+    ) -> SpacePreview {
+        SpacePreview {
+            space_id: id.to_owned(),
+            name: id.to_owned(),
+            description: None,
+            tags: Default::default(),
+            public: true,
+            category: None,
+            parent_space_id: parent.map(ToOwned::to_owned),
+            child_space_ids: Vec::new(),
+            kind,
+            realm_id: realm_id.to_owned(),
+        }
+    }
+
+    #[test]
+    fn projection_realm_id_uses_space_home_realm() {
+        let spaces = vec![
+            preview("cx:realm:root", SpacePreviewKind::Realm, "", None),
+            preview(
+                "cx:space:child",
+                SpacePreviewKind::Space,
+                "cx:realm:root",
+                Some("cx:realm:root"),
+            ),
+        ];
+
+        assert_eq!(
+            projection_realm_id_for_space(&spaces, "cx:space:child"),
+            "cx:realm:root"
+        );
+    }
+
+    #[test]
+    fn projection_realm_id_climbs_legacy_parent_links() {
+        let spaces = vec![
+            preview("cx:space:legacy-root", SpacePreviewKind::Realm, "", None),
+            preview(
+                "cx:space:legacy-child",
+                SpacePreviewKind::Space,
+                "",
+                Some("cx:space:legacy-root"),
+            ),
+        ];
+
+        assert_eq!(
+            projection_realm_id_for_space(&spaces, "cx:space:legacy-child"),
+            "cx:space:legacy-root"
+        );
+    }
+
+    #[test]
+    fn known_projection_realm_id_waits_for_unknown_routes() {
+        assert_eq!(
+            projection_realm_id_for_known_space(&[], "cx:space:child"),
+            None
+        );
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackfillResBody {
     #[serde(default)]

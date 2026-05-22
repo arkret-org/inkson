@@ -252,11 +252,7 @@ impl SetupSection {
 // is `space` (generic) / `project` / `folder` / `board` / `list`;
 // profiles may register additional kinds.
 const SPACE_KIND_OPTIONS: [(&str, &str, &str); 5] = [
-    (
-        "space",
-        "Space (generic)",
-        "Default. Use when no specific workflow shape applies.",
-    ),
+    ("space", "Space (generic)", ""),
     (
         "project",
         "Project",
@@ -532,14 +528,23 @@ pub fn SetupPanel(
         .map(|(id, body)| (id.clone(), body.clone()))
         .collect();
     let projection_kind = |body: &Value| -> &'static str {
-        match body.get("__kind").and_then(|kind| kind.as_str()) {
-            Some("space") => "space",
+        match body
+            .get("__kind")
+            .and_then(|kind| kind.as_str())
+            .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
+        {
+            Some("space") | Some("cx.schema.space.v1") => "space",
             _ => "realm",
         }
     };
     let projection_realm_id = |id: &str, body: &Value| -> String {
         body.get("realm_id")
             .and_then(|realm_id| realm_id.as_str())
+            .or_else(|| {
+                body.get("summary")
+                    .and_then(|summary| summary.get("realm_id"))
+                    .and_then(|realm_id| realm_id.as_str())
+            })
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| id.to_owned())
     };
@@ -1352,6 +1357,8 @@ pub fn SetupPanel(
                                     label { "Space title" }
                                     input {
                                         "data-testid": "new-space-title-input",
+                                        required: true,
+                                        "aria-required": "true",
                                         value: "{new_space_title_value}",
                                         placeholder: "Backlog, Roadmap, Onboarding...",
                                         oninput: move |event| new_space_title.set(event.value())
@@ -1371,8 +1378,13 @@ pub fn SetupPanel(
                                             }
                                         }
                                     }
-                                    div { class: "muted",
-                                        "{SPACE_KIND_OPTIONS.iter().find(|(value, _, _)| *value == new_space_kind_value).map(|(_, _, hint)| *hint).unwrap_or(\"Kind is not set.\")}"
+                                    if let Some(kind_hint) = SPACE_KIND_OPTIONS
+                                        .iter()
+                                        .find(|(value, _, _)| *value == new_space_kind_value)
+                                        .map(|(_, _, hint)| *hint)
+                                        .filter(|hint| !hint.is_empty())
+                                    {
+                                        div { class: "muted", "{kind_hint}" }
                                     }
                                 }
                                 div { class: "setup-field setup-field-span-2",

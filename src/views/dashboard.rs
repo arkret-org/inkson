@@ -5,7 +5,7 @@ use crate::{
     components::{HelpTip, UiIcon},
     i18n::tr,
     local_state::{ClientLocalState, LocalStateStore},
-    models::SpacePreview,
+    models::{SpacePreview, projection_realm_id_for_known_space},
     routes::Route,
     views::helpers::with_authed_api,
 };
@@ -38,11 +38,12 @@ pub fn DashboardPanel(
     let mut recent_flows_loaded_for = use_signal(String::new);
     let mut recent_flows_status = use_signal(String::new);
     let has_session = !token().trim().is_empty();
-    let active_space = spaces()
+    let spaces_snapshot = spaces();
+    let active_space = spaces_snapshot
         .iter()
         .find(|space| space.space_id == selected_space())
         .cloned()
-        .or_else(|| spaces().first().cloned());
+        .or_else(|| spaces_snapshot.first().cloned());
 
     let notification_summaries = {
         let snapshot = state_store.read().load();
@@ -57,17 +58,20 @@ pub fn DashboardPanel(
         .as_ref()
         .map(|space| space.space_id.clone())
         .unwrap_or_else(|| selected_space());
+    let active_projection_realm_id =
+        projection_realm_id_for_known_space(&spaces_snapshot, &active_space_id).unwrap_or_default();
     if has_session
         && !active_space_id.trim().is_empty()
+        && !active_projection_realm_id.trim().is_empty()
         && recent_flows_loaded_for() != active_space_id
     {
         recent_flows_loaded_for.set(active_space_id.clone());
         let base = base_url.clone();
         let api_token = token();
-        let space = active_space_id.clone();
+        let realm_id = active_projection_realm_id.clone();
         spawn(async move {
             match with_authed_api(&base, api_token, |api| async move {
-                api.list_flow_projections(&space).await
+                api.list_flow_projections(&realm_id).await
             })
             .await
             {

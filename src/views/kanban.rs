@@ -144,6 +144,15 @@ struct BoardSpaceOption {
     state: SpaceContainerLifecycleState,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum BoardToolbarPopover {
+    #[default]
+    None,
+    CreateBoard,
+    Projection,
+    Queue,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum DiscussionAccessState {
     Readable,
@@ -665,6 +674,7 @@ pub fn KanbanPanel(
     token: Signal<String>,
     account_did: String,
     selected_space: String,
+    projection_realm_id: String,
     selected_space_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
@@ -712,6 +722,7 @@ pub fn KanbanPanel(
     let mut new_card_title = use_signal(String::new);
     let mut adding_card_to = use_signal(|| Option::<String>::None);
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
+    let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
@@ -869,30 +880,26 @@ pub fn KanbanPanel(
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
     // off than before this wiring.
-    let mut lifecycle_bootstrapped = use_signal(|| false);
-    let lifecycle_base = base_url.clone();
-    let lifecycle_token = token;
-    let lifecycle_space = selected_space.clone();
-    use_future(move || {
-        let base = lifecycle_base.clone();
-        let space = lifecycle_space.clone();
-        async move {
-            if lifecycle_bootstrapped() {
-                return;
-            }
-            lifecycle_bootstrapped.set(true);
+    let mut lifecycle_bootstrapped_for = use_signal(String::new);
+    let lifecycle_realm_id = projection_realm_id.trim().to_owned();
+    if !lifecycle_realm_id.is_empty() && lifecycle_bootstrapped_for() != lifecycle_realm_id {
+        lifecycle_bootstrapped_for.set(lifecycle_realm_id.clone());
+        let base = base_url.clone();
+        let lifecycle_token = token;
+        spawn(async move {
+            let realm_id = lifecycle_realm_id.clone();
             let api_token = lifecycle_token();
             let containers_res = {
-                let space = space.clone();
+                let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.list_space_container_projections(&space).await
+                    api.list_space_container_projections(&realm_id).await
                 })
                 .await
             };
             let flows_res = {
-                let space = space.clone();
+                let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token, |api| async move {
-                    api.list_flow_projections(&space).await
+                    api.list_flow_projections(&realm_id).await
                 })
                 .await
             };
@@ -963,14 +970,15 @@ pub fn KanbanPanel(
             if applied > 0 && !server_projection_applied {
                 board_status.set(format!("Board refreshed: {applied} item(s) reconciled"));
             }
-        }
-    });
+        });
+    }
 
     let write_record_count = write_records().len();
     let manual_review_count = write_records()
         .iter()
         .filter(|record| matches!(record.state, CardState::Conflict | CardState::Quarantined))
         .count();
+    let board_selected = !selected_board_space_id().trim().is_empty();
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             div { class: "event board-header board-toolbar",
@@ -986,347 +994,394 @@ pub fn KanbanPanel(
                         div { class: "space-title", "{selected_board_label}" }
                     }
                     div { class: "actions board-toolbar-controls", "data-testid": "board-space-selector",
-                    span { class: "muted board-control-label", "Board" }
-                    select {
-                        class: "board-select",
-                        "data-testid": "board-space-select",
-                        value: "{selected_board_space_id}",
-                        onchange: move |event| {
-                            let board_id = event.value();
-                            selected_board_space_id.set(board_id.clone());
-                            let containers = lifecycle_container_projection();
-                            let flows = lifecycle_flow_projection();
-                            if containers.is_empty() && flows.is_empty() {
-                                board_status.set(format!("Board selected · {board_id}"));
-                                return;
+                        if board_popover() != BoardToolbarPopover::None {
+                            div {
+                                class: "board-popover-scrim",
+                                onclick: move |_| board_popover.set(BoardToolbarPopover::None),
                             }
-                            let (projected_columns, options, projected_board_id) =
-                                columns_from_lifecycle_projection(
-                                    &containers,
-                                    &flows,
-                                    &board_id,
-                                );
-                            if !options.is_empty() {
-                                board_space_options.set(options);
-                            }
-                            if projected_board_id.as_deref() == Some(board_id.as_str()) {
-                                let list_count = projected_columns.len();
-                                let card_count = projected_columns
-                                    .iter()
-                                    .map(|column| column.cards.len())
-                                    .sum::<usize>();
-                                columns.set(projected_columns);
-                                projection_source.set(BoardProjectionSource::ApiDerived);
-                                board_status.set(format!(
-                                    "Board loaded: {list_count} list(s), {card_count} card(s)"
-                                ));
-                            } else {
-                                columns.set(Vec::new());
-                                board_status.set(format!(
-                                    "No list projection available for selected Board · {board_id}"
-                                ));
-                            }
-                        },
-                        option {
-                            value: "",
-                            selected: selected_board_space_id().is_empty(),
-                            "Select board"
                         }
-                        for board_option in board_space_options().iter() {
+                        select {
+                            class: "board-select",
+                            "data-testid": "board-space-select",
+                            value: "{selected_board_space_id}",
+                            onchange: move |event| {
+                                let board_id = event.value();
+                                selected_board_space_id.set(board_id.clone());
+                                board_popover.set(BoardToolbarPopover::None);
+                                let containers = lifecycle_container_projection();
+                                let flows = lifecycle_flow_projection();
+                                if board_id.trim().is_empty() {
+                                    columns.set(Vec::new());
+                                    adding_card_to.set(None);
+                                    board_status.set("Select or create a board before adding lists".to_owned());
+                                    return;
+                                }
+                                if containers.is_empty() && flows.is_empty() {
+                                    board_status.set(format!("Board selected · {board_id}"));
+                                    return;
+                                }
+                                let (projected_columns, options, projected_board_id) =
+                                    columns_from_lifecycle_projection(
+                                        &containers,
+                                        &flows,
+                                        &board_id,
+                                    );
+                                if !options.is_empty() {
+                                    board_space_options.set(options);
+                                }
+                                if projected_board_id.as_deref() == Some(board_id.as_str()) {
+                                    let list_count = projected_columns.len();
+                                    let card_count = projected_columns
+                                        .iter()
+                                        .map(|column| column.cards.len())
+                                        .sum::<usize>();
+                                    columns.set(projected_columns);
+                                    projection_source.set(BoardProjectionSource::ApiDerived);
+                                    board_status.set(format!(
+                                        "Board loaded: {list_count} list(s), {card_count} card(s)"
+                                    ));
+                                } else {
+                                    columns.set(Vec::new());
+                                    adding_card_to.set(None);
+                                    board_status.set(format!(
+                                        "No list projection available for selected Board · {board_id}"
+                                    ));
+                                }
+                            },
                             option {
-                                value: "{board_option.id}",
-                                selected: selected_board_space_id() == board_option.id,
-                                "{board_option.title}"
+                                value: "",
+                                selected: selected_board_space_id().is_empty(),
+                                "Select board"
                             }
-                        }
-                    }
-                        details { class: "board-create-menu",
-                            summary { class: "btn sm secondary", "New board" }
-                            div { class: "board-popover-panel",
-                                input {
-                                    "data-testid": "new-board-title-input",
-                                    value: "{new_board_title}",
-                                    placeholder: "Board title",
-                                    oninput: move |evt| new_board_title.set(evt.value()),
-                                }
-                                button {
-                                    class: "primary",
-                                    "data-testid": "create-board-space-button",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let space = selected_space.clone();
-                                        let actor = account_did.clone();
-                                        move |_| {
-                                            let title = new_board_title().trim().to_owned();
-                                            if title.is_empty() {
-                                                board_status.set("board title is required".to_owned());
-                                                return;
-                                            }
-                                            if actor.trim().is_empty() {
-                                                board_status.set("sign in before creating a Board".to_owned());
-                                                return;
-                                            }
-                                            let board_space_id = format!("cx:space:{}", uuid_v7());
-                                            board_space_options.write().push(BoardSpaceOption {
-                                                id: board_space_id.clone(),
-                                                title: title.clone(),
-                                                state: SpaceContainerLifecycleState::Active,
-                                            });
-                                            selected_board_space_id.set(board_space_id.clone());
-                                            let op = crate::operation::cx_ops::space_create(
-                                                &space,
-                                                &actor,
-                                                &board_space_id,
-                                                "board",
-                                                &title,
-                                                None,
-                                                None,
-                                            )
-                                            .build("yougen");
-                                            submit_kanban_operation_event(
-                                                base.clone(),
-                                                token,
-                                                space.clone(),
-                                                op,
-                                                state_store,
-                                                board_status,
-                                            );
-                                            new_board_title.set("Board".to_owned());
-                                        }
-                                    },
-                                    "Create Board"
+                            for board_option in board_space_options().iter() {
+                                option {
+                                    value: "{board_option.id}",
+                                    selected: selected_board_space_id() == board_option.id,
+                                    "{board_option.title}"
                                 }
                             }
                         }
-                        details { class: "board-projection-menu",
-                            summary { class: "btn sm secondary", "Projection" }
-                            div { class: "board-popover-panel board-projection-panel",
-                                label { class: "field board-inline-field",
-                                    span { "View ID" }
+                        div {
+                            class: if board_popover() == BoardToolbarPopover::CreateBoard { "board-popover-host is-open" } else { "board-popover-host" },
+                            button {
+                                class: "btn sm secondary board-popover-trigger",
+                                "data-testid": "new-board-toggle",
+                                onclick: move |_| {
+                                    let next = if board_popover() == BoardToolbarPopover::CreateBoard {
+                                        BoardToolbarPopover::None
+                                    } else {
+                                        BoardToolbarPopover::CreateBoard
+                                    };
+                                    board_popover.set(next);
+                                },
+                                "New board"
+                            }
+                            if board_popover() == BoardToolbarPopover::CreateBoard {
+                                div {
+                                    class: "board-popover-panel",
+                                    onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                     input {
-                                        "data-testid": "board-view-id-input",
-                                        value: "{board_view_id}",
-                                        placeholder: "cx:view:...",
-                                        oninput: move |evt| board_view_id.set(evt.value()),
+                                        "data-testid": "new-board-title-input",
+                                        value: "{new_board_title}",
+                                        placeholder: "Board title",
+                                        oninput: move |evt| new_board_title.set(evt.value()),
                                     }
-                                }
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "board-projection-refresh",
-                                    onclick: {
-                                        // T20 — real API call to soland's
-                                        // POST /api/v1/views/:id/projection. Demo seed is
-                                        // opt-in so normal boards never show fake cards.
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            let view = board_view_id();
-                                            if view.trim().is_empty() {
-                                                board_status.set(
-                                                    "enter a Board View ID before refreshing collection projection"
-                                                        .to_owned(),
-                                                );
-                                                return;
-                                            }
-                                            spawn(async move {
-                                                match with_authed_api(&base, api_token, |api| async move {
-                                                    api.collection_projection(&view).await
-                                                })
-                                                .await
-                                                {
-                                                    Ok(projection) => {
-                                                        let cols = collection_projection_to_columns(&projection);
-                                                        if !cols.is_empty() {
-                                                            columns.set(cols);
-                                                        }
-                                                        projection_source.set(BoardProjectionSource::ApiDerived);
-                                                        board_status.set(format!(
-                                                            "API projection · {} groups · view={}",
-                                                            projection.groups.len(),
-                                                            projection.view_id.as_str()
-                                                        ));
-                                                    }
-                                                    Err(err) => {
-                                                        if seed_fallback_allowed {
-                                                            columns.set(seed_columns());
-                                                            projection_source.set(BoardProjectionSource::SeedFallback);
-                                                            board_status.set(format!(
-                                                                "Board data unavailable: {}; showing sample fallback",
-                                                                err.display()
-                                                            ));
-                                                        } else {
-                                                            columns.set(Vec::new());
-                                                            projection_source.set(BoardProjectionSource::Unavailable);
-                                                            board_status.set(format!(
-                                                                "Board data unavailable: {}; sample fallback disabled",
-                                                                err.display()
-                                                            ));
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    },
-                                    {crate::i18n::tr("kanban.refresh_from_api")}
-                                }
-                                details { class: "board-diagnostics", "data-testid": "board-diagnostics",
-                                    summary { "Diagnostics" }
-                                    div { class: "actions", "data-testid": "board-write-states",
-                                        for state in write_state_samples() {
-                                            span { class: state.class_name(), "{state.label()}" }
-                                        }
-                                    }
-                                    div { class: "metric-grid", "data-testid": "board-projection-model",
-                                        div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
-                                        div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
-                                        div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                                        div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
-                                        div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
-                                    }
-                                    div { class: "muted",
-                                        "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires YOUGEN_ALLOW_KANBAN_SEED_FALLBACK=1."
-                                    }
-                                }
-                            }
-                        }
-                        details { class: "board-queue-menu", "data-testid": "board-offline-queue",
-                            summary { class: "btn sm secondary",
-                                "Queue {write_record_count}"
-                            }
-                            div { class: "board-popover-panel board-queue-panel",
-                                div { class: "actions board-queue-actions",
                                     button {
-                                        class: "secondary",
-                                        "data-testid": "replay-board-queue",
+                                        class: "primary",
+                                        "data-testid": "create-board-space-button",
                                         onclick: {
-                                            // Replay path resubmits a queued Move via
-                                            // api.submit_move.
                                             let base = base_url.clone();
+                                            let space = selected_space.clone();
+                                            let actor = account_did.clone();
                                             move |_| {
-                                                replay_first_move(
+                                                let title = new_board_title().trim().to_owned();
+                                                if title.is_empty() {
+                                                    board_status.set("board title is required".to_owned());
+                                                    return;
+                                                }
+                                                if actor.trim().is_empty() {
+                                                    board_status.set("sign in before creating a Board".to_owned());
+                                                    return;
+                                                }
+                                                let board_space_id = format!("cx:space:{}", uuid_v7());
+                                                board_space_options.write().push(BoardSpaceOption {
+                                                    id: board_space_id.clone(),
+                                                    title: title.clone(),
+                                                    state: SpaceContainerLifecycleState::Active,
+                                                });
+                                                selected_board_space_id.set(board_space_id.clone());
+                                                columns.set(Vec::new());
+                                                adding_card_to.set(None);
+                                                let op = crate::operation::cx_ops::space_create(
+                                                    &space,
+                                                    &actor,
+                                                    &board_space_id,
+                                                    "board",
+                                                    &title,
+                                                    None,
+                                                    None,
+                                                )
+                                                .build("yougen");
+                                                submit_kanban_operation_event(
                                                     base.clone(),
                                                     token,
-                                                    write_records,
+                                                    space.clone(),
+                                                    op,
+                                                    state_store,
                                                     board_status,
                                                 );
+                                                board_status.set("Board created. Add a list before adding cards.".to_owned());
+                                                new_board_title.set("Board".to_owned());
+                                                board_popover.set(BoardToolbarPopover::None);
                                             }
                                         },
-                                        "Replay Queue"
+                                        "Create Board"
                                     }
-                                    span { class: "muted", "{manual_review_count} review / {write_record_count} total" }
                                 }
-                                div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
-                                for record in write_records() {
-                                    div { class: "event", "data-testid": "board-event-record",
-                                        div { class: "event-head",
-                                            span { "{record.kind}" }
-                                            span { class: record.state.class_name(), "{record.state.label()}" }
+                            }
+                        }
+                        div {
+                            class: if board_popover() == BoardToolbarPopover::Projection { "board-popover-host is-open" } else { "board-popover-host" },
+                            button {
+                                class: "btn sm secondary board-popover-trigger",
+                                "data-testid": "board-projection-toggle",
+                                onclick: move |_| {
+                                    let next = if board_popover() == BoardToolbarPopover::Projection {
+                                        BoardToolbarPopover::None
+                                    } else {
+                                        BoardToolbarPopover::Projection
+                                    };
+                                    board_popover.set(next);
+                                },
+                                "Projection"
+                            }
+                            if board_popover() == BoardToolbarPopover::Projection {
+                                div {
+                                    class: "board-popover-panel board-projection-panel",
+                                    onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                                    label { class: "field board-inline-field",
+                                        span { "View ID" }
+                                        input {
+                                            "data-testid": "board-view-id-input",
+                                            value: "{board_view_id}",
+                                            placeholder: "cx:view:...",
+                                            oninput: move |evt| board_view_id.set(evt.value()),
                                         }
-                                        div { class: "muted", "move_id {record.move_id}" }
-                                        div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
-                                        div { class: "muted", "anchor_ref {record.anchor_ref}" }
-                                        div { class: "muted", "effect {record.effect_summary}" }
-                                        div { class: "muted", "{record.note}" }
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "board-projection-refresh",
+                                        onclick: {
+                                            // T20 — real API call to soland's
+                                            // POST /api/v1/views/:id/projection. Demo seed is
+                                            // opt-in so normal boards never show fake cards.
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let api_token = token();
+                                                let view = board_view_id();
+                                                if view.trim().is_empty() {
+                                                    board_status.set(
+                                                        "enter a Board View ID before refreshing collection projection"
+                                                            .to_owned(),
+                                                    );
+                                                    return;
+                                                }
+                                                board_popover.set(BoardToolbarPopover::None);
+                                                spawn(async move {
+                                                    match with_authed_api(&base, api_token, |api| async move {
+                                                        api.collection_projection(&view).await
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(projection) => {
+                                                            let cols = collection_projection_to_columns(&projection);
+                                                            if !cols.is_empty() {
+                                                                columns.set(cols);
+                                                            }
+                                                            projection_source.set(BoardProjectionSource::ApiDerived);
+                                                            board_status.set(format!(
+                                                                "API projection · {} groups · view={}",
+                                                                projection.groups.len(),
+                                                                projection.view_id.as_str()
+                                                            ));
+                                                        }
+                                                        Err(err) => {
+                                                            if seed_fallback_allowed {
+                                                                columns.set(seed_columns());
+                                                                projection_source.set(BoardProjectionSource::SeedFallback);
+                                                                board_status.set(format!(
+                                                                    "Board data unavailable: {}; showing sample fallback",
+                                                                    err.display()
+                                                                ));
+                                                            } else {
+                                                                columns.set(Vec::new());
+                                                                projection_source.set(BoardProjectionSource::Unavailable);
+                                                                board_status.set(format!(
+                                                                    "Board data unavailable: {}; sample fallback disabled",
+                                                                    err.display()
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        {crate::i18n::tr("kanban.refresh_from_api")}
+                                    }
+                                    details { class: "board-diagnostics", "data-testid": "board-diagnostics",
+                                        summary { "Diagnostics" }
+                                        div { class: "actions", "data-testid": "board-write-states",
+                                            for state in write_state_samples() {
+                                                span { class: state.class_name(), "{state.label()}" }
+                                            }
+                                        }
+                                        div { class: "metric-grid", "data-testid": "board-projection-model",
+                                            div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
+                                            div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
+                                            div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
+                                            div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
+                                            div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
+                                        }
+                                        div { class: "muted",
+                                            "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires YOUGEN_ALLOW_KANBAN_SEED_FALLBACK=1."
+                                        }
                                     }
                                 }
-                                if write_records().is_empty() {
-                                    div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
+                            }
+                        }
+                        div {
+                            class: if board_popover() == BoardToolbarPopover::Queue { "board-popover-host is-open" } else { "board-popover-host" },
+                            "data-testid": "board-offline-queue",
+                            button {
+                                class: "btn sm secondary board-popover-trigger",
+                                "data-testid": "board-queue-toggle",
+                                onclick: move |_| {
+                                    let next = if board_popover() == BoardToolbarPopover::Queue {
+                                        BoardToolbarPopover::None
+                                    } else {
+                                        BoardToolbarPopover::Queue
+                                    };
+                                    board_popover.set(next);
+                                },
+                                "Queue {write_record_count}"
+                            }
+                            if board_popover() == BoardToolbarPopover::Queue {
+                                div {
+                                    class: "board-popover-panel board-queue-panel",
+                                    onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                                    div { class: "actions board-queue-actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "replay-board-queue",
+                                            onclick: {
+                                                // Replay path resubmits a queued Move via
+                                                // api.submit_move.
+                                                let base = base_url.clone();
+                                                move |_| {
+                                                    replay_first_move(
+                                                        base.clone(),
+                                                        token,
+                                                        write_records,
+                                                        board_status,
+                                                    );
+                                                }
+                                            },
+                                            "Replay Queue"
+                                        }
+                                        span { class: "muted", "{manual_review_count} review / {write_record_count} total" }
+                                    }
+                                    div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
+                                    for record in write_records() {
+                                        div { class: "event", "data-testid": "board-event-record",
+                                            div { class: "event-head",
+                                                span { "{record.kind}" }
+                                                span { class: record.state.class_name(), "{record.state.label()}" }
+                                            }
+                                            div { class: "muted", "move_id {record.move_id}" }
+                                            div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
+                                            div { class: "muted", "anchor_ref {record.anchor_ref}" }
+                                            div { class: "muted", "effect {record.effect_summary}" }
+                                            div { class: "muted", "{record.note}" }
+                                        }
+                                    }
+                                    if write_records().is_empty() {
+                                        div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                div { class: "board-toolbar-secondary",
-                    div { class: "actions board-list-compose",
-                        input {
-                            "data-testid": "new-column-input",
-                            value: "{new_column_title}",
-                            placeholder: "New list title",
-                            oninput: move |evt| new_column_title.set(evt.value()),
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "add-column-button",
-                            onclick: {
-                                // Lists are Space containers in v1. The optimistic
-                                // local column uses the new Space-container id while
-                                // the write submits `cx.space.create`.
-                                let base = base_url.clone();
-                                let space = selected_space.clone();
-                                let actor = account_did.clone();
-                                move |_| {
-                                    let title = new_column_title().trim().to_owned();
-                                    if title.is_empty() {
-                                        return;
+                if board_selected {
+                    div { class: "board-toolbar-secondary",
+                        div { class: "actions board-list-compose",
+                            input {
+                                "data-testid": "new-column-input",
+                                value: "{new_column_title}",
+                                placeholder: "New list title",
+                                oninput: move |evt| new_column_title.set(evt.value()),
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "add-column-button",
+                                onclick: {
+                                    // Lists are Space containers in v1. The optimistic
+                                    // local column uses the new Space-container id while
+                                    // the write submits `cx.space.create`.
+                                    let base = base_url.clone();
+                                    let space = selected_space.clone();
+                                    let actor = account_did.clone();
+                                    move |_| {
+                                        let title = new_column_title().trim().to_owned();
+                                        if title.is_empty() {
+                                            return;
+                                        }
+                                        if actor.trim().is_empty() {
+                                            board_status.set("sign in before adding lists".to_owned());
+                                            return;
+                                        }
+                                        let board_space_id = selected_board_space_id();
+                                        if board_space_id.trim().is_empty() {
+                                            board_status.set("select or create a Board Space before adding lists".to_owned());
+                                            return;
+                                        }
+                                        let col_count = columns().len();
+                                        let rank = format!("r{:03}", col_count + 1);
+                                        let list_space_id = format!("cx:space:{}", uuid_v7());
+                                        columns.write().push(KanbanColumn {
+                                            id: list_space_id.clone(),
+                                            title: title.clone(),
+                                            rank: rank.clone(),
+                                            cards: Vec::new(),
+                                            state: SpaceContainerLifecycleState::Active,
+                                        });
+                                        let op = crate::operation::cx_ops::space_create(
+                                            &space,
+                                            &actor,
+                                            &list_space_id,
+                                            "list",
+                                            &title,
+                                            Some(&board_space_id),
+                                            Some(&rank),
+                                        )
+                                        .build("yougen");
+                                        submit_kanban_operation_event(
+                                            base.clone(),
+                                            token,
+                                            space.clone(),
+                                            op,
+                                            state_store,
+                                            board_status,
+                                        );
+                                        new_column_title.set(String::new());
                                     }
-                                    if actor.trim().is_empty() {
-                                        board_status.set("sign in before adding lists".to_owned());
-                                        return;
-                                    }
-                                    let board_space_id = selected_board_space_id();
-                                    if board_space_id.trim().is_empty() {
-                                        board_status.set("select or create a Board Space before adding lists".to_owned());
-                                        return;
-                                    }
-                                    let col_count = columns().len();
-                                    let rank = format!("r{:03}", col_count + 1);
-                                    let list_space_id = format!("cx:space:{}", uuid_v7());
-                                    columns.write().push(KanbanColumn {
-                                        id: list_space_id.clone(),
-                                        title: title.clone(),
-                                        rank: rank.clone(),
-                                        cards: Vec::new(),
-                                        state: SpaceContainerLifecycleState::Active,
-                                    });
-                                    let op = crate::operation::cx_ops::space_create(
-                                        &space,
-                                        &actor,
-                                        &list_space_id,
-                                        "list",
-                                        &title,
-                                        Some(&board_space_id),
-                                        Some(&rank),
-                                    )
-                                    .build("yougen");
-                                    submit_kanban_operation_event(
-                                        base.clone(),
-                                        token,
-                                        space.clone(),
-                                        op,
-                                        state_store,
-                                        board_status,
-                                    );
-                                    new_column_title.set(String::new());
-                                }
-                            },
-                            {crate::i18n::tr("kanban.add_list")}
-                        }
-                    }
-                    div { class: "actions board-renderer-tabs", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
-                    span { class: "muted board-control-label", "View" }
-                    button {
-                        class: "badge blue board-renderer-tab",
-                        "data-testid": "renderer-board",
-                        role: "tab",
-                        "aria-selected": "true",
-                        title: "Board view is active",
-                        "board"
-                    }
-                    for renderer in ["list", "table", "calendar", "timeline", "graph"] {
-                        button {
-                            class: "badge board-renderer-tab is-disabled",
-                            "data-testid": "renderer-{renderer}",
-                            role: "tab",
-                            "aria-selected": "false",
-                            "aria-disabled": "true",
-                            disabled: true,
-                            title: "{renderer} view is not available yet",
-                            "{renderer}"
+                                },
+                                {crate::i18n::tr("kanban.add_list")}
+                            }
                         }
                     }
-                }
                 }
                 div { class: "board-status-row",
                     div { class: "actions board-source-pill", "data-testid": "board-projection-source",
@@ -1383,12 +1438,22 @@ pub fn KanbanPanel(
             div { class: "{board_grid_class}", "data-testid": "kanban-board-grid",
                 if visible_columns.is_empty() {
                     div { class: "board-empty-state",
-                        EmptyState {
-                            title: "Board".to_owned(),
-                            kind: EmptyStateKind::Empty,
-                            message: Some("No persisted Board/List/Card projection is available for this Space.".to_owned()),
-                            badge_override: Some("no persisted data".to_owned()),
-                            test_id: Some("kanban-empty-board".to_owned()),
+                        if board_selected {
+                            EmptyState {
+                                title: "No lists yet".to_owned(),
+                                kind: EmptyStateKind::Empty,
+                                message: Some("Add a list before adding cards to this board.".to_owned()),
+                                badge_override: Some("empty board".to_owned()),
+                                test_id: Some("kanban-empty-board".to_owned()),
+                            }
+                        } else {
+                            EmptyState {
+                                title: "No board selected".to_owned(),
+                                kind: EmptyStateKind::Empty,
+                                message: Some("Create or select a board before adding lists and cards.".to_owned()),
+                                badge_override: Some("select board".to_owned()),
+                                test_id: Some("kanban-empty-board".to_owned()),
+                            }
                         }
                     }
                 } else {
@@ -1967,10 +2032,35 @@ pub fn KanbanPanel(
             }
 
             if let Some(ref card) = selected_card() {
-                div { class: "event card-detail-drawer", "data-testid": "card-detail-modal",
-                    div { class: "event-head",
-                        span { "Card Detail" }
-                        span { "{card.id} / {card.state.label()}" }
+                div {
+                    class: "card-detail-overlay",
+                    "data-testid": "card-detail-overlay",
+                    role: "presentation",
+                    onclick: move |_| {
+                        selected_card.set(None);
+                        editing_card_detail.set(false);
+                    },
+                    div {
+                        class: "event card-detail-popup",
+                        "data-testid": "card-detail-modal",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                    div { class: "event-head card-detail-header",
+                        div {
+                            span { "Card Detail" }
+                            span { class: "muted", "{card.id} / {card.state.label()}" }
+                        }
+                        button {
+                            class: "secondary card-detail-close",
+                            "data-testid": "card-detail-close-button",
+                            "aria-label": "Close card detail",
+                            onclick: move |_| {
+                                selected_card.set(None);
+                                editing_card_detail.set(false);
+                            },
+                            {crate::i18n::tr("common.close")}
+                        }
                     }
                     if editing_card_detail() {
                         div { class: "workflow-form", "data-testid": "card-detail-edit-form",
@@ -2351,10 +2441,14 @@ pub fn KanbanPanel(
                         }
                         button {
                             class: "secondary",
-                            onclick: move |_| selected_card.set(None),
+                            onclick: move |_| {
+                                selected_card.set(None);
+                                editing_card_detail.set(false);
+                            },
                             {crate::i18n::tr("common.close")}
                         }
                     }
+                }
                 }
             }
         }

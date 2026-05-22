@@ -15,9 +15,11 @@
 //!   (or it's the `"-"` sentinel). Subsequent iterations resume with
 //!   `after=<cursor>&catchup=true`.
 //! * **Server-authoritative reconcile**: on a full sync the response is
-//!   the truth — any cached projection not in `response.spaces` gets
-//!   pruned via `LocalStateStore::retain_space_projections`. On
-//!   incremental, soland's `left_spaces` field is the prune signal.
+//!   the truth for top-level Realm membership. Nested container Spaces
+//!   may not appear as top-level `response.spaces` entries, so locally
+//!   projected Spaces are retained while their home Realm remains in
+//!   the full-sync response. On incremental, soland's `left_spaces`
+//!   field is the prune signal.
 //! * **Lifecycle via generation counter**: callers (login / logout /
 //!   server-switch) bump the engine's `generation` Signal; the loop
 //!   notices on the next iteration and exits cleanly. A fresh engine
@@ -289,11 +291,17 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
         store.save_sync_cursor(response.cursor.clone());
 
         if is_full_sync {
-            // Server-authoritative: drop projections the server didn't
-            // include. Without this, a Space the viewer left would
-            // linger because `save_space_projection` is upsert-only.
+            // Server-authoritative for top-level Realm membership:
+            // drop projections the server didn't include, except local
+            // Space-container projections whose home Realm is still
+            // present. Containers are not guaranteed to arrive as
+            // top-level sync entries.
             let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
-            let pruned = store.retain_space_projections(|id| server_set.contains(id));
+            let keep_set = crate::app::full_sync_projection_keep_set(
+                &server_set,
+                &store.load().space_projections,
+            );
+            let pruned = store.retain_space_projections(|id| keep_set.contains(id));
             if !pruned.is_empty() {
                 tracing::info!(
                     pruned_count = pruned.len(),
@@ -469,8 +477,9 @@ mod tests {
         // Bench against the store directly — we don't need the dioxus
         // signals to verify the reconcile semantics. The signal-side
         // wiring is exercised by the lib's integration tests; the unit
-        // contract here is "after a full sync, only server-reported
-        // ids remain in the store".
+        // contract here is "after a full sync, server-reported ids
+        // remain, plus nested Space containers under still-joined
+        // Realms".
         let path = std::env::temp_dir().join(format!(
             "yougen-engine-prune-{}.json",
             std::time::SystemTime::now()
@@ -479,22 +488,33 @@ mod tests {
                 .as_nanos(),
         ));
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("cx:space:a", json!({"name": "A"}));
-        store.save_space_projection("cx:space:b", json!({"name": "B"}));
+        store.save_space_projection("cx:realm:a", json!({"summary": {"title": "A"}}));
+        store.save_space_projection(
+            "cx:space:child",
+            json!({
+                "__kind": "space",
+                "realm_id": "cx:realm:a",
+                "summary": {"title": "Child"}
+            }),
+        );
+        store.save_space_projection("cx:space:b", json!({"summary": {"title": "B"}}));
         store.save_draft("cx:space:b", "draft-b");
 
         let mut response = empty_response("sx:42");
         response
             .spaces
-            .insert("cx:space:a".to_owned(), json!({"name": "A"}));
+            .insert("cx:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
 
         // Mirror the engine's full-sync prune step.
         let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
-        let pruned = store.retain_space_projections(|id| server_set.contains(id));
+        let keep_set =
+            crate::app::full_sync_projection_keep_set(&server_set, &store.load().space_projections);
+        let pruned = store.retain_space_projections(|id| keep_set.contains(id));
         assert_eq!(pruned, vec!["cx:space:b".to_owned()]);
 
         let state = store.load();
-        assert!(state.space_projections.contains_key("cx:space:a"));
+        assert!(state.space_projections.contains_key("cx:realm:a"));
+        assert!(state.space_projections.contains_key("cx:space:child"));
         assert!(!state.space_projections.contains_key("cx:space:b"));
         assert!(!state.drafts.contains_key("cx:space:b"));
     }

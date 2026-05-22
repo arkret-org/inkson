@@ -65,25 +65,13 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 30_000 });
   });
 
-  test("board: multi-renderer header switches View.kind=collection renderer", async ({ page }) => {
-    // Kanban's multi-renderer switcher MUST expose every
-    // spec-declared View.kind=collection renderer
-    // (board/list/table/calendar/timeline/graph) as a `data-testid=
-    // renderer-*` tab. Soland's `cx.view.update` projection then
-    // writes the chosen renderer back; this test pins the surface so a
-    // future trim of the tab list (or rename) regresses loudly.
+  test("board: omits dormant View renderer controls", async ({ page }) => {
+    // The kanban surface should not expose disabled View renderer
+    // placeholders until those renderers are wired to real behavior.
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId("view-renderer-switcher")).toBeVisible();
-    for (const renderer of ["board", "list", "table", "calendar", "timeline", "graph"]) {
-      await expect(page.getByTestId(`renderer-${renderer}`)).toBeVisible();
-    }
-    // The default selected renderer is `board` (matches spec
-    // `View{kind=collection, renderer=board}` default).
-    await expect(page.getByTestId("renderer-board")).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
+    await expect(page.getByTestId("renderer-board")).toHaveCount(0);
   });
 
   // ---- Flow detail · synthesis vs discussion ----

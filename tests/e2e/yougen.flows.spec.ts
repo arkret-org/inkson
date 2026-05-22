@@ -8,6 +8,9 @@ const LIVE_DEVICE_ID = process.env.YOUGEN_E2E_LIVE_DEVICE_ID ?? "dev_alice";
 const LIVE_SESSION_TOKEN = process.env.YOUGEN_E2E_LIVE_SESSION_TOKEN ?? "sx:e2e-token";
 const DEMO_SPACE =
   process.env.YOUGEN_E2E_LIVE_SPACE_ID ?? "cx:space:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = DEMO_SPACE.replace(/^cx:space:/, "cx:realm:");
+const CHILD_SPACE = "cx:space:01launchchild0000000000000";
+const CHILD_REALM = CHILD_SPACE.replace(/^cx:space:/, "cx:realm:");
 
 function isLiveSmoke(title: string) {
   return title.startsWith("live smoke ");
@@ -395,10 +398,50 @@ test("topbar theme toggle takes effect on the first click from system dark", asy
 test("kanban card detail exposes linked discussion and locked discussion boundaries", async ({ page }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
-  await expect(page.getByTestId("card-detail-modal")).toContainText("Primary discussion");
-  await expect(page.getByTestId("card-detail-modal")).toContainText("Locked discussion");
-  await expect(page.getByTestId("card-detail-modal")).toContainText("card visibility != discussion visibility");
+  const detailPopup = page.getByTestId("card-detail-modal");
+  await expect(page.getByTestId("card-detail-overlay")).toBeVisible();
+  await expect(detailPopup).toHaveAttribute("role", "dialog");
+  await expect(detailPopup).toContainText("Primary discussion");
+  await expect(detailPopup).toContainText("Locked discussion");
+  await expect(detailPopup).toContainText("card visibility != discussion visibility");
   await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
+  await page.getByTestId("card-detail-close-button").click();
+  await expect(detailPopup).toHaveCount(0);
+});
+
+test("kanban hides list creation until a board exists", async ({ page }) => {
+  await page.route("**/api/v1/projection/spaces**", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], total: 0, spaces: [] }),
+    });
+  });
+  await page.route("**/api/v1/projection/flows**", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], total: 0, flows: [] }),
+    });
+  });
+
+  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.getByTestId("kanban-empty-board")).toContainText("No board selected");
+  await expect(page.getByTestId("add-column-button")).toHaveCount(0);
+  await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
+  await expect(page.getByTestId("board-space-selector")).not.toContainText("BOARD");
+
+  await page.getByTestId("new-board-toggle").click();
+  await expect(page.getByTestId("new-board-title-input")).toBeVisible();
+  await page.mouse.click(12, 12);
+  await expect(page.getByTestId("new-board-title-input")).toHaveCount(0);
+
+  await page.getByTestId("new-board-toggle").click();
+  await page.getByTestId("new-board-title-input").fill("Design board");
+  await page.getByTestId("create-board-space-button").click();
+  await expect(page.getByTestId("add-column-button")).toBeVisible();
+  await expect(page.getByTestId("kanban-empty-board")).toContainText("No lists yet");
 });
 
 test("kanban queues canonical event submissions and quarantines manual replay", async ({ page }) => {
@@ -415,7 +458,7 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
     (component: { family?: string }) => component.family === "cx.component.flow.position.v1",
   );
   expect(positionComponent?.family).toBe("cx.component.flow.position.v1");
-  await page.locator('[data-testid="board-offline-queue"] > summary').click();
+  await page.getByTestId("board-queue-toggle").click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
@@ -429,9 +472,7 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
 
 test("kanban board selector swaps projected board columns", async ({ page }) => {
   await openKanban(page);
-  await expect(page.getByTestId("renderer-board")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("renderer-list")).toBeDisabled();
-  await expect(page.getByTestId("renderer-calendar")).toBeDisabled();
+  await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
   await expect(page.getByTestId("kanban-board-grid")).toContainText("Legal review for public beta");
 
   await page.getByTestId("board-space-select").selectOption({ label: "Secondary planning board" });
@@ -588,6 +629,70 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("call-panel")).not.toContainText("signaling-only");
 });
 
+test("setup realm form stays in the main workspace layout", async ({ page }) => {
+  await refreshServer(page);
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("setup-panel")).toBeVisible();
+
+  const measureLayout = () => page.evaluate(() => {
+    const rectOf = (selector: string) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect
+        ? { left: rect.left, right: rect.right, top: rect.top, width: rect.width }
+        : null;
+    };
+    return {
+      sidebar: rectOf('[data-testid="sidebar"]'),
+      main: rectOf('[data-testid="main-view"]'),
+      setup: rectOf('[data-testid="setup-panel"]'),
+      header: rectOf(".workspace-header"),
+    };
+  });
+
+  const assertWorkspaceLayout = (layout: Awaited<ReturnType<typeof measureLayout>>) => {
+    expect(layout.sidebar).not.toBeNull();
+    expect(layout.main).not.toBeNull();
+    expect(layout.setup).not.toBeNull();
+    expect(layout.header).not.toBeNull();
+
+    expect(layout.sidebar!.top).toBeLessThanOrEqual(2);
+    expect(layout.main!.top).toBeLessThanOrEqual(2);
+    expect(Math.abs(layout.main!.top - layout.sidebar!.top)).toBeLessThanOrEqual(2);
+    expect(Math.abs(layout.header!.top - layout.main!.top)).toBeLessThanOrEqual(2);
+
+    const horizontalOverlap = Math.max(
+      0,
+      Math.min(layout.setup!.right, layout.sidebar!.right) -
+        Math.max(layout.setup!.left, layout.sidebar!.left),
+    );
+    expect(horizontalOverlap).toBeLessThanOrEqual(2);
+    expect(layout.setup!.left).toBeGreaterThanOrEqual(layout.main!.left - 2);
+    expect(layout.setup!.right).toBeLessThanOrEqual(layout.main!.right + 2);
+    expect(layout.setup!.top).toBeGreaterThan(layout.header!.top);
+    expect(layout.setup!.width).toBeGreaterThan(640);
+  };
+
+  const layout = await measureLayout();
+  assertWorkspaceLayout(layout);
+
+  await page.evaluate(() => {
+    const accountKey = "did:web:alice.example";
+    const encrypted = [...new TextEncoder().encode("ar")]
+      .map((byte, index) => {
+        const keyByte = accountKey.charCodeAt(index % accountKey.length);
+        return (byte ^ keyByte).toString(16).padStart(2, "0");
+      })
+      .join("");
+    const state = JSON.parse(localStorage.getItem("yougen.local_state.v1") ?? "{}");
+    state.private_data = { ...(state.private_data ?? {}), locale: encrypted };
+    localStorage.setItem("yougen.local_state.v1", JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "rtl");
+  await expect(page.getByTestId("setup-panel")).toBeVisible();
+  assertWorkspaceLayout(await measureLayout());
+});
+
 test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
   await refreshServer(page);
   await page.getByTestId("topbar-notifications-button").click();
@@ -621,28 +726,6 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
-  const setupLayout = await page.evaluate(() => {
-    const rectOf = (selector: string) => {
-      const rect = document.querySelector(selector)?.getBoundingClientRect();
-      return rect
-        ? { left: rect.left, right: rect.right, top: rect.top, width: rect.width }
-        : null;
-    };
-    return {
-      sidebar: rectOf('[data-testid="sidebar"]'),
-      main: rectOf('[data-testid="main-view"]'),
-      setup: rectOf('[data-testid="setup-panel"]'),
-      header: rectOf(".workspace-header"),
-    };
-  });
-  expect(setupLayout.sidebar).not.toBeNull();
-  expect(setupLayout.main).not.toBeNull();
-  expect(setupLayout.setup).not.toBeNull();
-  expect(setupLayout.header).not.toBeNull();
-  expect(setupLayout.setup!.left).toBeGreaterThanOrEqual(setupLayout.main!.left);
-  expect(setupLayout.setup!.left).toBeGreaterThan(setupLayout.sidebar!.right - 2);
-  expect(setupLayout.setup!.top).toBeGreaterThan(setupLayout.header!.top);
-  expect(setupLayout.setup!.width).toBeGreaterThan(640);
   await expect(page.getByTestId("space-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
@@ -971,9 +1054,26 @@ test("kanban card drag queues a flow move", async ({ page }) => {
 
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
 
-  await page.locator('[data-testid="board-offline-queue"] > summary').click();
+  await page.getByTestId("board-queue-toggle").click();
   await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.move");
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
+});
+
+test("kanban projections use home Realm for nested Spaces", async ({ page }) => {
+  await refreshServer(page);
+  const projectionRealmIds: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/projection/spaces" || url.pathname === "/api/v1/projection/flows") {
+      projectionRealmIds.push(url.searchParams.get("realm_id") ?? "");
+    }
+  });
+
+  await page.goto(`/kanban/${CHILD_SPACE}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+
+  await expect.poll(() => projectionRealmIds, { timeout: 20_000 }).toContain(DEMO_REALM);
+  expect(projectionRealmIds).not.toContain(CHILD_REALM);
 });
 
 test("plaintext compose keeps request ids, revision chains, tombstones, and local MLS entries", async ({ page }) => {

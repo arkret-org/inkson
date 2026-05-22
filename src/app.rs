@@ -14,7 +14,10 @@ use crate::{
     },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
-    models::{ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind},
+    models::{
+        ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
+        projection_realm_id_for_known_space,
+    },
     routes::Route,
     views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
 };
@@ -522,7 +525,6 @@ body {
 
 .board-toolbar-controls,
 .board-list-compose,
-.board-renderer-tabs,
 .board-source-pill,
 .board-queue-actions {
   align-items: center;
@@ -530,20 +532,8 @@ body {
   flex-wrap: nowrap;
 }
 
-.board-renderer-tab {
-  appearance: none;
-  border: 0;
-  cursor: default;
-  font: inherit;
-  line-height: 1.2;
-}
-
-.board-renderer-tab.is-disabled {
-  opacity: 0.58;
-}
-
 .board-toolbar-secondary {
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: wrap;
 }
 
@@ -552,7 +542,26 @@ body {
 }
 
 .board-list-compose input {
+  width: 100%;
   max-width: 360px;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--border, var(--cx-line-strong));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface, var(--cx-surface));
+  color: var(--cx-ink);
+}
+
+.board-popover-panel input {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--border, var(--cx-line-strong));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface, var(--cx-surface));
+  color: var(--cx-ink);
 }
 
 .board-control-label {
@@ -567,37 +576,39 @@ body {
   max-width: 260px;
 }
 
-.board-create-menu,
-.board-projection-menu,
-.board-queue-menu {
+.board-popover-host {
   position: relative;
 }
 
-.board-create-menu > summary,
-.board-projection-menu > summary,
-.board-queue-menu > summary {
-  list-style: none;
+.board-popover-host.is-open {
+  z-index: 50;
 }
 
-.board-create-menu > summary::-webkit-details-marker,
-.board-projection-menu > summary::-webkit-details-marker,
-.board-queue-menu > summary::-webkit-details-marker {
-  display: none;
+.board-popover-trigger {
+  position: relative;
+  z-index: 42;
+}
+
+.board-popover-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: transparent;
 }
 
 .board-popover-panel {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  z-index: 40;
+  z-index: 43;
   width: min(360px, calc(100vw - 48px));
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, var(--cx-line));
   border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
+  background: var(--surface, var(--cx-surface));
+  box-shadow: var(--shadow-md, var(--cx-shadow));
 }
 
 .board-projection-panel {
@@ -770,7 +781,43 @@ body {
 .board-maintenance > .event {
   margin-top: 8px;
 }
-.card-detail-drawer { border-color: var(--cx-brand); }
+.card-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px 24px;
+  background: rgba(8, 16, 12, 0.52);
+  overflow: auto;
+}
+.card-detail-popup {
+  width: min(900px, 100%);
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  border-color: var(--cx-brand);
+  box-shadow: var(--shadow-md, var(--cx-shadow));
+}
+.card-detail-header {
+  position: sticky;
+  top: -14px;
+  z-index: 1;
+  align-items: center;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border, var(--cx-line));
+  background: var(--surface, var(--cx-surface));
+}
+.card-detail-header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.card-detail-close {
+  width: auto;
+  min-height: 34px;
+  padding: 6px 10px;
+}
 .chat-message-row {
   padding: 10px 12px;
   gap: 8px;
@@ -951,6 +998,7 @@ body {
   display: grid;
   gap: 6px;
   min-width: 0;
+  align-content: start;
 }
 .setup-field label {
   color: var(--text, var(--cx-ink));
@@ -2484,13 +2532,34 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   background: var(--bg);
 }
 
+.shell.app > .sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.shell.app > .workspace {
+  grid-column: 2;
+  grid-row: 1;
+}
+
 .shell.app.rtl {
-  direction: rtl;
+  direction: ltr;
   grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
 }
 
-.shell.app.rtl .sidebar { grid-column: 2; }
-.shell.app.rtl .workspace { grid-column: 1; }
+.shell.app.rtl > .sidebar {
+  grid-column: 2;
+}
+
+.shell.app.rtl > .workspace {
+  grid-column: 1;
+}
+.shell.app.rtl .sidebar,
+.shell.app.rtl .workspace,
+.shell.app.rtl .mobile-shellbar,
+.shell.app.rtl .mobile-drawer {
+  direction: rtl;
+}
 
 .shell.app.sidebar-collapsed {
   grid-template-columns: var(--sidebar-collapsed-w) minmax(0, 1fr);
@@ -4003,6 +4072,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     height: calc(100vh - var(--topbar-h));
   }
 
+  .shell.app > .workspace,
+  .shell.app.rtl > .workspace {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
   .topbar-context-pill {
     display: none;
   }
@@ -4039,7 +4114,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   .board-status-row,
   .board-toolbar-controls,
   .board-list-compose,
-  .board-renderer-tabs,
   .board-source-pill {
     align-items: stretch;
     flex-direction: column;
@@ -4048,7 +4122,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
   .board-toolbar-controls > *,
   .board-list-compose > *,
-  .board-renderer-tabs > *,
   .board-source-pill > * {
     width: 100%;
     max-width: 100%;
@@ -4059,15 +4132,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     width: 100%;
     min-width: 0;
     max-width: 100%;
-  }
-
-  .board-renderer-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .board-renderer-tabs .board-control-label {
-    grid-column: 1 / -1;
   }
 
   .board-status-text {
@@ -5035,6 +5099,8 @@ pub fn RouterView() -> Element {
     let active_scope_mode = space_scope_mode();
     let active_space_scope_ids =
         scoped_space_ids(&loaded_spaces, &active_space_id, active_scope_mode);
+    let active_projection_realm_id =
+        projection_realm_id_for_known_space(&loaded_spaces, &active_space_id).unwrap_or_default();
     let active_space_scope_set: BTreeSet<String> = active_space_scope_ids.iter().cloned().collect();
     let active_space_scope_count = active_space_scope_ids.len();
     let active_space_scope_label = if active_space_scope_count <= 1 {
@@ -6265,6 +6331,7 @@ pub fn RouterView() -> Element {
                                             token,
                                             account_did: account_did(),
                                             selected_space: active_space_id.clone(),
+                                            projection_realm_id: active_projection_realm_id.clone(),
                                             selected_space_scope: active_space_scope_ids.clone(),
                                             sync_cursor,
                                             frontier_state,
@@ -6478,6 +6545,7 @@ pub fn RouterView() -> Element {
                                     token,
                                     account_did: account_did(),
                                     selected_space: active_space_id.clone(),
+                                    projection_realm_id: active_projection_realm_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
@@ -7475,16 +7543,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         {
                             let mut store = state_store.write();
                             store.save_sync_cursor(sync.cursor.clone());
-                            // Server-authoritative reconcile: drop every
-                            // cached projection whose space_id isn't in
-                            // the response. Without this, a Space the
-                            // viewer left (or that was deleted server-side)
-                            // would linger in the sidebar forever because
-                            // `save_space_projection` is upsert-only.
+                            // Server-authoritative reconcile for top-level
+                            // Realm membership. Nested Space containers are
+                            // not always returned as top-level sync entries,
+                            // so keep local container projections while their
+                            // home Realm is still present.
                             let server_set: BTreeSet<String> =
                                 sync.spaces.keys().cloned().collect();
-                            let pruned =
-                                store.retain_space_projections(|id| server_set.contains(id));
+                            let keep_set = full_sync_projection_keep_set(
+                                &server_set,
+                                &store.load().space_projections,
+                            );
+                            let pruned = store.retain_space_projections(|id| keep_set.contains(id));
                             if !pruned.is_empty() {
                                 tracing::info!(
                                     pruned_count = pruned.len(),
@@ -7841,27 +7911,10 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
                         .collect::<BTreeSet<_>>()
                 })
                 .unwrap_or_default();
-            // Classify Realm vs Space. Wire signals:
-            // - `__kind` (yougen-local tag from optimistic save)
-            // - `schema` (server projection — cx.schema.realm.v1 vs
-            //   cx.schema.space.v1)
-            // Anything else (legacy) defaults to Realm because
-            // pre-M-SPACE-CREATE-1 yougen could only create Realms.
-            let kind = match body
-                .get("__kind")
-                .and_then(Value::as_str)
-                .or_else(|| body.get("schema").and_then(Value::as_str))
-            {
-                Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
-                _ => SpacePreviewKind::Realm,
-            };
+            let kind = projection_preview_kind(id, body);
             let realm_id = match kind {
                 SpacePreviewKind::Realm => String::new(),
-                SpacePreviewKind::Space => body
-                    .get("realm_id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_default(),
+                SpacePreviewKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
             // Sidebar tree wiring: a Space without an explicit
             // `parent_ref` is rendered under its home Realm. This
@@ -7897,6 +7950,84 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
 
 fn is_realm_or_space_projection_id(id: &str) -> bool {
     id.starts_with("cx:realm:") || id.starts_with("cx:space:")
+}
+
+fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
+    // Classify Realm vs Space. Wire signals:
+    // - `__kind` (yougen-local tag from optimistic save)
+    // - `schema` (server projection — cx.schema.realm.v1 vs
+    //   cx.schema.space.v1)
+    // - parent links on legacy nested Space projections
+    // Anything else (legacy) defaults to Realm because
+    // pre-M-SPACE-CREATE-1 yougen could only create Realms.
+    match body
+        .get("__kind")
+        .and_then(Value::as_str)
+        .or_else(|| body.get("schema").and_then(Value::as_str))
+    {
+        Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
+        Some("realm") | Some("cx.schema.realm.v1") => SpacePreviewKind::Realm,
+        _ if id.starts_with("cx:space:") && extract_parent_space_id(id, body).is_some() => {
+            SpacePreviewKind::Space
+        }
+        _ => SpacePreviewKind::Realm,
+    }
+}
+
+fn projection_home_realm_id(body: &Value) -> Option<String> {
+    body.get("realm_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            body.get("summary")
+                .and_then(|summary| summary.get("realm_id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|realm_id| !realm_id.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn server_set_contains_realm_id(server_set: &BTreeSet<String>, realm_id: &str) -> bool {
+    if server_set.contains(realm_id) {
+        return true;
+    }
+    if let Some(suffix) = realm_id.strip_prefix("cx:realm:") {
+        return server_set.contains(&format!("cx:space:{suffix}"));
+    }
+    if let Some(suffix) = realm_id.strip_prefix("cx:space:") {
+        return server_set.contains(&format!("cx:realm:{suffix}"));
+    }
+    false
+}
+
+pub fn full_sync_projection_keep_set(
+    server_set: &BTreeSet<String>,
+    cached: &BTreeMap<String, Value>,
+) -> BTreeSet<String> {
+    let mut keep = server_set.clone();
+    for (id, body) in cached {
+        if should_retain_projection_after_full_sync(id, body, server_set) {
+            keep.insert(id.clone());
+        }
+    }
+    keep
+}
+
+pub fn should_retain_projection_after_full_sync(
+    id: &str,
+    body: &Value,
+    server_set: &BTreeSet<String>,
+) -> bool {
+    if server_set.contains(id) {
+        return true;
+    }
+    if !id.starts_with("cx:space:") || projection_preview_kind(id, body) != SpacePreviewKind::Space
+    {
+        return false;
+    }
+    projection_home_realm_id(body)
+        .as_deref()
+        .is_some_and(|realm_id| server_set_contains_realm_id(server_set, realm_id))
 }
 
 fn projection_looks_like_flow(body: &Value) -> bool {
@@ -8179,6 +8310,38 @@ mod tests {
 
         assert_eq!(root.child_space_ids, vec!["cx:space:child".to_owned()]);
         assert_eq!(child.parent_space_id.as_deref(), Some("cx:space:root"));
+        assert_eq!(root.kind, SpacePreviewKind::Realm);
+        assert_eq!(child.kind, SpacePreviewKind::Space);
+    }
+
+    #[test]
+    fn sync_projection_marks_schema_space_with_home_realm() {
+        let mut spaces = BTreeMap::new();
+        spaces.insert(
+            "cx:realm:root".to_owned(),
+            json!({
+                "schema": "cx.schema.realm.v1",
+                "summary": {"title": "Root"}
+            }),
+        );
+        spaces.insert(
+            "cx:space:child".to_owned(),
+            json!({
+                "schema": "cx.schema.space.v1",
+                "realm_id": "cx:realm:root",
+                "summary": {"title": "Child"}
+            }),
+        );
+
+        let previews = space_previews_from_sync_spaces(&spaces);
+        let child = previews
+            .iter()
+            .find(|space| space.space_id == "cx:space:child")
+            .expect("child preview");
+
+        assert_eq!(child.kind, SpacePreviewKind::Space);
+        assert_eq!(child.realm_id, "cx:realm:root");
+        assert_eq!(child.parent_space_id.as_deref(), Some("cx:realm:root"));
     }
 
     #[test]
@@ -8309,6 +8472,40 @@ mod tests {
         );
         assert_eq!(previews[0].name, "Test");
         assert_eq!(previews[0].kind, SpacePreviewKind::Realm);
+    }
+
+    #[test]
+    fn full_sync_keep_set_preserves_local_space_under_joined_realm() {
+        let mut server_set = BTreeSet::new();
+        server_set.insert("cx:realm:root".to_owned());
+
+        let mut cached = BTreeMap::new();
+        cached.insert(
+            "cx:realm:root".to_owned(),
+            json!({"summary": {"title": "Root"}}),
+        );
+        cached.insert(
+            "cx:space:child".to_owned(),
+            json!({
+                "__kind": "space",
+                "realm_id": "cx:realm:root",
+                "summary": {"title": "Child"}
+            }),
+        );
+        cached.insert(
+            "cx:space:stale".to_owned(),
+            json!({
+                "__kind": "space",
+                "realm_id": "cx:realm:missing",
+                "summary": {"title": "Stale"}
+            }),
+        );
+
+        let keep = full_sync_projection_keep_set(&server_set, &cached);
+
+        assert!(keep.contains("cx:realm:root"));
+        assert!(keep.contains("cx:space:child"));
+        assert!(!keep.contains("cx:space:stale"));
     }
 
     #[test]
