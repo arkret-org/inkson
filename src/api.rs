@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fmt,
     sync::{
         Arc,
@@ -11,7 +10,7 @@ use std::{
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
-use contrix_sdk::{ErrorDetail, ErrorEnvelope};
+use contrix_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
 use reqwest::{
     Client, Method, StatusCode,
@@ -3615,62 +3614,12 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
             envelope
         }
     }
-    #[derive(serde::Deserialize)]
-    struct LegacyErrorShape {
-        #[serde(alias = "code")]
-        errcode: Option<String>,
-        #[serde(alias = "message")]
-        error: Option<String>,
-        #[serde(default)]
-        request_id: Option<String>,
-        #[serde(default)]
-        details: BTreeMap<String, Value>,
-    }
-    #[derive(serde::Deserialize)]
-    struct LegacyEnvelopeShape {
-        #[serde(default)]
-        ok: bool,
-        error: LegacyErrorShape,
-        #[serde(default)]
-        request_id: Option<String>,
-    }
-    impl From<LegacyEnvelopeShape> for ErrorEnvelope {
-        fn from(value: LegacyEnvelopeShape) -> Self {
-            let code = value
-                .error
-                .errcode
-                .filter(|code| !code.trim().is_empty())
-                .unwrap_or_else(|| "unknown_error".to_owned());
-            let message = value
-                .error
-                .error
-                .filter(|message| !message.trim().is_empty())
-                .unwrap_or_else(|| "Request failed".to_owned());
-            ErrorEnvelope {
-                ok: value.ok,
-                error: ErrorDetail {
-                    code,
-                    message,
-                    retry_after_ms: None,
-                    details: value.error.details,
-                },
-                request_id: value
-                    .error
-                    .request_id
-                    .or(value.request_id)
-                    .unwrap_or_else(default_request_id),
-            }
-        }
-    }
-
     let envelope = if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
         body.error
     } else if let Ok(wrapped_plain) = serde_json::from_slice::<WrappedPlainEnvelope>(bytes) {
         wrapped_plain.into()
     } else if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
         plain.into()
-    } else if let Ok(legacy) = serde_json::from_slice::<LegacyEnvelopeShape>(bytes) {
-        legacy.into()
     } else {
         ErrorEnvelope::new(
             "http_status",
@@ -4324,10 +4273,10 @@ mod tests {
     }
 
     #[test]
-    fn decodes_legacy_errcode_error_shape() {
+    fn decodes_canonical_error_envelope_with_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"errcode":"capability_denied","error":"actor is not a member of the event Space","request_id":"cx:req:legacy"}}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:req:01964137-0000-7000-8000-000000000010"}"#,
         );
 
         assert_eq!(decoded.code(), "capability_denied");
@@ -4335,19 +4284,25 @@ mod tests {
             decoded.message(),
             "actor is not a member of the event Space"
         );
-        assert_eq!(decoded.request_id, "cx:req:legacy");
+        assert_eq!(
+            decoded.request_id,
+            "cx:req:01964137-0000-7000-8000-000000000010"
+        );
     }
 
     #[test]
     fn decodes_wrapped_error_envelope_without_inner_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:req:outer"}"#,
+            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:req:01964137-0000-7000-8000-000000000011"}"#,
         );
 
         assert_eq!(decoded.code(), "auth_expired");
         assert_eq!(decoded.message(), "session expired");
-        assert_eq!(decoded.request_id, "cx:req:outer");
+        assert_eq!(
+            decoded.request_id,
+            "cx:req:01964137-0000-7000-8000-000000000011"
+        );
     }
 
     #[test]
@@ -4445,7 +4400,7 @@ mod tests {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"errcode":"capability_denied","error":"actor is not a member of the event Space","request_id":"cx:req:membership"}}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:req:01964137-0000-7000-8000-000000000010"}"#,
             ),
         }
         .into();

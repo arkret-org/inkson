@@ -681,10 +681,10 @@ test("chat membership denial restores draft without panicking", async ({ page })
       body: JSON.stringify({
         ok: false,
         error: {
-          errcode: "capability_denied",
-          error: "actor is not a member of the event Space",
-          request_id: "cx:req:e2e-membership-denied",
+          code: "capability_denied",
+          message: "actor is not a member of the event Space",
         },
+        request_id: "cx:req:01964137-0000-7000-8000-000000000013",
       }),
     });
   });
