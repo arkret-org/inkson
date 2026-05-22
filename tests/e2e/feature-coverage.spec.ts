@@ -32,7 +32,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: overview/current-model.md §4, models/views.md §6
   test("board: drag flow across lists writes cx.flow.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
-    // clientx.flows.spec.ts::"kanban card drag queues a flow move".
+    // yougen.flows.spec.ts::"kanban card drag queues a flow move".
     // This placeholder pins the structural contract the drop relies
     // on: the move-queue + write-records data-testids MUST
     // exist on /kanban so soland can dispatch cx.flow.move /

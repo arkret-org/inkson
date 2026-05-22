@@ -122,26 +122,33 @@ use crate::operation::{
 };
 
 /// Generic wrapper for soland's
-/// `/api/v1/projection/{space_containers|flows}` lifecycle endpoints. Keeps
+/// `/api/v1/projection/{spaces|flows}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
-/// hydrate path can pluck projection rows with the same code. The wire
-/// shape is canonical `items` — legacy `places` / `flows` / `space_containers`
-/// aliases are gone.
+/// hydrate path can pluck projection rows with the same code. The decoder
+/// normalizes spec `spaces` / `flows` / `morphs` collection keys plus
+/// soland's legacy `space_containers` key into `items`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionResponse<T> {
     pub realm_id: String,
     #[serde(default)]
     pub total: u32,
-    #[serde(default = "Vec::new")]
+    #[serde(
+        default = "Vec::new",
+        alias = "spaces",
+        alias = "space_containers",
+        alias = "flows",
+        alias = "morphs"
+    )]
     pub items: Vec<T>,
 }
 
 /// Server-side Space-container projection row.
 ///
 /// Soland serves these rows from
-/// `GET /api/v1/projection/space_containers`.
+/// `GET /api/v1/projection/spaces`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
+    #[serde(alias = "space_id")]
     pub container_space_id: String,
     pub realm_id: String,
     #[serde(default)]
@@ -161,6 +168,7 @@ pub struct SpaceContainerProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct FlowProjectionView {
     pub flow_id: String,
+    #[serde(alias = "realm_id")]
     pub space_id: String,
     #[serde(default)]
     pub title: String,
@@ -175,6 +183,7 @@ pub struct FlowProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
+    #[serde(alias = "realm_id")]
     pub space_id: String,
     #[serde(default)]
     pub morph_type: String,
@@ -1958,7 +1967,7 @@ impl ContrixApi {
         // `cx:space:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
         let realm_id = scope_id_as_realm_id(space_id);
-        let path = format!("api/v1/projection/space-containers?realm_id={realm_id}");
+        let path = format!("api/v1/projection/spaces?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
@@ -1966,7 +1975,8 @@ impl ContrixApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
-        let path = format!("api/v1/projection/flows?space_id={space_id}");
+        let realm_id = scope_id_as_realm_id(space_id);
+        let path = format!("api/v1/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
@@ -2656,18 +2666,12 @@ fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
     let details = rejected
         .iter()
         .map(|item| {
-            let id = item
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
+            let id = item.get("id").and_then(Value::as_str).unwrap_or("unknown");
             let reason = item
                 .get("reason_code")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            let detail = item
-                .get("detail")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let detail = item.get("detail").and_then(Value::as_str).unwrap_or("");
             if detail.is_empty() {
                 format!("{id}:{reason}")
             } else {
@@ -3891,6 +3895,57 @@ mod tests {
             api.endpoint("/api/v1/server/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/api/v1/server/describe"
         );
+    }
+
+    #[test]
+    fn lifecycle_projection_response_accepts_soland_legacy_keys() {
+        let spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
+            serde_json::from_value(json!({
+                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "total": 1,
+                "space_containers": [{
+                    "container_space_id": "cx:space:01904100-0000-7000-8000-f10dc0000001",
+                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "kind": "board",
+                    "title": "Launch board",
+                    "state": "active"
+                }]
+            }))
+            .unwrap();
+        assert_eq!(spaces.items.len(), 1);
+        assert_eq!(spaces.items[0].kind, "board");
+
+        let canonical_spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
+            serde_json::from_value(json!({
+                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "total": 1,
+                "spaces": [{
+                    "space_id": "cx:space:01904100-0000-7000-8000-f10dc0000001",
+                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "kind": "board",
+                    "title": "Launch board",
+                    "state": "active"
+                }]
+            }))
+            .unwrap();
+        assert_eq!(
+            canonical_spaces.items[0].container_space_id,
+            "cx:space:01904100-0000-7000-8000-f10dc0000001"
+        );
+
+        let flows: LifecycleProjectionResponse<FlowProjectionView> =
+            serde_json::from_value(json!({
+                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "flows": [{
+                    "flow_id": "cx:flow:01904100-0000-7000-8000-f20dc0000001",
+                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "title": "Card",
+                    "state": "archived"
+                }]
+            }))
+            .unwrap();
+        assert_eq!(flows.items[0].space_id, flows.realm_id);
+        assert_eq!(flows.items[0].state, "archived");
     }
 
     #[test]

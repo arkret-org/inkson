@@ -581,6 +581,14 @@ pub fn KanbanPanel(
     } else {
         "Current Space".to_owned()
     };
+    let selected_board_label = {
+        let board_id = selected_board_space_id();
+        board_space_options()
+            .iter()
+            .find(|option| option.id == board_id)
+            .map(|option| option.title.clone())
+            .unwrap_or_else(|| crate::i18n::tr("kanban.board_title"))
+    };
 
     // T20 — auto-refresh-on-mount. The component renders SeedFallback
     // synchronously, then immediately fires a single async fetch against
@@ -701,7 +709,7 @@ pub fn KanbanPanel(
     });
 
     // Hydrate Space-container / Flow lifecycle state from the soland
-    // `/api/v1/projection/{space_containers|flows}` endpoints so
+    // `/api/v1/projection/{spaces|flows}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -788,37 +796,107 @@ pub fn KanbanPanel(
             div { class: "event board-header",
                 div { class: "event-head",
                     span { {crate::i18n::tr("kanban.board_header")} }
-                    span { "{scope_label} / writes to {selected_space}" }
+                    span {
+                        title: "writes to {selected_space}",
+                        "{scope_label}"
+                    }
                 }
-                div { class: "space-title", {crate::i18n::tr("kanban.board_title")} }
+                div { class: "space-title", "{selected_board_label}" }
                 div { class: "muted",
                     {crate::i18n::tr("kanban.board_hint")}
                 }
-                div { class: "actions", "data-testid": "board-write-states",
-                    for state in write_state_samples() {
-                        span { class: state.class_name(), "{state.label()}" }
+
+                div { class: "actions", "data-testid": "board-space-selector",
+                    span { class: "muted", "Board" }
+                    select {
+                        "data-testid": "board-space-select",
+                        value: "{selected_board_space_id}",
+                        onchange: move |event| selected_board_space_id.set(event.value()),
+                        option {
+                            value: "",
+                            selected: selected_board_space_id().is_empty(),
+                            "Select board"
+                        }
+                        for board_option in board_space_options().iter() {
+                            option {
+                                value: "{board_option.id}",
+                                selected: selected_board_space_id() == board_option.id,
+                                "{board_option.title}"
+                            }
+                        }
+                    }
+                    input {
+                        "data-testid": "board-view-id-input",
+                        value: "{board_view_id}",
+                        placeholder: "cx:view:...",
+                        oninput: move |evt| board_view_id.set(evt.value()),
+                    }
+                    input {
+                        "data-testid": "new-board-title-input",
+                        value: "{new_board_title}",
+                        placeholder: "Board title",
+                        oninput: move |evt| new_board_title.set(evt.value()),
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "create-board-space-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            let actor = account_did.clone();
+                            move |_| {
+                                let title = new_board_title().trim().to_owned();
+                                if title.is_empty() {
+                                    board_status.set("board title is required".to_owned());
+                                    return;
+                                }
+                                if actor.trim().is_empty() {
+                                    board_status.set("sign in before creating a Board".to_owned());
+                                    return;
+                                }
+                                let board_space_id = format!("cx:space:{}", uuid_v7());
+                                board_space_options.write().push(BoardSpaceOption {
+                                    id: board_space_id.clone(),
+                                    title: title.clone(),
+                                    state: SpaceContainerLifecycleState::Active,
+                                });
+                                selected_board_space_id.set(board_space_id.clone());
+                                let op = crate::operation::cx_ops::space_create(
+                                    &space,
+                                    &actor,
+                                    &board_space_id,
+                                    "board",
+                                    &title,
+                                    None,
+                                    None,
+                                )
+                                .build("yougen");
+                                submit_kanban_operation_event(
+                                    base.clone(),
+                                    token,
+                                    space.clone(),
+                                    op,
+                                    state_store,
+                                    board_status,
+                                );
+                                new_board_title.set("Board".to_owned());
+                            }
+                        },
+                        "Create Board"
                     }
                 }
-                // Multi-renderer switcher — claude-design desktop/board.html
-                // models/views.md §4: View.kind = collection|timeline|graph|document|composite
-                // The current board is View{kind="collection", renderer="board"} and can switch to list/table/calendar/timeline.
+
                 div { class: "actions", "data-testid": "view-renderer-switcher", role: "tablist", "aria-label": "View renderer",
-                    span { class: "muted", "View renderer:" }
+                    span { class: "muted", "View" }
                     span { class: "badge blue", "data-testid": "renderer-board", role: "tab", "aria-selected": "true", "board" }
                     span { class: "badge", "data-testid": "renderer-list", role: "tab", "list" }
                     span { class: "badge", "data-testid": "renderer-table", role: "tab", "table" }
                     span { class: "badge", "data-testid": "renderer-calendar", role: "tab", "calendar" }
                     span { class: "badge", "data-testid": "renderer-timeline", role: "tab", "timeline" }
                     span { class: "badge", "data-testid": "renderer-graph", role: "tab", "graph" }
-                    span { class: "muted", "New View → cx.view.create · Filter/sort/columns → cx.view.update · Rebuild projection cache → cx.view.reconcile · Morph content → cx.morph.update" }
                 }
-                // T20 — board projection source indicator. Shows whether the
-                // current columns came from the API (Principal Server view
-                // projection) or the local seed fallback. Refresh button
-                // re-runs the probe so when SDK lands the endpoint mid-session
-                // the user can flip to API-derived without restarting.
                 div { class: "actions", "data-testid": "board-projection-source",
-                    span { class: "muted", "Projection source:" }
+                    span { class: "muted", "Source" }
                     span {
                         class: "{projection_source().class_name()}",
                         "data-testid": "board-projection-source-pill",
@@ -885,99 +963,25 @@ pub fn KanbanPanel(
                         },
                         {crate::i18n::tr("kanban.refresh_from_api")}
                     }
-                    span { class: "muted",
-                        "Refresh calls Client::collection_projection (POST /api/v1/views/:id/projection); when unavailable we fall back to seed data."
-                    }
                 }
 
-                div { class: "actions", "data-testid": "board-space-selector",
-                    span { class: "muted", "Board Space:" }
-                    select {
-                        "data-testid": "board-space-select",
-                        value: "{selected_board_space_id}",
-                        onchange: move |event| selected_board_space_id.set(event.value()),
-                        option {
-                            value: "",
-                            selected: selected_board_space_id().is_empty(),
-                            "Select board"
-                        }
-                        for board_option in board_space_options().iter() {
-                            option {
-                                value: "{board_option.id}",
-                                selected: selected_board_space_id() == board_option.id,
-                                "{board_option.title}"
-                            }
+                details { class: "board-diagnostics", "data-testid": "board-diagnostics",
+                    summary { "Details" }
+                    div { class: "actions", "data-testid": "board-write-states",
+                        for state in write_state_samples() {
+                            span { class: state.class_name(), "{state.label()}" }
                         }
                     }
-                    input {
-                        "data-testid": "board-view-id-input",
-                        value: "{board_view_id}",
-                        placeholder: "cx:view:...",
-                        oninput: move |evt| board_view_id.set(evt.value()),
+                    div { class: "metric-grid", "data-testid": "board-projection-model",
+                        div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
+                        div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
+                        div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
+                        div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
+                        div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
                     }
-                    input {
-                        "data-testid": "new-board-title-input",
-                        value: "{new_board_title}",
-                        placeholder: "Board title",
-                        oninput: move |evt| new_board_title.set(evt.value()),
+                    div { class: "muted",
+                        "View lifecycle: create, update, reconcile. Refresh uses collection projection and falls back to seed data when needed."
                     }
-                    button {
-                        class: "secondary",
-                        "data-testid": "create-board-space-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let space = selected_space.clone();
-                            move |_| {
-                                let title = new_board_title().trim().to_owned();
-                                if title.is_empty() {
-                                    board_status.set("board title is required".to_owned());
-                                    return;
-                                }
-                                let board_space_id = format!("cx:space:{}", uuid_v7());
-                                let identity = match state_store.write().ensure_local_identity() {
-                                    Ok(identity) => identity,
-                                    Err(err) => {
-                                        board_status.set(format!("identity unavailable: {err}"));
-                                        return;
-                                    }
-                                };
-                                board_space_options.write().push(BoardSpaceOption {
-                                    id: board_space_id.clone(),
-                                    title: title.clone(),
-                                    state: SpaceContainerLifecycleState::Active,
-                                });
-                                selected_board_space_id.set(board_space_id.clone());
-                                let op = crate::operation::cx_ops::space_create(
-                                    &space,
-                                    &identity.device_did,
-                                    &board_space_id,
-                                    "board",
-                                    &title,
-                                    None,
-                                    None,
-                                )
-                                .build("yougen");
-                                submit_kanban_operation_event(
-                                    base.clone(),
-                                    token,
-                                    space.clone(),
-                                    op,
-                                    state_store,
-                                    board_status,
-                                );
-                                new_board_title.set("Board".to_owned());
-                            }
-                        },
-                        "Create Board"
-                    }
-                }
-
-                div { class: "metric-grid", "data-testid": "board-projection-model",
-                    div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "View renderer: kanban" } }
-                    div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "Collection projection source" } }
-                    div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                    div { class: "metric", strong { "Sync state" } span { "{frontier_state}" } div { class: "muted", "Moves rebase from latest projection" } }
-                    div { class: "metric", strong { "Write plane" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "Active writes use the server when online" } }
                 }
                 div { class: "workflow-form",
                     div { class: "actions",
@@ -996,9 +1000,14 @@ pub fn KanbanPanel(
                                 // the write submits `cx.space.create`.
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
+                                let actor = account_did.clone();
                                 move |_| {
                                     let title = new_column_title().trim().to_owned();
                                     if title.is_empty() {
+                                        return;
+                                    }
+                                    if actor.trim().is_empty() {
+                                        board_status.set("sign in before adding lists".to_owned());
                                         return;
                                     }
                                     let board_space_id = selected_board_space_id();
@@ -1016,16 +1025,9 @@ pub fn KanbanPanel(
                                         cards: Vec::new(),
                                         state: SpaceContainerLifecycleState::Active,
                                     });
-                                    let identity = match state_store.write().ensure_local_identity() {
-                                        Ok(identity) => identity,
-                                        Err(err) => {
-                                            board_status.set(format!("identity unavailable: {err}"));
-                                            return;
-                                        }
-                                    };
                                     let op = crate::operation::cx_ops::space_create(
                                         &space,
-                                        &identity.device_did,
+                                        &actor,
                                         &list_space_id,
                                         "list",
                                         &title,
@@ -1108,6 +1110,7 @@ pub fn KanbanPanel(
                             let last_rank = column.cards.last().map(|c| c.rank.clone());
                             let base = base_url.clone();
                             let space = selected_space.clone();
+                            let actor = account_did.clone();
                             move |event| {
                                 event.prevent_default();
                                 let Some(dragged) = dragging_card() else {
@@ -1130,6 +1133,7 @@ pub fn KanbanPanel(
                                     space.clone(),
                                     board_space_id,
                                     view_id_for_rebase,
+                                    actor.clone(),
                                     dragged,
                                     target_column_id.clone(),
                                     neighbours,
@@ -1224,6 +1228,7 @@ pub fn KanbanPanel(
                                     };
                                     let base = base_url.clone();
                                     let space = selected_space.clone();
+                                    let actor = account_did.clone();
                                     move |event| {
                                         event.prevent_default();
                                         // Stop propagation so the column's
@@ -1250,6 +1255,7 @@ pub fn KanbanPanel(
                                             space.clone(),
                                             board_space_id,
                                             view_id_for_rebase,
+                                            actor.clone(),
                                             dragged,
                                             target_column_id.clone(),
                                             neighbours,
@@ -1375,6 +1381,7 @@ pub fn KanbanPanel(
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let space = selected_space.clone();
+                                            let actor = account_did.clone();
                                             move |_| {
                                                 let title = new_card_title().trim().to_owned();
                                                 if title.is_empty() {
@@ -1439,6 +1446,7 @@ pub fn KanbanPanel(
                                                     base.clone(),
                                                     token,
                                                     space.clone(),
+                                                    actor.clone(),
                                                     flow_id.clone(),
                                                     "cx.flow.create",
                                                     value,
@@ -2033,6 +2041,7 @@ pub fn KanbanPanel(
                                 let flow_id = card.id.clone();
                                 let track_id = card.primary_flow_id.clone();
                                 let space = selected_space.clone();
+                                let actor = account_did.clone();
                                 move |_| {
                                     let value = json!({
                                         "kind": "flow.track.member",
@@ -2045,6 +2054,7 @@ pub fn KanbanPanel(
                                         base.clone(),
                                         token,
                                         space.clone(),
+                                        actor.clone(),
                                         flow_id.clone(),
                                         "cx.flow.track.member",
                                         value,
@@ -2289,6 +2299,7 @@ fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
     space_id: String,
+    actor_did: String,
     subject: String,
     kind: &'static str,
     value: serde_json::Value,
@@ -2298,13 +2309,10 @@ fn submit_kanban_move(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
-    let actor_did = match state_store.write().ensure_local_identity() {
-        Ok(id) => id.device_did.as_str().to_owned(),
-        Err(err) => {
-            board_status.set(format!("identity unavailable: {err}"));
-            return;
-        }
-    };
+    if actor_did.trim().is_empty() {
+        board_status.set("sign in before updating cards".to_owned());
+        return;
+    }
     let envelope = crate::operation::cx_ops::flow_position_update(
         &space_id,
         &actor_did,
@@ -2415,6 +2423,7 @@ fn dispatch_flow_position_move(
     space_id: String,
     board_space_id: String,
     board_view_id: String,
+    actor_did: String,
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
@@ -2488,6 +2497,7 @@ fn dispatch_flow_position_move(
         space_id,
         board_space_id,
         board_view_id,
+        actor_did,
         dragged.card_id,
         kind,
         expected,
@@ -2837,6 +2847,7 @@ fn submit_flow_position_cas_move(
     space_id: String,
     board_space_id: String,
     board_view_id: String,
+    actor_did: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -2851,6 +2862,7 @@ fn submit_flow_position_cas_move(
         space_id,
         board_space_id,
         board_view_id,
+        actor_did,
         flow_id,
         kind,
         expected,
@@ -2874,6 +2886,7 @@ fn submit_flow_position_cas_move_with_attempt(
     space_id: String,
     board_space_id: String,
     board_view_id: String,
+    actor_did: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -2885,13 +2898,10 @@ fn submit_flow_position_cas_move_with_attempt(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
-    let actor_did = match state_store.write().ensure_local_identity() {
-        Ok(id) => id.device_did.as_str().to_owned(),
-        Err(err) => {
-            board_status.set(format!("identity unavailable: {err}"));
-            return;
-        }
-    };
+    if actor_did.trim().is_empty() {
+        board_status.set("sign in before moving cards".to_owned());
+        return;
+    }
     let expected_json = match &expected {
         FlowPositionExpectation::Initial => serde_json::Value::Null,
         FlowPositionExpectation::At {
@@ -3046,6 +3056,7 @@ fn submit_flow_position_cas_move_with_attempt(
                         space_for_rebase,
                         board_for_rebase,
                         view_for_rebase,
+                        actor_did.clone(),
                         flow_for_rebase,
                         kind_for_record,
                         effect_for_rebase,
@@ -3093,6 +3104,7 @@ fn rebase_flow_position_after_conflict(
     space_id: String,
     board_space_id: String,
     board_view_id: String,
+    actor_did: String,
     flow_id: String,
     kind: String,
     effect: FlowPositionEffect,
@@ -3142,6 +3154,7 @@ fn rebase_flow_position_after_conflict(
             space_id,
             board_space_id,
             board_view_id,
+            actor_did,
             flow_id,
             kind_static,
             new_expected,
@@ -3356,7 +3369,7 @@ mod tests {
     }
 
     /// Wire state strings emitted by soland's
-    /// `/api/v1/projection/{space_containers|flows}` round-trip into the
+    /// `/api/v1/projection/{spaces|flows}` round-trip into the
     /// renderer enums. Unknown values stay at the safe `Active` default.
     #[test]
     fn lifecycle_wire_strings_decode_to_enums() {

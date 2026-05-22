@@ -369,7 +369,7 @@ mod tests {
     /// Build a hermetic `LocalStateStore` rooted at a unique temp file.
     /// Necessary because `LocalStateStore::default()` resolves to the
     /// developer's `state.json` under `$LOCALAPPDATA/yougen/` (or the
-    /// `CLIENTX_STATE_PATH` override) and would otherwise leak whatever
+    /// `YOUGEN_STATE_PATH` override) and would otherwise leak whatever
     /// pre-existing OIDC bundle the dev session has persisted into the
     /// `evaluate_refresh_policy` decisions under test.
     #[cfg(not(target_arch = "wasm32"))]

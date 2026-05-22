@@ -425,12 +425,9 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mobile.no_match", "No spaces match.");
 
     // Kanban / Board view (header + section labels)
-    dict.set("kanban.board_header", "Launch Board");
+    dict.set("kanban.board_header", "Board");
     dict.set("kanban.board_title", "Board");
-    dict.set(
-        "kanban.board_hint",
-        "Drag cards across lists to move them; the board syncs automatically when the server is available.",
-    );
+    dict.set("kanban.board_hint", "Drag cards between lists.");
     dict.set(
         "chat.mls_passphrase_placeholder",
         "Encryption passphrase (this Space)",
@@ -1131,12 +1128,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mobile.no_match", "未找到匹配空间。");
 
     // Kanban / Board view
-    dict.set("kanban.board_header", "启动看板");
+    dict.set("kanban.board_header", "看板");
     dict.set("kanban.board_title", "看板");
-    dict.set(
-        "kanban.board_hint",
-        "拖动卡片到不同列即可移动；服务器可用时看板将自动同步。",
-    );
+    dict.set("kanban.board_hint", "拖动卡片到不同列即可移动。");
     dict.set("chat.mls_passphrase_placeholder", "加密口令（本 Space）");
     dict.set("chat.mls_passphrase_save", "保存口令");
     dict.set("chat.mls_publish_key_package", "发布 Key Package");

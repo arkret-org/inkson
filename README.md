@@ -78,7 +78,7 @@ Per-project task lists are consolidated upstream — see
 
 Platform notes:
 
-- Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep `CLIENTX_SERVER_URL` or the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
+- Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
 - Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
 - All platforms use the same typed API client, bounded retry/backoff policy, Contrix error envelope decoding, and encrypted-payload preservation path.
@@ -96,7 +96,7 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/api/v1/*` responses. Use `CLIENTX_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/api/v1/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 

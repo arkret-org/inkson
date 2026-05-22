@@ -480,6 +480,24 @@ body {
 .board-header {
   gap: 8px;
 }
+.board-header .space-title {
+  margin-bottom: 0;
+}
+.board-diagnostics {
+  width: 100%;
+}
+.board-diagnostics > summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--cx-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.board-diagnostics > .metric-grid,
+.board-diagnostics > .actions,
+.board-diagnostics > .muted {
+  margin-top: 8px;
+}
 .board-column {
   min-width: 0;
   min-height: 220px;
@@ -6529,7 +6547,8 @@ fn route_label(route: &Route) -> &'static str {
         Route::Directory => "Search",
         Route::Setup => "Workspace Setup",
         Route::SetupSection { section } => match section.as_str() {
-            "spaces" => "New Space",
+            "realms" | "spaces" => "New Realm",
+            "new-space" => "New Space",
             _ => "Workspace Setup",
         },
         Route::Settings | Route::SettingsSection { .. } => "Settings",
@@ -7500,6 +7519,28 @@ mod tests {
         assert_eq!(
             SpaceSurface::from_preference("discussion"),
             Some(SpaceSurface::Discussion)
+        );
+    }
+
+    #[test]
+    fn setup_section_route_labels_match_realm_and_space_forms() {
+        assert_eq!(
+            route_label(&Route::SetupSection {
+                section: "realms".to_owned()
+            }),
+            "New Realm"
+        );
+        assert_eq!(
+            route_label(&Route::SetupSection {
+                section: "spaces".to_owned()
+            }),
+            "New Realm"
+        );
+        assert_eq!(
+            route_label(&Route::SetupSection {
+                section: "new-space".to_owned()
+            }),
+            "New Space"
         );
     }
 

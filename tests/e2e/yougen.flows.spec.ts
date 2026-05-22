@@ -446,6 +446,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await page.getByTestId("topbar-create-button").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
+  await expect(page.getByTestId("space-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(setupPanel.getByRole("button", { name: "Apply Policy" })).toHaveCount(0);
@@ -459,6 +460,8 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("three independent axes");
   await page.getByTestId("new-space-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
+  await expect(setupPanel.getByRole("button", { name: "Create Realm" })).toBeVisible();
+  await expect(setupPanel.getByRole("button", { name: "Create Space" })).toHaveCount(0);
   const createSpaceRequest = page.waitForRequest(
     (request) => request.url().endsWith("/api/v1/spaces") && request.method() === "POST",
   );
@@ -470,7 +473,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
   await expect(page.getByTestId("selected-space-id")).toContainText("cx:space:01js0setupflow000000000000");
 
-  await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Space", exact: true }).click();
+  await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
   await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
   await page.reload({ waitUntil: "domcontentloaded" });

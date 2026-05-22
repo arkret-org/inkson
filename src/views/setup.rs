@@ -63,7 +63,7 @@ const JOIN_RULE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "restricted",
         "Restricted",
-        "Joining depends on policy or claims, even if the Space is discoverable.",
+        "Joining depends on policy or claims, even if the Realm is discoverable.",
     ),
 ];
 
@@ -748,7 +748,7 @@ pub fn SetupPanel(
                                     div { class: "metric directory-axis-card",
                                         strong { "Discoverability" }
                                         div { class: "workflow-form setup-field",
-                                            label { "Who can discover that this Space exists?" }
+                                            label { "Who can discover that this Realm exists?" }
                                             select {
                                                 "data-testid": "space-discoverability-input",
                                                 value: "{discoverability_value}",
@@ -1173,7 +1173,7 @@ pub fn SetupPanel(
                                                                         String::new(),
                                                                     );
                                                                     let _ = navigator.push(Route::Login);
-                                                                    "Session expired. Sign in again before creating a Space.".to_owned()
+                                                                    "Session expired. Sign in again before creating a Realm.".to_owned()
                                                                 } else {
                                                                     format!("create failed: {error}")
                                                                 };
@@ -1191,7 +1191,7 @@ pub fn SetupPanel(
                                                 });
                                             }
                                         },
-                                        "Create Space"
+                                        "Create Realm"
                                     }
                                 }
                             }

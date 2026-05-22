@@ -14,7 +14,7 @@
 # - **Forks can't access secrets.** GitHub doesn't expose secrets to
 #   PRs from forks; the cross-platform suite itself doesn't currently
 #   read any secrets, but the e2e harness in `playwright.config.ts`
-#   does for `CLIENTX_E2E_*` and the round-27 helpers all skip cleanly
+#   does for `YOUGEN_E2E_*` and the round-27 helpers all skip cleanly
 #   when env vars are missing. To stay aligned, this workflow also
 #   self-skips when the PR's head repo is not the upstream repo
 #   (`pull_request.head.repo.full_name` != `github.repository`). The

@@ -238,7 +238,7 @@ fn browser_storage() -> Option<web_sys::Storage> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn default_config_path() -> PathBuf {
-    std::env::var_os("CLIENTX_CONFIG_PATH")
+    std::env::var_os("YOUGEN_CONFIG_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| app_data_dir().join("config.json"))
 }
