@@ -31,7 +31,7 @@ use crate::{
     api::ContrixApi,
     local_state::LocalStateStore,
     routes::Route,
-    views::helpers::{handle_from_did, with_authed_api},
+    views::helpers::{handle_from_did, short_protocol_id, with_authed_api},
 };
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
@@ -130,6 +130,8 @@ pub fn OnboardingPanel(
         .local_identity_record()
         .map(|record| shorten_device_key(&record.did_key))
         .unwrap_or_else(|| shorten_device_key(""));
+    let device_id_value = device_id();
+    let device_id_label = short_protocol_id(&device_id_value);
     let mut register_did = use_signal(|| account_did());
     let mut register_handle = use_signal(|| handle_from_did(&account_did()));
     let mut register_display_name = use_signal(|| "yougen".to_owned());
@@ -364,7 +366,7 @@ pub fn OnboardingPanel(
                         }
                         div { class: "metric",
                             strong { "Device id" }
-                            span { class: "mono", "data-testid": "onboarding-device-id", "{device_id()}" }
+                            span { class: "mono", "data-testid": "onboarding-device-id", title: "{device_id_value}", "{device_id_label}" }
                             div { class: "muted", "Stable identifier for this device" }
                         }
                         div { class: "metric",

@@ -28,7 +28,11 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{local_state::LocalStateStore, operation::cx_ops, views::helpers::with_authed_api};
+use crate::{
+    local_state::LocalStateStore,
+    operation::cx_ops,
+    views::helpers::{short_protocol_id, with_authed_api},
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum BlockKind {
@@ -122,10 +126,12 @@ pub fn parse_comment_range(raw: &str) -> Option<(u32, u32)> {
 /// version-list when the user clicks `document-version-restore-button`
 /// against a version that was already restored vs. a fresh restore.
 pub fn restore_status_label(target_version_id: &str, current_version_id: &str) -> String {
+    let target_label = short_protocol_id(target_version_id);
+    let current_label = short_protocol_id(current_version_id);
     if target_version_id == current_version_id {
-        format!("already at {target_version_id}")
+        format!("already at {target_label}")
     } else {
-        format!("restored {target_version_id} (was {current_version_id})")
+        format!("restored {target_label} (was {current_label})")
     }
 }
 
@@ -320,6 +326,8 @@ pub fn DocumentPanel(
             save_draft(store, &actor_key, &space_id, &draft);
         }
     };
+    let space_id_label = short_protocol_id(&space_id);
+    let actor_key_label = short_protocol_id(&actor_key);
 
     rsx! {
         div { class: "timeline", "data-testid": "document-panel",
@@ -334,7 +342,7 @@ pub fn DocumentPanel(
                         failed_label: Some("Local draft (sync failed)".to_owned()),
                         test_id: Some("document-sync-badge".to_owned()),
                     }
-                    span { class: "mono", "{space_id}" }
+                    span { class: "mono", title: "{space_id}", "{space_id_label}" }
                 }
                 div { class: "muted",
                     "Edits save to this device immediately. Save Version writes a cx.flow.create or cx.flow.update event to the Space's document Flow synthesis track."
@@ -462,12 +470,17 @@ pub fn DocumentPanel(
                 div { class: "event", "data-testid": "version-history",
                     div { class: "event-head", span { "Version History" } span { "{versions().len()} versions" } }
                     for version in versions() {
-                        div { class: "event", "data-testid": "version-entry",
-                            div { class: "event-head",
-                                span { "{version.id}" }
-                                span { "{version.timestamp}" }
+                        {
+                            let version_id_label = short_protocol_id(&version.id);
+                            rsx! {
+                                div { class: "event", "data-testid": "version-entry",
+                                    div { class: "event-head",
+                                        span { title: "{version.id}", "{version_id_label}" }
+                                        span { "{version.timestamp}" }
+                                    }
+                                    div { class: "muted", "By: {version.author} ({version.block_count} blocks)" }
+                                }
                             }
-                            div { class: "muted", "By: {version.author} ({version.block_count} blocks)" }
                         }
                     }
                 }
@@ -695,7 +708,7 @@ pub fn DocumentPanel(
                     span { class: "badge", "{remote_cursors().len() + 1}" }
                 }
                 ul {
-                    li { class: "mono", "{actor_key} (you)" }
+                    li { class: "mono", title: "{actor_key}", "{actor_key_label} (you)" }
                     for cursor in remote_cursors().iter() {
                         li { class: "mono",
                             span { "data-actor-did": "{cursor.actor_did}", "{cursor.display_name}" }
@@ -789,6 +802,7 @@ pub fn DocumentPanel(
                         let range_start = thread.range_start;
                         let range_end = thread.range_end;
                         let author_did = thread.author_did.clone();
+                        let author_did_label = short_protocol_id(&author_did);
                         let body = thread.body.clone();
                         let resolved = thread.resolved;
                         let replies = thread.replies.clone();
@@ -799,7 +813,7 @@ pub fn DocumentPanel(
                                 "data-range-start": "{range_start}",
                                 "data-range-end": "{range_end}",
                                 div { class: "event-head",
-                                    span { class: "mono", "{author_did}" }
+                                    span { class: "mono", title: "{author_did}", "{author_did_label}" }
                                     span { class: "badge", "[{range_start}..{range_end})" }
                                     if resolved {
                                         span { class: "badge green", "resolved" }
@@ -807,9 +821,14 @@ pub fn DocumentPanel(
                                 }
                                 div { class: "muted", "{body}" }
                                 for reply in replies.iter() {
-                                    div { class: "muted",
-                                        span { class: "mono", "{reply.author_did}: " }
-                                        span { "{reply.body}" }
+                                    {
+                                        let reply_author_did_label = short_protocol_id(&reply.author_did);
+                                        rsx! {
+                                            div { class: "muted",
+                                                span { class: "mono", title: "{reply.author_did}", "{reply_author_did_label}: " }
+                                                span { "{reply.body}" }
+                                            }
+                                        }
                                     }
                                 }
                                 if !resolved {
@@ -893,6 +912,7 @@ pub fn DocumentPanel(
                 for version in versions().iter() {
                     {
                         let version_id = version.id.clone();
+                        let version_id_label = short_protocol_id(&version_id);
                         let timestamp = version.timestamp.clone();
                         let block_count = version.block_count;
                         rsx! {
@@ -902,7 +922,7 @@ pub fn DocumentPanel(
                                 "data-version-id": "{version_id}",
                                 "data-created-at": "{timestamp}",
                                 div { class: "event-head",
-                                    span { class: "mono", "{version_id}" }
+                                    span { class: "mono", title: "{version_id}", "{version_id_label}" }
                                     span { class: "muted", "{timestamp}" }
                                 }
                                 div { class: "muted", "{block_count} blocks" }
@@ -954,38 +974,43 @@ pub fn DocumentPanel(
             // Diff modal — renders only when the harness clicked
             // `document-version-diff-button` on a row.
             if let Some(target_vid) = diff_modal_for() {
-                div {
-                    class: "publish-to-source-modal-backdrop",
-                    "data-testid": "document-version-diff-modal",
-                    div {
-                        class: "publish-to-source-modal",
-                        role: "dialog",
-                        "aria-modal": "true",
-                        header {
-                            class: "publish-to-source-modal-header",
-                            h2 { "Diff vs {target_vid}" }
-                        }
-                        section {
-                            class: "publish-to-source-modal-body",
-                            pre {
-                                // The diff body is a TODO seam (see
-                                // build_version_diff); for now we
-                                // render block-count-only delta
-                                // because soland does not yet expose
-                                // per-version block snapshots in its
-                                // anchor history.
-                                // TODO(G3.Y4-followup): wire to
-                                // soland's per-anchor snapshot
-                                // endpoint when it ships.
-                                "{build_version_diff(&blocks(), &blocks())}"
-                            }
-                        }
-                        footer {
-                            class: "publish-to-source-modal-footer",
-                            button {
-                                class: "secondary",
-                                onclick: move |_| diff_modal_for.set(None),
-                                "Close"
+                {
+                    let target_vid_label = short_protocol_id(&target_vid);
+                    rsx! {
+                        div {
+                            class: "publish-to-source-modal-backdrop",
+                            "data-testid": "document-version-diff-modal",
+                            div {
+                                class: "publish-to-source-modal",
+                                role: "dialog",
+                                "aria-modal": "true",
+                                header {
+                                    class: "publish-to-source-modal-header",
+                                    h2 { title: "{target_vid}", "Diff vs {target_vid_label}" }
+                                }
+                                section {
+                                    class: "publish-to-source-modal-body",
+                                    pre {
+                                        // The diff body is a TODO seam (see
+                                        // build_version_diff); for now we
+                                        // render block-count-only delta
+                                        // because soland does not yet expose
+                                        // per-version block snapshots in its
+                                        // anchor history.
+                                        // TODO(G3.Y4-followup): wire to
+                                        // soland's per-anchor snapshot
+                                        // endpoint when it ships.
+                                        "{build_version_diff(&blocks(), &blocks())}"
+                                    }
+                                }
+                                footer {
+                                    class: "publish-to-source-modal-footer",
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| diff_modal_for.set(None),
+                                        "Close"
+                                    }
+                                }
                             }
                         }
                     }

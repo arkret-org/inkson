@@ -15,7 +15,7 @@ use crate::{
         dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
     },
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -236,7 +236,16 @@ pub fn NotificationsPanel(
                         }
                     }
                     if !notification.space_id.is_empty() {
-                        div { class: "muted", "Space: {notification.space_id}" }
+                        {
+                            let space_id_label = short_protocol_id(&notification.space_id);
+                            rsx! {
+                                div {
+                                    class: "muted",
+                                    title: "{notification.space_id}",
+                                    "Space: {space_id_label}"
+                                }
+                            }
+                        }
                     }
                     div { class: "actions",
                         if !notification.read {
@@ -302,7 +311,10 @@ pub fn NotificationsPanel(
                                     let space_id = notification.space_id.clone();
                                     move |_| {
                                         state_store.write().set_space_muted(space_id.clone(), true);
-                                        status_msg.set(format!("Muted notifications for {space_id}."));
+                                        status_msg.set(format!(
+                                            "Muted notifications for {}.",
+                                            short_protocol_id(&space_id)
+                                        ));
                                     }
                                 },
                                 UiIcon { name: "bell" }

@@ -15,7 +15,7 @@ use crate::{
         estimate_passphrase_strength,
     },
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
     workflows::blocked_release_workflows,
 };
 
@@ -817,6 +817,8 @@ pub fn SettingsPanel(
                                                 crate::i18n::tr("settings.signer.freshness.never"),
                                             ),
                                         };
+                                        let signer_did_label = short_protocol_id(&signer_did);
+                                        let key_id_label = short_protocol_id(&key_id);
                                         rsx! {
                                             div {
                                                 class: "metric",
@@ -824,12 +826,14 @@ pub fn SettingsPanel(
                                                 strong { {crate::i18n::tr("settings.signer.label")} }
                                                 span {
                                                     "data-testid": "settings-signer-did",
-                                                    {signer_did}
+                                                    title: "{signer_did}",
+                                                    "{signer_did_label}"
                                                 }
                                                 div {
                                                     class: "muted",
                                                     "data-testid": "settings-signer-key-id",
-                                                    {format!("{} ({mode_tag} / {alg})", key_id)}
+                                                    title: "{key_id}",
+                                                    "{key_id_label} ({mode_tag} / {alg})"
                                                 }
                                                 div {
                                                     class: "muted",
@@ -1840,19 +1844,27 @@ pub fn SettingsPanel(
                             div { class: "muted", {crate::i18n::tr("settings.muted_spaces_empty")} }
                         } else {
                             for space_id in muted_spaces {
-                                div { class: "actions", "data-testid": "settings-muted-space-row",
-                                    span { "{space_id}" }
-                                    button {
-                                        class: "secondary",
-                                        "data-testid": "notifications-settings-unmute-space",
-                                        onclick: {
-                                            let space_id = space_id.clone();
-                                            move |_| {
-                                                state_store.write().set_space_muted(space_id.clone(), false);
-                                                status.set(format!("Unmuted {space_id} from notification preferences"));
+                                {
+                                    let space_id_label = short_protocol_id(&space_id);
+                                    rsx! {
+                                        div { class: "actions", "data-testid": "settings-muted-space-row",
+                                            span { title: "{space_id}", "{space_id_label}" }
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "notifications-settings-unmute-space",
+                                                onclick: {
+                                                    let space_id = space_id.clone();
+                                                    move |_| {
+                                                        state_store.write().set_space_muted(space_id.clone(), false);
+                                                        status.set(format!(
+                                                            "Unmuted {} from notification preferences",
+                                                            short_protocol_id(&space_id)
+                                                        ));
+                                                    }
+                                                },
+                                                "Unmute"
                                             }
-                                        },
-                                        "Unmute"
+                                        }
                                     }
                                 }
                             }
@@ -1955,9 +1967,10 @@ pub fn SettingsPanel(
                                     .as_ref()
                                     .map(|p| p.lock_reason())
                                     .unwrap_or_default();
+                                let space_id_label = short_protocol_id(&space_id);
                                 rsx! {
                                     div { class: "actions", "data-testid": "read-receipt-override-row",
-                                        span { "{space_id}" }
+                                        span { title: "{space_id}", "{space_id_label}" }
                                         span { class: "badge",
                                             {if send { "sending" } else { "skipping" }}
                                         }
@@ -1987,7 +2000,8 @@ pub fn SettingsPanel(
                                                         state_store.read().read_receipt_space_overrides(),
                                                     );
                                                     status.set(format!(
-                                                        "Read receipts for {space_id}: {}",
+                                                        "Read receipts for {}: {}",
+                                                        short_protocol_id(&space_id),
                                                         if next { "send" } else { "skip" }
                                                     ));
                                                     push_read_receipt_account_data(
@@ -2017,7 +2031,8 @@ pub fn SettingsPanel(
                                                         state_store.read().read_receipt_space_overrides(),
                                                     );
                                                     status.set(format!(
-                                                        "Read receipts for {space_id}: inherit default"
+                                                        "Read receipts for {}: inherit default",
+                                                        short_protocol_id(&space_id)
                                                     ));
                                                     push_read_receipt_account_data(
                                                         base_url(),
@@ -2062,7 +2077,10 @@ pub fn SettingsPanel(
                                     state_store.read().read_receipt_space_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
-                                status.set(format!("Skipping read receipts in {space_id}"));
+                                status.set(format!(
+                                    "Skipping read receipts in {}",
+                                    short_protocol_id(&space_id)
+                                ));
                                 push_read_receipt_account_data(
                                     base_url(),
                                     token(),
@@ -2088,7 +2106,10 @@ pub fn SettingsPanel(
                                     state_store.read().read_receipt_space_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
-                                status.set(format!("Sending read receipts in {space_id}"));
+                                status.set(format!(
+                                    "Sending read receipts in {}",
+                                    short_protocol_id(&space_id)
+                                ));
                                 push_read_receipt_account_data(
                                     base_url(),
                                     token(),
@@ -2127,98 +2148,105 @@ pub fn SettingsPanel(
                         } else {
                             rsx! {
                                 for (space_id, remark) in remarks {
-                                    div {
-                                        class: "actions",
-                                        "data-testid": "space-remark-row",
-                                        "data-space-id": "{space_id}",
-                                        span { class: "mono", "{space_id}" }
-                                        input {
-                                            r#type: "text",
-                                            "data-testid": "space-remark-input",
-                                            placeholder: "Local name (private)",
-                                            value: "{space_remark_inputs().get(&space_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
-                                            oninput: {
-                                                let id = space_id.clone();
-                                                move |evt: FormEvent| {
-                                                    let mut current = space_remark_inputs();
-                                                    current.insert(id.clone(), evt.value());
-                                                    space_remark_inputs.set(current);
+                                    {
+                                        let space_id_label = short_protocol_id(&space_id);
+                                        rsx! {
+                                            div {
+                                                class: "actions",
+                                                "data-testid": "space-remark-row",
+                                                "data-space-id": "{space_id}",
+                                                span { class: "mono", title: "{space_id}", "{space_id_label}" }
+                                                input {
+                                                    r#type: "text",
+                                                    "data-testid": "space-remark-input",
+                                                    placeholder: "Local name (private)",
+                                                    value: "{space_remark_inputs().get(&space_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                                    oninput: {
+                                                        let id = space_id.clone();
+                                                        move |evt: FormEvent| {
+                                                            let mut current = space_remark_inputs();
+                                                            current.insert(id.clone(), evt.value());
+                                                            space_remark_inputs.set(current);
+                                                        }
+                                                    },
                                                 }
-                                            },
-                                        }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "space-remark-save",
-                                            onclick: {
-                                                let id = space_id.clone();
-                                                let existing = remark.clone();
-                                                move |_| {
-                                                    let id = id.clone();
-                                                    let next_name = space_remark_inputs()
-                                                        .get(&id)
-                                                        .cloned()
-                                                        .unwrap_or_default();
-                                                    let mut next = existing.clone();
-                                                    next.local_name = next_name.trim().to_owned();
-                                                    next.updated_at = Some(
-                                                        chrono::Utc::now()
-                                                            .to_rfc3339_opts(
-                                                                chrono::SecondsFormat::Secs,
-                                                                true,
-                                                            ),
-                                                    );
-                                                    state_store
-                                                        .write()
-                                                        .set_space_remark(id.clone(), next.clone());
-                                                    space_remarks_snapshot.set(
-                                                        state_store.read().space_remarks(),
-                                                    );
-                                                    if next.is_empty() {
-                                                        status.set(format!(
-                                                            "Space remark cleared for {id}"
-                                                        ));
-                                                    } else {
-                                                        status.set(format!(
-                                                            "Space remark saved: {} → {}",
-                                                            id, next.local_name
-                                                        ));
-                                                    }
-                                                    push_space_remark_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        id,
-                                                        next,
-                                                    );
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "space-remark-save",
+                                                    onclick: {
+                                                        let id = space_id.clone();
+                                                        let existing = remark.clone();
+                                                        move |_| {
+                                                            let id = id.clone();
+                                                            let next_name = space_remark_inputs()
+                                                                .get(&id)
+                                                                .cloned()
+                                                                .unwrap_or_default();
+                                                            let mut next = existing.clone();
+                                                            next.local_name = next_name.trim().to_owned();
+                                                            next.updated_at = Some(
+                                                                chrono::Utc::now()
+                                                                    .to_rfc3339_opts(
+                                                                        chrono::SecondsFormat::Secs,
+                                                                        true,
+                                                                    ),
+                                                            );
+                                                            state_store
+                                                                .write()
+                                                                .set_space_remark(id.clone(), next.clone());
+                                                            space_remarks_snapshot.set(
+                                                                state_store.read().space_remarks(),
+                                                            );
+                                                            if next.is_empty() {
+                                                                status.set(format!(
+                                                                    "Space remark cleared for {}",
+                                                                    short_protocol_id(&id)
+                                                                ));
+                                                            } else {
+                                                                status.set(format!(
+                                                                    "Space remark saved: {} → {}",
+                                                                    short_protocol_id(&id), next.local_name
+                                                                ));
+                                                            }
+                                                            push_space_remark_account_data(
+                                                                base_url(),
+                                                                token(),
+                                                                id,
+                                                                next,
+                                                            );
+                                                        }
+                                                    },
+                                                    "Save"
                                                 }
-                                            },
-                                            "Save"
-                                        }
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "space-remark-delete",
-                                            onclick: {
-                                                let id = space_id.clone();
-                                                move |_| {
-                                                    let id = id.clone();
-                                                    state_store.write().remove_space_remark(&id);
-                                                    let mut inputs = space_remark_inputs();
-                                                    inputs.remove(&id);
-                                                    space_remark_inputs.set(inputs);
-                                                    space_remarks_snapshot.set(
-                                                        state_store.read().space_remarks(),
-                                                    );
-                                                    status.set(format!(
-                                                        "Space remark cleared for {id}"
-                                                    ));
-                                                    push_space_remark_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        id,
-                                                        crate::account_data::SpaceRemark::default(),
-                                                    );
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "space-remark-delete",
+                                                    onclick: {
+                                                        let id = space_id.clone();
+                                                        move |_| {
+                                                            let id = id.clone();
+                                                            state_store.write().remove_space_remark(&id);
+                                                            let mut inputs = space_remark_inputs();
+                                                            inputs.remove(&id);
+                                                            space_remark_inputs.set(inputs);
+                                                            space_remarks_snapshot.set(
+                                                                state_store.read().space_remarks(),
+                                                            );
+                                                            status.set(format!(
+                                                                "Space remark cleared for {}",
+                                                                short_protocol_id(&id)
+                                                            ));
+                                                            push_space_remark_account_data(
+                                                                base_url(),
+                                                                token(),
+                                                                id,
+                                                                crate::account_data::SpaceRemark::default(),
+                                                            );
+                                                        }
+                                                    },
+                                                    "Delete"
                                                 }
-                                            },
-                                            "Delete"
+                                            }
                                         }
                                     }
                                 }
@@ -2275,7 +2303,8 @@ pub fn SettingsPanel(
                                 new_space_remark_id.set(String::new());
                                 new_space_remark_name.set(String::new());
                                 status.set(format!(
-                                    "Space remark saved: {space_id} → {local_name}"
+                                    "Space remark saved: {} → {local_name}",
+                                    short_protocol_id(&space_id)
                                 ));
                                 push_space_remark_account_data(
                                     base_url(),
@@ -2308,11 +2337,12 @@ pub fn SettingsPanel(
                         } else {
                             rsx! {
                                 for (actor_did, remark) in remarks {
+                                    let actor_did_label = short_protocol_id(&actor_did);
                                     div {
                                         class: "actions",
                                         "data-testid": "contact-remark-row",
                                         "data-actor-did": "{actor_did}",
-                                        span { class: "mono", "{actor_did}" }
+                                        span { class: "mono", title: "{actor_did}", "{actor_did_label}" }
                                         input {
                                             r#type: "text",
                                             "data-testid": "contact-remark-input",
@@ -2355,11 +2385,14 @@ pub fn SettingsPanel(
                                                         state_store.read().contact_remarks(),
                                                     );
                                                     status.set(if next.is_empty() {
-                                                        format!("Contact remark cleared for {did}")
+                                                        format!(
+                                                            "Contact remark cleared for {}",
+                                                            short_protocol_id(&did)
+                                                        )
                                                     } else {
                                                         format!(
                                                             "Contact remark saved: {} → {}",
-                                                            did, next.local_name
+                                                            short_protocol_id(&did), next.local_name
                                                         )
                                                     });
                                                     push_contact_remark_account_data(
@@ -2387,7 +2420,8 @@ pub fn SettingsPanel(
                                                         state_store.read().contact_remarks(),
                                                     );
                                                     status.set(format!(
-                                                        "Contact remark cleared for {did}"
+                                                        "Contact remark cleared for {}",
+                                                        short_protocol_id(&did)
                                                     ));
                                                     push_contact_remark_account_data(
                                                         base_url(),
@@ -2457,7 +2491,8 @@ pub fn SettingsPanel(
                                 new_contact_remark_did.set(String::new());
                                 new_contact_remark_name.set(String::new());
                                 status.set(format!(
-                                    "Contact remark saved: {actor_did} → {local_name}"
+                                    "Contact remark saved: {} → {local_name}",
+                                    short_protocol_id(&actor_did)
                                 ));
                                 push_contact_remark_account_data(
                                     base_url(),
@@ -2586,24 +2621,26 @@ pub fn SettingsPanel(
                                     let entries = state_store.read().client_blocklist();
                                     blocklist_snapshot.set(entries.clone());
                                     if changed {
+                                        let did_label = short_protocol_id(&did);
                                         blocklist_did_input.set(String::new());
                                         blocklist_reason_input.set(String::new());
                                         blocklist_status.set(format!(
-                                            "{} {did}",
+                                            "{} {did_label}",
                                             crate::i18n::tr(
                                                 "settings.privacy.blocked_users.added"
                                             )
                                         ));
                                         status.set(format!(
-                                            "{} {did}",
+                                            "{} {did_label}",
                                             crate::i18n::tr(
                                                 "settings.privacy.blocked_users.added"
                                             )
                                         ));
                                         push_blocklist_account_data(base(), token(), entries);
                                     } else {
+                                        let did_label = short_protocol_id(&did);
                                         blocklist_status.set(format!(
-                                            "{} {did}",
+                                            "{} {did_label}",
                                             crate::i18n::tr(
                                                 "settings.privacy.blocked_users.duplicate"
                                             )
@@ -2649,9 +2686,10 @@ pub fn SettingsPanel(
                     } else {
                         ul { class: "settings-list", "data-testid": "blocklist-entries",
                             for entry in blocklist_snapshot.read().iter() {
+                                let did_label = short_protocol_id(&entry.did);
                                 li { class: "settings-list-row", "data-testid": "blocklist-entry",
                                     div {
-                                        strong { "{entry.did}" }
+                                        strong { title: "{entry.did}", "{did_label}" }
                                         if let Some(reason) = &entry.reason {
                                             div { class: "muted", "{reason}" }
                                         }
@@ -2672,14 +2710,15 @@ pub fn SettingsPanel(
                                                 let entries = state_store.read().client_blocklist();
                                                 blocklist_snapshot.set(entries.clone());
                                                 if changed {
+                                                    let did_label = short_protocol_id(&did);
                                                     blocklist_status.set(format!(
-                                                        "{} {did}",
+                                                        "{} {did_label}",
                                                         crate::i18n::tr(
                                                             "settings.privacy.blocked_users.removed"
                                                         )
                                                     ));
                                                     status.set(format!(
-                                                        "{} {did}",
+                                                        "{} {did_label}",
                                                         crate::i18n::tr(
                                                             "settings.privacy.blocked_users.removed"
                                                         )

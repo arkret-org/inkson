@@ -30,7 +30,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::coauth::CoauthApi;
+use crate::{coauth::CoauthApi, views::helpers::short_protocol_id};
 
 /// One quarantined invite row, parsed from the wire JSON.
 #[derive(Clone, Debug, PartialEq)]
@@ -172,15 +172,29 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
             for entry in entries() {
                 div { class: "event", "data-testid": "quarantine-row",
                     div { class: "event-head",
-                        span { "{entry.target}" }
+                        {
+                            let target_label = short_protocol_id(&entry.target);
+                            rsx! { span { title: "{entry.target}", "{target_label}" } }
+                        }
                         span { class: badge_for(&entry.state), "{entry.state}" }
                     }
-                    div { class: "muted", "data-testid": "quarantine-invite-id", "invite {entry.invite_id}" }
+                    {
+                        let invite_id_label = short_protocol_id(&entry.invite_id);
+                        rsx! {
+                            div { class: "muted", "data-testid": "quarantine-invite-id", title: "{entry.invite_id}", "invite {invite_id_label}" }
+                        }
+                    }
                     if let Some(issuer) = &entry.issuer {
-                        div { class: "muted", "issuer {issuer}" }
+                        {
+                            let issuer_label = short_protocol_id(issuer);
+                            rsx! { div { class: "muted", title: "{issuer}", "issuer {issuer_label}" } }
+                        }
                     }
                     if let Some(space_id) = &entry.space_id {
-                        div { class: "muted", "space {space_id}" }
+                        {
+                            let space_id_label = short_protocol_id(space_id);
+                            rsx! { div { class: "muted", title: "{space_id}", "space {space_id_label}" } }
+                        }
                     }
                     if let Some(reason) = &entry.reason {
                         div { class: "muted", "reason {reason}" }
@@ -207,10 +221,12 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                                     .await
                                                 {
                                                     Ok(_) => status.set(format!(
-                                                        "approved invite {invite_id}"
+                                                        "approved invite {}",
+                                                        short_protocol_id(&invite_id)
                                                     )),
                                                     Err(err) => status.set(format!(
-                                                        "approve {invite_id} failed: {err}"
+                                                        "approve {} failed: {err}",
+                                                        short_protocol_id(&invite_id)
                                                     )),
                                                 },
                                                 Err(err) => {
@@ -266,10 +282,12 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                                             .await
                                                         {
                                                             Ok(_) => status.set(format!(
-                                                                "rejected invite {invite_id}"
+                                                                "rejected invite {}",
+                                                                short_protocol_id(&invite_id)
                                                             )),
                                                             Err(err) => status.set(format!(
-                                                                "reject {invite_id} failed: {err}"
+                                                                "reject {} failed: {err}",
+                                                                short_protocol_id(&invite_id)
                                                             )),
                                                         },
                                                         Err(err) => {

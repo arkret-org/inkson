@@ -7,7 +7,7 @@ use crate::{
     local_state::LocalStateStore,
     models::*,
     routes::Route,
-    views::helpers::{display_name_for_did, with_authed_api},
+    views::helpers::{display_name_for_did, short_protocol_id, with_authed_api},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -634,6 +634,7 @@ pub fn DirectoryPanel(
                         let profile_visibility = value_str(&org, "profile_visibility", "unknown");
                         let directory_services = value_vec(&org, "directory_services");
                         let proof_count = value_vec(&org, "proofs").len();
+                        let org_did_label = short_protocol_id(&org_did);
                         let actor_lookup_seed = if !org_handle.is_empty() {
                             org_handle.clone()
                         } else {
@@ -643,7 +644,7 @@ pub fn DirectoryPanel(
                             div { class: "event", "data-testid": "org-result",
                                 div { class: "event-head",
                                     span { "organization" }
-                                    span { "{org_did}" }
+                                    span { title: "{org_did}", "{org_did_label}" }
                                 }
                                 div { class: "space-title", "{org_name}" }
                                 if !org_handle.is_empty() {
@@ -749,7 +750,17 @@ pub fn DirectoryPanel(
                     div { class: "event", "data-testid": "actor-result",
                         div { class: "event-head",
                             span { "actor" }
-                            span { "{actor.get(\"did\").and_then(|v| v.as_str()).unwrap_or(\"-\")}" }
+                            {
+                                let actor_did = actor
+                                    .get("did")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("-")
+                                    .to_owned();
+                                let actor_did_label = short_protocol_id(&actor_did);
+                                rsx! {
+                                    span { title: "{actor_did}", "{actor_did_label}" }
+                                }
+                            }
                         }
                         div { class: "actions", style: "align-items: center; gap: 12px;",
                             // A4b — directory actor avatar. soland's

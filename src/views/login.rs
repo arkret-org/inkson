@@ -15,7 +15,7 @@ use crate::{
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     local_state::{LocalStateStore, PersistedSessionGrant},
-    views::helpers::persist_config,
+    views::helpers::{persist_config, short_protocol_id},
 };
 
 #[derive(Clone, Debug)]
@@ -263,6 +263,9 @@ pub fn LoginPanel(
                     drop(store_snapshot);
                     let show_session_diagnostics =
                         session_status != "signed-out" || !jkt_display.is_empty();
+                    let device_label = short_protocol_id(&device_value);
+                    let actor_label = short_protocol_id(&actor_value);
+                    let jkt_label = short_protocol_id(&jkt_display);
                     rsx! {
                         if show_session_diagnostics {
                             div { class: "auth-session-state", "data-testid": "session-state-card",
@@ -273,16 +276,19 @@ pub fn LoginPanel(
                                 }
                                 div {
                                     "data-testid": "session-device-id",
-                                    "{device_value}"
+                                    title: "{device_value}",
+                                    "{device_label}"
                                 }
                                 div {
                                     "data-testid": "session-actor-did",
-                                    "{actor_value}"
+                                    title: "{actor_value}",
+                                    "{actor_label}"
                                 }
                                 if !jkt_display.is_empty() {
                                     div {
                                         "data-testid": "session-dpop-jkt",
-                                        "{jkt_display}"
+                                        title: "{jkt_display}",
+                                        "{jkt_label}"
                                     }
                                 }
                                 button {

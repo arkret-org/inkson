@@ -8,7 +8,7 @@ use crate::{
     local_state::{LocalStateStore, MoveSubmissionState},
     operation::cx_ops,
     routes::Route,
-    views::helpers::{active_sync_token, authed_api_with_sync},
+    views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id},
 };
 
 /// Default `covered_frontier_lag` warning threshold used by the
@@ -397,6 +397,7 @@ pub fn SpaceAdminPanel(
                         "Local Move/Anchor pipeline state for writes you've submitted from this device. Pending → Effective once anchored; failures expand inline."
                     }
                     for record in move_submissions.clone() {
+                        let move_id_label = short_protocol_id(&record.move_id);
                         div { class: "event", "data-testid": "move-submission-row",
                             div { class: "event-head",
                                 span { "{record.kind}" }
@@ -408,7 +409,8 @@ pub fn SpaceAdminPanel(
                                 }
                             }
                             div { class: "muted", "data-testid": "move-submission-id",
-                                "move {record.move_id}"
+                                title: "{record.move_id}",
+                                "move {move_id_label}"
                             }
                             if record.state.is_failed() {
                                 button {
@@ -439,7 +441,8 @@ pub fn SpaceAdminPanel(
                                             div { "reason: (none reported)" }
                                         }
                                         if let Some(anchor) = &record.anchor_ref {
-                                            div { "bound anchor: {anchor}" }
+                                            let anchor_label = short_protocol_id(anchor);
+                                            div { title: "{anchor}", "bound anchor: {anchor_label}" }
                                         }
                                         div { "submitted_at: {record.submitted_at}" }
                                     }
@@ -462,8 +465,10 @@ pub fn SpaceAdminPanel(
                         "One or more cells in this Space's projection are in the bottom-expose state — soland received concurrent Moves it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a head_in repair Move before downstream queries return a definitive value."
                     }
                     for (cell_ref, info) in &bottom_cells {
+                        let cell_ref_label = short_protocol_id(cell_ref);
                         div { class: "muted", "data-testid": "bottom-cell-row",
-                            "{cell_ref} · status={info.status}"
+                            title: "{cell_ref}",
+                            "{cell_ref_label} · status={info.status}"
                         }
                         // Side-by-side render of the competing heads so the
                         // operator can see what they're picking between
@@ -471,8 +476,9 @@ pub fn SpaceAdminPanel(
                         if !info.heads.is_empty() {
                             div { class: "metric-grid", "data-testid": "bottom-cell-heads",
                                 for head in &info.heads {
+                                    let head_move_id_label = short_protocol_id(&head.move_id);
                                     div { class: "metric", "data-testid": "bottom-cell-head",
-                                        strong { "data-testid": "bottom-cell-head-move-id", "{head.move_id}" }
+                                        strong { "data-testid": "bottom-cell-head-move-id", title: "{head.move_id}", "{head_move_id_label}" }
                                         span { "data-testid": "bottom-cell-head-value",
                                             "{serde_json::to_string(&head.value).unwrap_or_default()}"
                                         }
@@ -626,8 +632,9 @@ pub fn SpaceAdminPanel(
                                         .await
                                         {
                                             Ok(resp) => status_msg.set(format!(
-                                                "repair event {op_id}: state=accepted event_id={}",
-                                                resp.event_id
+                                                "repair event {}: state=accepted event_id={}",
+                                                short_protocol_id(&op_id),
+                                                short_protocol_id(&resp.event_id)
                                             )),
                                             Err(err) => status_msg.set(format!(
                                                 "repair submit failed: {}", err.display()
@@ -907,8 +914,9 @@ pub fn SpaceAdminPanel(
                                         .await
                                         {
                                             Ok(resp) => status_msg.set(format!(
-                                                "cx.realm.update event {op_id}: event_id={}",
-                                                resp.event_id
+                                                "cx.realm.update event {}: event_id={}",
+                                                short_protocol_id(&op_id),
+                                                short_protocol_id(&resp.event_id)
                                             )),
                                             Err(err) => status_msg.set(format!(
                                                 "realm update failed: {}", err.display()
@@ -1126,7 +1134,9 @@ pub fn SpaceAdminPanel(
                                                         }
                                                         invite_target.set(String::new());
                                                         status_msg.set(format!(
-                                                            "invited {target} (pending) fact {op_id}"
+                                                            "invited {} (pending) fact {}",
+                                                            short_protocol_id(&target),
+                                                            short_protocol_id(&op_id)
                                                         ));
                                                     }
                                                     Err(error) => status_msg.set(format!("invite failed: {error}")),
@@ -1211,6 +1221,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 for member in members() {
+                    let member_label = short_protocol_id(&member);
                     div { class: "event", "data-testid": "member-row",
                         div { class: "event-head",
                             // A4b — member avatar slot. Avatars are
@@ -1237,7 +1248,7 @@ pub fn SpaceAdminPanel(
                                     }
                                 }
                             }
-                            span { "{member}" }
+                            span { title: "{member}", "{member_label}" }
                             {
                                 // Mark agent-endpoint DIDs (registered via
                                 // `cx.agent.endpoint`) so admins can tell bots
@@ -1319,7 +1330,10 @@ pub fn SpaceAdminPanel(
                                             )
                                             .await
                                             {
-                                                Ok(_) => status_msg.set(format!("kicked {m_for_msg}")),
+                                                Ok(_) => status_msg.set(format!(
+                                                    "kicked {}",
+                                                    short_protocol_id(&m_for_msg)
+                                                )),
                                                 Err(err) => status_msg.set(format!(
                                                     "kick failed: {}", err.display()
                                                 )),
@@ -1359,7 +1373,10 @@ pub fn SpaceAdminPanel(
                                             )
                                             .await
                                             {
-                                                Ok(_) => status_msg.set(format!("banned {m_for_msg}")),
+                                                Ok(_) => status_msg.set(format!(
+                                                    "banned {}",
+                                                    short_protocol_id(&m_for_msg)
+                                                )),
                                                 Err(err) => status_msg.set(format!(
                                                     "ban failed: {}", err.display()
                                                 )),
@@ -1392,7 +1409,7 @@ pub fn SpaceAdminPanel(
                                 class: "event",
                                 "data-testid": "block-user-confirm-modal",
                                 div { class: "space-title", {crate::i18n::tr("member.block_confirm.title")} }
-                                div { class: "muted", "{member}" }
+                                div { class: "muted", title: "{member}", "{member_label}" }
                                 div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
                                 div { class: "actions",
                                     button {
@@ -1407,7 +1424,10 @@ pub fn SpaceAdminPanel(
                                                     .block_user(&m, None);
                                                 block_confirm_did.set(None);
                                                 if changed {
-                                                    status_msg.set(format!("Blocked {m}"));
+                                                    status_msg.set(format!(
+                                                        "Blocked {}",
+                                                        short_protocol_id(&m)
+                                                    ));
                                                     let entries = state_store
                                                         .read()
                                                         .client_blocklist();
@@ -1417,7 +1437,10 @@ pub fn SpaceAdminPanel(
                                                         entries,
                                                     );
                                                 } else {
-                                                    status_msg.set(format!("{m} is already blocked"));
+                                                    status_msg.set(format!(
+                                                        "{} is already blocked",
+                                                        short_protocol_id(&m)
+                                                    ));
                                                 }
                                             }
                                         },
@@ -1469,20 +1492,24 @@ pub fn SpaceAdminPanel(
             div { class: "event", "data-testid": "space-invites",
                 div { class: "event-head", span { "Invites" } span { "lifecycle" } }
                 for invite in space_invites() {
+                    let invite_target_label = short_protocol_id(&invite.target);
+                    let invite_id_label = short_protocol_id(&invite.invite_id);
                     div { class: "event", "data-testid": "invite-row",
                         div { class: "event-head",
-                            span { "{invite.target}" }
+                            span { title: "{invite.target}", "{invite_target_label}" }
                             span { "{invite.state}" }
                         }
-                        div { class: "muted", "data-testid": "invite-id", "{invite.invite_id}" }
+                        div { class: "muted", "data-testid": "invite-id", title: "{invite.invite_id}", "{invite_id_label}" }
                         if let Some(role) = &invite.role {
                             div { class: "muted", "role {role}" }
                         }
                         if let Some(operation_id) = &invite.operation_id {
-                            div { class: "muted", "fact {operation_id}" }
+                            let operation_id_label = short_protocol_id(operation_id);
+                            div { class: "muted", title: "{operation_id}", "fact {operation_id_label}" }
                         }
                         if let Some(event_id) = &invite.event_id {
-                            div { class: "muted", "event {event_id}" }
+                            let event_id_label = short_protocol_id(event_id);
+                            div { class: "muted", title: "{event_id}", "event {event_id_label}" }
                         }
                         div { class: "actions",
                             button {
@@ -1530,7 +1557,10 @@ pub fn SpaceAdminPanel(
                                                                     }),
                                                                 );
                                                             }
-                                                            status_msg.set(format!("accepted invite fact {op_id}"));
+                                                            status_msg.set(format!(
+                                                                "accepted invite fact {}",
+                                                                short_protocol_id(&op_id)
+                                                            ));
                                                         }
                                                         Err(error) => status_msg.set(format!("accept failed: {error}")),
                                                     }
@@ -1593,7 +1623,10 @@ pub fn SpaceAdminPanel(
                                                                     }),
                                                                 );
                                                             }
-                                                            status_msg.set(format!("canceled invite fact {op_id}"));
+                                                            status_msg.set(format!(
+                                                                "canceled invite fact {}",
+                                                                short_protocol_id(&op_id)
+                                                            ));
                                                         }
                                                         Err(error) => status_msg.set(format!("cancel failed: {error}")),
                                                     }
@@ -1991,8 +2024,9 @@ pub fn SpaceAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "cx.capability.grant event {op_id}: event_id={}",
-                                            resp.event_id
+                                            "cx.capability.grant event {}: event_id={}",
+                                            short_protocol_id(&op_id),
+                                            short_protocol_id(&resp.event_id)
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "capability.grant submit failed: {}", err.display()
@@ -2057,8 +2091,9 @@ pub fn SpaceAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "cx.capability.revoke event {op_id}: event_id={}",
-                                            resp.event_id
+                                            "cx.capability.revoke event {}: event_id={}",
+                                            short_protocol_id(&op_id),
+                                            short_protocol_id(&resp.event_id)
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "capability.revoke submit failed: {}", err.display()
@@ -2265,7 +2300,10 @@ pub fn SpaceAdminPanel(
                                     )
                                     .await
                                     {
-                                        Ok(_) => status_msg.set(format!("deleted {space_for_msg}")),
+                                        Ok(_) => status_msg.set(format!(
+                                            "deleted {}",
+                                            short_protocol_id(&space_for_msg)
+                                        )),
                                         Err(err) => status_msg.set(format!("delete failed: {}", err.display())),
                                     }
                                 });
@@ -2435,9 +2473,10 @@ pub fn SpaceAdminPanel(
                             }
                         }
                         for chain in chains {
+                            let group_id_label = short_protocol_id(&chain.group_id);
                             div { class: "event", "data-testid": "mls-revoke-chain-row",
                                 div { class: "event-head",
-                                    span { "{chain.group_id}" }
+                                    span { title: "{chain.group_id}", "{group_id_label}" }
                                     span { class: "badge", "{chain.status_summary()}" }
                                 }
                                 div { class: "metric-grid",
@@ -2448,7 +2487,8 @@ pub fn SpaceAdminPanel(
                                             "{chain.commit_state.label()}"
                                         }
                                         if let Some(ref id) = chain.commit_move_id {
-                                            div { class: "muted", "{id}" }
+                                            let id_label = short_protocol_id(id);
+                                            div { class: "muted", title: "{id}", "{id_label}" }
                                         }
                                         if let ChainMoveState::Failed { reason } =
                                             &chain.commit_state
@@ -2463,7 +2503,8 @@ pub fn SpaceAdminPanel(
                                             "{chain.epoch_advance_state.label()}"
                                         }
                                         if let Some(ref id) = chain.epoch_advance_move_id {
-                                            div { class: "muted", "{id}" }
+                                            let id_label = short_protocol_id(id);
+                                            div { class: "muted", title: "{id}", "{id_label}" }
                                         }
                                         if let ChainMoveState::Failed { reason } =
                                             &chain.epoch_advance_state
@@ -2541,7 +2582,8 @@ async fn run_device_revoke_from_snapshot(
         Some(env) => env,
         None => {
             status.set(format!(
-                "no persisted MLS snapshot for space {space_id}; nothing to revoke against"
+                "no persisted MLS snapshot for space {}; nothing to revoke against",
+                short_protocol_id(&space_id)
             ));
             return;
         }

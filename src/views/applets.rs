@@ -33,7 +33,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// Stable hash for a manifest body. `manifest_hash` is what soland's
 /// applet registry will eventually pin per applet; the value is
@@ -232,13 +232,15 @@ pub fn AppletsPanel(
                                 .unwrap_or("-")
                                 .to_owned();
                             let op_id = r.operation_id.clone();
+                            let service_did_label = short_protocol_id(&service_did);
+                            let op_id_label = short_protocol_id(&op_id);
                             rsx! {
                                 div { class: "event", "data-testid": "applet-registration-row",
                                     div { class: "event-head",
-                                        span { class: "mono", "{service_did}" }
+                                        span { class: "mono", title: "{service_did}", "{service_did_label}" }
                                         span { class: "badge", "{namespace}" }
                                     }
-                                    div { class: "muted", "operation_id {op_id}" }
+                                    div { class: "muted", title: "{op_id}", "operation_id {op_id_label}" }
                                 }
                             }
                         }
@@ -351,11 +353,12 @@ pub fn AppletsPanel(
                                 .and_then(|b| b.get("status"))
                                 .and_then(Value::as_str)
                                 .map(ToOwned::to_owned);
+                            let session_id_label = short_protocol_id(&session_id);
                             rsx! {
                                 div { class: "event", "data-testid": "applet-session-row",
                                     div { class: "event-head",
                                         span { class: "mono", "{kind}" }
-                                        span { class: "mono", "{session_id}" }
+                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
                                     }
                                     if let Some(status_str) = status_opt {
                                         div { class: "muted", "status: {status_str}" }
@@ -390,11 +393,12 @@ pub fn AppletsPanel(
                                 .and_then(|b| b.get("message"))
                                 .and_then(Value::as_str)
                                 .map(ToOwned::to_owned);
+                            let session_id_label = short_protocol_id(&session_id);
                             rsx! {
                                 div { class: "event", "data-testid": "applet-bridge-error-row",
                                     div { class: "event-head",
                                         span { class: "mono", "{error_code}" }
-                                        span { class: "mono", "{session_id}" }
+                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
                                     }
                                     if let Some(msg) = msg_opt {
                                         div { class: "muted", "{msg}" }
@@ -506,46 +510,52 @@ pub fn AppletsPanel(
                     }
                 } else {
                     for (applet_id, service_did, namespace, manifest_hash, installed_at) in applet_rows.iter().cloned() {
-                        div {
-                            class: "event",
-                            "data-testid": "applet-row",
-                            "data-applet-id": "{applet_id}",
-                            "data-applet-manifest-hash": "{manifest_hash}",
-                            "data-installed-at": "{installed_at}",
-                            div { class: "event-head",
-                                span { class: "mono", "{service_did}" }
-                                span { class: "badge", "{namespace}" }
-                                span { class: "mono muted", "{manifest_hash}" }
-                            }
-                            div { class: "actions",
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "applet-accountability-trace-button",
-                                    onclick: {
-                                        let aid = applet_id.clone();
-                                        move |_| trace_open_for.set(Some(aid.clone()))
-                                    },
-                                    "Trace events"
-                                }
-                                button {
-                                    class: "danger",
-                                    "data-testid": "applet-uninstall-button",
-                                    onclick: {
-                                        let sd = service_did.clone();
-                                        move |_| {
-                                            install_status.set(format!(
-                                                "uninstall requested for {sd}"
-                                            ));
-                                            // TODO(G3.Y4-followup):
-                                            // POST a cx.applet.revoke
-                                            // / cx.applet.uninstall
-                                            // event once soland accepts
-                                            // it; for now we surface
-                                            // the request locally so
-                                            // operators can audit.
+                        {
+                            let service_did_label = short_protocol_id(&service_did);
+                            let manifest_hash_label = short_protocol_id(&manifest_hash);
+                            rsx! {
+                                div {
+                                    class: "event",
+                                    "data-testid": "applet-row",
+                                    "data-applet-id": "{applet_id}",
+                                    "data-applet-manifest-hash": "{manifest_hash}",
+                                    "data-installed-at": "{installed_at}",
+                                    div { class: "event-head",
+                                        span { class: "mono", title: "{service_did}", "{service_did_label}" }
+                                        span { class: "badge", "{namespace}" }
+                                        span { class: "mono muted", title: "{manifest_hash}", "{manifest_hash_label}" }
+                                    }
+                                    div { class: "actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "applet-accountability-trace-button",
+                                            onclick: {
+                                                let aid = applet_id.clone();
+                                                move |_| trace_open_for.set(Some(aid.clone()))
+                                            },
+                                            "Trace events"
                                         }
-                                    },
-                                    "Uninstall"
+                                        button {
+                                            class: "danger",
+                                            "data-testid": "applet-uninstall-button",
+                                            onclick: {
+                                                let sd = service_did.clone();
+                                                move |_| {
+                                                    install_status.set(format!(
+                                                        "uninstall requested for {sd}"
+                                                    ));
+                                                    // TODO(G3.Y4-followup):
+                                                    // POST a cx.applet.revoke
+                                                    // / cx.applet.uninstall
+                                                    // event once soland accepts
+                                                    // it; for now we surface
+                                                    // the request locally so
+                                                    // operators can audit.
+                                                }
+                                            },
+                                            "Uninstall"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -556,60 +566,66 @@ pub fn AppletsPanel(
             // Accountability trace modal — renders only when the
             // operator clicked the trace button on a row.
             if let Some(target) = trace_open_for() {
-                div {
-                    class: "publish-to-source-modal-backdrop",
-                    "data-testid": "applet-accountability-modal",
-                    div {
-                        class: "publish-to-source-modal",
-                        role: "dialog",
-                        "aria-modal": "true",
-                        header {
-                            class: "publish-to-source-modal-header",
-                            h2 { "Accountability trace — {target}" }
-                        }
-                        section {
-                            class: "publish-to-source-modal-body",
-                            if trace_events.is_empty() {
-                                p { class: "muted", "No events observed for this applet yet." }
-                            } else {
-                                for ev in trace_events.iter() {
-                                    {
-                                        let event_id = ev.operation_id.clone();
-                                        let kind = ev
-                                            .payload
-                                            .get("kind")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("?")
-                                            .to_owned();
-                                        let emitted_at = ev
-                                            .payload
-                                            .get("timestamp")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("-")
-                                            .to_owned();
-                                        rsx! {
-                                            div {
-                                                class: "event",
-                                                "data-testid": "applet-accountability-event",
-                                                "data-event-id": "{event_id}",
-                                                "data-emitted-at": "{emitted_at}",
-                                                div { class: "event-head",
-                                                    span { class: "mono", "{kind}" }
-                                                    span { class: "muted", "{emitted_at}" }
+                {
+                    let target_label = short_protocol_id(&target);
+                    rsx! {
+                        div {
+                            class: "publish-to-source-modal-backdrop",
+                            "data-testid": "applet-accountability-modal",
+                            div {
+                                class: "publish-to-source-modal",
+                                role: "dialog",
+                                "aria-modal": "true",
+                                header {
+                                    class: "publish-to-source-modal-header",
+                                    h2 { title: "{target}", "Accountability trace — {target_label}" }
+                                }
+                                section {
+                                    class: "publish-to-source-modal-body",
+                                    if trace_events.is_empty() {
+                                        p { class: "muted", "No events observed for this applet yet." }
+                                    } else {
+                                        for ev in trace_events.iter() {
+                                            {
+                                                let event_id = ev.operation_id.clone();
+                                                let kind = ev
+                                                    .payload
+                                                    .get("kind")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or("?")
+                                                    .to_owned();
+                                                let emitted_at = ev
+                                                    .payload
+                                                    .get("timestamp")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or("-")
+                                                    .to_owned();
+                                                let event_id_label = short_protocol_id(&event_id);
+                                                rsx! {
+                                                    div {
+                                                        class: "event",
+                                                        "data-testid": "applet-accountability-event",
+                                                        "data-event-id": "{event_id}",
+                                                        "data-emitted-at": "{emitted_at}",
+                                                        div { class: "event-head",
+                                                            span { class: "mono", "{kind}" }
+                                                            span { class: "muted", "{emitted_at}" }
+                                                        }
+                                                        div { class: "muted", title: "{event_id}", "event_id {event_id_label}" }
+                                                    }
                                                 }
-                                                div { class: "muted", "event_id {event_id}" }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        }
-                        footer {
-                            class: "publish-to-source-modal-footer",
-                            button {
-                                class: "secondary",
-                                onclick: move |_| trace_open_for.set(None),
-                                "Close"
+                                footer {
+                                    class: "publish-to-source-modal-footer",
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| trace_open_for.set(None),
+                                        "Close"
+                                    }
+                                }
                             }
                         }
                     }

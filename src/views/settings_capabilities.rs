@@ -20,7 +20,7 @@ use crate::{
     api::ContrixApi,
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 /// One row in the user's capability list. Backed by either the user
@@ -203,58 +203,69 @@ pub fn CapabilitiesSettingsCard(
             } else {
                 ul { class: "settings-list",
                     for row in rows.read().iter().cloned() {
-                        li {
-                            class: "event",
-                            "data-testid": "capability-row",
-                            "data-capability-id": "{row.capability_id}",
-                            "data-action": "{row.action}",
-                            "data-scope": "{row.scope}",
-                            "data-issuer-did": "{row.issuer_did}",
-                            "data-subject-did": "{row.subject_did}",
-                            "data-expires-at": "{row.expires_at}",
-                            div { class: "event-head",
-                                span { "{row.action}" }
-                                span { class: "muted", "expires {row.expires_at}" }
-                            }
-                            div { class: "muted", "issued by {row.issuer_did} → {row.subject_did}" }
-                            div { class: "muted mono", "scope {row.scope}" }
-                            div { class: "actions",
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "capability-detail-button",
+                        {
+                            let issuer_did_label = short_protocol_id(&row.issuer_did);
+                            let subject_did_label = short_protocol_id(&row.subject_did);
+                            rsx! {
+                                li {
+                                    class: "event",
+                                    "data-testid": "capability-row",
                                     "data-capability-id": "{row.capability_id}",
-                                    onclick: {
-                                        let id = row.capability_id.clone();
-                                        move |_| detail_for.set(Some(id.clone()))
-                                    },
-                                    "Detail"
-                                }
-                                // Revoke is only meaningful when the current
-                                // actor is the issuer (per §3.3); render the
-                                // button regardless but disable it when the
-                                // viewer is not the issuer. Soland still
-                                // validates server-side, so a stray click
-                                // returns capability_denied via the global
-                                // policy-deny banner — defence in depth.
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "capability-revoke-button",
-                                    "data-capability-id": "{row.capability_id}",
-                                    disabled: row.issuer_did != account_did(),
-                                    onclick: {
-                                        let id = row.capability_id.clone();
-                                        move |_| {
-                                            // TODO(G3.Y3-followup): wire to
-                                            // `POST /api/v1/authz/capabilities/{id}/revoke`
-                                            // once soland ships the revoke endpoint
-                                            // (spec §3.3). Until then the click is a
-                                            // no-op so the testid is hookable.
-                                            status.set(format!(
-                                                "TODO: revoke capability {id} via soland (G3.Y3-followup)"
-                                            ));
+                                    "data-action": "{row.action}",
+                                    "data-scope": "{row.scope}",
+                                    "data-issuer-did": "{row.issuer_did}",
+                                    "data-subject-did": "{row.subject_did}",
+                                    "data-expires-at": "{row.expires_at}",
+                                    div { class: "event-head",
+                                        span { "{row.action}" }
+                                        span { class: "muted", "expires {row.expires_at}" }
+                                    }
+                                    div {
+                                        class: "muted",
+                                        title: "{row.issuer_did} → {row.subject_did}",
+                                        "issued by {issuer_did_label} → {subject_did_label}"
+                                    }
+                                    div { class: "muted mono", "scope {row.scope}" }
+                                    div { class: "actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "capability-detail-button",
+                                            "data-capability-id": "{row.capability_id}",
+                                            onclick: {
+                                                let id = row.capability_id.clone();
+                                                move |_| detail_for.set(Some(id.clone()))
+                                            },
+                                            "Detail"
                                         }
-                                    },
-                                    "Revoke"
+                                        // Revoke is only meaningful when the current
+                                        // actor is the issuer (per §3.3); render the
+                                        // button regardless but disable it when the
+                                        // viewer is not the issuer. Soland still
+                                        // validates server-side, so a stray click
+                                        // returns capability_denied via the global
+                                        // policy-deny banner — defence in depth.
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "capability-revoke-button",
+                                            "data-capability-id": "{row.capability_id}",
+                                            disabled: row.issuer_did != account_did(),
+                                            onclick: {
+                                                let id = row.capability_id.clone();
+                                                move |_| {
+                                                    // TODO(G3.Y3-followup): wire to
+                                                    // `POST /api/v1/authz/capabilities/{id}/revoke`
+                                                    // once soland ships the revoke endpoint
+                                                    // (spec §3.3). Until then the click is a
+                                                    // no-op so the testid is hookable.
+                                                    status.set(format!(
+                                                        "TODO: revoke capability {} via soland (G3.Y3-followup)",
+                                                        short_protocol_id(&id)
+                                                    ));
+                                                }
+                                            },
+                                            "Revoke"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -264,6 +275,7 @@ pub fn CapabilitiesSettingsCard(
 
             if let Some(capability_id) = detail_for.read().clone() {
                 if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
+                    let capability_id_label = short_protocol_id(&row.capability_id);
                     div {
                         class: "event modal",
                         "data-testid": "capability-detail-modal",
@@ -280,7 +292,7 @@ pub fn CapabilitiesSettingsCard(
                                 "×"
                             }
                         }
-                        div { class: "muted", "{row.capability_id}" }
+                        div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
                         if row.chain.is_empty() {
                             div {
                                 class: "muted",
@@ -290,15 +302,25 @@ pub fn CapabilitiesSettingsCard(
                         } else {
                             ol { class: "settings-list",
                                 for (idx, step) in row.chain.iter().enumerate() {
-                                    li {
-                                        class: "event",
-                                        "data-testid": "capability-chain-step",
-                                        "data-step-index": "{idx}",
-                                        div { class: "event-head",
-                                            span { "Step {idx + 1}" }
-                                            span { class: "mono", "{step.issuer_did} → {step.subject_did}" }
+                                    {
+                                        let issuer_did_label = short_protocol_id(&step.issuer_did);
+                                        let subject_did_label = short_protocol_id(&step.subject_did);
+                                        rsx! {
+                                            li {
+                                                class: "event",
+                                                "data-testid": "capability-chain-step",
+                                                "data-step-index": "{idx}",
+                                                div { class: "event-head",
+                                                    span { "Step {idx + 1}" }
+                                                    span {
+                                                        class: "mono",
+                                                        title: "{step.issuer_did} → {step.subject_did}",
+                                                        "{issuer_did_label} → {subject_did_label}"
+                                                    }
+                                                }
+                                                div { class: "muted mono", "constraints {step.constraints}" }
+                                            }
                                         }
-                                        div { class: "muted mono", "constraints {step.constraints}" }
                                     }
                                 }
                             }

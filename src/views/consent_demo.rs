@@ -23,7 +23,10 @@
 
 use dioxus::prelude::*;
 
-use crate::{local_state::LocalStateStore, views::helpers::with_authed_api};
+use crate::{
+    local_state::LocalStateStore,
+    views::helpers::{short_protocol_id, with_authed_api},
+};
 
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
 // build_signed_consent_revoke_v2 / format_submit_response and their
@@ -114,10 +117,15 @@ pub fn ConsentGrantDemoCard(
                             .await
                             {
                                 Ok(response) => status.set(format!(
-                                    "cx.consent.grant event {} state=accepted", response.event_id
+                                    "cx.consent.grant event {} state=accepted",
+                                    short_protocol_id(&response.event_id)
                                 )),
                                 Err(err) => status
-                                    .set(format!("submit {op_id}: {}", err.display())),
+                                    .set(format!(
+                                        "submit {}: {}",
+                                        short_protocol_id(&op_id),
+                                        err.display()
+                                    )),
                             }
                         });
                     },
@@ -163,10 +171,12 @@ pub fn ConsentGrantDemoCard(
                             .await
                             {
                                 Ok(response) => status.set(format!(
-                                    "cx.consent.revoke event {} state=accepted", response.event_id
+                                    "cx.consent.revoke event {} state=accepted",
+                                    short_protocol_id(&response.event_id)
                                 )),
                                 Err(err) => status.set(format!(
-                                    "submit revoke {op_id}: {}",
+                                    "submit revoke {}: {}",
+                                    short_protocol_id(&op_id),
                                     err.display()
                                 )),
                             }
@@ -176,8 +186,15 @@ pub fn ConsentGrantDemoCard(
                 }
             }
             if !last_move_id().is_empty() {
-                div { class: "muted", "data-testid": "consent-grant-last-move-id",
-                    "Last move id: {last_move_id}"
+                {
+                    let last_move_id_value = last_move_id();
+                    let last_move_id_label = short_protocol_id(&last_move_id_value);
+                    rsx! {
+                        div { class: "muted", "data-testid": "consent-grant-last-move-id",
+                            title: "{last_move_id_value}",
+                            "Last move id: {last_move_id_label}"
+                        }
+                    }
                 }
             }
             if !status().is_empty() {

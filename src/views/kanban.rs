@@ -11,7 +11,7 @@ use crate::{
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 /// Board Space id used only when the explicit demo seed fallback is
@@ -1135,6 +1135,10 @@ pub fn KanbanPanel(
             .map(|option| option.title.clone())
             .unwrap_or_else(|| crate::i18n::tr("kanban.board_title"))
     };
+    let selected_board_space_id_value = selected_board_space_id();
+    let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
+    let board_view_id_value = board_view_id();
+    let board_view_id_label = short_protocol_id(&board_view_id_value);
 
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
@@ -1412,7 +1416,10 @@ pub fn KanbanPanel(
                                     return;
                                 }
                                 if containers.is_empty() && flows.is_empty() {
-                                    board_status.set(format!("Board selected · {board_id}"));
+                                    board_status.set(format!(
+                                        "Board selected · {}",
+                                        short_protocol_id(&board_id)
+                                    ));
                                     return;
                                 }
                                 let (projected_columns, options, projected_board_id) =
@@ -1444,7 +1451,8 @@ pub fn KanbanPanel(
                                     columns.set(Vec::new());
                                     adding_card_to.set(None);
                                     board_status.set(format!(
-                                        "No list projection available for selected Board · {board_id}"
+                                        "No list projection available for selected Board · {}",
+                                        short_protocol_id(&board_id)
                                     ));
                                 }
                             },
@@ -1646,8 +1654,8 @@ pub fn KanbanPanel(
                                             }
                                         }
                                         div { class: "metric-grid", "data-testid": "board-projection-model",
-                                            div { class: "metric", strong { "Board" } span { "{selected_board_space_id}" } div { class: "muted", "renderer: kanban" } }
-                                            div { class: "metric", strong { "View" } span { "{board_view_id}" } div { class: "muted", "collection projection" } }
+                                            div { class: "metric", strong { "Board" } span { title: "{selected_board_space_id_value}", "{selected_board_space_id_label}" } div { class: "muted", "renderer: kanban" } }
+                                            div { class: "metric", strong { "View" } span { title: "{board_view_id_value}", "{board_view_id_label}" } div { class: "muted", "collection projection" } }
                                             div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
                                             div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
                                             div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
@@ -1702,16 +1710,23 @@ pub fn KanbanPanel(
                                     }
                                     div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
                                     for record in write_records() {
-                                        div { class: "event", "data-testid": "board-event-record",
-                                            div { class: "event-head",
-                                                span { "{record.kind}" }
-                                                span { class: record.state.class_name(), "{record.state.label()}" }
+                                        {
+                                            let move_id_label = short_protocol_id(&record.move_id);
+                                            let cell_id_label = short_protocol_id(&record.cell_id);
+                                            let anchor_ref_label = short_protocol_id(&record.anchor_ref);
+                                            rsx! {
+                                                div { class: "event", "data-testid": "board-event-record",
+                                                    div { class: "event-head",
+                                                        span { "{record.kind}" }
+                                                        span { class: record.state.class_name(), "{record.state.label()}" }
+                                                    }
+                                                    div { class: "muted", title: "{record.move_id}", "move_id {move_id_label}" }
+                                                    div { class: "muted", title: "{record.cell_id}", "cell {cell_id_label} / hlc {record.hlc}" }
+                                                    div { class: "muted", title: "{record.anchor_ref}", "anchor_ref {anchor_ref_label}" }
+                                                    div { class: "muted", "effect {record.effect_summary}" }
+                                                    div { class: "muted", "{record.note}" }
+                                                }
                                             }
-                                            div { class: "muted", "move_id {record.move_id}" }
-                                            div { class: "muted", "cell {record.cell_id} / hlc {record.hlc}" }
-                                            div { class: "muted", "anchor_ref {record.anchor_ref}" }
-                                            div { class: "muted", "effect {record.effect_summary}" }
-                                            div { class: "muted", "{record.note}" }
                                         }
                                     }
                                     if write_records().is_empty() {
@@ -2429,6 +2444,7 @@ pub fn KanbanPanel(
             if let Some(ref card) = selected_card() {
                 {
                     let active_track = card_detail_track();
+                    let card_id_label = short_protocol_id(&card.id);
                     rsx! {
                         div {
                             class: "card-detail-overlay",
@@ -2478,7 +2494,7 @@ pub fn KanbanPanel(
                                             span { class: "card-detail-status-dot", "aria-hidden": "true" }
                                             h2 { "{card.title}" }
                                         }
-                                        div { class: "card-detail-id muted", "{card.id}" }
+                                        div { class: "card-detail-id muted", title: "{card.id}", "{card_id_label}" }
                                     }
                                     button {
                                         class: "secondary card-detail-close icon-button",
@@ -3042,7 +3058,10 @@ fn dispatch_card_detail_update(
         }
     }
     if !found {
-        board_status.set(format!("internal: card {} not in board state", current.id));
+        board_status.set(format!(
+            "internal: card {} not in board state",
+            short_protocol_id(&current.id)
+        ));
         return false;
     }
     selected_card.set(Some(updated_card));
@@ -3079,7 +3098,10 @@ fn submit_kanban_operation_event(
             "body": operation.payload.clone(),
         }),
     );
-    board_status.set(format!("submitting {kind} operation {operation_id}"));
+    board_status.set(format!(
+        "submitting {kind} operation {}",
+        short_protocol_id(&operation_id)
+    ));
     let api_token = token();
     spawn(async move {
         let operation_for_submit = operation.clone();
@@ -3194,7 +3216,10 @@ fn submit_kanban_move(
             "write_state": "queued",
         }),
     );
-    board_status.set(format!("submitting {wire_kind} event {op_id}"));
+    board_status.set(format!(
+        "submitting {wire_kind} event {}",
+        short_protocol_id(&op_id)
+    ));
     let api_token = token();
     let space_for_record = space_id.clone();
     let anchor_for_record = anchor_ref.clone();
@@ -3222,11 +3247,15 @@ fn submit_kanban_move(
                     .find(|r| r.move_id == op_for_track)
                 {
                     record.state = CardState::Accepted;
-                    record.note = format!("event accepted event_id={}", resp.event_id);
+                    record.note = format!(
+                        "event accepted event_id={}",
+                        short_protocol_id(&resp.event_id)
+                    );
                 }
                 board_status.set(format!(
-                    "{kind_for_record} event {op_for_track} accepted (event_id={})",
-                    resp.event_id
+                    "{kind_for_record} event {} accepted (event_id={})",
+                    short_protocol_id(&op_for_track),
+                    short_protocol_id(&resp.event_id)
                 ));
             }
             Err(err) => {
@@ -3372,7 +3401,8 @@ fn validate_space_container_lifecycle_transition(
     }
     if prior == target {
         return Err(format!(
-            "list {space_container_id} already in {target:?} state; refused"
+            "list {} already in {target:?} state; refused",
+            short_protocol_id(space_container_id)
         ));
     }
     Ok(())
@@ -3473,7 +3503,8 @@ fn dispatch_space_container_lifecycle(
         let mut cols = columns.write();
         let Some(col) = cols.iter_mut().find(|c| c.id == space_container_id) else {
             board_status.set(format!(
-                "internal: list {space_container_id} not in board state"
+                "internal: list {} not in board state",
+                short_protocol_id(&space_container_id)
             ));
             return;
         };
@@ -3551,7 +3582,8 @@ fn validate_flow_lifecycle_transition(
     }
     if prior == target {
         return Err(format!(
-            "card {flow_id} already in {target:?} state; refused"
+            "card {} already in {target:?} state; refused",
+            short_protocol_id(flow_id)
         ));
     }
     Ok(())
@@ -3595,7 +3627,10 @@ fn dispatch_flow_lifecycle(
         match found {
             Some(prior) => prior,
             None => {
-                board_status.set(format!("internal: card {flow_id} not in board state"));
+                board_status.set(format!(
+                    "internal: card {} not in board state",
+                    short_protocol_id(&flow_id)
+                ));
                 return;
             }
         }
@@ -3828,7 +3863,10 @@ fn submit_flow_position_cas_move_with_attempt(
             "write_state": "submitted",
         }),
     );
-    board_status.set(format!("submitting {kind} event {move_id}"));
+    board_status.set(format!(
+        "submitting {kind} event {}",
+        short_protocol_id(&move_id)
+    ));
     let api_token = token();
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
@@ -3866,11 +3904,15 @@ fn submit_flow_position_cas_move_with_attempt(
                     .find(|r| r.move_id == move_for_track)
                 {
                     record.state = CardState::Accepted;
-                    record.note = format!("event accepted event_id={}", resp.event_id);
+                    record.note = format!(
+                        "event accepted event_id={}",
+                        short_protocol_id(&resp.event_id)
+                    );
                 }
                 board_status.set(format!(
-                    "{kind_for_record} event {move_for_track} accepted (event_id={})",
-                    resp.event_id
+                    "{kind_for_record} event {} accepted (event_id={})",
+                    short_protocol_id(&move_for_track),
+                    short_protocol_id(&resp.event_id)
                 ));
             }
             Err(err) => {

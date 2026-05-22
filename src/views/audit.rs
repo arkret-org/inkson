@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
+    views::helpers::short_protocol_id,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,20 +102,41 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
             } else {
                 for row in rows.iter() {
-                    div { class: "event", "data-testid": "audit-row",
-                        div { class: "event-head",
-                            span { class: "badge", "{row.kind}" }
-                            if let Some(space) = &row.space_id {
-                                span { class: "mono", "data-testid": "audit-row-space", "{space}" }
+                    {
+                        let operation_id_label = short_protocol_id(&row.operation_id);
+                        rsx! {
+                            div { class: "event", "data-testid": "audit-row",
+                                div { class: "event-head",
+                                    span { class: "badge", "{row.kind}" }
+                                    if let Some(space) = &row.space_id {
+                                        {
+                                            let space_label = short_protocol_id(space);
+                                            rsx! {
+                                                span {
+                                                    class: "mono",
+                                                    "data-testid": "audit-row-space",
+                                                    title: "{space}",
+                                                    "{space_label}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(target) = &row.target_event_id {
+                                    {
+                                        let target_label = short_protocol_id(target);
+                                        rsx! { div { class: "muted", title: "{target}", "target {target_label}" } }
+                                    }
+                                }
+                                if let Some(reader) = &row.reader_device {
+                                    {
+                                        let reader_label = short_protocol_id(reader);
+                                        rsx! { div { class: "muted", title: "{reader}", "reader {reader_label}" } }
+                                    }
+                                }
+                                div { class: "muted mono", "data-testid": "audit-row-op", title: "{row.operation_id}", "op {operation_id_label}" }
                             }
                         }
-                        if let Some(target) = &row.target_event_id {
-                            div { class: "muted", "target {target}" }
-                        }
-                        if let Some(reader) = &row.reader_device {
-                            div { class: "muted", "reader {reader}" }
-                        }
-                        div { class: "muted mono", "data-testid": "audit-row-op", "op {row.operation_id}" }
                     }
                 }
             }

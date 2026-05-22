@@ -17,7 +17,7 @@ use crate::{
     routes::Route,
     views::helpers::{
         StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
-        with_authed_api_with_sync,
+        short_protocol_id, with_authed_api_with_sync,
     },
 };
 
@@ -362,7 +362,9 @@ async fn run_mls_add_member_and_invite(
         Ok(Some(record)) => record,
         Ok(None) => {
             status.set(format!(
-                "MLS invite: {target_actor}/{target_device} has not published a key package"
+                "MLS invite: {}/{} has not published a key package",
+                short_protocol_id(&target_actor),
+                short_protocol_id(&target_device)
             ));
             return;
         }
@@ -492,7 +494,9 @@ async fn run_mls_add_member_and_invite(
         .write()
         .save_mls_snapshot(space_id.clone(), new_envelope);
     status.set(format!(
-        "MLS invite accepted: {target_actor}/{target_device} added at epoch {}",
+        "MLS invite accepted: {}/{} added at epoch {}",
+        short_protocol_id(&target_actor),
+        short_protocol_id(&target_device),
         post_state.epoch
     ));
 }
@@ -3476,7 +3480,7 @@ pub fn ChatPanel(
                                                 let label = if !snapshot.is_empty() {
                                                     snapshot.clone()
                                                 } else {
-                                                    mention.target.clone()
+                                                    short_protocol_id(&mention.target)
                                                 };
                                                 // Reassignment heuristic:
                                                 // we have a captured
@@ -3942,15 +3946,19 @@ pub fn ChatPanel(
                                         .get(&msg.id)
                                         .cloned();
                                     match promoted_to {
-                                        Some(child_space_id) => rsx! {
-                                            div {
-                                                class: "discussion-promoted-indicator",
-                                                "data-testid": "discussion-promoted-indicator",
-                                                "data-child-space-id": "{child_space_id}",
-                                                span { "Discussion moved to " }
-                                                a {
-                                                    href: "/chat/{child_space_id}",
-                                                    "{child_space_id}"
+                                        Some(child_space_id) => {
+                                            let child_space_id_label = short_protocol_id(&child_space_id);
+                                            rsx! {
+                                                div {
+                                                    class: "discussion-promoted-indicator",
+                                                    "data-testid": "discussion-promoted-indicator",
+                                                    "data-child-space-id": "{child_space_id}",
+                                                    span { "Discussion moved to " }
+                                                    a {
+                                                        href: "/chat/{child_space_id}",
+                                                        title: "{child_space_id}",
+                                                        "{child_space_id_label}"
+                                                    }
                                                 }
                                             }
                                         },
@@ -4211,6 +4219,7 @@ pub fn ChatPanel(
                                                 "offline".to_owned()
                                             }
                                         });
+                                    let did_attr_label = short_protocol_id(&did_attr);
                                     let state_for_class = state.clone();
                                     rsx! {
                                         div {
@@ -4220,7 +4229,7 @@ pub fn ChatPanel(
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
                                             span { class: "presence-name", "{display}" }
-                                            span { class: "muted mono", " {did_attr}" }
+                                            span { class: "muted mono", title: "{did_attr}", " {did_attr_label}" }
                                             span { class: "muted", " ({state})" }
                                         }
                                     }
@@ -4243,6 +4252,7 @@ pub fn ChatPanel(
                                     &participant.did,
                                 );
                                 let participant_did_attr = participant.did.clone();
+                                let participant_did_label = short_protocol_id(&participant_did_attr);
                                 // T7.3: derive binding context host
                                 // (e.g. `acme.example`) from the DID
                                 // method/host so the row reads as
@@ -4297,8 +4307,8 @@ pub fn ChatPanel(
                                     }
                                     details { class: "binding-context-details",
                                         summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
-                                        div { class: "mono muted",
-                                            "{participant_did_attr}"
+                                        div { class: "mono muted", title: "{participant_did_attr}",
+                                            "{participant_did_label}"
                                         }
                                     }
                                 }
@@ -4524,12 +4534,18 @@ pub fn ChatPanel(
             // around. The marker itself is actor-private — see
             // discovery/read-receipts.md §3.1.
             if !latest_read_marker().is_empty() {
-                div {
-                    class: "read-receipt-marker-bar",
-                    "data-testid": "read-receipt-marker-bar",
-                    "data-up-to-event-id": "{latest_read_marker}",
-                    span { "Read up to " }
-                    span { class: "mono", "{latest_read_marker}" }
+                {
+                    let latest_read_marker_value = latest_read_marker();
+                    let latest_read_marker_label = short_protocol_id(&latest_read_marker_value);
+                    rsx! {
+                        div {
+                            class: "read-receipt-marker-bar",
+                            "data-testid": "read-receipt-marker-bar",
+                            "data-up-to-event-id": "{latest_read_marker_value}",
+                            span { "Read up to " }
+                            span { class: "mono", title: "{latest_read_marker_value}", "{latest_read_marker_label}" }
+                        }
+                    }
                 }
             }
 
@@ -4844,44 +4860,49 @@ pub fn ChatPanel(
                                             div { class: "muted", "No matches" }
                                         } else {
                                             for candidate in matches {
-                                                button {
-                                                    r#type: "button",
-                                                    class: "mention-suggestion",
-                                                    "data-testid": "mention-suggestion",
-                                                    "data-mention-did": "{candidate.did}",
-                                                    onclick: {
-                                                        let candidate = candidate.clone();
-                                                        move |_| {
-                                                            let inserted = mention_picker_state
-                                                                .write()
-                                                                .insert(candidate.clone());
-                                                            if inserted {
-                                                                // Replace the trailing `@`
-                                                                // (if any) with the chip
-                                                                // mention so the draft text
-                                                                // and the chip list stay in
-                                                                // sync.
-                                                                let current = chat_draft();
-                                                                let trimmed = current
-                                                                    .strip_suffix('@')
-                                                                    .unwrap_or(&current)
-                                                                    .to_owned();
-                                                                let needs_space = !trimmed.is_empty()
-                                                                    && !trimmed.ends_with(' ');
-                                                                chat_draft.set(format!(
-                                                                    "{trimmed}{}@{} ",
-                                                                    if needs_space { " " } else { "" },
-                                                                    candidate.display_name,
-                                                                ));
+                                                {
+                                                    let candidate_did_label = short_protocol_id(&candidate.did);
+                                                    rsx! {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "mention-suggestion",
+                                                            "data-testid": "mention-suggestion",
+                                                            "data-mention-did": "{candidate.did}",
+                                                            onclick: {
+                                                                let candidate = candidate.clone();
+                                                                move |_| {
+                                                                    let inserted = mention_picker_state
+                                                                        .write()
+                                                                        .insert(candidate.clone());
+                                                                    if inserted {
+                                                                        // Replace the trailing `@`
+                                                                        // (if any) with the chip
+                                                                        // mention so the draft text
+                                                                        // and the chip list stay in
+                                                                        // sync.
+                                                                        let current = chat_draft();
+                                                                        let trimmed = current
+                                                                            .strip_suffix('@')
+                                                                            .unwrap_or(&current)
+                                                                            .to_owned();
+                                                                        let needs_space = !trimmed.is_empty()
+                                                                            && !trimmed.ends_with(' ');
+                                                                        chat_draft.set(format!(
+                                                                            "{trimmed}{}@{} ",
+                                                                            if needs_space { " " } else { "" },
+                                                                            candidate.display_name,
+                                                                        ));
+                                                                    }
+                                                                    mention_picker_state.write().close();
+                                                                }
+                                                            },
+                                                            span { class: "mention-suggestion-name",
+                                                                "{candidate.display_name}"
                                                             }
-                                                            mention_picker_state.write().close();
+                                                            span { class: "muted mono", title: "{candidate.did}",
+                                                                " {candidate_did_label}"
+                                                            }
                                                         }
-                                                    },
-                                                    span { class: "mention-suggestion-name",
-                                                        "{candidate.display_name}"
-                                                    }
-                                                    span { class: "muted mono",
-                                                        " {candidate.did}"
                                                     }
                                                 }
                                             }

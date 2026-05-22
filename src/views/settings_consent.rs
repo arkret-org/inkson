@@ -19,6 +19,7 @@ use dioxus::prelude::*;
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
+    views::helpers::short_protocol_id,
 };
 
 /// Local representation of a stored consent grant. Until the soland
@@ -125,48 +126,56 @@ pub fn ConsentSettingsCard(
             } else {
                 ul { class: "settings-list",
                     for grant in grants.read().iter().cloned() {
-                        li {
-                            class: "event",
-                            "data-testid": "consent-grant-row",
-                            "data-grant-id": "{grant.grant_id}",
-                            "data-scope": "{grant.scope}",
-                            "data-grantee-did": "{grant.grantee_did}",
-                            "data-expires-at": "{grant.expires_at}",
-                            div { class: "event-head",
-                                span { "{grant.scope}" }
-                                span { class: "mono", "{grant.grantee_did}" }
-                            }
-                            div { class: "muted", "expires {grant.expires_at}" }
-                            div { class: "actions",
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "consent-grant-revoke-button",
+                        {
+                            let grantee_did_label = short_protocol_id(&grant.grantee_did);
+                            rsx! {
+                                li {
+                                    class: "event",
+                                    "data-testid": "consent-grant-row",
                                     "data-grant-id": "{grant.grant_id}",
-                                    onclick: {
-                                        let grant_id = grant.grant_id.clone();
-                                        let account_did = account_did();
-                                        move |_| {
-                                            // TODO(G3.Y3-followup): wire to soland
-                                            // `DELETE /api/v1/consent/grants/{id}` once the
-                                            // reducer + projection land (G3.S2). Until then
-                                            // the revoke is local-only so the cotest UI
-                                            // assertion can still flip the row off.
-                                            let updated: Vec<ConsentGrantRow> = grants
-                                                .read()
-                                                .iter()
-                                                .filter(|g| g.grant_id != grant_id)
-                                                .cloned()
-                                                .collect();
-                                            save_local_grants(
-                                                &mut state_store.write(),
-                                                &account_did,
-                                                &updated,
-                                            );
-                                            grants.set(updated);
-                                            status.set(format!("Revoked grant {grant_id}"));
+                                    "data-scope": "{grant.scope}",
+                                    "data-grantee-did": "{grant.grantee_did}",
+                                    "data-expires-at": "{grant.expires_at}",
+                                    div { class: "event-head",
+                                        span { "{grant.scope}" }
+                                        span { class: "mono", title: "{grant.grantee_did}", "{grantee_did_label}" }
+                                    }
+                                    div { class: "muted", "expires {grant.expires_at}" }
+                                    div { class: "actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "consent-grant-revoke-button",
+                                            "data-grant-id": "{grant.grant_id}",
+                                            onclick: {
+                                                let grant_id = grant.grant_id.clone();
+                                                let account_did = account_did();
+                                                move |_| {
+                                                    // TODO(G3.Y3-followup): wire to soland
+                                                    // `DELETE /api/v1/consent/grants/{id}` once the
+                                                    // reducer + projection land (G3.S2). Until then
+                                                    // the revoke is local-only so the cotest UI
+                                                    // assertion can still flip the row off.
+                                                    let updated: Vec<ConsentGrantRow> = grants
+                                                        .read()
+                                                        .iter()
+                                                        .filter(|g| g.grant_id != grant_id)
+                                                        .cloned()
+                                                        .collect();
+                                                    save_local_grants(
+                                                        &mut state_store.write(),
+                                                        &account_did,
+                                                        &updated,
+                                                    );
+                                                    grants.set(updated);
+                                                    status.set(format!(
+                                                        "Revoked grant {}",
+                                                        short_protocol_id(&grant_id)
+                                                    ));
+                                                }
+                                            },
+                                            "Revoke"
                                         }
-                                    },
-                                    "Revoke"
+                                    }
                                 }
                             }
                         }

@@ -8,7 +8,7 @@ use crate::{
     config::LocalConfigStore,
     local_state::LocalStateStore,
     routes::Route,
-    views::helpers::{authed_api, persist_config},
+    views::helpers::{authed_api, persist_config, short_protocol_id},
 };
 
 const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
@@ -521,6 +521,7 @@ pub fn SetupPanel(
     let new_space_default_realm_ref_value = new_space_default_realm_ref();
     let new_space_state_value = new_space_state();
     let new_space_created_id_value = new_space_created_id();
+    let new_space_created_id_label = short_protocol_id(&new_space_created_id_value);
     // Every persisted projection is either a Realm or a Space; the
     // tag is recorded under `__kind` ("realm" | "space") when we
     // save it. Legacy projections without the tag are treated as
@@ -585,6 +586,7 @@ pub fn SetupPanel(
     let parsed_seed_members = parse_seed_members(&seed_members_value);
     let seed_member_count = parsed_seed_members.len();
     let has_created_space = !created_space_id_value.trim().is_empty();
+    let created_space_id_label = short_protocol_id(&created_space_id_value);
     let current_visibility_hint = policy_combination_hint(
         &discoverability_value,
         &join_rule_value,
@@ -1008,7 +1010,12 @@ pub fn SetupPanel(
                                         } else {
                                             div { class: "setup-chip-wrap",
                                                 for member in parsed_seed_members.iter().take(8) {
-                                                    span { class: "badge blue mono", "{member}" }
+                                                    {
+                                                        let member_label = short_protocol_id(member);
+                                                        rsx! {
+                                                            span { class: "badge blue mono", title: "{member}", "{member_label}" }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1224,7 +1231,7 @@ pub fn SetupPanel(
                                     div { class: "setup-summary-list",
                                         div { class: "setup-summary-row",
                                             strong { "Created Realm" }
-                                            span { class: "mono", "{created_space_id_value}" }
+                                            span { class: "mono", title: "{created_space_id_value}", "{created_space_id_label}" }
                                         }
                                         div { class: "setup-summary-row setup-summary-row-stack",
                                             strong { "Bootstrap state" }
@@ -1290,7 +1297,7 @@ pub fn SetupPanel(
                                 div { class: "setup-summary-row",
                                     strong { "Created Realm" }
                                     span { class: "mono", "data-testid": "selected-space-id",
-                                        if has_created_space { "{created_space_id_value}" } else { "not created yet" }
+                                        if has_created_space { "{created_space_id_label}" } else { "not created yet" }
                                     }
                                 }
                                 div { class: "setup-summary-row setup-summary-row-stack",
@@ -1345,10 +1352,11 @@ pub fn SetupPanel(
                                             onchange: move |event| new_space_realm_id.set(event.value()),
                                             option { value: "", "— pick a Realm —" }
                                             for (id, title) in &available_realms {
+                                                let id_label = short_protocol_id(id);
                                                 option {
                                                     value: "{id}",
                                                     selected: new_space_realm_id_value == *id,
-                                                    "{title} ({id})"
+                                                    "{title} ({id_label})"
                                                 }
                                             }
                                         }
@@ -1425,10 +1433,11 @@ pub fn SetupPanel(
                                             onchange: move |event| new_space_parent_id.set(event.value()),
                                             option { value: "", "(root — no parent)" }
                                             for (id, title) in &parent_candidates {
+                                                let id_label = short_protocol_id(id);
                                                 option {
                                                     value: "{id}",
                                                     selected: new_space_parent_id_value == *id,
-                                                    "{title} ({id})"
+                                                    "{title} ({id_label})"
                                                 }
                                             }
                                         }
@@ -1457,10 +1466,11 @@ pub fn SetupPanel(
                                                 onchange: move |event| new_space_default_realm_ref.set(event.value()),
                                                 option { value: "", "(inherit — use home Realm)" }
                                                 for (id, title) in &available_realms {
+                                                    let id_label = short_protocol_id(id);
                                                     option {
                                                         value: "{id}",
                                                         selected: new_space_default_realm_ref_value == *id,
-                                                        "{title} ({id})"
+                                                        "{title} ({id_label})"
                                                     }
                                                 }
                                             }
@@ -1580,7 +1590,7 @@ pub fn SetupPanel(
                                 strong { "Created Space" }
                                 span { class: "mono", "data-testid": "new-space-created-id",
                                     if !new_space_created_id_value.trim().is_empty() {
-                                        "{new_space_created_id_value}"
+                                        "{new_space_created_id_label}"
                                     } else {
                                         "not created yet"
                                     }
@@ -1632,7 +1642,10 @@ pub fn SetupPanel(
                                                         Ok(api) => match api.change_space_lifecycle(
                                                             &space_id, &realm_id, &actor, "cx.space.archive",
                                                         ).await {
-                                                            Ok(()) => new_space_state.set(format!("Archived {space_id}")),
+                                                            Ok(()) => new_space_state.set(format!(
+                                                                "Archived {}",
+                                                                short_protocol_id(&space_id)
+                                                            )),
                                                             Err(error) => new_space_state.set(format!("archive failed: {error}")),
                                                         },
                                                         Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
@@ -1660,7 +1673,10 @@ pub fn SetupPanel(
                                                         Ok(api) => match api.change_space_lifecycle(
                                                             &space_id, &realm_id, &actor, "cx.space.restore",
                                                         ).await {
-                                                            Ok(()) => new_space_state.set(format!("Restored {space_id}")),
+                                                            Ok(()) => new_space_state.set(format!(
+                                                                "Restored {}",
+                                                                short_protocol_id(&space_id)
+                                                            )),
                                                             Err(error) => new_space_state.set(format!("restore failed: {error}")),
                                                         },
                                                         Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
@@ -1688,7 +1704,10 @@ pub fn SetupPanel(
                                                         Ok(api) => match api.change_space_lifecycle(
                                                             &space_id, &realm_id, &actor, "cx.space.tombstone",
                                                         ).await {
-                                                            Ok(()) => new_space_state.set(format!("Tombstoned {space_id} (irreversible)")),
+                                                            Ok(()) => new_space_state.set(format!(
+                                                                "Tombstoned {} (irreversible)",
+                                                                short_protocol_id(&space_id)
+                                                            )),
                                                             Err(error) => new_space_state.set(format!("tombstone failed: {error}")),
                                                         },
                                                         Err(error) => new_space_state.set(format!("invalid base URL: {error}")),

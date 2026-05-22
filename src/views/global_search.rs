@@ -27,7 +27,7 @@ use serde_json::Value;
 use crate::api::ContrixApi;
 use crate::i18n::tr;
 use crate::routes::Route;
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// True when a `key` event should be treated as the global search
 /// trigger (`Ctrl+F` on Win/Linux, `Cmd+F` on macOS). The `meta` flag
@@ -263,6 +263,8 @@ pub fn GlobalSearchPanel(
                                 .unwrap_or("message")
                                 .to_owned();
                             let destination_for_button = destination.clone();
+                            let space_id_label = short_protocol_id(&space_id_text);
+                            let sender_label = short_protocol_id(&sender);
                             rsx! {
                                 div {
                                     key: "{idx}",
@@ -273,11 +275,12 @@ pub fn GlobalSearchPanel(
                                         span {
                                             class: "id mono",
                                             "data-testid": "global-search-result-space",
-                                            "{space_id_text}"
+                                            title: "{space_id_text}",
+                                            "{space_id_label}"
                                         }
                                     }
                                     if !sender.is_empty() {
-                                        div { class: "muted", "{sender}" }
+                                        div { class: "muted", title: "{sender}", "{sender_label}" }
                                     }
                                     div {
                                         "data-testid": "global-search-result-snippet",

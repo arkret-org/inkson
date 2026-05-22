@@ -182,12 +182,13 @@ pub fn LazyLinkBadge(
     reason: Option<String>,
 ) -> Element {
     let reason_text = reason.unwrap_or_else(|| "locked".to_owned());
-    let target_text = target_ref.unwrap_or_else(|| "opaque".to_owned());
+    let target_full = target_ref.unwrap_or_else(|| "opaque".to_owned());
+    let target_text = crate::views::helpers::short_protocol_id(&target_full);
     rsx! {
         span {
             class: "badge amber",
             "data-testid": "lazy-link-badge",
-            "title": "object-model-core.md §2.4.1 — cross-Space lazy link",
+            "title": "object-model-core.md §2.4.1 — cross-Space lazy link: {target_full}",
             "🔒 lazy_link · {reason_text} · {target_text}"
         }
     }

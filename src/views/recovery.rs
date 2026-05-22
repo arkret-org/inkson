@@ -33,7 +33,7 @@ use crate::{
         encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key,
         generate_recovery_key,
     },
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
@@ -715,7 +715,10 @@ pub fn RecoveryPanel(
                         for (idx , g) in guardians().iter().enumerate() {
                             div { class: "metric", "data-testid": "guardian-row",
                                 strong { "{g.label}" }
-                                span { class: "mono", "{g.did}" }
+                                {
+                                    let guardian_did_label = short_protocol_id(&g.did);
+                                    rsx! { span { class: "mono", title: "{g.did}", "{guardian_did_label}" } }
+                                }
                                 div { class: "muted",
                                     if g.note.is_empty() {
                                         if g.confirmed { "share confirmed" } else { "share pending" }
@@ -921,7 +924,10 @@ pub fn RecoveryPanel(
                         for row in backup_rows() {
                             div { class: "metric", "data-testid": "restore-row",
                                 strong { "{row.backup_class}" }
-                                div { class: "mono", "{row.backup_id}" }
+                                {
+                                    let backup_id_label = short_protocol_id(&row.backup_id);
+                                    rsx! { div { class: "mono", title: "{row.backup_id}", "{backup_id_label}" } }
+                                }
                                 div { class: "muted",
                                     "version {row.backup_version} · created {fmt_relative(&row.created_at)}"
                                 }
@@ -945,7 +951,10 @@ pub fn RecoveryPanel(
                                             move |_| {
                                                 restore_target.set(Some(bid.clone()));
                                                 restore_plaintext.set(String::new());
-                                                restore_status.set(format!("Selected {bid}. Enter your vault passphrase below."));
+                                                restore_status.set(format!(
+                                                    "Selected {}. Enter your vault passphrase below.",
+                                                    short_protocol_id(&bid)
+                                                ));
                                             }
                                         },
                                         if restore_target() == Some(row.backup_id.clone()) { "Selected" } else { "Decrypt" }
@@ -962,8 +971,12 @@ pub fn RecoveryPanel(
                                                 let api_token = token();
                                                 let bid = bid.clone();
                                                 restore_loading.set(true);
-                                                restore_status.set(format!("Deleting {bid}…"));
+                                                restore_status.set(format!(
+                                                    "Deleting {}…",
+                                                    short_protocol_id(&bid)
+                                                ));
                                                 spawn(async move {
+                                                    let bid_label = short_protocol_id(&bid);
                                                     let bid_clone = bid.clone();
                                                     let result = with_authed_api(&base, api_token, |api| async move {
                                                         api.delete_key_backup(&bid_clone).await
@@ -972,7 +985,7 @@ pub fn RecoveryPanel(
                                                     .map_err(|err| anyhow::anyhow!("{}", err.display()));
                                                     match result {
                                                         Ok(_) => {
-                                                            restore_status.set(format!("Deleted {bid}"));
+                                                            restore_status.set(format!("Deleted {bid_label}"));
                                                             let mut rows = backup_rows();
                                                             rows.retain(|r| r.backup_id != bid);
                                                             backup_rows.set(rows);
@@ -982,7 +995,7 @@ pub fn RecoveryPanel(
                                                             }
                                                         }
                                                         Err(err) => restore_status
-                                                            .set(format!("Delete {bid} failed: {err}")),
+                                                            .set(format!("Delete {bid_label} failed: {err}")),
                                                     }
                                                     restore_loading.set(false);
                                                 });
@@ -999,7 +1012,12 @@ pub fn RecoveryPanel(
                     .and_then(|id| backup_rows().into_iter().find(|r| r.backup_id == id))
                 {
                     div { class: "workflow-form", "data-testid": "restore-decrypt-form",
-                            div { class: "muted", "Decrypt {target_row.backup_id}" }
+                            {
+                                let target_backup_id_label = short_protocol_id(&target_row.backup_id);
+                                rsx! {
+                                    div { class: "muted", title: "{target_row.backup_id}", "Decrypt {target_backup_id_label}" }
+                                }
+                            }
                             label { r#for: "restore-passphrase", "Vault passphrase" }
                             input {
                                 id: "restore-passphrase",
@@ -1026,12 +1044,13 @@ pub fn RecoveryPanel(
                                             restore_status.set("Stretching passphrase with Argon2id…".to_owned());
                                             restore_loading.set(true);
                                             spawn(async move {
+                                                let bid_label = short_protocol_id(&bid);
                                                 match decrypt_vault(&pass_bytes, &salt, &nonce, &ct) {
                                                     Ok(plain) => {
                                                         let text = String::from_utf8_lossy(&plain).into_owned();
                                                         restore_plaintext.set(text);
                                                         restore_pass.set(String::new());
-                                                        restore_status.set(format!("Decrypted {bid}. The plaintext below stays in memory only — clear it when done."));
+                                                        restore_status.set(format!("Decrypted {bid_label}. The plaintext below stays in memory only — clear it when done."));
                                                     }
                                                     Err(err) => {
                                                         restore_plaintext.set(String::new());

@@ -26,7 +26,7 @@ use crate::{
     recovery_crypto::{
         VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
     },
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 const KEY_BACKUP_STATE_KEY: &str = "key_backup.state.v1";
@@ -94,6 +94,8 @@ pub fn SettingsSecurityPanel(
     let mut action_status = use_signal(String::new);
 
     let has_session = !token().trim().is_empty();
+    let last_backup_id_value = last_backup_id();
+    let last_backup_id_label = short_protocol_id(&last_backup_id_value);
 
     rsx! {
         div { class: "settings", "data-testid": "settings-security-panel",
@@ -129,7 +131,7 @@ pub fn SettingsSecurityPanel(
                                     if last_backup_id().is_empty() {
                                         "Trigger a backup to start protecting your keys."
                                     } else {
-                                        "backup_id: {last_backup_id}"
+                                        "backup_id: {last_backup_id_label}"
                                     }
                                 }
                             }
@@ -185,7 +187,8 @@ pub fn SettingsSecurityPanel(
                                             last_backup_id()
                                         };
                                         action_status.set(format!(
-                                            "Stretching passphrase + uploading backup {backup_id}…"
+                                            "Stretching passphrase + uploading backup {}…",
+                                            short_protocol_id(&backup_id)
                                         ));
                                         let actor_for_payload = actor_owned.clone();
                                         let pass_bytes = pass.into_bytes();
@@ -242,7 +245,8 @@ pub fn SettingsSecurityPanel(
                                                     last_backup_at.set(now.clone());
                                                     status_text.set("enabled".to_owned());
                                                     action_status.set(format!(
-                                                        "Backup {backup_id_async} stored ({} bytes ciphertext)",
+                                                        "Backup {} stored ({} bytes ciphertext)",
+                                                        short_protocol_id(&backup_id_async),
                                                         ct.ciphertext.len()
                                                     ));
                                                     let next = KeyBackupState {
@@ -284,7 +288,10 @@ pub fn SettingsSecurityPanel(
                                         );
                                         return;
                                     }
-                                    action_status.set(format!("Fetching backup {backup_id}…"));
+                                    action_status.set(format!(
+                                        "Fetching backup {}…",
+                                        short_protocol_id(&backup_id)
+                                    ));
                                     spawn(async move {
                                         // TODO(G3.Y1-followup): soland
                                         // exposes `GET /api/v1/keys/backups/{id}`

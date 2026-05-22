@@ -14,7 +14,8 @@ use crate::{
     media::{hash_matches, media_type_preview_policy, sha256_hex},
     operation::{EventEnvelope, OperationBuilder, uuid_v7},
     views::helpers::{
-        active_sync_token, authed_api_with_sync, with_authed_api, with_authed_api_with_sync,
+        active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
+        with_authed_api_with_sync,
     },
 };
 
@@ -192,11 +193,17 @@ impl TimelineEvent {
             self.event_id.as_deref(),
             self.redaction_id.as_deref(),
         ) {
-            (_, _, Some(redaction_id)) => Some(format!("tombstone {redaction_id}")),
-            (Some(operation_id), Some(event_id), _) => {
-                Some(format!("fact {operation_id} / event {event_id}"))
+            (_, _, Some(redaction_id)) => {
+                Some(format!("tombstone {}", short_protocol_id(redaction_id)))
             }
-            (Some(operation_id), None, _) => Some(format!("fact {operation_id}")),
+            (Some(operation_id), Some(event_id), _) => Some(format!(
+                "fact {} / event {}",
+                short_protocol_id(operation_id),
+                short_protocol_id(event_id)
+            )),
+            (Some(operation_id), None, _) => {
+                Some(format!("fact {}", short_protocol_id(operation_id)))
+            }
             _ => None,
         }
     }
@@ -768,13 +775,17 @@ pub fn TimelinePanel(
                                                 Some(marker.body.space_id.as_str()),
                                             );
                                             if !should_send {
+                                                let marker_event_id_label =
+                                                    short_protocol_id(&marker.body.event_id);
                                                 receipt_status.set(format!(
                                                     "Read receipt: skipped per preference for {}",
-                                                    marker.body.event_id
+                                                    marker_event_id_label
                                                 ));
                                                 return;
                                             }
-                                            receipt_status.set(format!("Read receipt: sending {}", marker.body.event_id));
+                                            let marker_event_id_label =
+                                                short_protocol_id(&marker.body.event_id);
+                                            receipt_status.set(format!("Read receipt: sending {marker_event_id_label}"));
 
                                             let base = base.clone();
                                             let api_token = token();
@@ -785,6 +796,10 @@ pub fn TimelinePanel(
                                             let actor_for_audit = marker.actor.clone();
                                             let device_for_audit = marker.device_id.clone();
                                             spawn(async move {
+                                                let actor_for_status_label =
+                                                    short_protocol_id(&actor_for_status);
+                                                let receipt_event_id_label =
+                                                    short_protocol_id(&receipt_event_id);
                                                 match authed_api_with_sync(&base, api_token, wait_for) {
                                                     Ok(api) => {
                                                         match api
@@ -798,14 +813,14 @@ pub fn TimelinePanel(
                                                         {
                                                             Ok(receipt) if receipt.ok => {
                                                                 read_receipts.write().push(format!(
-                                                                    "{actor_for_status} -> {receipt_event_id}"
+                                                                    "{actor_for_status_label} -> {receipt_event_id_label}"
                                                                 ));
                                                                 receipt_status.set(format!(
-                                                                    "Read receipt: sent cx.receipt.read for {receipt_event_id}"
+                                                                    "Read receipt: sent cx.receipt.read for {receipt_event_id_label}"
                                                                 ));
                                                             }
                                                             Ok(_) => receipt_status.set(format!(
-                                                                "Read receipt: server returned not ok for {receipt_event_id}"
+                                                                "Read receipt: server returned not ok for {receipt_event_id_label}"
                                                             )),
                                                             Err(error) => receipt_status.set(format!(
                                                                 "Read receipt failed: {error}"
@@ -957,7 +972,10 @@ pub fn TimelinePanel(
                                                                         }),
                                                                     );
                                                                     frontier_state.set(updated.event_id.clone());
-                                                                    write_status.set(format!("revised {op_id}"));
+                                                                    write_status.set(format!(
+                                                                        "revised {}",
+                                                                        short_protocol_id(&op_id)
+                                                                    ));
                                                                 }
                                                                 Err(error) => {
                                                                     // Rollback optimistic edit
@@ -1053,7 +1071,10 @@ pub fn TimelinePanel(
                                                                             "status": redacted.status,
                                                                         }),
                                                                     );
-                                                                    write_status.set(format!("tombstoned {op_id}"));
+                                                                    write_status.set(format!(
+                                                                        "tombstoned {}",
+                                                                        short_protocol_id(&op_id)
+                                                                    ));
                                                                 }
                                                                 Err(error) => {
                                                                     // Rollback optimistic redaction
@@ -1083,10 +1104,11 @@ pub fn TimelinePanel(
                             }
 
                             if thread_open() == Some(idx) {
+                                let event_id_label = short_protocol_id(&event.id);
                                 div { class: "event", "data-testid": "thread-panel",
                                     div { class: "event-head",
                                         span { "Thread" }
-                                        span { "{event.id}" }
+                                        span { title: "{event.id}", "{event_id_label}" }
                                     }
                                     div { class: "muted", "Thread messages would appear here." }
                                     div { class: "actions",
@@ -1108,12 +1130,14 @@ pub fn TimelinePanel(
                             div { class: "section", "data-testid": "revision-chain",
                                 div { class: "muted", "Revision chain ({event.revisions.len()})" }
                                 for revision in &event.revisions {
+                                    let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
+                                    let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
                                     div { class: "muted", "data-testid": "revision-entry",
                                         "{revision.timestamp}: {revision.body}"
-                                        if let Some(operation_id) = &revision.operation_id {
+                                        if let Some(operation_id) = &revision_operation_id_label {
                                             " [{operation_id}]"
                                         }
-                                        if let Some(event_id) = &revision.event_id {
+                                        if let Some(event_id) = &revision_event_id_label {
                                             " / {event_id}"
                                         }
                                     }
@@ -1753,7 +1777,10 @@ pub fn TimelinePanel(
                                                                 }),
                                                             );
                                                         }
-                                                        write_status.set(format!("persisted {op_id}"));
+                                                        write_status.set(format!(
+                                                            "persisted {}",
+                                                            short_protocol_id(&op_id)
+                                                        ));
                                                         break;
                                                     }
                                                     Err(error) => {
@@ -1786,7 +1813,8 @@ pub fn TimelinePanel(
                                                             break;
                                                         }
                                                         write_status.set(format!(
-                                                            "pending sync: queued {op_id} (retry {attempt})"
+                                                            "pending sync: queued {} (retry {attempt})",
+                                                            short_protocol_id(&op_id)
                                                         ));
                                                         crate::api::sleep_for(Duration::from_secs(1)).await;
                                                     }
@@ -1850,11 +1878,12 @@ fn timeline_events_from_sync_spaces(
 ) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
     for (space_id, body) in spaces {
+        let space_id_label = short_protocol_id(space_id);
         let mut summary_event = TimelineEvent::system_notice(
             format!("summary-{space_id}"),
             "server",
             format!(
-                "{space_id}: {}",
+                "{space_id_label}: {}",
                 body["summary"]["summary"]
                     .as_str()
                     .unwrap_or("No summary available")
@@ -1911,8 +1940,8 @@ fn timeline_events_from_sync_spaces(
                 sender_display: event
                     .get("sender")
                     .and_then(Value::as_str)
-                    .unwrap_or("server")
-                    .to_owned(),
+                    .map(short_protocol_id)
+                    .unwrap_or_else(|| "server".to_owned()),
                 body,
                 timestamp: event
                     .get("created_at")
@@ -1966,11 +1995,11 @@ fn read_marker_status_label(marker: &ReadMarkerRecord) -> String {
         .body
         .topic_id
         .as_deref()
-        .map(|topic_id| format!("thread {topic_id}"))
+        .map(|topic_id| format!("thread {}", short_protocol_id(topic_id)))
         .unwrap_or_else(|| "space timeline".to_owned());
     format!(
         "Read marker: {} ({scope}) at {}",
-        marker.body.event_id,
+        short_protocol_id(&marker.body.event_id),
         marker.updated_at.format("%Y-%m-%d %H:%M")
     )
 }

@@ -55,7 +55,7 @@ use crate::{
     local_state::LocalStateStore,
     operation::uuid_v7,
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -342,6 +342,7 @@ fn render_device_row(
     // can target either: `[data-testid="device-row"][data-current="true"]`
     // or the dedicated `device-row-current` testid below.
     let device_id_for_button = row.device_id.clone();
+    let device_id_label = short_protocol_id(&row.device_id);
     rsx! {
         tr {
             class: "{row_class}",
@@ -349,7 +350,7 @@ fn render_device_row(
             "data-device-id": "{row.device_id}",
             "data-current": if is_current { "true" } else { "false" },
             td {
-                strong { "{row.device_id}" }
+                strong { title: "{row.device_id}", "{device_id_label}" }
                 if is_current {
                     span {
                         class: "badge green",
@@ -388,12 +389,13 @@ fn render_revoke_modal(
 ) -> Element {
     let confirm_target = target.clone();
     let cancel_target = target.clone();
+    let target_label = short_protocol_id(&target);
     rsx! {
         div { class: "modal-overlay", "data-testid": "device-revoke-modal",
             div { class: "modal",
                 div { class: "event-head",
                     span { "Revoke device" }
-                    span { "{target}" }
+                    span { title: "{target}", "{target_label}" }
                 }
                 p {
                     "This will write "
@@ -418,8 +420,10 @@ fn render_revoke_modal(
                             let api_token = token();
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
-                            revoke_status.set(format!("Revoking {target_for_status}…"));
+                            let target_label = short_protocol_id(&target_for_status);
+                            revoke_status.set(format!("Revoking {target_label}…"));
                             spawn(async move {
+                                let target_label = short_protocol_id(&target_for_status);
                                 let target_inner = target_id.clone();
                                 match with_authed_api(&base, api_token.clone(), move |api| async move {
                                     api.revoke_device(&target_inner).await
@@ -428,7 +432,7 @@ fn render_revoke_modal(
                                 {
                                     Ok(_ok) => {
                                         revoke_status.set(format!(
-                                            "Revoked {target_for_status}. Sibling device will lose write access at next sync."
+                                            "Revoked {target_label}. Sibling device will lose write access at next sync."
                                         ));
                                         revoke_target.set(None);
                                         // Re-fetch to reflect the new

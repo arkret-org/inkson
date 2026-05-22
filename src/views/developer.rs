@@ -17,6 +17,7 @@ use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
     views::audit::AuditPanel,
+    views::helpers::short_protocol_id,
 };
 
 /// Default protocol version advertised by yougen — kept here so the
@@ -87,10 +88,15 @@ pub fn DeveloperToolsPanel(state_store: Signal<LocalStateStore>) -> Element {
                         "Showing {preview_count} of {raw_ops_total} raw operations (newest first)."
                     }
                     for (op_id, kind) in recent_ops.iter() {
-                        div { class: "event", "data-testid": "developer-raw-event-row",
-                            div { class: "event-head",
-                                span { class: "badge", "{kind}" }
-                                span { class: "mono muted", "{op_id}" }
+                        {
+                            let op_id_label = short_protocol_id(op_id);
+                            rsx! {
+                                div { class: "event", "data-testid": "developer-raw-event-row",
+                                    div { class: "event-head",
+                                        span { class: "badge", "{kind}" }
+                                        span { class: "mono muted", title: "{op_id}", "{op_id_label}" }
+                                    }
+                                }
                             }
                         }
                     }

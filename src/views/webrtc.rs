@@ -38,7 +38,7 @@
 
 use dioxus::prelude::*;
 
-use crate::local_state::LocalStateStore;
+use crate::{local_state::LocalStateStore, views::helpers::short_protocol_id};
 
 /// Client-side call lifecycle FSM. The spec-side `cx.call.state`
 /// transitions are the durable counterpart; this enum is the **UI**
@@ -243,12 +243,13 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
 
                 if stage() == CallStage::IncomingRinging {
+                    let incoming_from_label = short_protocol_id(&incoming_from);
                     div { class: "event",
                         "data-testid": "webrtc-incoming-call-banner",
                         role: "alert",
                         div { class: "event-head",
                             span { "Incoming call" }
-                            span { class: "mono", "{incoming_from}" }
+                            span { class: "mono", title: "{incoming_from}", "{incoming_from_label}" }
                         }
                         div { class: "actions",
                             button {

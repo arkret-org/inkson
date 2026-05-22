@@ -65,6 +65,36 @@ pub fn handle_from_did(did: &str) -> String {
         .collect()
 }
 
+const SHORT_PROTOCOL_ID_THRESHOLD: usize = 32;
+
+fn shorten_ascii_middle(value: &str, head: usize, tail: usize) -> String {
+    let len = value.len();
+    if len <= head + tail + 3 {
+        return value.to_owned();
+    }
+    format!("{}...{}", &value[..head], &value[len - tail..])
+}
+
+/// Return a compact, display-only label for long protocol identifiers.
+///
+/// Storage, inputs, copy buttons, routes, and API payloads must keep the
+/// canonical value. This helper is intentionally for read-only UI text such
+/// as menus, badges, rows, and status labels.
+pub fn short_protocol_id(value: impl AsRef<str>) -> String {
+    let value = value.as_ref().trim();
+    if value.len() <= SHORT_PROTOCOL_ID_THRESHOLD {
+        return value.to_owned();
+    }
+
+    if let Some((prefix, tail)) = value.rsplit_once(':') {
+        if tail.len() >= 20 && prefix.len() <= 20 {
+            return format!("{prefix}:{}", shorten_ascii_middle(tail, 8, 6));
+        }
+    }
+
+    shorten_ascii_middle(value, 16, 8)
+}
+
 /// Persist the current client configuration (server URL, DID, device ID, token).
 pub fn persist_config(
     mut config_store: Signal<LocalConfigStore>,
@@ -95,16 +125,16 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 /// chat headers, @mention popovers, directory rows, verify-device peer
 /// labels, and message-author lines stay consistent.
 ///
-/// The `did` argument is returned verbatim when no remark / no
-/// `local_name` is set, so callers can use the result wherever they
-/// would have used the DID itself.
+/// The `did` argument falls back to a compact display-only label when no
+/// remark / no `local_name` is set. Use the original DID for inputs, copies,
+/// routes, and protocol payloads.
 pub fn display_name_for_did(
     state_store: &crate::local_state::LocalStateStore,
     did: &str,
 ) -> String {
     match state_store.contact_remark(did) {
         Some(remark) => remark.display_name(did).to_owned(),
-        None => did.to_owned(),
+        None => short_protocol_id(did),
     }
 }
 
@@ -314,6 +344,30 @@ mod tests {
             mentions
                 .iter()
                 .any(|mention| mention.target == "topic-demo")
+        );
+    }
+
+    #[test]
+    fn short_protocol_id_keeps_short_values_readable() {
+        assert_eq!(
+            short_protocol_id("did:web:alice.example"),
+            "did:web:alice.example"
+        );
+    }
+
+    #[test]
+    fn short_protocol_id_compacts_typed_uuid_tail() {
+        assert_eq!(
+            short_protocol_id("cx:space:0196419b-0000-7000-8000-000000000000"),
+            "cx:space:0196419b...000000"
+        );
+    }
+
+    #[test]
+    fn short_protocol_id_compacts_long_did_without_a_long_tail() {
+        assert_eq!(
+            short_protocol_id("did:web:auth.local.host:users:01KCANONICAL"),
+            "did:web:auth.l...CANONICAL"
         );
     }
 }

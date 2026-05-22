@@ -1023,12 +1023,14 @@ pub mod cx_ops {
         role: Option<&str>,
         state: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.invite.create").body(json!({
-            "invite_id": invite_id,
-            "target": target,
-            "role": role,
-            "state": state,
-        }))
+        let mut body = serde_json::Map::new();
+        body.insert("invite_id".to_owned(), json!(invite_id));
+        body.insert("target".to_owned(), json!(target));
+        if let Some(role) = role {
+            body.insert("role".to_owned(), json!(role));
+        }
+        body.insert("state".to_owned(), json!(state));
+        OperationBuilder::new(space_id, actor, "cx.invite.create").body(Value::Object(body))
     }
 
     pub fn invite_accept(space_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {

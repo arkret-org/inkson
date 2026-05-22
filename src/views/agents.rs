@@ -37,7 +37,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
@@ -404,13 +404,15 @@ pub fn AgentsPanel(
                                 .unwrap_or("-")
                                 .to_owned();
                             let op_id = e.operation_id.clone();
+                            let did_label = short_protocol_id(&did);
+                            let op_id_label = short_protocol_id(&op_id);
                             rsx! {
                                 div { class: "event", "data-testid": "agent-endpoint-row",
                                     div { class: "event-head",
-                                        span { class: "mono", "{did}" }
+                                        span { class: "mono", title: "{did}", "{did_label}" }
                                         span { class: "badge blue", "{proto}" }
                                     }
-                                    div { class: "muted", "operation_id {op_id}" }
+                                    div { class: "muted", title: "{op_id}", "operation_id {op_id_label}" }
                                 }
                             }
                         }
@@ -521,11 +523,12 @@ pub fn AgentsPanel(
                                 .and_then(|b| b.get("status"))
                                 .and_then(Value::as_str)
                                 .map(ToOwned::to_owned);
+                            let session_id_label = short_protocol_id(&session_id);
                             rsx! {
                                 div { class: "event", "data-testid": "agent-session-row",
                                     div { class: "event-head",
                                         span { class: "mono", "{kind}" }
-                                        span { class: "mono", "{session_id}" }
+                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
                                     }
                                     if let Some(status_str) = status_opt {
                                         div { class: "muted", "status: {status_str}" }
@@ -557,15 +560,22 @@ pub fn AgentsPanel(
                                 .and_then(Value::as_str)
                                 .map(ToOwned::to_owned);
                             let op_id = r.operation_id.clone();
+                            let session_id_label = short_protocol_id(&session_id);
+                            let op_id_label = short_protocol_id(&op_id);
                             rsx! {
                                 div { class: "event", "data-testid": "agent-result-row",
                                     div { class: "event-head",
-                                        span { class: "mono", "{session_id}" }
+                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
                                         if let Some(root) = root_opt {
-                                            span { class: "mono", "audit_binding {root}" }
+                                            {
+                                                let root_label = short_protocol_id(&root);
+                                                rsx! {
+                                                    span { class: "mono", title: "{root}", "audit_binding {root_label}" }
+                                                }
+                                            }
                                         }
                                     }
-                                    div { class: "muted", "operation_id {op_id}" }
+                                    div { class: "muted", title: "{op_id}", "operation_id {op_id_label}" }
                                 }
                             }
                         }
@@ -615,10 +625,12 @@ pub fn AgentsPanel(
                             let verify = verify_agent_audit_binding(payload);
                             let badge_class = verify.badge_class();
                             let badge_label = verify.badge_label();
+                            let session_id_label = short_protocol_id(&session_id);
+                            let event_id_label = short_protocol_id(&event_id);
                             rsx! {
                                 div { class: "event", "data-testid": "agent-incoming-result-row",
                                     div { class: "event-head",
-                                        span { class: "mono", "{session_id}" }
+                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
                                         span { class: "badge", "{session_status}" }
                                         span { class: "mono", "{binding_kind}" }
                                         span {
@@ -627,7 +639,7 @@ pub fn AgentsPanel(
                                             "{badge_label}"
                                         }
                                     }
-                                    div { class: "muted", "event_id {event_id}" }
+                                    div { class: "muted", title: "{event_id}", "event_id {event_id_label}" }
                                 }
                             }
                         }
@@ -676,8 +688,9 @@ pub fn AgentsPanel(
                                     return;
                                 }
                                 handoff_state.set(HandoffState::Pending);
+                                let target_label = short_protocol_id(&target);
                                 handoff_status_text.set(format!(
-                                    "handoff to {target} pending controller confirmation"
+                                    "handoff to {target_label} pending controller confirmation"
                                 ));
                                 transcript_steps.set(Vec::new());
                                 audit_verify_result.set(None);
@@ -697,14 +710,15 @@ pub fn AgentsPanel(
                                         let space = space.clone();
                                         let actor = actor.clone();
                                         let target = handoff_target_did();
+                                        let target_label = short_protocol_id(&target);
                                         let api_token = token();
                                         handoff_state.set(HandoffState::Approved);
                                         handoff_status_text.set(format!(
-                                            "handoff to {target} approved; submitting start event"
+                                            "handoff to {target_label} approved; submitting start event"
                                         ));
                                         transcript_steps.write().push((
                                             "cx.agent.protocol_session.start".to_owned(),
-                                            format!("start handoff to {target}"),
+                                            format!("start handoff to {target_label}"),
                                         ));
                                         spawn(async move {
                                             let session_id = format!(

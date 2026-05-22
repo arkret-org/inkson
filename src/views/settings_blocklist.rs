@@ -23,6 +23,7 @@ use dioxus::prelude::*;
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
+    views::helpers::short_protocol_id,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,45 +122,53 @@ pub fn BlocklistSettingsCard(
             } else {
                 ul { class: "settings-list",
                     for entry in entries.read().iter().cloned() {
-                        li {
-                            class: "event",
-                            "data-testid": "blocklist-row",
-                            "data-actor-did": "{entry.actor_did}",
-                            "data-blocked-at": "{entry.blocked_at}",
-                            div { class: "event-head",
-                                span { class: "mono", "{entry.actor_did}" }
-                                span { class: "muted", "{entry.blocked_at}" }
-                            }
-                            div { class: "actions",
-                                button {
-                                    class: "secondary",
-                                    "data-testid": "blocklist-unblock-button",
+                        {
+                            let actor_did_label = short_protocol_id(&entry.actor_did);
+                            rsx! {
+                                li {
+                                    class: "event",
+                                    "data-testid": "blocklist-row",
                                     "data-actor-did": "{entry.actor_did}",
-                                    onclick: {
-                                        let actor_did = entry.actor_did.clone();
-                                        let account_did = account_did();
-                                        move |_| {
-                                            // TODO(G3.Y3-followup): wire to
-                                            // `DELETE /api/v1/account-data/blocklist/{did}` once
-                                            // soland's account_data layer ships the personal
-                                            // blocklist endpoint (spec
-                                            // discovery/client-preferences.md §2).
-                                            let next: Vec<BlocklistRow> = entries
-                                                .read()
-                                                .iter()
-                                                .filter(|e| e.actor_did != actor_did)
-                                                .cloned()
-                                                .collect();
-                                            save_blocklist(
-                                                &mut state_store.write(),
-                                                &account_did,
-                                                &next,
-                                            );
-                                            entries.set(next);
-                                            status.set(format!("Unblocked {actor_did}"));
+                                    "data-blocked-at": "{entry.blocked_at}",
+                                    div { class: "event-head",
+                                        span { class: "mono", title: "{entry.actor_did}", "{actor_did_label}" }
+                                        span { class: "muted", "{entry.blocked_at}" }
+                                    }
+                                    div { class: "actions",
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "blocklist-unblock-button",
+                                            "data-actor-did": "{entry.actor_did}",
+                                            onclick: {
+                                                let actor_did = entry.actor_did.clone();
+                                                let account_did = account_did();
+                                                move |_| {
+                                                    // TODO(G3.Y3-followup): wire to
+                                                    // `DELETE /api/v1/account-data/blocklist/{did}` once
+                                                    // soland's account_data layer ships the personal
+                                                    // blocklist endpoint (spec
+                                                    // discovery/client-preferences.md §2).
+                                                    let next: Vec<BlocklistRow> = entries
+                                                        .read()
+                                                        .iter()
+                                                        .filter(|e| e.actor_did != actor_did)
+                                                        .cloned()
+                                                        .collect();
+                                                    save_blocklist(
+                                                        &mut state_store.write(),
+                                                        &account_did,
+                                                        &next,
+                                                    );
+                                                    entries.set(next);
+                                                    status.set(format!(
+                                                        "Unblocked {}",
+                                                        short_protocol_id(&actor_did)
+                                                    ));
+                                                }
+                                            },
+                                            "Unblock"
                                         }
-                                    },
-                                    "Unblock"
+                                    }
                                 }
                             }
                         }
@@ -199,7 +208,10 @@ pub fn BlocklistSettingsCard(
                                     .iter()
                                     .any(|e| e.actor_did == target);
                                 if already_blocked {
-                                    status.set(format!("{target} is already blocked"));
+                                    status.set(format!(
+                                        "{} is already blocked",
+                                        short_protocol_id(&target)
+                                    ));
                                     return;
                                 }
                                 let entry = BlocklistRow {
@@ -211,7 +223,10 @@ pub fn BlocklistSettingsCard(
                                 next.push(entry);
                                 save_blocklist(&mut state_store.write(), &account_did, &next);
                                 entries.set(next);
-                                status.set(format!("blocklist updated — added {target}"));
+                                status.set(format!(
+                                    "blocklist updated — added {}",
+                                    short_protocol_id(&target)
+                                ));
                                 add_input.set(String::new());
                             }
                         },

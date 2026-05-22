@@ -6,7 +6,7 @@ use crate::{
     local_state::LocalStateStore,
     models::*,
     secure_key_store::default_secure_key_store,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
@@ -791,9 +791,10 @@ pub fn VerifyDevicePanel(
                     }
                 }
                 for entry in trust_devices() {
+                    let device_id_label = short_protocol_id(&entry.device_id);
                     div { class: "event", "data-testid": "trust-row",
                         div { class: "event-head",
-                            span { "{entry.device_id}" }
+                            span { title: "{entry.device_id}", "{device_id_label}" }
                             span { "{entry.trust_state}" }
                         }
                         if let Some(ref name) = entry.display_name {
@@ -1146,8 +1147,11 @@ pub fn VerifyDevicePanel(
                     }
                 }
                 if !cross_signing_publish_id().is_empty() {
+                    let publish_id = cross_signing_publish_id();
+                    let publish_id_label = short_protocol_id(&publish_id);
                     div { class: "muted", "data-testid": "cross-signing-publish-id",
-                        "Last publish event id: {cross_signing_publish_id}"
+                        title: "{publish_id}",
+                        "Last publish event id: {publish_id_label}"
                     }
                 }
             }

@@ -19,7 +19,11 @@ use crate::{
         projection_realm_id_for_known_space,
     },
     routes::Route,
-    views::{ConnectionState, helpers::persist_config, timeline::TimelineEvent},
+    views::{
+        ConnectionState,
+        helpers::{persist_config, short_protocol_id},
+        timeline::TimelineEvent,
+    },
 };
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
@@ -5723,19 +5727,22 @@ pub fn RouterView() -> Element {
         .unwrap_or_default();
     let has_session = !token().trim().is_empty();
     let active_server_label = normalize_server_url(&base_url());
+    let account_did_value = account_did();
+    let device_id_value = device_id();
+    let account_did_label = short_protocol_id(&account_did_value);
+    let device_id_label = short_protocol_id(&device_id_value);
     let account_label = if has_session {
-        account_did()
+        account_did_label.clone()
     } else {
         "Not signed in".to_owned()
     };
     let account_detail = if has_session {
-        format!("device {}", device_id())
+        format!("device {device_id_label}")
     } else {
         "Refresh server metadata, then sign in".to_owned()
     };
-    let account_did_value = account_did();
-    let device_id_value = device_id();
     let frontier_label = frontier_state();
+    let frontier_label_display = short_protocol_id(&frontier_label);
     let push_label = push_state();
     let crypto_label = crypto_state();
     let account_session_label = account_session_state();
@@ -6737,7 +6744,7 @@ pub fn RouterView() -> Element {
                                         div { class: "account-menu__row",
                                             strong { "DID" }
                                             div { class: "account-menu__value",
-                                                span { class: "mono", "data-testid": "account-menu-did", title: "{account_did_value}", "{account_did_value}" }
+                                                span { class: "mono", "data-testid": "account-menu-did", title: "{account_did_value}", "{account_did_label}" }
                                                 button {
                                                     class: "btn icon sm ghost account-menu__copy",
                                                     "data-testid": "account-menu-copy-did",
@@ -6757,7 +6764,7 @@ pub fn RouterView() -> Element {
                                         div { class: "account-menu__row",
                                             strong { "Device" }
                                             div { class: "account-menu__value",
-                                                span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_value}" }
+                                                span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_label}" }
                                                 button {
                                                     class: "btn icon sm ghost account-menu__copy",
                                                     "data-testid": "account-menu-copy-device",
@@ -6780,7 +6787,7 @@ pub fn RouterView() -> Element {
                                         }
                                         div { class: "account-menu__row",
                                             strong { "Frontier" }
-                                            span { class: "mono", "data-testid": "account-menu-frontier", "{frontier_label}" }
+                                            span { class: "mono", "data-testid": "account-menu-frontier", title: "{frontier_label}", "{frontier_label_display}" }
                                         }
                                         div { class: "account-menu__row",
                                             strong { "Push" }
@@ -7563,16 +7570,21 @@ fn CommandPalette(
                 div { class: "command-palette-group",
                     div { class: "command-palette-label", {crate::i18n::tr("command_palette.spaces")} }
                     for space in matched_spaces.iter() {
-                        button {
-                            class: "command-palette-item",
-                            "data-testid": "command-palette-space",
-                            role: "option",
-                            onclick: {
-                                let id = space.space_id.clone();
-                                move |_| on_pick_space.call(id.clone())
-                            },
-                            span { class: "command-palette-item-title", "{space.name}" }
-                            span { class: "command-palette-item-hint", "{space.space_id}" }
+                        {
+                            let space_id_label = short_protocol_id(&space.space_id);
+                            rsx! {
+                                button {
+                                    class: "command-palette-item",
+                                    "data-testid": "command-palette-space",
+                                    role: "option",
+                                    onclick: {
+                                        let id = space.space_id.clone();
+                                        move |_| on_pick_space.call(id.clone())
+                                    },
+                                    span { class: "command-palette-item-title", "{space.name}" }
+                                    span { class: "command-palette-item-hint", title: "{space.space_id}", "{space_id_label}" }
+                                }
+                            }
                         }
                     }
                 }
@@ -8795,11 +8807,12 @@ fn projection_looks_like_flow(body: &Value) -> bool {
 pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
     for (id, body) in spaces {
+        let id_label = short_protocol_id(id);
         let mut summary_event = TimelineEvent::system_notice(
             format!("summary-{id}"),
             "server",
             format!(
-                "{id}: {}",
+                "{id_label}: {}",
                 body["summary"]["summary"]
                     .as_str()
                     .unwrap_or("No summary available")

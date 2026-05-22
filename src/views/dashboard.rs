@@ -7,7 +7,7 @@ use crate::{
     local_state::{ClientLocalState, LocalStateStore},
     models::{SpacePreview, projection_realm_id_for_known_space},
     routes::Route,
-    views::helpers::with_authed_api,
+    views::helpers::{short_protocol_id, with_authed_api},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +38,8 @@ pub fn DashboardPanel(
     let mut recent_flows_loaded_for = use_signal(String::new);
     let mut recent_flows_status = use_signal(String::new);
     let has_session = !token().trim().is_empty();
+    let sync_cursor_label = short_protocol_id(&sync_cursor);
+    let frontier_state_label = short_protocol_id(&frontier_state);
     let spaces_snapshot = spaces();
     let active_space = spaces_snapshot
         .iter()
@@ -376,7 +378,7 @@ pub fn DashboardPanel(
                         div { class: "settings-row",
                             div {
                                 div { class: "label f-12", "Sync frontier" }
-                                div { class: "sub mono", "{sync_cursor}" }
+                                div { class: "sub mono", title: "{sync_cursor}", "{sync_cursor_label}" }
                             }
                             span { class: if has_session { "pill success dot" } else { "pill muted xs" }, if has_session { "loaded" } else { "not connected" } }
                         }
@@ -385,7 +387,7 @@ pub fn DashboardPanel(
                                 div { class: "label f-12", "Event frontier" }
                                 div { class: "sub", if has_session { "Principal Server reported" } else { "Not loaded" } }
                             }
-                            span { class: "mono f-11", "data-testid": "event-frontier-card", "{frontier_state}" }
+                            span { class: "mono f-11", "data-testid": "event-frontier-card", title: "{frontier_state}", "{frontier_state_label}" }
                         }
                         div { class: "settings-row",
                             div {

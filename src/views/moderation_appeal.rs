@@ -27,7 +27,7 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// User-facing projection of the four moderation appeal wire states.
 ///
@@ -243,7 +243,8 @@ pub fn AppealEntrypoint(
                                 Ok(_) => {
                                     local_state.set(AppealState::Submitted);
                                     status.set(format!(
-                                        "Appeal {appeal_id} submitted — server will surface status here once the review lands."
+                                        "Appeal {} submitted — server will surface status here once the review lands.",
+                                        short_protocol_id(&appeal_id)
                                     ));
                                 }
                                 Err(err) => {
