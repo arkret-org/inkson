@@ -6,6 +6,16 @@ Android / web).
 
 ## [Unreleased]
 
+### Testing
+
+- **Changed** `tests/e2e/` is now mock-only. The five `live smoke ...` cases in
+  `yougen.flows.spec.ts` and the `YOUGEN_E2E_LIVE*` env-var surface have been
+  removed: those scenarios are covered more strictly by the sibling
+  [`cotest`](../cotest) joint suite (`cotest/e2e/`), which already boots a real
+  `soland` process and drives the yougen UI against it. Yougen's own e2e keeps
+  watch over the UI contract (`tests/e2e/mockContrixContract.ts`); end-to-end
+  protocol coverage belongs in cotest.
+
 ### Round R4 — protocol review closures (2026-05-20, contrix-spec `2a4d39b..a77b995`)
 
 Closes the round-4 protocol-review commits on the client surfaces. See

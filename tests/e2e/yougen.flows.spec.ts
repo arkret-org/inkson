@@ -1,20 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { mockContrixApi } from "./mockContrixApi";
 
-const LIVE_E2E = process.env.YOUGEN_E2E_LIVE === "1";
-const LIVE_SERVER_URL = process.env.YOUGEN_E2E_LIVE_SERVER_URL ?? "http://127.0.0.1:8008";
-const LIVE_ACCOUNT_DID = process.env.YOUGEN_E2E_LIVE_ACCOUNT_DID ?? "did:web:alice.example";
-const LIVE_DEVICE_ID = process.env.YOUGEN_E2E_LIVE_DEVICE_ID ?? "dev_alice";
-const LIVE_SESSION_TOKEN = process.env.YOUGEN_E2E_LIVE_SESSION_TOKEN ?? "sx:e2e-token";
-const DEMO_SPACE =
-  process.env.YOUGEN_E2E_LIVE_SPACE_ID ?? "cx:space:0196419b-0000-7000-8000-000000000000";
+const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
 const DEMO_REALM = DEMO_SPACE.replace(/^cx:space:/, "cx:realm:");
 const CHILD_SPACE = "cx:space:01launchchild0000000000000";
 const CHILD_REALM = CHILD_SPACE.replace(/^cx:space:/, "cx:realm:");
-
-function isLiveSmoke(title: string) {
-  return title.startsWith("live smoke ");
-}
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -30,9 +20,6 @@ async function openServerSwitcher(page: import("@playwright/test").Page) {
 }
 
 async function refreshServer(page: import("@playwright/test").Page) {
-  if (LIVE_E2E) {
-    return;
-  }
   await openServerSwitcher(page);
   await page.getByTestId("server-option").filter({ hasText: "https://local.host" }).click();
 }
@@ -106,16 +93,11 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  if (LIVE_E2E && !isLiveSmoke(testInfo.title)) {
-    test.skip(true, "mock-only flow; YOUGEN_E2E_LIVE=1 runs the live smoke subset");
-  }
-  if (!LIVE_E2E) {
-    await mockContrixApi(page);
-  }
+  await mockContrixApi(page);
   if (testInfo.title.startsWith("login page")) {
     return;
   }
-  await page.addInitScript((liveConfig) => {
+  await page.addInitScript(() => {
     if (localStorage.getItem("yougen.config.v1")) {
       return;
     }
@@ -126,52 +108,11 @@ test.beforeEach(async ({ page }, testInfo) => {
         account_did: "did:web:alice.example",
         device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
         session_token: "sx:e2e-token",
-        ...(liveConfig ?? {}),
       }),
     );
-  }, LIVE_E2E
-    ? {
-        server_url: LIVE_SERVER_URL,
-        account_did: LIVE_ACCOUNT_DID,
-        device_id: LIVE_DEVICE_ID,
-        session_token: LIVE_SESSION_TOKEN,
-      }
-    : {});
+  });
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
-});
-
-test("live smoke server describe reaches true soland", async ({ request }) => {
-  test.skip(!LIVE_E2E, "live-only smoke");
-  const response = await request.get(`${LIVE_SERVER_URL}/api/v1/server/describe`);
-  expect(response.status()).toBe(200);
-  const body = await response.json();
-  expect(body.service_type).toBe("principal_server");
-  expect(body.supported_operations ?? []).toContain("cx.events.submit");
-});
-
-test("live smoke shell boots with configured session", async ({ page }) => {
-  test.skip(!LIVE_E2E, "live-only smoke");
-  await expect(page.getByTestId("client-shell")).toBeVisible();
-  await expect(page.getByTestId("principal-context")).toContainText(LIVE_SERVER_URL);
-});
-
-test("live smoke account menu uses configured principal", async ({ page }) => {
-  test.skip(!LIVE_E2E, "live-only smoke");
-  await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu")).toContainText(LIVE_ACCOUNT_DID);
-});
-
-test("live smoke settings route renders", async ({ page }) => {
-  test.skip(!LIVE_E2E, "live-only smoke");
-  await page.goto("/settings", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("settings-panel")).toBeVisible();
-});
-
-test("live smoke timeline route renders configured space", async ({ page }) => {
-  test.skip(!LIVE_E2E, "live-only smoke");
-  await page.goto(`/timeline/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("timeline")).toBeVisible();
 });
 
 test("bootstrap login and sync shows the connected workspace", async ({ page }) => {

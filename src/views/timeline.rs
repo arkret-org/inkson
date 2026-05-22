@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use chrono::Utc;
 // A6.2: HasFileData trait surfaces `event.files()` on DragData /
 // FormData events; not re-exported via the prelude root.
@@ -223,14 +225,9 @@ pub(crate) fn message_create_operation(
 ) -> EventEnvelope {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `flow_id` and `track` (`flow-and-message.md` §2). The default Flow
-    // for a Space is `cx:flow:<space_uuid>` (re-tag of the Space id —
-    // matches soland's `flow_id_from_space_id`); the default track is
-    // "discussion" (the only v1-interop track per the schema's
-    // `$defs/track` description).
-    let flow_id = space_id
-        .strip_prefix("cx:space:")
-        .map(|suffix| format!("cx:flow:{suffix}"))
-        .unwrap_or_else(|| space_id.to_owned());
+    // for a Realm/Space is `cx:flow:<uuid>` (typed-id re-tag, matching
+    // soland's `flow_id_from_space_id`); the default track is "discussion".
+    let flow_id = default_flow_id_for_scope(space_id);
     let mut payload = json!({
         "flow_id": flow_id,
         "track": "discussion",
@@ -244,6 +241,14 @@ pub(crate) fn message_create_operation(
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .body(payload)
         .build("yougen")
+}
+
+fn default_flow_id_for_scope(scope_id: &str) -> String {
+    scope_id
+        .strip_prefix("cx:realm:")
+        .or_else(|| scope_id.strip_prefix("cx:space:"))
+        .map(|suffix| format!("cx:flow:{suffix}"))
+        .unwrap_or_else(|| scope_id.to_owned())
 }
 
 fn message_revise_operation(
@@ -260,6 +265,17 @@ fn message_revise_operation(
             "target_event_id": event_id,
         }))
         .build("yougen")
+}
+
+fn pending_send_error_is_permanent(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("capability_denied")
+        || lower.contains("actor is not a member")
+        || lower.contains("not a joined member")
+        || lower.contains("banned")
+        || lower.contains("forbidden")
+        || lower.contains("403")
+        || lower.contains("401")
 }
 
 fn message_redact_operation(
@@ -1666,45 +1682,73 @@ pub fn TimelinePanel(
                                                 &body_clone,
                                             );
                                             let op_id = op.local_operation_id().to_owned();
-                                            match api.submit_event_envelope(&op).await {
-                                            Ok(sent) => {
-                                                if let Some(found) = timeline
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| candidate.id == local_event_id)
-                                                {
-                                                    found.apply_send_ack(
-                                                        sent.event_id.clone(),
-                                                        op_id.clone(),
-                                                    );
+                                            let mut attempt = 0usize;
+                                            loop {
+                                                match api.submit_event_envelope(&op).await {
+                                                    Ok(sent) => {
+                                                        if let Some(found) = timeline
+                                                            .write()
+                                                            .iter_mut()
+                                                            .find(|candidate| candidate.id == local_event_id)
+                                                        {
+                                                            found.apply_send_ack(
+                                                                sent.event_id.clone(),
+                                                                op_id.clone(),
+                                                            );
+                                                        }
+                                                        sync_cursor.set(sent.sync_token.clone());
+                                                        frontier_state.set(sent.event_id.clone());
+                                                        {
+                                                            let mut store = state_store.write();
+                                                            store.save_sync_cursor(sent.sync_token.clone());
+                                                            store.append_raw_operation(
+                                                                op_id.clone(),
+                                                                Some(space.clone()),
+                                                                json!({
+                                                                    "event_id": sent.event_id,
+                                                                    "kind": "cx.message.create",
+                                                                    "status": sent.status,
+                                                                }),
+                                                            );
+                                                        }
+                                                        write_status.set(format!("persisted {op_id}"));
+                                                        break;
+                                                    }
+                                                    Err(error) => {
+                                                        let error_text = format!("{error}");
+                                                        if pending_send_error_is_permanent(&error_text) {
+                                                            if let Some(found) = timeline
+                                                                .write()
+                                                                .iter_mut()
+                                                                .find(|candidate| candidate.id == local_event_id)
+                                                            {
+                                                                found.pending = false;
+                                                            }
+                                                            write_status.set(format!(
+                                                                "discarded pending change: {error_text}"
+                                                            ));
+                                                            break;
+                                                        }
+                                                        attempt += 1;
+                                                        if attempt >= 30 {
+                                                            if let Some(found) = timeline
+                                                                .write()
+                                                                .iter_mut()
+                                                                .find(|candidate| candidate.id == local_event_id)
+                                                            {
+                                                                found.pending = false;
+                                                            }
+                                                            write_status.set(format!(
+                                                                "send failed after reconnect retries: {error_text}"
+                                                            ));
+                                                            break;
+                                                        }
+                                                        write_status.set(format!(
+                                                            "pending sync: queued {op_id} (retry {attempt})"
+                                                        ));
+                                                        crate::api::sleep_for(Duration::from_secs(1)).await;
+                                                    }
                                                 }
-                                                sync_cursor.set(sent.sync_token.clone());
-                                                frontier_state.set(sent.event_id.clone());
-                                                {
-                                                    let mut store = state_store.write();
-                                                    store.save_sync_cursor(sent.sync_token.clone());
-                                                    store.append_raw_operation(
-                                                        op_id.clone(),
-                                                        Some(space.clone()),
-                                                        json!({
-                                                            "event_id": sent.event_id,
-                                                            "kind": "cx.message.create",
-                                                            "status": sent.status,
-                                                        }),
-                                                    );
-                                                }
-                                                write_status.set(format!("persisted {op_id}"));
-                                            }
-                                            Err(error) => {
-                                                if let Some(found) = timeline
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| candidate.id == local_event_id)
-                                                {
-                                                    found.pending = false;
-                                                }
-                                                write_status.set(format!("send failed: {error}"));
-                                            }
                                             }
                                         }
                                         Err(error) => write_status.set(format!("invalid server URL: {error}")),
@@ -1939,4 +1983,41 @@ fn try_local_mls_decrypt(
     _payload_value: &Value,
 ) -> Option<Vec<u8>> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_create_operation_retags_realm_scope_to_flow_id() {
+        let op = message_create_operation(
+            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            None,
+            "hello",
+        );
+
+        assert_eq!(
+            op.payload["flow_id"],
+            "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+        );
+        assert_eq!(op.payload["track"], "discussion");
+        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+    }
+
+    #[test]
+    fn message_create_operation_retags_space_scope_to_flow_id() {
+        let op = message_create_operation(
+            "cx:space:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            None,
+            "hello",
+        );
+
+        assert_eq!(
+            op.payload["flow_id"],
+            "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+        );
+    }
 }

@@ -98,6 +98,8 @@ npm run e2e
 
 The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/api/v1/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
+The e2e suite under `tests/e2e/` is **mock-only**: it pins yougen's UI surface against the contract in `tests/e2e/mockContrixContract.ts` and never speaks to a real Contrix server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `yougen` and a real `soland` process. Any test that needs a live server should be added there, not here.
+
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 
 The release gate used by CI is available locally:

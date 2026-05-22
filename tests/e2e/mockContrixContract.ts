@@ -1,3 +1,8 @@
+// Parity contract consumed by `cotest/tests/yougen_mock_parity.rs`.
+// Each branch here is shadowed by a fixture entry in
+// `cotest/tests/fixtures/yougen_mock_parity.json` and gets compared
+// against a real soland process. When adding a branch, also add the
+// matching fixture case — unmatched branches are silently dead code.
 const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
 
 export function mockContrixContract(req) {
@@ -56,26 +61,6 @@ export function mockContrixContract(req) {
       display_name: "yougen",
       created_at: "2026-04-28T12:00:00Z",
     });
-  }
-
-  if (method === "POST" && path === "/api/v1/spaces") {
-    const id =
-      body.realm_id ??
-      body.space_id ??
-      body.id ??
-      `cx:space:${body.slug ?? "0196419b-0000-7000-8000-000000000001"}`;
-    return json(
-      {
-        ok: true,
-        id,
-        space_id: id,
-        realm_id: id.replace(/^cx:space:/, "cx:realm:"),
-        title: body.title ?? body.name ?? "Mock parity space",
-        summary: body.summary ?? "",
-        owner: body.owner ?? "did:web:alice.example",
-      },
-      201,
-    );
   }
 
   if (method === "POST" && path === "/api/v1/directory/search-realms") {
