@@ -125,6 +125,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("timeline")).toBeVisible();
   await expect(page.getByTestId("space-context-bar")).not.toContainText("Current + descendants");
   await expect(page.getByTestId("space-context-bar")).not.toContainText("Space views");
+  await expect(page.getByTestId("space-context-bar")).not.toContainText("Discussion");
   await expect(page.getByTestId("space-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
 });

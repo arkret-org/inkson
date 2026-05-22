@@ -6113,7 +6113,7 @@ fn SpaceContextBar(
     rsx! {
         div { class: "event", "data-testid": "space-context-bar",
             div { class: "actions",
-                for surface in SpaceSurface::all() {
+                for surface in SpaceSurface::top_nav() {
                     if surface.is_available(minimal_ready, kanban_ready, chat_ready, full_ready) {
                         Link {
                             class: if current_surface == Some(surface) { "primary" } else { "secondary" },
@@ -6356,13 +6356,10 @@ enum SpaceSurface {
 }
 
 impl SpaceSurface {
-    fn all() -> [Self; 4] {
-        [
-            Self::Timeline,
-            Self::Board,
-            Self::Discussion,
-            Self::Document,
-        ]
+    fn top_nav() -> [Self; 3] {
+        // Discussion/Chat remains routeable, but it is no longer a top Space
+        // surface because it is a Flow track, not a Space kind.
+        [Self::Timeline, Self::Board, Self::Document]
     }
 
     fn short_label(self) -> &'static str {
@@ -7484,6 +7481,25 @@ mod tests {
         assert!(
             crate::push::push_token_provider().is_some(),
             "second ensure call must keep the provider installed"
+        );
+    }
+
+    #[test]
+    fn space_top_nav_excludes_discussion_surface() {
+        let surfaces = SpaceSurface::top_nav();
+
+        assert_eq!(
+            surfaces,
+            [
+                SpaceSurface::Timeline,
+                SpaceSurface::Board,
+                SpaceSurface::Document
+            ]
+        );
+        assert!(!surfaces.contains(&SpaceSurface::Discussion));
+        assert_eq!(
+            SpaceSurface::from_preference("discussion"),
+            Some(SpaceSurface::Discussion)
         );
     }
 
