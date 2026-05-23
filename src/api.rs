@@ -1748,7 +1748,7 @@ impl ContrixApi {
     /// Update a Realm's metadata via `cx.realm.update` event (spec-canonical).
     /// `patch` carries the merge-shape body the server reducer applies to the
     /// realm row.
-    pub async fn update_space(
+    pub async fn update_realm_metadata(
         &self,
         realm_id: &str,
         actor_id: &str,
@@ -1756,6 +1756,33 @@ impl ContrixApi {
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope =
             crate::operation::cx_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)
+                .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Backward-compatible alias for callers that still pass a Realm scope
+    /// through the old "space" naming used during the Realm/Space inversion.
+    pub async fn update_space(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.update_realm_metadata(realm_id, actor_id, patch).await
+    }
+
+    /// Update a structural Space object's metadata via `cx.space.update`.
+    /// The event is submitted to the Space's home Realm (`realm_id`), while
+    /// `space_id` identifies the Space object being patched.
+    pub async fn update_space_metadata(
+        &self,
+        realm_id: &str,
+        space_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            crate::operation::cx_ops::space_update_patch(realm_id, actor_id, space_id, patch)
                 .build("yougen");
         self.submit_event_envelope(&envelope).await
     }

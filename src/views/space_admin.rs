@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     device_revoke::{ChainMoveState, MlsRevokeMoveChain},
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState},
+    models::SpacePreviewKind,
     operation::cx_ops,
     routes::Route,
     views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id},
@@ -94,6 +95,116 @@ impl SpaceAdminSection {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MetadataSubject {
+    kind: SpacePreviewKind,
+    home_realm_id: String,
+    title: String,
+    summary: String,
+}
+
+fn projection_string(body: &Value, paths: &[&[&str]]) -> Option<String> {
+    for path in paths {
+        let mut current = body;
+        let mut found = true;
+        for segment in *path {
+            if let Some(next) = current.get(*segment) {
+                current = next;
+            } else {
+                found = false;
+                break;
+            }
+        }
+        if !found {
+            continue;
+        }
+        if let Some(value) = current.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(value.to_owned());
+        }
+    }
+    None
+}
+
+fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePreviewKind {
+    if subject_id.starts_with("cx:realm:") {
+        return SpacePreviewKind::Realm;
+    }
+    let Some(body) = body else {
+        return SpacePreviewKind::Realm;
+    };
+    match body
+        .get("__kind")
+        .and_then(Value::as_str)
+        .or_else(|| body.get("schema").and_then(Value::as_str))
+    {
+        Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
+        Some("realm") | Some("cx.schema.realm.v1") => SpacePreviewKind::Realm,
+        _ => {
+            let has_parent = projection_string(
+                body,
+                &[
+                    &["parent_ref"],
+                    &["parent_space_id"],
+                    &["summary", "parent_ref"],
+                    &["summary", "parent_space_id"],
+                ],
+            )
+            .is_some();
+            if subject_id.starts_with("cx:space:") && has_parent {
+                SpacePreviewKind::Space
+            } else {
+                SpacePreviewKind::Realm
+            }
+        }
+    }
+}
+
+fn projection_home_realm_for_admin(
+    subject_id: &str,
+    kind: SpacePreviewKind,
+    body: Option<&Value>,
+) -> String {
+    if kind == SpacePreviewKind::Realm {
+        return crate::operation::scope_id_as_realm_id(subject_id);
+    }
+    body.and_then(|body| projection_string(body, &[&["realm_id"], &["summary", "realm_id"]]))
+        .unwrap_or_else(|| crate::operation::scope_id_as_realm_id(subject_id))
+}
+
+fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSubject {
+    let state = store.load();
+    let body = state.space_projections.get(subject_id);
+    let kind = projection_kind_for_admin(subject_id, body);
+    let title = body
+        .and_then(|body| {
+            projection_string(
+                body,
+                &[&["summary", "title"], &["title"], &["object", "title"]],
+            )
+        })
+        .unwrap_or_default();
+    let summary = body
+        .and_then(|body| {
+            projection_string(
+                body,
+                &[
+                    &["summary", "summary"],
+                    &["summary"],
+                    &["description"],
+                    &["object", "summary"],
+                    &["object", "description"],
+                ],
+            )
+        })
+        .unwrap_or_default();
+    MetadataSubject {
+        kind,
+        home_realm_id: projection_home_realm_for_admin(subject_id, kind, body),
+        title,
+        summary,
+    }
+}
+
 #[component]
 pub fn SpaceAdminPanel(
     base_url: String,
@@ -106,8 +217,8 @@ pub fn SpaceAdminPanel(
     active_section: Option<String>,
 ) -> Element {
     let mut space_name = use_signal(|| String::new());
-    let mut space_topic = use_signal(|| String::new());
     let mut space_description = use_signal(|| String::new());
+    let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut invite_target = use_signal(String::new);
@@ -229,6 +340,20 @@ pub fn SpaceAdminPanel(
         .read()
         .space_has_pending_mls_binding(&selected_space);
     let active_section = SpaceAdminSection::from_slug(active_section.as_deref());
+    let metadata_subject = metadata_subject_for(&state_store.read(), &selected_space);
+    if metadata_loaded_for() != selected_space {
+        space_name.set(metadata_subject.title.clone());
+        space_description.set(metadata_subject.summary.clone());
+        metadata_loaded_for.set(selected_space.clone());
+    }
+    let metadata_subject_label = match metadata_subject.kind {
+        SpacePreviewKind::Realm => "Realm",
+        SpacePreviewKind::Space => "Space",
+    };
+    let metadata_event_kind = match metadata_subject.kind {
+        SpacePreviewKind::Realm => "cx.realm.update",
+        SpacePreviewKind::Space => "cx.space.update",
+    };
     let alert_count = usize::from(space_paused)
         + usize::from(space_pending_mls_binding)
         + usize::from(!bottom_cells.is_empty())
@@ -816,29 +941,38 @@ pub fn SpaceAdminPanel(
                 }
             }
             if active_section == SpaceAdminSection::Access {
-            // Space metadata editor
+            // Realm / Space metadata editor. Spec fields are `title` and
+            // optional `summary`; access policy is handled by the facet
+            // controls below rather than by generic metadata fields.
             div { class: "event", "data-testid": "space-metadata",
-                div { class: "event-head", span { "Space Metadata" } span { "{selected_space}" } }
+                div { class: "event-head",
+                    span { "{metadata_subject_label} Metadata" }
+                    span { "{metadata_event_kind}" }
+                }
+                div { class: "muted",
+                    span { class: "mono", title: "{selected_space}", "{short_protocol_id(&selected_space)}" }
+                    if metadata_subject.kind == SpacePreviewKind::Space {
+                        span { " · home Realm " }
+                        span {
+                            class: "mono",
+                            title: "{metadata_subject.home_realm_id}",
+                            "{short_protocol_id(&metadata_subject.home_realm_id)}"
+                        }
+                    }
+                }
                 div { class: "workflow-form",
-                    label { "Name" }
+                    label { "Title" }
                     input {
                         "data-testid": "space-name-input",
                         value: "{space_name}",
-                        placeholder: "Space name",
+                        placeholder: "{metadata_subject_label} title",
                         oninput: move |evt| space_name.set(evt.value()),
                     }
-                    label { "Topic" }
-                    input {
-                        "data-testid": "space-topic-input",
-                        value: "{space_topic}",
-                        placeholder: "Space topic",
-                        oninput: move |evt| space_topic.set(evt.value()),
-                    }
-                    label { "Description" }
+                    label { "Summary" }
                     textarea {
                         "data-testid": "space-description-input",
                         value: "{space_description}",
-                        placeholder: "Space description",
+                        placeholder: "Optional summary",
                         oninput: move |evt| space_description.set(evt.value()),
                     }
                     div { class: "actions",
@@ -847,14 +981,20 @@ pub fn SpaceAdminPanel(
                             "data-testid": "update-metadata-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let subject_id = selected_space.clone();
+                                let subject_kind = metadata_subject.kind;
+                                let home_realm_id = metadata_subject.home_realm_id.clone();
                                 move |_| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let subject_id = subject_id.clone();
+                                    let home_realm_id = home_realm_id.clone();
                                     let api_token = token();
-                                    let name = space_name();
-                                    let topic = space_topic();
-                                    let desc = space_description();
+                                    let title = space_name().trim().to_owned();
+                                    let summary = space_description().trim().to_owned();
+                                    if title.is_empty() {
+                                        status_msg.set("metadata update failed: title is required by spec".to_owned());
+                                        return;
+                                    }
                                     let actor_did = match state_store.write().ensure_local_identity() {
                                         Ok(id) => id.device_did.as_str().to_owned(),
                                         Err(err) => {
@@ -862,86 +1002,43 @@ pub fn SpaceAdminPanel(
                                             return;
                                         }
                                     };
+                                    let patch = if summary.is_empty() {
+                                        json!({
+                                            "title": title,
+                                            "summary": { "$op": "unset" },
+                                        })
+                                    } else {
+                                        json!({
+                                            "title": title,
+                                            "summary": summary,
+                                        })
+                                    };
                                     spawn(async move {
                                         match crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.update_space(&space, &actor_did, json!({
-                                                    "name": name,
-                                                    "topic": topic,
-                                                    "description": desc,
-                                                })).await
+                                                match subject_kind {
+                                                    SpacePreviewKind::Realm => {
+                                                        api.update_realm_metadata(&home_realm_id, &actor_did, patch).await
+                                                    }
+                                                    SpacePreviewKind::Space => {
+                                                        api.update_space_metadata(&home_realm_id, &subject_id, &actor_did, patch).await
+                                                    }
+                                                }
                                             },
                                         )
                                         .await
                                         {
-                                            Ok(_) => status_msg.set("Metadata updated".to_owned()),
+                                            Ok(_) => status_msg.set(format!(
+                                                "{metadata_event_kind} metadata updated"
+                                            )),
                                             Err(err) => status_msg.set(format!("update failed: {}", err.display())),
                                         }
                                     });
                                 }
                             },
                             {crate::i18n::tr("space_admin.save_metadata")}
-                        }
-                        // Alternate cell-update path: build a cx.realm.update
-                        // event targeting cx.component.realm.organization.v1
-                        // (cas-register) and submit it through cx.events.submit.
-                        button {
-                            class: "secondary",
-                            "data-testid": "update-metadata-via-move-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                let space = selected_space.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let space = space.clone();
-                                    let api_token = token();
-                                    let name = space_name();
-                                    let topic = space_topic();
-                                    let desc = space_description();
-                                    let value = json!({
-                                        "title": name,
-                                        "topic": topic,
-                                        "description": desc,
-                                    });
-                                    let actor_did = match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id.device_did.as_str().to_owned(),
-                                        Err(err) => {
-                                            status_msg.set(format!("identity unavailable: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let envelope = crate::operation::cx_ops::realm_organization_update(
-                                        &space,
-                                        &actor_did,
-                                        value,
-                                    )
-                                    .build("yougen");
-                                    let op_id = envelope.local_operation_id().to_owned();
-                                    spawn(async move {
-                                        match crate::views::helpers::with_authed_api(
-                                            &base,
-                                            api_token,
-                                            |api| async move {
-                                                api.submit_event_envelope(&envelope).await
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(resp) => status_msg.set(format!(
-                                                "cx.realm.update event {}: event_id={}",
-                                                short_protocol_id(&op_id),
-                                                short_protocol_id(&resp.event_id)
-                                            )),
-                                            Err(err) => status_msg.set(format!(
-                                                "realm update failed: {}", err.display()
-                                            )),
-                                        }
-                                    });
-                                }
-                            },
-                            {crate::i18n::tr("space_admin.save_metadata_move")}
                         }
                     }
                 }

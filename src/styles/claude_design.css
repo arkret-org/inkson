@@ -98,6 +98,18 @@
   --right-pane-w: 340px;
   --topbar-h:     52px;
 
+  /* Layering */
+  --layer-sticky: 10;
+  --layer-local-scrim: 30;
+  --layer-local-popover: 40;
+  --layer-chrome: 100;
+  --layer-global-scrim: 150;
+  --layer-global-popover: 160;
+  --layer-modal: 300;
+  --layer-toast: 400;
+  --layer-drag-shield: 900;
+  --surface-solid: #ffffff;
+
   color-scheme: light;
 }
 
@@ -151,6 +163,7 @@
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 18px 36px rgba(0, 0, 0, 0.6);
   --ring: 0 0 0 3px rgba(114, 181, 143, 0.26);
+  --surface-solid: #16201c;
 
   color-scheme: dark;
 }
@@ -198,7 +211,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   position: fixed;
   top: 12px;
   right: 16px;
-  z-index: 60;
+  z-index: var(--layer-global-popover);
   display: flex;
   gap: 6px;
   align-items: center;
@@ -894,8 +907,8 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
    Absolutely positioned over the message that triggered it. */
 .message-context-menu {
   position: absolute;
-  z-index: 50;
-  background: var(--surface-1);
+  z-index: var(--layer-local-popover);
+  background: var(--surface-solid, var(--surface));
   border: 1px solid var(--surface-3);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -1211,12 +1224,12 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   min-width: 320px;
   max-height: 60vh;
   overflow-y: auto;
-  background: var(--surface);
+  background: var(--surface-solid, var(--surface));
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
   padding: 8px;
-  z-index: 100;
+  z-index: var(--layer-global-popover);
 }
 .command-palette-empty {
   padding: 16px;
@@ -1876,7 +1889,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   display: flex; align-items: center; gap: 8px;
   padding: 0 12px;
   font-weight: 600;
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: 0; z-index: var(--layer-sticky);
 }
 .m-app-bar.transparent { background: transparent; border: none; }
 .m-app-bar .grow { flex: 1; min-width: 0; }
@@ -2217,7 +2230,7 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   display: flex; align-items: center; gap: 10px;
   max-width: 360px;
   font-size: 13px;
-  z-index: 100;
+  z-index: var(--layer-toast);
 }
 .toast.danger { background: var(--danger); color: white; }
 
@@ -2226,11 +2239,11 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   position: fixed; inset: 0;
   background: rgba(20, 22, 30, 0.55);
   display: grid; place-items: center;
-  z-index: 50;
+  z-index: var(--layer-modal);
   backdrop-filter: blur(2px);
 }
 .modal {
-  background: var(--surface);
+  background: var(--surface-solid, var(--surface));
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
@@ -2251,6 +2264,52 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
   padding: 12px 18px;
   border-top: 1px solid var(--border);
   display: flex; justify-content: flex-end; gap: 8px;
+}
+
+.modal-overlay,
+.publish-to-source-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-modal);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 22, 30, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.publish-to-source-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--surface-solid, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.publish-to-source-modal-header,
+.publish-to-source-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.publish-to-source-modal-footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.publish-to-source-modal-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
 }
 
 /* ===== 20. DOC PAGE (workflows.md / errors.md rendered) =========== */

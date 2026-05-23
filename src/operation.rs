@@ -961,6 +961,24 @@ pub mod cx_ops {
             }))
     }
 
+    /// Build a `cx.space.update` patch operation for structural Space
+    /// metadata (`title`, `summary`, `rank`, `fields`, ...). The event lives
+    /// in the Space's home Realm; `space_id` stays as the object target.
+    pub fn space_update_patch(
+        realm_id: &str,
+        actor: &str,
+        space_id: &str,
+        patch: serde_json::Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.space.update")
+            .target_ref(space_id)
+            .body(json!({
+                "space_id": space_id,
+                "target_ref": space_id,
+                "patch": patch,
+            }))
+    }
+
     /// Build a `cx.moderation.report.submit` operation. Note: this is
     /// the event-stream form; today yougen also has a direct HTTP
     /// path via `api::Client::report_moderation`. Keep both — the
@@ -1978,6 +1996,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
         let morph_id = "cx:morph:0196419b-0000-7000-8000-000000000003";
+        let space_id = "cx:space:0196419b-0000-7000-8000-000000000004";
 
         let events = [
             cx_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
@@ -1993,6 +2012,13 @@ mod tests {
                 realm_id,
                 actor,
                 json!({ "title": { "$op": "set", "value": "Engineering" } }),
+            )
+            .build("node"),
+            cx_ops::space_update_patch(
+                realm_id,
+                actor,
+                space_id,
+                json!({ "title": "Roadmap Board", "summary": "Q2 planning" }),
             )
             .build("node"),
         ];

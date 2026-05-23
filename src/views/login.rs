@@ -301,7 +301,10 @@ pub fn LoginPanel(
                                         spawn(async move {
                                             let prepared = {
                                                 let mut store = state_store_write.write();
-                                                crate::session_refresh::prepare_refresh(&mut store)
+                                                crate::session_refresh::prepare_refresh_for_server(
+                                                    &mut store,
+                                                    &base_url(),
+                                                )
                                             };
                                             let outcome = match prepared {
                                                 crate::session_refresh::RefreshPrepared::Done(o) => o,

@@ -448,7 +448,7 @@ pub fn english_translations() -> TranslationDict {
         "recovery.vault_rotate_prompt",
         "Enter a new passphrase above and click Encrypt and upload to rotate.",
     );
-    dict.set("space_admin.save_metadata", "Save Metadata");
+    dict.set("space_admin.save_metadata", "Save Title & Summary");
     dict.set("space_admin.save_metadata_move", "Save Metadata (Move)");
     dict.set("space_admin.tombstone_delete", "Tombstone / Delete");
     dict.set("space_admin.archive_space", "Archive Space");
@@ -1128,7 +1128,7 @@ pub fn chinese_translations() -> TranslationDict {
         "recovery.vault_rotate_prompt",
         "请在上方输入新口令并点击「加密并上传」完成轮换。",
     );
-    dict.set("space_admin.save_metadata", "保存元数据");
+    dict.set("space_admin.save_metadata", "保存标题和摘要");
     dict.set("space_admin.save_metadata_move", "通过 Move 保存元数据");
     dict.set("space_admin.tombstone_delete", "终结 / 删除");
     dict.set("space_admin.archive_space", "归档 Space");

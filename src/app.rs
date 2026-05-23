@@ -476,7 +476,7 @@ body {
 .directory-search-card {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--layer-sticky);
 }
 
 .workspace-body:has(> .kanban-panel) {
@@ -502,8 +502,7 @@ body {
 }
 
 .board-toolbar-main,
-.board-toolbar-secondary,
-.board-status-row {
+.board-toolbar-secondary {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -529,7 +528,6 @@ body {
 
 .board-toolbar-controls,
 .board-list-compose,
-.board-source-pill,
 .board-queue-actions {
   align-items: center;
   gap: 6px;
@@ -568,13 +566,6 @@ body {
   color: var(--cx-ink);
 }
 
-.board-control-label {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .board-select {
   min-width: 180px;
   max-width: 260px;
@@ -585,18 +576,18 @@ body {
 }
 
 .board-popover-host.is-open {
-  z-index: 50;
+  z-index: var(--layer-local-popover);
 }
 
 .board-popover-trigger {
   position: relative;
-  z-index: 42;
+  z-index: var(--layer-sticky);
 }
 
 .board-popover-scrim {
   position: fixed;
   inset: 0;
-  z-index: 30;
+  z-index: var(--layer-local-scrim);
   background: transparent;
 }
 
@@ -604,14 +595,14 @@ body {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  z-index: 43;
+  z-index: var(--layer-local-popover);
   width: min(360px, calc(100vw - 48px));
   display: grid;
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--border, var(--cx-line));
   border-radius: 8px;
-  background: var(--surface, var(--cx-surface));
+  background: var(--surface-solid, var(--surface, var(--cx-surface)));
   box-shadow: var(--shadow-md, var(--cx-shadow));
 }
 
@@ -627,19 +618,6 @@ body {
 
 .board-inline-field {
   margin: 0;
-}
-
-.board-status-row {
-  min-height: 20px;
-  justify-content: space-between;
-}
-
-.board-status-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
 }
 
 .board-conflict-alert {
@@ -797,7 +775,7 @@ body {
 .card-detail-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--layer-modal);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -814,7 +792,7 @@ body {
   overflow: hidden;
   border: 1px solid var(--border, var(--cx-line));
   border-radius: 8px;
-  background: var(--surface, var(--cx-surface));
+  background: var(--surface-solid, var(--surface, var(--cx-surface)));
   color: var(--text, var(--cx-ink));
   box-shadow: var(--shadow-lg, var(--cx-shadow));
 }
@@ -823,38 +801,38 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px 14px;
+  gap: 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border, var(--cx-line));
-  background: var(--surface, var(--cx-surface));
+  background: var(--surface-solid, var(--surface, var(--cx-surface)));
 }
 .card-detail-title-block {
   min-width: 0;
   display: grid;
   align-content: start;
-  gap: 2px;
-}
-.card-detail-kicker {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 18px;
+  gap: 4px;
 }
 .card-detail-title-row {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 .card-detail-title-row h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.18;
   font-weight: 800;
   letter-spacing: 0;
   overflow-wrap: anywhere;
+}
+.card-detail-title-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 .card-detail-status-dot {
   width: 16px;
@@ -873,9 +851,64 @@ body {
 }
 .card-detail-close {
   flex: 0 0 auto;
-  border-radius: 8px;
-  min-height: 34px;
   box-shadow: none;
+}
+.card-detail-header-actions {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-detail-header-button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.card-detail-action-menu-wrap {
+  position: relative;
+}
+.card-detail-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+  min-width: 220px;
+  overflow: hidden;
+  padding: 4px 0;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface-solid, var(--surface, var(--cx-surface)));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+}
+.card-detail-action-menu-item {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text, var(--cx-ink));
+  box-shadow: none;
+  text-align: left;
+}
+.card-detail-action-menu-item:hover,
+.card-detail-action-menu-item:focus-visible {
+  background: var(--surface-2, rgba(148, 163, 184, 0.12));
+}
+.card-detail-action-menu-item:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 .card-detail-layout {
   flex: 1 1 auto;
@@ -883,6 +916,9 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   overflow: hidden;
+}
+.card-detail-layout.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
 }
 .card-detail-main {
   min-width: 0;
@@ -1018,6 +1054,11 @@ body {
   margin: 0;
   overflow-wrap: anywhere;
   font-weight: 700;
+}
+.card-detail-field-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
 }
 .card-detail-activity {
   gap: 9px;
@@ -1683,6 +1724,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 :root {
   --sidebar-w: 272px;
   --sidebar-collapsed-w: 72px;
+  --layer-sticky: 10;
+  --layer-local-scrim: 30;
+  --layer-local-popover: 40;
+  --layer-chrome: 100;
+  --layer-global-scrim: 150;
+  --layer-global-popover: 160;
+  --layer-modal: 300;
+  --layer-toast: 400;
+  --layer-drag-shield: 900;
 }
 
 :root,
@@ -1690,6 +1740,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --bg: #f6eee7;
   --bg-elev: #ece2d9;
   --surface: rgba(255, 250, 245, 0.94);
+  --surface-solid: #fffaf5;
   --surface-2: #f6efe8;
   --surface-3: #efe5dc;
   --surface-inv: #18212f;
@@ -1757,6 +1808,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   --bg: #101722;
   --bg-elev: #223041;
   --surface: rgba(27, 36, 48, 0.94);
+  --surface-solid: #1b2430;
   --surface-2: #202b39;
   --surface-3: #283546;
   --surface-inv: #fffaf6;
@@ -2101,6 +2153,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .mention-suggestions {
+  position: relative;
+  z-index: var(--layer-local-popover);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2108,7 +2162,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-sm);
   max-height: 220px;
   overflow-y: auto;
@@ -2147,7 +2201,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .discussion-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--layer-modal);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -2161,7 +2215,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
@@ -2241,12 +2295,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   right: 0;
   top: calc(100% + 4px);
   min-width: 200px;
-  background: var(--surface, #fff);
+  background: var(--surface-solid, var(--surface, #fff));
   border: 1px solid var(--border, #cbd5df);
   border-radius: 8px;
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08));
   padding: 4px;
-  z-index: 30;
+  z-index: var(--layer-local-popover);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2365,7 +2419,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     inset: auto 0 0 0;
     max-height: 70vh;
     border-radius: 14px 14px 0 0;
-    z-index: 40;
+    z-index: var(--layer-local-popover);
+    background: var(--surface-solid, var(--surface));
     box-shadow: 0 -8px 24px rgba(0,0,0,0.18);
     overflow-y: auto;
   }
@@ -2598,14 +2653,14 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   position: absolute;
   left: 38px;
   bottom: calc(100% + 6px);
-  z-index: 25;
+  z-index: var(--layer-local-popover);
   min-width: 180px;
   display: grid;
   gap: 4px;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-md);
 }
 
@@ -3067,7 +3122,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   position: absolute;
   inset-block: 0;
   right: 0;
-  z-index: 30;
+  z-index: var(--layer-sticky);
   width: 10px;
   cursor: col-resize;
 }
@@ -3089,7 +3144,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .sidebar-resize-shield {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--layer-drag-shield);
   cursor: col-resize;
   background: transparent;
 }
@@ -3403,6 +3458,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .workspace-header {
+  position: relative;
+  z-index: var(--layer-chrome);
   flex-wrap: nowrap;
   min-width: 0;
 }
@@ -3556,6 +3613,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   right: 0;
   top: calc(100% + 8px);
   width: min(420px, calc(100vw - 32px));
+  z-index: var(--layer-global-popover);
 }
 
 .workspace-header .actions .pill {
@@ -3951,6 +4009,13 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   position: relative;
 }
 
+.account-menu-scrim {
+  position: fixed;
+  inset: -100vmax;
+  z-index: var(--layer-global-scrim);
+  background: transparent;
+}
+
 .account-menu-button .dot-online {
   position: absolute;
   right: 4px;
@@ -3963,23 +4028,18 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 60;
+  z-index: var(--layer-global-popover);
   width: min(420px, 92vw);
   display: grid;
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fffaf5;
+  background: var(--surface-solid, var(--surface));
   color: var(--text);
-  box-shadow: 0 24px 64px rgba(49, 35, 24, 0.22);
-  backdrop-filter: none;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
   isolation: isolate;
-}
-
-[data-theme="dark"] .account-menu,
-[data-theme="night"] .account-menu {
-  background: #1b2430;
 }
 
 .shell.rtl .account-menu {
@@ -4518,13 +4578,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
   .mobile-shellbar {
     height: var(--topbar-h);
+    position: sticky;
+    top: 0;
+    z-index: var(--layer-chrome);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
     padding: 0 12px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--surface-solid, var(--surface));
   }
 
   .mobile-shellbar .brand {
@@ -4536,13 +4599,13 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   .mobile-drawer {
     position: fixed;
     inset: var(--topbar-h) 0 auto 0;
-    z-index: 50;
+    z-index: var(--layer-global-popover);
     display: none;
     flex-direction: column;
     gap: 8px;
     padding: 12px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--surface-solid, var(--surface));
     box-shadow: var(--shadow-md);
   }
 
@@ -4597,18 +4660,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
   .board-toolbar-main,
   .board-toolbar-secondary,
-  .board-status-row,
   .board-toolbar-controls,
-  .board-list-compose,
-  .board-source-pill {
+  .board-list-compose {
     align-items: stretch;
     flex-direction: column;
     width: 100%;
   }
 
   .board-toolbar-controls > *,
-  .board-list-compose > *,
-  .board-source-pill > * {
+  .board-list-compose > * {
     width: 100%;
     max-width: 100%;
   }
@@ -4618,11 +4678,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     width: 100%;
     min-width: 0;
     max-width: 100%;
-  }
-
-  .board-status-text {
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
 
   .discussion-shell,
@@ -4643,7 +4698,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   .discussion-composer {
     position: sticky;
     bottom: 0;
-    z-index: 3;
+    z-index: var(--layer-sticky);
   }
 
   .compose-security-grid {
@@ -5454,9 +5509,10 @@ pub fn RouterView() -> Element {
                 // the sidebar scope toggle, persisting drafts, anything
                 // that calls `state_store.write()` while the exchange
                 // is in flight.
+                let active_base = base_url();
                 let prepared = {
                     let mut store = state_store.write();
-                    crate::session_refresh::prepare_refresh(&mut store)
+                    crate::session_refresh::prepare_refresh_for_server(&mut store, &active_base)
                 };
                 let outcome = match prepared {
                     crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
@@ -5466,12 +5522,15 @@ pub fn RouterView() -> Element {
                         crate::session_refresh::commit_refresh(&mut store, result)
                     }
                 };
+                if !same_server_url(&active_base, &base_url()) {
+                    continue;
+                }
                 match outcome {
                     crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
                         token.set(access_token.clone());
                         persist_config(
                             config_store,
-                            base_url(),
+                            active_base.clone(),
                             account_did(),
                             device_id(),
                             access_token,
@@ -5481,7 +5540,7 @@ pub fn RouterView() -> Element {
                         token.set(String::new());
                         persist_config(
                             config_store,
-                            base_url(),
+                            active_base.clone(),
                             account_did(),
                             device_id(),
                             String::new(),
@@ -5535,7 +5594,26 @@ pub fn RouterView() -> Element {
     let mut bootstrap_pending = use_signal(|| true);
     if bootstrap_pending() {
         let base = base_url();
-        let session = token();
+        let mut session = token();
+        if !session.trim().is_empty() {
+            let stale_for_selected_server = state_store
+                .read()
+                .session_grant()
+                .as_ref()
+                .map(|grant| !crate::session_refresh::grant_matches_principal_server(grant, &base))
+                .unwrap_or(false);
+            if stale_for_selected_server {
+                token.set(String::new());
+                persist_config(
+                    config_store,
+                    base.clone(),
+                    account_did(),
+                    device_id(),
+                    String::new(),
+                );
+                session.clear();
+            }
+        }
         if !base.trim().is_empty() && !session.trim().is_empty() {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
@@ -5863,7 +5941,7 @@ pub fn RouterView() -> Element {
             // A6.4 — global key handler. `?` (Shift+/) opens the
             // shortcut-help overlay unless the event originated from a
             // text input / textarea / contenteditable surface. `Esc`
-            // dismisses it.
+            // dismisses transient overlays.
             // A6.1 — `Cmd+F` (Ctrl+F on non-Mac) opens the global
             // cross-Space message search panel; we intercept the
             // browser's native find-in-page because the in-app panel
@@ -5886,6 +5964,22 @@ pub fn RouterView() -> Element {
                     let _ = navigator.push(Route::Search);
                     return;
                 }
+                if key == "Escape" {
+                    if shortcut_help_open() {
+                        shortcut_help_open.set(false);
+                        event.prevent_default();
+                        event.stop_propagation();
+                        return;
+                    }
+                    if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                        palette_open.set(false);
+                        topbar_search_expanded.set(false);
+                        global_query.set(String::new());
+                        event.prevent_default();
+                        event.stop_propagation();
+                    }
+                    return;
+                }
                 if crate::components::shortcut_help::key_event_is_help_trigger(&key) {
                     // We can't reliably inspect event.target() in
                     // dioxus 0.7 (the target type is opaque); however
@@ -5895,9 +5989,13 @@ pub fn RouterView() -> Element {
                     // presses. Toggle the overlay.
                     shortcut_help_open.set(true);
                     event.stop_propagation();
-                } else if key == "Escape" && shortcut_help_open() {
-                    shortcut_help_open.set(false);
-                    event.stop_propagation();
+                }
+            },
+            onclick: move |_| {
+                if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                    palette_open.set(false);
+                    topbar_search_expanded.set(false);
+                    global_query.set(String::new());
                 }
             },
             onmousemove: move |event| {
@@ -6502,6 +6600,16 @@ pub fn RouterView() -> Element {
                             } else {
                                 "topbar-command-search"
                             },
+                            onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                            onkeydown: move |event| {
+                                if event.key().to_string() == "Escape" {
+                                    palette_open.set(false);
+                                    topbar_search_expanded.set(false);
+                                    global_query.set(String::new());
+                                    event.prevent_default();
+                                    event.stop_propagation();
+                                }
+                            },
                             if !topbar_search_is_open {
                                 button {
                                     r#type: "button",
@@ -6523,6 +6631,9 @@ pub fn RouterView() -> Element {
                                         value: "{global_query}",
                                         placeholder: crate::i18n::tr("topbar.search_placeholder"),
                                         autofocus: true,
+                                        onmounted: move |event| async move {
+                                            let _ = event.set_focus(true).await;
+                                        },
                                         onfocusin: move |_| palette_open.set(true),
                                         oninput: move |event| {
                                             global_query.set(event.value());
@@ -6534,6 +6645,8 @@ pub fn RouterView() -> Element {
                                                 palette_open.set(false);
                                                 topbar_search_expanded.set(false);
                                                 global_query.set(String::new());
+                                                event.prevent_default();
+                                                event.stop_propagation();
                                             } else if key == "Enter" {
                                                 if !global_query().trim().is_empty() {
                                                     view.set(Route::to_view(&Route::Directory));
@@ -6619,7 +6732,13 @@ pub fn RouterView() -> Element {
                                 "data-testid": "account-menu-button",
                                 title: crate::i18n::tr("topbar.account_menu"),
                                 "aria-label": crate::i18n::tr("topbar.account_menu"),
-                                onclick: move |_| {
+                                onclick: move |event: dioxus::events::MouseEvent| {
+                                    event.stop_propagation();
+                                    if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                                        palette_open.set(false);
+                                        topbar_search_expanded.set(false);
+                                        global_query.set(String::new());
+                                    }
                                     server_menu_open.set(false);
                                     account_menu_open.toggle();
                                 },
@@ -6629,6 +6748,11 @@ pub fn RouterView() -> Element {
                                 }
                             }
                             if account_menu_open() {
+                                div {
+                                    class: "account-menu-scrim",
+                                    "aria-hidden": "true",
+                                    onclick: move |_| account_menu_open.set(false),
+                                }
                                 div { class: "account-menu", "data-testid": "account-menu", role: "menu",
                                     div { class: "account-menu__head",
                                         span { class: "avatar", if has_session { "P" } else { "?" } }
@@ -7789,6 +7913,7 @@ struct ServerSelectionContext {
 fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let server_url = normalize_server_url(&server_url);
     let mut base_url = ctx.base_url;
+    let mut token = ctx.token;
     let mut sync_cursor = ctx.sync_cursor;
     let mut selected_space = ctx.selected_space;
     let mut spaces = ctx.spaces;
@@ -7803,6 +7928,7 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut status = ctx.status;
     let mut state_store = ctx.state_store;
     let mut sync_generation = ctx.sync_generation;
+    let server_changed = !same_server_url(&base_url(), &server_url);
 
     // A space cached against the previous server's view is meaningless
     // on the new server (different service DID, different membership,
@@ -7810,12 +7936,27 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     // rooms). Wipe the account-scoped cache before re-pointing the URL
     // so the next sync starts from a clean slate. Device-level state
     // (local_identity, push_registration) is preserved.
-    state_store.write().clear_account_scoped();
+    {
+        let mut store = state_store.write();
+        store.clear_account_scoped();
+        if server_changed {
+            store.set_session_grant(None);
+            store.set_oidc_tokens(None);
+        }
+    }
     // Retire the previous server's SyncEngine. The use_effect's
     // base_url tracking would re-spawn anyway, but bumping here ensures
     // the in-flight long-poll exits before the new URL takes over.
     sync_generation.set(sync_generation() + 1);
 
+    if server_changed {
+        token.set(String::new());
+    }
+    let next_token = if server_changed {
+        String::new()
+    } else {
+        token()
+    };
     base_url.set(server_url.clone());
     sync_cursor.set("-".to_owned());
     selected_space.set(String::new());
@@ -7834,7 +7975,7 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
         server_url,
         (ctx.account_did)(),
         (ctx.device_id)(),
-        (ctx.token)(),
+        next_token,
     );
 }
 

@@ -30,6 +30,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     api::{ContrixApi, SessionGrantIntrospectionProof},
     coauth::{build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem},
+    config::normalize_server_url,
     local_state::{LocalStateStore, PersistedSessionGrant},
     models::DevLoginResponse,
 };
@@ -113,6 +114,28 @@ pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
     RefreshDecision::Fresh
 }
 
+fn normalized_server_key(server_url: &str) -> String {
+    normalize_server_url(server_url)
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// True when a persisted grant is scoped to the active Principal Server.
+///
+/// The client currently keeps one foreground server session. A grant minted
+/// for another server must not be refreshed in the background or persisted as
+/// the active server's bearer; otherwise an inactive server can indirectly
+/// bounce the visible session back to login.
+pub fn grant_matches_principal_server(
+    grant: &PersistedSessionGrant,
+    principal_server_url: &str,
+) -> bool {
+    let grant_server = normalized_server_key(&grant.principal_server_url);
+    let active_server = normalized_server_key(principal_server_url);
+    !grant_server.is_empty() && grant_server == active_server
+}
+
 /// Outcome of the synchronous prep step. Either the refresh is already
 /// resolved (no grant, fresh enough, grant dead) or the caller has the
 /// materials it needs to run the async exchange.
@@ -181,6 +204,21 @@ pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
     };
 
     RefreshPrepared::Ready { grant, proof }
+}
+
+/// Like [`prepare_refresh`], but refuses to use a grant minted for any server
+/// other than the currently selected Principal Server.
+pub fn prepare_refresh_for_server(
+    store: &mut LocalStateStore,
+    principal_server_url: &str,
+) -> RefreshPrepared {
+    if let Some(grant) = store.session_grant()
+        && !grant_matches_principal_server(&grant, principal_server_url)
+    {
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
+    }
+
+    prepare_refresh(store)
 }
 
 /// Pure async exchange. Holds no `LocalStateStore` borrow.
@@ -401,6 +439,33 @@ mod tests {
         let mut store = isolated_store("grant-expired");
         store.set_session_grant(Some(grant_with_session_expiry(3600, -60)));
         assert_eq!(refresh_decision(&store), RefreshDecision::GrantExpired);
+    }
+
+    #[test]
+    fn grant_match_normalizes_current_server_url() {
+        let grant = grant_with_session_expiry(3600, 86400);
+        assert!(grant_matches_principal_server(
+            &grant,
+            "https://principal.example/"
+        ));
+        assert!(!grant_matches_principal_server(
+            &grant,
+            "https://other-principal.example"
+        ));
+    }
+
+    #[test]
+    fn prepare_refresh_ignores_grant_for_inactive_server() {
+        let mut store = isolated_store("inactive-server-grant");
+        store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
+
+        let outcome = prepare_refresh_for_server(&mut store, "https://other-principal.example");
+
+        assert!(matches!(
+            outcome,
+            RefreshPrepared::Done(RefreshOutcome::NoGrant)
+        ));
+        assert!(store.session_grant().is_some());
     }
 
     #[test]

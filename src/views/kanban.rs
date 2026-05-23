@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -9,6 +10,7 @@ use crate::{
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
+    routes::Route,
     views::helpers::{short_protocol_id, with_authed_api},
 };
 
@@ -430,38 +432,6 @@ enum BoardProjectionSource {
     /// No projection was available and demo seed fallback is disabled for
     /// this server profile.
     Unavailable,
-}
-
-impl BoardProjectionSource {
-    fn label(self) -> &'static str {
-        match self {
-            Self::ApiDerived => "Live board data",
-            Self::SeedFallback => "Sample data",
-            Self::Unavailable => "Board data unavailable",
-        }
-    }
-
-    fn class_name(self) -> &'static str {
-        match self {
-            Self::ApiDerived => "badge green",
-            Self::SeedFallback => "badge amber",
-            Self::Unavailable => "badge red",
-        }
-    }
-
-    fn explanation(self) -> &'static str {
-        match self {
-            Self::ApiDerived => {
-                "Data is loaded from the Principal Server and aligned with the current sync frontier."
-            }
-            Self::SeedFallback => {
-                "Sample fallback is enabled, so local demo data is visible while writes still queue normally."
-            }
-            Self::Unavailable => {
-                "Board data is unavailable and sample fallback is disabled for this server profile."
-            }
-        }
-    }
 }
 
 fn kanban_seed_fallback_allowed(_base_url: &str) -> bool {
@@ -1038,6 +1008,8 @@ pub fn KanbanPanel(
     let mut lifecycle_container_projection =
         use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
     let mut lifecycle_flow_projection = use_signal(Vec::<crate::api::FlowProjectionView>::new);
+    let navigator = use_navigator();
+    let route = use_route::<Route>();
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still
@@ -1052,6 +1024,8 @@ pub fn KanbanPanel(
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
+    let mut card_detail_sidebar_visible = use_signal(|| true);
+    let mut card_detail_actions_open = use_signal(|| false);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
@@ -1088,6 +1062,34 @@ pub fn KanbanPanel(
     let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
     let board_view_id_value = board_view_id();
     let board_view_id_label = short_protocol_id(&board_view_id_value);
+
+    {
+        let routed_flow_id = route_card_flow_id(&route);
+        use_effect(move || {
+            let Some(flow_id) = routed_flow_id.clone() else {
+                return;
+            };
+            if selected_card()
+                .as_ref()
+                .is_some_and(|card| card_matches_flow_id(card, &flow_id))
+            {
+                return;
+            }
+            if let Some(card) = find_card_by_flow_id(&columns.read(), &flow_id) {
+                let draft = card_detail_draft_from_card(&card);
+                card_edit_title.set(draft.title);
+                card_edit_description.set(draft.description);
+                card_edit_labels.set(draft.labels.join(", "));
+                card_edit_assignee.set(draft.assignee);
+                card_edit_due.set(draft.due);
+                editing_card_detail.set(false);
+                card_detail_actions_open.set(false);
+                card_detail_overlay_press_started.set(false);
+                card_detail_overlay_press_ended.set(false);
+                selected_card.set(Some(card));
+            }
+        });
+    }
 
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
@@ -1756,18 +1758,6 @@ pub fn KanbanPanel(
                         }
                     }
                 }
-                div { class: "board-status-row",
-                    div { class: "actions board-source-pill", "data-testid": "board-projection-source",
-                    span { class: "muted board-control-label", "Source" }
-                    span {
-                        class: "{projection_source().class_name()}",
-                        "data-testid": "board-projection-source-pill",
-                        "title": "{projection_source().explanation()}",
-                        "{projection_source().label()}"
-                    }
-                    }
-                    span { class: "muted board-status-text", "data-testid": "board-status", "{board_status}" }
-                }
             }
 
             if manual_review_count > 0 {
@@ -2018,6 +2008,8 @@ pub fn KanbanPanel(
                                 ondragend: move |_| dragging_card.set(None),
                                 onclick: {
                                     let c = card.clone();
+                                    let route_space_id = card_detail_route_space_id(&selected_space);
+                                    let navigator = navigator.clone();
                                     move |_| {
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
@@ -2026,9 +2018,14 @@ pub fn KanbanPanel(
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
+                                        card_detail_actions_open.set(false);
                                         card_detail_overlay_press_started.set(false);
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
+                                        let _ = navigator.push(Route::KanbanTask {
+                                            space_id: route_space_id.clone(),
+                                            task_id: c.id.clone(),
+                                        });
                                     }
                                 },
                                 div { class: "event-head",
@@ -2386,6 +2383,29 @@ pub fn KanbanPanel(
             if let Some(ref card) = selected_card() {
                 {
                     let card_id_label = short_protocol_id(&card.id);
+                    let card_link_path = flow_detail_deep_link_path(&selected_space, &card.id);
+                    let board_route_after_close = kanban_card_detail_board_route(&selected_space);
+                    let route_is_card_detail = matches!(route, Route::KanbanTask { .. });
+                    let sidebar_is_visible = card_detail_sidebar_visible();
+                    let sidebar_toggle_label = if sidebar_is_visible {
+                        "Hide details"
+                    } else {
+                        "Show details"
+                    };
+                    let sidebar_toggle_icon = if sidebar_is_visible {
+                        "panel-right-close"
+                    } else {
+                        "panel-right-open"
+                    };
+                    let detail_layout_class = if sidebar_is_visible {
+                        "card-detail-layout"
+                    } else {
+                        "card-detail-layout no-sidebar"
+                    };
+                    let overlay_navigator = navigator.clone();
+                    let overlay_board_route = board_route_after_close.clone();
+                    let close_navigator = navigator.clone();
+                    let close_board_route = board_route_after_close.clone();
                     rsx! {
                         div {
                             class: "card-detail-overlay",
@@ -2404,6 +2424,10 @@ pub fn KanbanPanel(
                                 {
                                     selected_card.set(None);
                                     editing_card_detail.set(false);
+                                    card_detail_actions_open.set(false);
+                                    if route_is_card_detail {
+                                        let _ = overlay_navigator.push(overlay_board_route.clone());
+                                    }
                                 }
                                 card_detail_overlay_press_started.set(false);
                                 card_detail_overlay_press_ended.set(false);
@@ -2425,28 +2449,168 @@ pub fn KanbanPanel(
                                 onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                 div { class: "card-detail-header",
                                     div { class: "card-detail-title-block",
-                                        div { class: "card-detail-kicker",
-                                            span { class: card.state.class_name(), "{card.state.label()}" }
-                                            for label in &card.labels {
-                                                span { class: "badge", "{label}" }
+                                        div { class: "card-detail-title-row",
+                                            h2 { "{card.title}" }
+                                            div { class: "card-detail-title-meta",
+                                                span { class: card.state.class_name(), "{card.state.label()}" }
+                                                for label in &card.labels {
+                                                    span { class: "badge", "{label}" }
+                                                }
                                             }
                                         }
-                                        div { class: "card-detail-title-row",
-                                            span { class: "card-detail-status-dot", "aria-hidden": "true" }
-                                            h2 { "{card.title}" }
-                                        }
-                                        div { class: "card-detail-id muted", title: "{card.id}", "{card_id_label}" }
                                     }
-                                    button {
-                                        class: "secondary card-detail-close icon-button",
-                                        "data-testid": "card-detail-close-button",
-                                        "aria-label": "Close card detail",
-                                        title: "Close",
-                                        onclick: move |_| {
-                                            selected_card.set(None);
-                                            editing_card_detail.set(false);
-                                        },
-                                        UiIcon { name: "x" }
+                                    div { class: "card-detail-header-actions",
+                                        button {
+                                            class: "secondary card-detail-header-button",
+                                            "data-testid": "card-detail-share-link-button",
+                                            "aria-label": "Copy flow link",
+                                            title: "Copy flow link",
+                                            onclick: {
+                                                let link_path = card_link_path.clone();
+                                                move |_| {
+                                                    share_kanban_flow_link(&link_path);
+                                                    board_status.set("Flow link copied".to_owned());
+                                                    card_detail_actions_open.set(false);
+                                                }
+                                            },
+                                            UiIcon { name: "share" }
+                                        }
+                                        if !editing_card_detail() {
+                                            button {
+                                                class: "secondary card-detail-header-button",
+                                                "data-testid": "card-detail-sidebar-toggle",
+                                                "aria-label": "{sidebar_toggle_label}",
+                                                "aria-pressed": "{sidebar_is_visible}",
+                                                title: "{sidebar_toggle_label}",
+                                                onclick: move |_| {
+                                                    card_detail_sidebar_visible.set(!card_detail_sidebar_visible());
+                                                    card_detail_actions_open.set(false);
+                                                },
+                                                UiIcon { name: sidebar_toggle_icon }
+                                            }
+                                        }
+                                        div { class: "card-detail-action-menu-wrap",
+                                            button {
+                                                class: "secondary card-detail-header-button",
+                                                "data-testid": "card-detail-actions-button",
+                                                "aria-label": "Actions",
+                                                "aria-expanded": "{card_detail_actions_open()}",
+                                                title: "Actions",
+                                                onclick: move |_| card_detail_actions_open.set(!card_detail_actions_open()),
+                                                UiIcon { name: "more-horizontal" }
+                                            }
+                                            if card_detail_actions_open() {
+                                                div { class: "card-detail-action-menu", "data-testid": "card-detail-actions-menu",
+                                                    button {
+                                                        class: "card-detail-action-menu-item",
+                                                        "data-testid": "card-detail-menu-edit-button",
+                                                        onclick: {
+                                                            let current = card.clone();
+                                                            move |_| {
+                                                                let draft = card_detail_draft_from_card(&current);
+                                                                card_edit_title.set(draft.title);
+                                                                card_edit_description.set(draft.description);
+                                                                card_edit_labels.set(draft.labels.join(", "));
+                                                                card_edit_assignee.set(draft.assignee);
+                                                                card_edit_due.set(draft.due);
+                                                                editing_card_detail.set(true);
+                                                                card_detail_actions_open.set(false);
+                                                            }
+                                                        },
+                                                        UiIcon { name: "settings" }
+                                                        span { {crate::i18n::tr("common.edit")} }
+                                                    }
+                                                    {
+                                                        let target = if card.lifecycle == FlowLifecycleState::Archived {
+                                                            FlowLifecycleState::Active
+                                                        } else {
+                                                            FlowLifecycleState::Archived
+                                                        };
+                                                        let action = if target == FlowLifecycleState::Archived {
+                                                            "cx.flow.archive"
+                                                        } else {
+                                                            "cx.flow.restore"
+                                                        };
+                                                        let gate = capability_gate_for_flow(
+                                                            &capability_engine,
+                                                            &account_did,
+                                                            &selected_space,
+                                                            &card.id,
+                                                            action,
+                                                        );
+                                                        let label = if target == FlowLifecycleState::Archived {
+                                                            crate::i18n::tr("kanban.archive_action")
+                                                        } else {
+                                                            crate::i18n::tr("kanban.restore_action")
+                                                        };
+                                                        let testid = if target == FlowLifecycleState::Archived {
+                                                            "card-detail-archive-button"
+                                                        } else {
+                                                            "card-detail-restore-button"
+                                                        };
+                                                        let title_text = if gate.enabled {
+                                                            format!("{label} this card ({action})")
+                                                        } else {
+                                                            format!("{label} gated: {}", gate.reason)
+                                                        };
+                                                        let testid_state = if gate.enabled { "open" } else { "denied" };
+                                                        let action_navigator = navigator.clone();
+                                                        let action_board_route = board_route_after_close.clone();
+                                                        rsx! {
+                                                            button {
+                                                                class: "card-detail-action-menu-item",
+                                                                "data-testid": testid,
+                                                                "data-flow-id": "{card.id}",
+                                                                "data-cap-gate": testid_state,
+                                                                disabled: !gate.enabled,
+                                                                title: title_text,
+                                                                onclick: {
+                                                                    let base = base_url.clone();
+                                                                    let space = selected_space.clone();
+                                                                    let actor = account_did.clone();
+                                                                    let flow_id = card.id.clone();
+                                                                    move |_| {
+                                                                        dispatch_flow_lifecycle(
+                                                                            base.clone(),
+                                                                            token,
+                                                                            space.clone(),
+                                                                            actor.clone(),
+                                                                            flow_id.clone(),
+                                                                            target,
+                                                                            columns,
+                                                                            board_status,
+                                                                        );
+                                                                        selected_card.set(None);
+                                                                        editing_card_detail.set(false);
+                                                                        card_detail_actions_open.set(false);
+                                                                        if route_is_card_detail {
+                                                                            let _ = action_navigator.push(action_board_route.clone());
+                                                                        }
+                                                                    }
+                                                                },
+                                                                UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
+                                                                span { "{label}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        button {
+                                            class: "secondary card-detail-header-button card-detail-close",
+                                            "data-testid": "card-detail-close-button",
+                                            "aria-label": "Close card detail",
+                                            title: "Close",
+                                            onclick: move |_| {
+                                                selected_card.set(None);
+                                                editing_card_detail.set(false);
+                                                card_detail_actions_open.set(false);
+                                                if route_is_card_detail {
+                                                    let _ = close_navigator.push(close_board_route.clone());
+                                                }
+                                            },
+                                            UiIcon { name: "x" }
+                                        }
                                     }
                                 }
 
@@ -2558,7 +2722,7 @@ pub fn KanbanPanel(
                                         }
                                     }
                                 } else {
-                                    div { class: "card-detail-layout",
+                                    div { class: "{detail_layout_class}",
                                         main { class: "card-detail-main",
                                             section { class: "card-detail-section",
                                                 div { class: "card-detail-section-head",
@@ -2619,80 +2783,15 @@ pub fn KanbanPanel(
                                             }
                                         }
 
+                                        if sidebar_is_visible {
                                         aside { class: "card-detail-sidebar",
-                                            div { class: "card-detail-side-actions",
-                                                {
-                                                    let target = if card.lifecycle == FlowLifecycleState::Archived {
-                                                        FlowLifecycleState::Active
-                                                    } else {
-                                                        FlowLifecycleState::Archived
-                                                    };
-                                                    let action = if target == FlowLifecycleState::Archived {
-                                                        "cx.flow.archive"
-                                                    } else {
-                                                        "cx.flow.restore"
-                                                    };
-                                                    let gate = capability_gate_for_flow(
-                                                        &capability_engine,
-                                                        &account_did,
-                                                        &selected_space,
-                                                        &card.id,
-                                                        action,
-                                                    );
-                                                    let label = if target == FlowLifecycleState::Archived {
-                                                        crate::i18n::tr("kanban.archive_action")
-                                                    } else {
-                                                        crate::i18n::tr("kanban.restore_action")
-                                                    };
-                                                    let testid = if target == FlowLifecycleState::Archived {
-                                                        "card-detail-archive-button"
-                                                    } else {
-                                                        "card-detail-restore-button"
-                                                    };
-                                                    let title_text = if gate.enabled {
-                                                        format!("{label} this card ({action})")
-                                                    } else {
-                                                        format!("{label} gated: {}", gate.reason)
-                                                    };
-                                                    let testid_state = if gate.enabled { "open" } else { "denied" };
-                                                    rsx! {
-                                                        button {
-                                                            class: "secondary",
-                                                            "data-testid": testid,
-                                                            "data-flow-id": "{card.id}",
-                                                            "data-cap-gate": testid_state,
-                                                            disabled: !gate.enabled,
-                                                            title: title_text,
-                                                            onclick: {
-                                                                let base = base_url.clone();
-                                                                let space = selected_space.clone();
-                                                                let actor = account_did.clone();
-                                                                let flow_id = card.id.clone();
-                                                                move |_| {
-                                                                    dispatch_flow_lifecycle(
-                                                                        base.clone(),
-                                                                        token,
-                                                                        space.clone(),
-                                                                        actor.clone(),
-                                                                        flow_id.clone(),
-                                                                        target,
-                                                                        columns,
-                                                                        board_status,
-                                                                    );
-                                                                    selected_card.set(None);
-                                                                    editing_card_detail.set(false);
-                                                                }
-                                                            },
-                                                            UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
-                                                            span { "{label}" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
                                             div { class: "card-detail-side-section", "data-testid": "card-fields",
                                                 h3 { "Details" }
                                                 dl { class: "card-detail-field-list",
+                                                    div {
+                                                        dt { "Flow ID" }
+                                                        dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
+                                                    }
                                                     div {
                                                         dt { "Assignee" }
                                                         dd { "{card.assignee}" }
@@ -2720,6 +2819,7 @@ pub fn KanbanPanel(
                                                 }
                                             }
                                         }
+                                        }
                                     }
                                 }
                             }
@@ -2729,6 +2829,98 @@ pub fn KanbanPanel(
             }
         }
     }
+}
+
+fn route_card_flow_id(route: &Route) -> Option<String> {
+    match route {
+        Route::KanbanTask { task_id, .. } => {
+            let task_id = task_id.trim();
+            if task_id.is_empty() {
+                None
+            } else {
+                Some(task_id.to_owned())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn card_matches_flow_id(card: &KanbanCard, flow_id: &str) -> bool {
+    let flow_id = flow_id.trim();
+    !flow_id.is_empty() && (card.id == flow_id || card.primary_flow_id == flow_id)
+}
+
+fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<KanbanCard> {
+    columns
+        .iter()
+        .flat_map(|column| column.cards.iter())
+        .find(|card| card_matches_flow_id(card, flow_id))
+        .cloned()
+}
+
+fn card_detail_route_space_id(space_id: &str) -> String {
+    let space_id = space_id.trim();
+    if space_id.is_empty() {
+        DEMO_BOARD_SPACE_ID.to_owned()
+    } else {
+        space_id.to_owned()
+    }
+}
+
+fn kanban_card_detail_board_route(space_id: &str) -> Route {
+    let space_id = space_id.trim();
+    if space_id.is_empty() {
+        Route::Kanban
+    } else {
+        Route::KanbanSpace {
+            space_id: space_id.to_owned(),
+        }
+    }
+}
+
+fn flow_detail_deep_link_path(space_id: &str, flow_id: &str) -> String {
+    format!(
+        "/kanban/{}/task/{}",
+        card_detail_route_space_id(space_id),
+        flow_id.trim()
+    )
+}
+
+fn share_kanban_flow_link(path: &str) {
+    let Ok(encoded) = serde_json::to_string(path) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const path = {encoded};
+    const url = new URL(path, window.location.href).href;
+    if (navigator.share) {{
+        try {{
+            await navigator.share({{ url }});
+            return true;
+        }} catch (err) {{
+            if (err && err.name === "AbortError") {{
+                return false;
+            }}
+        }}
+    }}
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(url);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = url;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
 }
 
 fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft {
@@ -4227,6 +4419,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn card_detail_deep_link_targets_kanban_task_route() {
+        assert_eq!(
+            flow_detail_deep_link_path("cx:space:ops", "cx:flow:abc"),
+            "/kanban/cx:space:ops/task/cx:flow:abc"
+        );
+        assert_eq!(
+            flow_detail_deep_link_path("", "cx:flow:abc"),
+            format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/cx:flow:abc")
+        );
+    }
+
+    #[test]
+    fn route_card_flow_id_reads_task_segment_only() {
+        assert_eq!(
+            route_card_flow_id(&Route::KanbanTask {
+                space_id: "cx:space:ops".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }),
+            Some("cx:flow:abc".to_owned())
+        );
+        assert_eq!(route_card_flow_id(&Route::Kanban), None);
+    }
+
+    #[test]
+    fn find_card_by_flow_id_matches_card_or_primary_flow() {
+        let columns = seed_columns();
+        assert_eq!(
+            find_card_by_flow_id(&columns, "cx:flow:legal-review").map(|card| card.title),
+            Some("Legal review for public beta".to_owned())
+        );
+        assert_eq!(
+            find_card_by_flow_id(&columns, "cx:flow:review-discussion").map(|card| card.id),
+            Some("cx:flow:legal-review".to_owned())
+        );
+    }
+
     /// T20 wire-up — `collection_projection_to_columns` adapter maps the
     /// canonical SDK response into the renderer's KanbanColumn vec. This
     /// is the core integration point; if the spec wire shape changes,
@@ -4312,44 +4541,6 @@ mod tests {
         assert!(card.locked_flow.is_none());
         assert_eq!(card.history_visibility, "synthesis-only");
         assert_eq!(card.external_visibility, "No external discussions linked");
-    }
-
-    #[test]
-    fn projection_source_label_distinguishes_api_vs_seed() {
-        assert_ne!(
-            BoardProjectionSource::ApiDerived.label(),
-            BoardProjectionSource::SeedFallback.label()
-        );
-        assert_ne!(
-            BoardProjectionSource::SeedFallback.label(),
-            BoardProjectionSource::Unavailable.label()
-        );
-        assert!(BoardProjectionSource::ApiDerived.label().contains("Live"));
-        assert!(
-            BoardProjectionSource::SeedFallback
-                .label()
-                .contains("Sample")
-        );
-        assert!(
-            BoardProjectionSource::Unavailable
-                .label()
-                .contains("unavailable")
-        );
-    }
-
-    #[test]
-    fn projection_source_class_marks_seed_as_amber() {
-        // Seed is a warning (demo data; not synced to frontier) — must be
-        // visually distinct from API-derived to avoid confusion.
-        assert_eq!(
-            BoardProjectionSource::ApiDerived.class_name(),
-            "badge green"
-        );
-        assert_eq!(
-            BoardProjectionSource::SeedFallback.class_name(),
-            "badge amber"
-        );
-        assert_eq!(BoardProjectionSource::Unavailable.class_name(), "badge red");
     }
 
     #[test]

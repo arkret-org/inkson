@@ -456,9 +456,7 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
 
   await page.getByTestId("replay-board-queue").click();
-  await expect(page.getByTestId("board-status")).toContainText(
-    /replay not available|no queued write to replay/,
-  );
+  await expect(page.getByTestId("board-status")).toHaveCount(0);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -607,6 +605,22 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("org-search-members").click();
   await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
   await expect(page.getByTestId("directory-search-input")).toHaveValue("contrix.example");
+});
+
+test("command palette closes with Escape and outside click", async ({ page }) => {
+  await page.getByTestId("topbar-search-button").click();
+  await expect(page.getByTestId("command-palette")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("command-palette")).toBeHidden();
+  await expect(page.getByTestId("topbar-search-button")).toBeVisible();
+
+  await page.getByTestId("topbar-search-button").click();
+  await expect(page.getByTestId("command-palette")).toBeVisible();
+  await page.getByTestId("topbar-crumbs").click();
+
+  await expect(page.getByTestId("command-palette")).toBeHidden();
+  await expect(page.getByTestId("topbar-search-button")).toBeVisible();
 });
 
 test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {

@@ -59,7 +59,6 @@ test.describe("feature coverage placeholders", () => {
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("board-offline-queue")).toBeVisible();
-    await expect(page.getByTestId("board-status")).toBeVisible();
     // At least one card MUST render so the drop target exists; the
     // fully-mocked server returns persisted board projections.
     await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 30_000 });
