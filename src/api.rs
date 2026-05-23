@@ -1830,7 +1830,7 @@ impl ContrixApi {
         role: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope = crate::operation::cx_ops::invite_create_structured(
-            space_id, actor_id, invite_id, target, role, "pending",
+            space_id, actor_id, invite_id, target, role,
         )
         .build("yougen");
         self.submit_event_envelope(&envelope).await

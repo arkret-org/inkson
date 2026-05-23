@@ -824,6 +824,21 @@ pub fn DirectoryPanel(
                                     }
                                 }
                             }
+                            {
+                                let actor_did = actor
+                                    .get("did")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                rsx! {
+                                    div {
+                                        class: "muted",
+                                        "data-testid": "actor-result-did",
+                                        title: "{actor_did}",
+                                        "{actor_did}"
+                                    }
+                                }
+                            }
                         }
                     }
                 }

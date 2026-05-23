@@ -1117,7 +1117,6 @@ pub fn SpaceAdminPanel(
                                                     &invite_id,
                                                     &target,
                                                     None,
-                                                    "pending",
                                                 )
                                                 .build("yougen");
                                                 let op_id = op.local_operation_id().to_owned();
@@ -1142,7 +1141,7 @@ pub fn SpaceAdminPanel(
                                                                 json!({
                                                                     "kind": "cx.invite.create",
                                                                     "invite_id": invite_id,
-                                                                    "target": target,
+                                                                    "invitee": target,
                                                                     "state": "pending",
                                                                     "event_id": submitted.event_id,
                                                                 }),
@@ -1151,7 +1150,7 @@ pub fn SpaceAdminPanel(
                                                         invite_target.set(String::new());
                                                         status_msg.set(format!(
                                                             "invited {} (pending) fact {}",
-                                                            short_protocol_id(&target),
+                                                            target,
                                                             short_protocol_id(&op_id)
                                                         ));
                                                     }
@@ -1521,6 +1520,7 @@ pub fn SpaceAdminPanel(
                                     span { title: "{invite.target}", "{invite_target_label}" }
                                     span { "{invite.state}" }
                                 }
+                                div { class: "muted", "data-testid": "invite-target", title: "{invite.target}", "{invite.target}" }
                                 div { class: "muted", "data-testid": "invite-id", title: "{invite.invite_id}", "{invite_id_label}" }
                                 if let Some(role) = &invite.role {
                                     div { class: "muted", "role {role}" }

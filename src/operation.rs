@@ -1019,17 +1019,22 @@ pub mod cx_ops {
         space_id: &str,
         actor: &str,
         invite_id: &str,
-        target: &str,
+        invitee: &str,
         role: Option<&str>,
-        state: &str,
     ) -> OperationBuilder {
         let mut body = serde_json::Map::new();
         body.insert("invite_id".to_owned(), json!(invite_id));
-        body.insert("target".to_owned(), json!(target));
+        body.insert("invitee".to_owned(), json!(invitee));
+        body.insert(
+            "expires_at".to_owned(),
+            json!(
+                (chrono::Utc::now() + chrono::Duration::days(7))
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            ),
+        );
         if let Some(role) = role {
-            body.insert("role".to_owned(), json!(role));
+            body.insert("x_role".to_owned(), json!(role));
         }
-        body.insert("state".to_owned(), json!(state));
         OperationBuilder::new(space_id, actor, "cx.invite.create").body(Value::Object(body))
     }
 
@@ -2283,11 +2288,22 @@ mod tests {
             "cx:invite:test",
             "did:web:bob.example",
             Some("member"),
-            "pending",
         )
         .build("node");
         assert_eq!(create.kind, "cx.invite.create");
         assert_eq!(create.payload["invite_id"], "cx:invite:test");
+        assert_eq!(create.payload["invitee"], "did:web:bob.example");
+        assert_eq!(create.payload["x_role"], "member");
+        assert!(
+            create
+                .payload
+                .get("expires_at")
+                .and_then(|value| value.as_str())
+                .is_some()
+        );
+        assert!(create.payload.get("target").is_none());
+        assert!(create.payload.get("role").is_none());
+        assert!(create.payload.get("state").is_none());
 
         let accept =
             cx_ops::invite_accept("cx:space:test", "did:web:bob.example", "cx:invite:test")

@@ -2374,6 +2374,7 @@ pub fn KanbanPanel(
                     details {
                         class: if archived_count == 0 { "event board-maintenance is-empty" } else { "event board-maintenance" },
                         "data-testid": "kanban-archived-cards",
+                        open: archived_count > 0,
                         summary {
                             span { {crate::i18n::tr("kanban.archived_cards_header")} }
                             span { "{archived_count} card(s)" }
