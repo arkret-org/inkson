@@ -770,12 +770,6 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-.board-card-discussion {
-  min-width: 0;
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 .board-add-card-row {
   display: flex;
   justify-content: flex-start;
@@ -949,51 +943,6 @@ body {
   color: var(--text-3, var(--cx-muted));
   font-size: 13px;
 }
-.card-detail-track-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border, var(--cx-line));
-  border-radius: 8px;
-  background: var(--surface-2, rgba(255,255,255,0.04));
-}
-.card-detail-track-tab {
-  min-width: 0;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2, var(--cx-muted));
-  font-weight: 800;
-}
-.card-detail-track-tab small {
-  color: inherit;
-  font-size: 11px;
-  font-weight: 650;
-}
-.card-detail-track-tab.active {
-  border-color: var(--border-strong, var(--cx-line-strong));
-  background: var(--surface, var(--cx-surface));
-  color: var(--text, var(--cx-ink));
-  box-shadow: var(--shadow-xs, none);
-}
-.card-detail-track-panel {
-  display: grid;
-  gap: 12px;
-  padding-top: 4px;
-}
-.card-detail-track-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-.card-detail-track-summary > div,
 .card-detail-side-section {
   min-width: 0;
   display: grid;
@@ -1004,21 +953,6 @@ body {
   background: var(--surface, var(--cx-surface));
   box-shadow: none;
 }
-.card-detail-track-summary strong,
-.card-detail-discussion-head strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card-detail-discussion-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-}
-.card-detail-open-discussion,
-.card-detail-track-actions .secondary,
 .card-detail-side-actions .secondary {
   min-height: 34px;
   display: inline-flex;
@@ -1028,8 +962,6 @@ body {
   border-radius: 8px;
   box-shadow: none;
 }
-.card-detail-linked-flow-list,
-.card-detail-track-actions,
 .card-detail-side-actions {
   display: flex;
   align-items: center;
@@ -1392,11 +1324,7 @@ body {
     border-left: 0;
     border-top: 1px solid var(--border, var(--cx-line));
   }
-  .card-detail-track-summary,
   .card-detail-edit-grid {
-    grid-template-columns: 1fr;
-  }
-  .card-detail-discussion-head {
     grid-template-columns: 1fr;
   }
 }
@@ -1916,6 +1844,22 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   grid-template-columns: 48px minmax(0, 1fr);
 }
 
+.card-detail-discussion-section {
+  min-height: 0;
+}
+
+.discussion-shell.embedded,
+.discussion-shell.embedded.left-collapsed,
+.discussion-shell.embedded.right-collapsed,
+.discussion-shell.embedded.left-collapsed.right-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(260px, 1fr) auto;
+  height: min(58vh, 560px);
+  min-height: 420px;
+  padding: 0;
+  gap: 8px;
+}
+
 .discussion-panel,
 .discussion-composer {
   min-width: 0;
@@ -1943,12 +1887,22 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   grid-row: 1;
 }
 
+.discussion-shell.embedded .discussion-main-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
 .discussion-composer {
   grid-column: 2;
   grid-row: 2;
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+.discussion-shell.embedded .discussion-composer {
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .discussion-details-panel,
@@ -2267,73 +2221,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   accent-color: var(--accent, #1f6b4f);
 }
 
-/* T7.2: watcher picker pills */
-.watcher-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.watcher-pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--border, #cbd5df);
-  border-radius: 8px;
-  background: var(--surface, #fff);
-  min-height: 38px;
-  align-items: center;
-}
-.watcher-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 6px 3px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 1.4;
-  border: 1px solid transparent;
-  max-width: 100%;
-  word-break: break-all;
-}
-.watcher-pill-valid {
-  background: color-mix(in srgb, var(--accent, #1f6b4f) 14%, transparent);
-  color: var(--accent-strong, #1f5a41);
-  border-color: color-mix(in srgb, var(--accent, #1f6b4f) 28%, transparent);
-}
-.watcher-pill-warning {
-  background: rgba(165, 107, 19, 0.14);
-  color: #8a5a10;
-  border-color: rgba(165, 107, 19, 0.32);
-}
-.watcher-pill-invalid {
-  background: rgba(198, 73, 64, 0.12);
-  color: #a23a32;
-  border-color: rgba(198, 73, 64, 0.34);
-}
-.watcher-pill-remove {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  padding: 0 2px;
-  font-size: 13px;
-  line-height: 1;
-}
-.watcher-pill-input {
-  flex: 1;
-  min-width: 140px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  padding: 4px 2px;
-  font-size: 13px;
-  color: inherit;
-}
-.watcher-pill-summary {
-  font-size: 12px;
-}
-
 /* T7.2: watch level dropdown */
 .watch-level-picker {
   position: relative;
@@ -2472,7 +2359,6 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 @media (max-width: 768px) {
-  .watcher-pill-input { min-width: 100px; }
   .watch-level-menu { left: 0; right: auto; }
   .discussion-details-panel {
     position: fixed;

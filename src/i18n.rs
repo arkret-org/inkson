@@ -385,7 +385,6 @@ pub fn english_translations() -> TranslationDict {
         "chat.settings.shared_history_hint",
         "Space-scoped policy — managed under Space admin.",
     );
-    dict.set("kanban.queue_track_member", "Queue flow track member");
     dict.set(
         "settings.muted_spaces_empty",
         "No spaces muted. Use the Notifications view to mute a noisy space.",
@@ -433,13 +432,6 @@ pub fn english_translations() -> TranslationDict {
         "Encryption passphrase (this Space)",
     );
     dict.set("chat.mls_passphrase_save", "Save passphrase");
-    dict.set("chat.mls_publish_key_package", "Publish key package");
-    dict.set(
-        "chat.mls_invite_actor_placeholder",
-        "alice:example.com or did:web:...",
-    );
-    dict.set("chat.mls_invite_device_placeholder", "Device id");
-    dict.set("chat.mls_invite_member", "Invite to encrypted group");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
     dict.set(
@@ -557,26 +549,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
-    dict.set("chat.label.watchers", "Add watchers");
-    dict.set(
-        "chat.watchers.hint",
-        "不影响访问控制 — Watching only changes notifications, \
-         not who can see the Flow.",
-    );
-    // T7.2 watcher pill picker.
-    dict.set(
-        "chat.watchers.placeholder",
-        "alice:example.com or did:web:… (comma to add)",
-    );
-    dict.set("chat.watchers.valid", "valid");
-    dict.set("chat.watchers.invalid", "invalid");
-    dict.set("chat.watchers.dupe", "Already added");
-    dict.set("chat.watchers.unknown_handle", "Handle not found locally");
-    dict.set("chat.watchers.invalid_did", "Malformed DID");
-    dict.set(
-        "chat.watchers.unresolved",
-        "Type a DID, a handle (alice:example.com), or pick from suggestions.",
-    );
     dict.set("common.remove", "Remove");
     // T7.2 watch level fast switcher.
     dict.set("chat.watch_level.prefix", "Watching");
@@ -1102,7 +1074,6 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.settings.shared_history_hint",
         "Space 级别策略——在 Space 管理处设置。",
     );
-    dict.set("kanban.queue_track_member", "排队 Flow track 成员");
     dict.set(
         "settings.muted_spaces_empty",
         "未静音任何空间。在通知视图中静音吵闹空间。",
@@ -1144,13 +1115,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.board_hint", "拖动卡片到不同列即可移动。");
     dict.set("chat.mls_passphrase_placeholder", "加密口令（本 Space）");
     dict.set("chat.mls_passphrase_save", "保存口令");
-    dict.set("chat.mls_publish_key_package", "发布 Key Package");
-    dict.set(
-        "chat.mls_invite_actor_placeholder",
-        "alice:example.com 或 did:web:...",
-    );
-    dict.set("chat.mls_invite_device_placeholder", "设备 id");
-    dict.set("chat.mls_invite_member", "邀请加入加密群组");
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
@@ -1264,25 +1228,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.hide_list", "隐藏讨论列表");
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
-    dict.set("chat.label.watchers", "添加关注者");
-    dict.set(
-        "chat.watchers.hint",
-        "不影响访问控制 —— 关注只改变通知，不改变谁能看到该 Flow。",
-    );
-    // T7.2 关注者多选 pill
-    dict.set(
-        "chat.watchers.placeholder",
-        "alice:example.com 或 did:web:…（用逗号添加）",
-    );
-    dict.set("chat.watchers.valid", "有效");
-    dict.set("chat.watchers.invalid", "无效");
-    dict.set("chat.watchers.dupe", "已添加");
-    dict.set("chat.watchers.unknown_handle", "本地未识别该 handle");
-    dict.set("chat.watchers.invalid_did", "DID 格式无效");
-    dict.set(
-        "chat.watchers.unresolved",
-        "请输入 DID、handle（alice:example.com），或从建议列表中选择。",
-    );
     dict.set("common.remove", "移除");
     // T7.2 watch level 快捷切换
     dict.set("chat.watch_level.prefix", "关注");

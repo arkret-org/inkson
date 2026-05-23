@@ -828,8 +828,6 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
         due: flow_projection_field_string(flow, None, &["due_at", "due"])
             .unwrap_or_else(|| "—".to_owned()),
         primary_flow_id: flow.flow_id.clone(),
-        primary_flow: title,
-        linked_flows: Vec::new(),
         locked_flow,
         external_visibility,
         history_visibility,
@@ -854,20 +852,14 @@ fn local_created_card(
     description: String,
 ) -> KanbanCard {
     KanbanCard {
-        id: flow_id,
+        id: flow_id.clone(),
         rank,
         title,
         description,
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),
         due: "unscheduled".to_owned(),
-        primary_flow_id: "cx:flow:launch-discussion".to_owned(),
-        primary_flow: "Launch discussion".to_owned(),
-        linked_flows: vec![FlowLink {
-            flow_id: "cx:flow:launch-discussion".to_owned(),
-            name: "Launch board discussion".to_owned(),
-            access_state: DiscussionAccessState::Readable,
-        }],
+        primary_flow_id: flow_id,
         locked_flow: None,
         external_visibility: "Not shared externally".to_owned(),
         history_visibility: "board default".to_owned(),
@@ -3976,19 +3968,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Alice".to_owned(),
                 due: "May 08".to_owned(),
                 primary_flow_id: "cx:flow:review-discussion".to_owned(),
-                primary_flow: "Review discussion".to_owned(),
-                linked_flows: vec![
-                    FlowLink {
-                        flow_id: "cx:flow:launch-discussion".to_owned(),
-                        name: "Launch board discussion".to_owned(),
-                        access_state: DiscussionAccessState::Readable,
-                    },
-                    FlowLink {
-                        flow_id: "cx:flow:external-counsel".to_owned(),
-                        name: "External counsel".to_owned(),
-                        access_state: DiscussionAccessState::External,
-                    },
-                ],
                 locked_flow: Some(LockedFlow {
                     flow_id_hash: "sha256:locked-private-decision".to_owned(),
                 reason: "You can see that a restricted discussion is linked, but not its name or members.".to_owned(),
@@ -4015,12 +3994,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Bob".to_owned(),
                 due: "May 10".to_owned(),
                 primary_flow_id: "cx:flow:support-discussion".to_owned(),
-                primary_flow: "Support desk discussion".to_owned(),
-                linked_flows: vec![FlowLink {
-                    flow_id: "cx:flow:launch-discussion".to_owned(),
-                    name: "Launch board discussion".to_owned(),
-                    access_state: DiscussionAccessState::Readable,
-                }],
                 locked_flow: None,
                 external_visibility: "No external discussions linked".to_owned(),
                 history_visibility: "shared history".to_owned(),
@@ -4044,12 +4017,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Carol".to_owned(),
                 due: "May 01".to_owned(),
                 primary_flow_id: "cx:flow:security-review".to_owned(),
-                primary_flow: "Security review".to_owned(),
-                linked_flows: vec![FlowLink {
-                    flow_id: "cx:flow:launch-discussion".to_owned(),
-                    name: "Launch board discussion".to_owned(),
-                    access_state: DiscussionAccessState::Readable,
-                }],
                 locked_flow: Some(LockedFlow {
                     flow_id_hash: "sha256:locked-incident-notes".to_owned(),
                     reason: "Incident notes require separate discussion capability.".to_owned(),
@@ -4781,8 +4748,6 @@ mod tests {
             assignee: String::new(),
             due: String::new(),
             primary_flow_id: String::new(),
-            primary_flow: String::new(),
-            linked_flows: Vec::new(),
             locked_flow: None,
             external_visibility: String::new(),
             history_visibility: String::new(),

@@ -74,26 +74,18 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("renderer-board")).toHaveCount(0);
   });
 
-  // ---- Flow detail · synthesis vs discussion ----
-  // claude-design: desktop/flow-detail.html, desktop/discussion.html
+  // ---- Flow detail · embedded discussion ----
+  // claude-design: desktop/flow-detail.html
   // spec: overview/current-model.md §3
-  test("card detail drawer shows flow tracks and respects track access", async ({ page }) => {
-    // Clicking a kanban card opens the card-detail drawer; the drawer MUST
-    // expose the synthesis/discussion *Flow tracks* even on cards whose
-    // discussion is locked (`lazy_link`), so the actor sees the access
-    // boundary instead of the UI silently hiding the track surface.
-    // T2.3: the legacy `branch` label was renamed to `track` per spec;
-    // access is delegated to the child Discussion Space, not a
-    // branch-scoped grant. Spec: `overview/current-model.md §3`.
+  test("card detail drawer embeds the discussion composer", async ({ page }) => {
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
     await page.getByTestId("kanban-card").first().click();
     const drawer = page.getByTestId("card-detail-modal");
     await expect(drawer).toBeVisible({ timeout: 30_000 });
-    const tabs = page.getByTestId("card-flow-tracks");
-    await expect(tabs).toBeVisible();
-    await expect(tabs).toContainText("synthesis");
-    await expect(tabs).toContainText("discussion");
+    await expect(drawer.getByTestId("chat-panel")).toBeVisible();
+    await expect(drawer.getByTestId("card-flow-tracks")).toHaveCount(0);
+    await expect(drawer.getByTestId("open-primary-discussion")).toHaveCount(0);
     await drawer.getByTestId("card-detail-edit-button").click();
     await expect(drawer.getByTestId("card-detail-description-rich-editor")).toBeVisible();
     await expect(drawer.getByTestId("card-detail-description-input")).toBeAttached();

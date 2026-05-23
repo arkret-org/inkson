@@ -35,8 +35,9 @@ async function openTimeline(page: import("@playwright/test").Page) {
 }
 
 async function openDiscussion(page: import("@playwright/test").Page) {
-  await page.goto(`/chat/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
-  await refreshServer(page);
+  await openKanban(page);
+  await page.getByTestId("kanban-card").first().click();
+  await expect(page.getByTestId("card-detail-modal")).toBeVisible();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -50,16 +51,8 @@ async function createDiscussion(
   page: import("@playwright/test").Page,
   name = "Test Discussion",
 ) {
-  await page.getByTestId("open-channel-dialog").click();
-  await page.getByTestId("new-channel-name").fill(name);
-  const request = page.waitForRequest(
-    (candidate) => candidate.url().endsWith("/api/v1/events") && candidate.method() === "POST",
-  );
-  await page.getByTestId("create-channel-button").click();
-  const body = await request.then((candidate) => candidate.postDataJSON());
-  await expect(page.getByTestId("chat-status")).toContainText("Flow created");
-  await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
-  return body;
+  void name;
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 async function writeLocalConfig(
@@ -377,16 +370,18 @@ test("topbar theme toggle takes effect on the first click from system dark", asy
   await expect(toggle).toHaveAttribute("title", "Switch to night theme");
 });
 
-test("kanban card detail exposes linked discussion and locked discussion boundaries", async ({ page }) => {
+test("kanban card detail embeds discussion without legacy boundary copy", async ({ page }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   const detailPopup = page.getByTestId("card-detail-modal");
   await expect(page.getByTestId("card-detail-overlay")).toBeVisible();
   await expect(detailPopup).toHaveAttribute("role", "dialog");
-  await expect(detailPopup).toContainText("Primary discussion");
-  await expect(detailPopup).toContainText("Locked discussion");
-  await expect(detailPopup).toContainText("card visibility != discussion visibility");
-  await expect(page.getByTestId("locked-discussion-fail-closed")).toContainText("Opaque ref");
+  await expect(detailPopup).toContainText("Discussion");
+  await expect(detailPopup).not.toContainText("Primary discussion");
+  await expect(detailPopup).not.toContainText("Launch discussion");
+  await expect(detailPopup).not.toContainText("card visibility != discussion visibility");
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
   const popupBox = await detailPopup.boundingBox();
   if (!popupBox) {
     throw new Error("card detail modal bounding box was unavailable");
@@ -783,88 +778,22 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
 });
 
-test("chat exposes the default discussion track and creates flow-backed tracks", async ({ page }) => {
+test("card detail embeds discussion directly without legacy discussion chrome", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);
-  await expect(page.getByTestId("discussion-list-panel")).toBeVisible();
   await expect(page.getByTestId("discussion-main-panel")).toBeVisible();
-  await expect(page.getByTestId("channel-creation")).toHaveCount(0);
-  await expect(page.getByTestId("open-channel-dialog")).toBeVisible();
-  await expect(page.getByTestId("discussion-settings-toggle")).toBeVisible();
-  await expect(page.getByTestId("discussion-users-toggle")).toBeVisible();
-  await expect(page.getByTestId("discussion-users-panel")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-settings-panel")).toHaveCount(0);
-  await expect(page.getByTestId("channel-item")).toHaveCount(1);
-  await expect(page.getByTestId("channel-item").first()).toContainText("Discussion");
-  await expect(page.getByTestId("empty-discussion-list")).toHaveCount(0);
   await expect(page.getByTestId("discussion-main-panel")).toContainText("No messages yet");
-  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Launch board discussion");
-  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Announcements discussion");
-  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Support desk discussion");
-  await expect(page.getByTestId("discussion-list-panel")).not.toContainText("Activity audit discussion");
-  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Board coordination and planning");
-  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Mei");
-  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Carlos");
-  await page.getByTestId("discussion-users-toggle").click();
-  await expect(page.getByTestId("discussion-users-panel")).toBeVisible();
-  await expect(page.getByTestId("discussion-users-panel")).toContainText("did:web:alice.example");
-  await expect(page.getByTestId("discussion-users-panel")).toContainText("You");
-  await expect(page.getByTestId("discussion-users-panel")).not.toContainText("Mei");
-  await expect(page.getByTestId("discussion-users-panel")).not.toContainText("Carlos");
-  await page.getByTestId("discussion-settings-toggle").click();
-  await expect(page.getByTestId("discussion-settings-panel")).toBeVisible();
-  await expect(page.getByTestId("discussion-users-panel")).toHaveCount(0);
-  await expect(page.getByTestId("ephemeral-channel-banner")).toHaveCount(0);
-  await expect(page.getByTestId("wire-kind-vs-category-banner")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-track-vocab-banner")).toHaveCount(0);
-
-  await page.getByTestId("open-channel-dialog").click();
-  await expect(page.getByTestId("channel-create-modal")).toBeVisible();
-  await page.getByTestId("new-channel-name").fill("Ops Announce");
-  await page.getByTestId("new-channel-topic").fill("Broadcast deploy updates");
-  await page.getByTestId("new-channel-members").fill("did:web:bob.example");
-  await expect(page.getByTestId("new-channel-create-card")).not.toBeChecked();
-  const channelEvent = page.waitForRequest("**/api/v1/events");
-  await page.getByTestId("create-channel-button").click();
-  const channelBody = await channelEvent.then((request) => request.postDataJSON());
-  expect(channelBody.kind).toBe("cx.flow.create");
-  expect(channelBody.payload.kind).toBeUndefined();
-  const flowObject = channelBody.payload.object;
-  expect(flowObject).toBeTruthy();
-  expect(channelBody.payload.category).toBe("general");
-  expect(channelBody.payload.fields.category).toBe("general");
-  expect(flowObject.fields.category).toBe("general");
-  expect(channelBody.payload.summary).toBe("Broadcast deploy updates");
-  expect(flowObject.summary).toBe("Broadcast deploy updates");
-  expect(flowObject.created_by).toBe("did:web:alice.example");
-  expect(flowObject.tracks.discussion).toBeTruthy();
-  expect(flowObject.tracks.synthesis).toBeUndefined();
-  expect(channelBody.payload.flow_id).toContain("cx:flow:");
-  expect(channelBody.payload.title).toBe("Ops Announce");
-  expect(channelBody.payload.rank).toBeTruthy();
-  await expect(page.getByTestId("channel-item").last()).toContainText("Ops Announce");
-  await expect(page.getByTestId("chat-status")).toContainText("Flow created");
+  await expect(page.getByTestId("discussion-list-panel")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-list-rail")).toHaveCount(0);
+  await expect(page.getByTestId("open-channel-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-users-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-settings-toggle")).toHaveCount(0);
   await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
-
-  await page.getByTestId("open-channel-dialog").click();
-  await page.getByTestId("new-channel-name").fill("Card Backed Discussion");
-  await page.getByTestId("new-channel-create-card").check();
-  const cardBackedEvent = page.waitForRequest("**/api/v1/events");
-  await page.getByTestId("create-channel-button").click();
-  const cardBackedBody = await cardBackedEvent.then((request) => request.postDataJSON());
-  expect(cardBackedBody.payload.object.tracks.discussion).toBeTruthy();
-  expect(cardBackedBody.payload.object.tracks.synthesis).toBeTruthy();
-  expect(cardBackedBody.payload.create_card).toBe(true);
-  await expect(page.getByTestId("space-list")).not.toContainText("Ops Announce");
-  await expect(page.getByTestId("space-list")).not.toContainText("Card Backed Discussion");
-
-  await page.getByTestId("collapse-discussion-list").click();
-  await expect(page.getByTestId("discussion-list-rail")).toBeVisible();
-  await page.getByTestId("expand-discussion-list").click();
-  await expect(page.getByTestId("discussion-list-panel")).toBeVisible();
-  await page.getByTestId("discussion-settings-toggle").click();
-  await expect(page.getByTestId("discussion-settings-panel")).toHaveCount(0);
-  await page.getByTestId("channel-item").filter({ hasText: "Ops Announce" }).click();
+  await expect(page.getByTestId("new-channel-members")).toHaveCount(0);
+  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
+  await expect(page.getByTestId("card-flow-tracks")).toHaveCount(0);
+  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Launch board discussion");
+  await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
   const chatSend = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
@@ -898,6 +827,8 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await expect(page.getByTestId("chat-message").last()).toContainText("message before reload");
 
   await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await page.getByTestId("kanban-card").first().click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   const reloadedMessage = page.getByTestId("chat-message").last();
   await expect(reloadedMessage).toContainText("message before reload");
@@ -1263,7 +1194,6 @@ test("visual smoke renders core client pages on desktop and mobile", async ({ pa
   for (const [route, testId] of [
     ["/", "dashboard-panel"],
     ["/kanban", "kanban-panel"],
-    ["/chat", "chat-panel"],
     ["/settings", "settings-panel"],
   ] as const) {
     await page.goto(route, { waitUntil: "domcontentloaded" });
