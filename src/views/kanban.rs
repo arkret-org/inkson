@@ -34,6 +34,8 @@ const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 const KANBAN_LIVE_POLL_SECONDS: u64 = 5;
 
 const LOCAL_PENDING_CARD_DESCRIPTION: &str = "New local card waiting for reducer receipt.";
+const CARD_DESCRIPTION_COLLAPSE_CHAR_THRESHOLD: usize = 360;
+const CARD_DESCRIPTION_COLLAPSE_LINE_THRESHOLD: usize = 6;
 
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanColumn {
@@ -71,7 +73,10 @@ struct KanbanCard {
     /// refreshes (server-side cell update), this must be re-synced.
     rank: String,
     title: String,
+    /// Flow `summary` — short one-line/paragraph overview.
     description: String,
+    /// Flow `body` — rich long-form content shown in the Description tab.
+    body: String,
     labels: Vec<String>,
     assignee: String,
     due: String,
@@ -145,6 +150,14 @@ enum BoardToolbarPopover {
     CreateBoard,
     Projection,
     Queue,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CardDetailContentTab {
+    #[default]
+    Description,
+    Synthesis,
+    Discussion,
 }
 
 const TOAST_EDITOR_SCRIPT_URL: &str =
@@ -610,6 +623,11 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned(),
+        body: flow_body_display_text(item.object.get("body").or_else(|| {
+            item.object
+                .get("fields")
+                .and_then(|fields| fields.get("body"))
+        })),
         labels: item
             .object
             .get("fields")
@@ -751,6 +769,50 @@ fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> Vec<String> 
     }
 }
 
+fn flow_body_display_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    let mut lines = Vec::new();
+    collect_content_text(value, &mut lines);
+    lines
+        .into_iter()
+        .map(|line| line.trim().to_owned())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
+    match value {
+        Value::String(text) => lines.push(text.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_content_text(item, lines);
+            }
+        }
+        Value::Object(object) => {
+            for key in [
+                "body",
+                "text",
+                "markdown",
+                "plain_text",
+                "content",
+                "caption",
+                "alt",
+            ] {
+                if let Some(child) = object.get(key) {
+                    collect_content_text(child, lines);
+                }
+            }
+            if let Some(blocks) = object.get("blocks") {
+                collect_content_text(blocks, lines);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCard {
     let title = if flow.title.trim().is_empty() {
         flow.flow_id.clone()
@@ -792,6 +854,7 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
             .unwrap_or_default(),
         title: title.clone(),
         description,
+        body: flow_body_display_text(flow.body.as_ref().or_else(|| flow.fields.get("body"))),
         labels: flow_projection_labels(flow),
         assignee: flow_projection_field_string(flow, None, &["assignee"])
             .unwrap_or_else(|| "—".to_owned()),
@@ -826,6 +889,7 @@ fn local_created_card(
         rank,
         title,
         description,
+        body: String::new(),
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),
         due: "unscheduled".to_owned(),
@@ -1026,6 +1090,8 @@ pub fn KanbanPanel(
     let mut editing_card_detail = use_signal(|| false);
     let mut card_detail_sidebar_visible = use_signal(|| true);
     let mut card_detail_actions_open = use_signal(|| false);
+    let mut card_detail_description_expanded = use_signal(|| false);
+    let mut card_detail_tab = use_signal(CardDetailContentTab::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
@@ -1084,6 +1150,8 @@ pub fn KanbanPanel(
                 card_edit_due.set(draft.due);
                 editing_card_detail.set(false);
                 card_detail_actions_open.set(false);
+                card_detail_description_expanded.set(false);
+                card_detail_tab.set(CardDetailContentTab::Description);
                 card_detail_overlay_press_started.set(false);
                 card_detail_overlay_press_ended.set(false);
                 selected_card.set(Some(card));
@@ -2019,6 +2087,8 @@ pub fn KanbanPanel(
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
                                         card_detail_actions_open.set(false);
+                                        card_detail_description_expanded.set(false);
+                                        card_detail_tab.set(CardDetailContentTab::Description);
                                         card_detail_overlay_press_started.set(false);
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
@@ -2402,6 +2472,31 @@ pub fn KanbanPanel(
                     } else {
                         "card-detail-layout no-sidebar"
                     };
+                    let active_detail_tab = card_detail_tab();
+                    let description_tab_class = if active_detail_tab == CardDetailContentTab::Description {
+                        "card-detail-tab active"
+                    } else {
+                        "card-detail-tab"
+                    };
+                    let synthesis_tab_class = if active_detail_tab == CardDetailContentTab::Synthesis {
+                        "card-detail-tab active"
+                    } else {
+                        "card-detail-tab"
+                    };
+                    let discussion_tab_class = if active_detail_tab == CardDetailContentTab::Discussion {
+                        "card-detail-tab active"
+                    } else {
+                        "card-detail-tab"
+                    };
+                    let description_is_collapsible = card_description_should_collapse(&card.body);
+                    let description_is_expanded = card_detail_description_expanded();
+                    let description_class = if description_is_collapsible && !description_is_expanded {
+                        "card-detail-description is-collapsed"
+                    } else {
+                        "card-detail-description"
+                    };
+                    let description_toggle_label = if description_is_expanded { "Less" } else { "More" };
+                    let summary_text = card_summary_text(&card.description);
                     let overlay_navigator = navigator.clone();
                     let overlay_board_route = board_route_after_close.clone();
                     let close_navigator = navigator.clone();
@@ -2501,95 +2596,153 @@ pub fn KanbanPanel(
                                             }
                                             if card_detail_actions_open() {
                                                 div { class: "card-detail-action-menu", "data-testid": "card-detail-actions-menu",
-                                                    button {
-                                                        class: "card-detail-action-menu-item",
-                                                        "data-testid": "card-detail-menu-edit-button",
-                                                        onclick: {
-                                                            let current = card.clone();
-                                                            move |_| {
-                                                                let draft = card_detail_draft_from_card(&current);
-                                                                card_edit_title.set(draft.title);
-                                                                card_edit_description.set(draft.description);
-                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                card_edit_assignee.set(draft.assignee);
-                                                                card_edit_due.set(draft.due);
-                                                                editing_card_detail.set(true);
-                                                                card_detail_actions_open.set(false);
-                                                            }
-                                                        },
-                                                        UiIcon { name: "settings" }
-                                                        span { {crate::i18n::tr("common.edit")} }
-                                                    }
-                                                    {
-                                                        let target = if card.lifecycle == FlowLifecycleState::Archived {
-                                                            FlowLifecycleState::Active
-                                                        } else {
-                                                            FlowLifecycleState::Archived
-                                                        };
-                                                        let action = if target == FlowLifecycleState::Archived {
-                                                            "cx.flow.archive"
-                                                        } else {
-                                                            "cx.flow.restore"
-                                                        };
-                                                        let gate = capability_gate_for_flow(
-                                                            &capability_engine,
-                                                            &account_did,
-                                                            &selected_space,
-                                                            &card.id,
-                                                            action,
-                                                        );
-                                                        let label = if target == FlowLifecycleState::Archived {
-                                                            crate::i18n::tr("kanban.archive_action")
-                                                        } else {
-                                                            crate::i18n::tr("kanban.restore_action")
-                                                        };
-                                                        let testid = if target == FlowLifecycleState::Archived {
-                                                            "card-detail-archive-button"
-                                                        } else {
-                                                            "card-detail-restore-button"
-                                                        };
-                                                        let title_text = if gate.enabled {
-                                                            format!("{label} this card ({action})")
-                                                        } else {
-                                                            format!("{label} gated: {}", gate.reason)
-                                                        };
-                                                        let testid_state = if gate.enabled { "open" } else { "denied" };
-                                                        let action_navigator = navigator.clone();
-                                                        let action_board_route = board_route_after_close.clone();
-                                                        rsx! {
-                                                            button {
-                                                                class: "card-detail-action-menu-item",
-                                                                "data-testid": testid,
-                                                                "data-flow-id": "{card.id}",
-                                                                "data-cap-gate": testid_state,
-                                                                disabled: !gate.enabled,
-                                                                title: title_text,
-                                                                onclick: {
-                                                                    let base = base_url.clone();
-                                                                    let space = selected_space.clone();
-                                                                    let actor = account_did.clone();
-                                                                    let flow_id = card.id.clone();
-                                                                    move |_| {
-                                                                        dispatch_flow_lifecycle(
-                                                                            base.clone(),
-                                                                            token,
-                                                                            space.clone(),
-                                                                            actor.clone(),
-                                                                            flow_id.clone(),
-                                                                            target,
-                                                                            columns,
-                                                                            board_status,
-                                                                        );
-                                                                        selected_card.set(None);
+                                                    if editing_card_detail() {
+                                                        button {
+                                                            class: "card-detail-action-menu-item",
+                                                            "data-testid": "card-detail-save-button",
+                                                            onclick: {
+                                                                let base = base_url.clone();
+                                                                let space = selected_space.clone();
+                                                                let actor = account_did.clone();
+                                                                let current = card.clone();
+                                                                move |_| {
+                                                                    let draft = CardDetailDraft {
+                                                                        title: card_edit_title().trim().to_owned(),
+                                                                        description: card_edit_description().trim().to_owned(),
+                                                                        labels: parse_card_labels(&card_edit_labels()),
+                                                                        assignee: card_edit_assignee().trim().to_owned(),
+                                                                        due: card_edit_due().trim().to_owned(),
+                                                                    };
+                                                                    if dispatch_card_detail_update(
+                                                                        base.clone(),
+                                                                        token,
+                                                                        space.clone(),
+                                                                        actor.clone(),
+                                                                        current.clone(),
+                                                                        draft,
+                                                                        columns,
+                                                                        selected_card,
+                                                                        state_store,
+                                                                        board_status,
+                                                                    ) {
                                                                         editing_card_detail.set(false);
                                                                         card_detail_actions_open.set(false);
-                                                                        if route_is_card_detail {
-                                                                            let _ = action_navigator.push(action_board_route.clone());
-                                                                        }
                                                                     }
-                                                                },
-                                                                UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
-                                                                span { "{label}" }
+                                                                }
+                                                            },
+                                                            UiIcon { name: "check" }
+                                                            span { {crate::i18n::tr("common.save")} }
+                                                        }
+                                                        button {
+                                                            class: "card-detail-action-menu-item",
+                                                            "data-testid": "card-detail-cancel-edit-button",
+                                                            onclick: {
+                                                                let current = card.clone();
+                                                                move |_| {
+                                                                    let draft = card_detail_draft_from_card(&current);
+                                                                    card_edit_title.set(draft.title);
+                                                                    card_edit_description.set(draft.description);
+                                                                    card_edit_labels.set(draft.labels.join(", "));
+                                                                    card_edit_assignee.set(draft.assignee);
+                                                                    card_edit_due.set(draft.due);
+                                                                    editing_card_detail.set(false);
+                                                                    card_detail_actions_open.set(false);
+                                                                }
+                                                            },
+                                                            UiIcon { name: "x" }
+                                                            span { {crate::i18n::tr("common.cancel")} }
+                                                        }
+                                                    } else {
+                                                        button {
+                                                            class: "card-detail-action-menu-item",
+                                                            "data-testid": "card-detail-menu-edit-button",
+                                                            onclick: {
+                                                                let current = card.clone();
+                                                                move |_| {
+                                                                    let draft = card_detail_draft_from_card(&current);
+                                                                    card_edit_title.set(draft.title);
+                                                                    card_edit_description.set(draft.description);
+                                                                    card_edit_labels.set(draft.labels.join(", "));
+                                                                    card_edit_assignee.set(draft.assignee);
+                                                                    card_edit_due.set(draft.due);
+                                                                    editing_card_detail.set(true);
+                                                                    card_detail_actions_open.set(false);
+                                                                }
+                                                            },
+                                                            UiIcon { name: "settings" }
+                                                            span { {crate::i18n::tr("common.edit")} }
+                                                        }
+                                                        {
+                                                            let target = if card.lifecycle == FlowLifecycleState::Archived {
+                                                                FlowLifecycleState::Active
+                                                            } else {
+                                                                FlowLifecycleState::Archived
+                                                            };
+                                                            let action = if target == FlowLifecycleState::Archived {
+                                                                "cx.flow.archive"
+                                                            } else {
+                                                                "cx.flow.restore"
+                                                            };
+                                                            let gate = capability_gate_for_flow(
+                                                                &capability_engine,
+                                                                &account_did,
+                                                                &selected_space,
+                                                                &card.id,
+                                                                action,
+                                                            );
+                                                            let label = if target == FlowLifecycleState::Archived {
+                                                                crate::i18n::tr("kanban.archive_action")
+                                                            } else {
+                                                                crate::i18n::tr("kanban.restore_action")
+                                                            };
+                                                            let testid = if target == FlowLifecycleState::Archived {
+                                                                "card-detail-archive-button"
+                                                            } else {
+                                                                "card-detail-restore-button"
+                                                            };
+                                                            let title_text = if gate.enabled {
+                                                                format!("{label} this card ({action})")
+                                                            } else {
+                                                                format!("{label} gated: {}", gate.reason)
+                                                            };
+                                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                                            let action_navigator = navigator.clone();
+                                                            let action_board_route = board_route_after_close.clone();
+                                                            rsx! {
+                                                                button {
+                                                                    class: "card-detail-action-menu-item",
+                                                                    "data-testid": testid,
+                                                                    "data-flow-id": "{card.id}",
+                                                                    "data-cap-gate": testid_state,
+                                                                    disabled: !gate.enabled,
+                                                                    title: title_text,
+                                                                    onclick: {
+                                                                        let base = base_url.clone();
+                                                                        let space = selected_space.clone();
+                                                                        let actor = account_did.clone();
+                                                                        let flow_id = card.id.clone();
+                                                                        move |_| {
+                                                                            dispatch_flow_lifecycle(
+                                                                                base.clone(),
+                                                                                token,
+                                                                                space.clone(),
+                                                                                actor.clone(),
+                                                                                flow_id.clone(),
+                                                                                target,
+                                                                                columns,
+                                                                                board_status,
+                                                                            );
+                                                                            selected_card.set(None);
+                                                                            editing_card_detail.set(false);
+                                                                            card_detail_actions_open.set(false);
+                                                                            if route_is_card_detail {
+                                                                                let _ = action_navigator.push(action_board_route.clone());
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
+                                                                    span { "{label}" }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -2627,7 +2780,7 @@ pub fn KanbanPanel(
                                             }
                                         }
                                         div { class: "field",
-                                            label { "Description" }
+                                            label { "Summary" }
                                             CardMarkdownEditor {
                                                 value: card_edit_description(),
                                                 base_url: base_url.clone(),
@@ -2667,59 +2820,6 @@ pub fn KanbanPanel(
                                                 }
                                             }
                                         }
-                                        div { class: "card-detail-form-actions",
-                                            button {
-                                                class: "primary",
-                                                "data-testid": "card-detail-save-button",
-                                                onclick: {
-                                                    let base = base_url.clone();
-                                                    let space = selected_space.clone();
-                                                    let actor = account_did.clone();
-                                                    let current = card.clone();
-                                                    move |_| {
-                                                        let draft = CardDetailDraft {
-                                                            title: card_edit_title().trim().to_owned(),
-                                                            description: card_edit_description().trim().to_owned(),
-                                                            labels: parse_card_labels(&card_edit_labels()),
-                                                            assignee: card_edit_assignee().trim().to_owned(),
-                                                            due: card_edit_due().trim().to_owned(),
-                                                        };
-                                                        if dispatch_card_detail_update(
-                                                            base.clone(),
-                                                            token,
-                                                            space.clone(),
-                                                            actor.clone(),
-                                                            current.clone(),
-                                                            draft,
-                                                            columns,
-                                                            selected_card,
-                                                            state_store,
-                                                            board_status,
-                                                        ) {
-                                                            editing_card_detail.set(false);
-                                                        }
-                                                    }
-                                                },
-                                                {crate::i18n::tr("common.save")}
-                                            }
-                                            button {
-                                                class: "secondary",
-                                                "data-testid": "card-detail-cancel-edit-button",
-                                                onclick: {
-                                                    let current = card.clone();
-                                                    move |_| {
-                                                        let draft = card_detail_draft_from_card(&current);
-                                                        card_edit_title.set(draft.title);
-                                                        card_edit_description.set(draft.description);
-                                                        card_edit_labels.set(draft.labels.join(", "));
-                                                        card_edit_assignee.set(draft.assignee);
-                                                        card_edit_due.set(draft.due);
-                                                        editing_card_detail.set(false);
-                                                    }
-                                                },
-                                                {crate::i18n::tr("common.cancel")}
-                                            }
-                                        }
                                     }
                                 } else {
                                     div { class: "{detail_layout_class}",
@@ -2728,7 +2828,7 @@ pub fn KanbanPanel(
                                                 div { class: "card-detail-section-head",
                                                     div { class: "card-detail-section-title",
                                                         UiIcon { name: "file" }
-                                                        span { "Description" }
+                                                        span { "Summary" }
                                                     }
                                                     button {
                                                         class: "secondary card-detail-mini-action",
@@ -2749,36 +2849,104 @@ pub fn KanbanPanel(
                                                         span { {crate::i18n::tr("common.edit")} }
                                                     }
                                                 }
-                                                if card.description.trim().is_empty() {
-                                                    div { class: "card-detail-empty", "No description" }
+                                                if summary_text.is_empty() {
+                                                    div { class: "card-detail-empty", "No summary" }
                                                 } else {
-                                                    div { class: "card-detail-description",
-                                                        {crate::content::render_blocks(
-                                                            &crate::content::parse_message_body(&card.description),
-                                                        )}
+                                                    div {
+                                                        class: "card-detail-summary",
+                                                        "data-testid": "card-summary",
+                                                        "{summary_text}"
                                                     }
                                                 }
                                             }
 
-                                            section { class: "card-detail-section card-detail-discussion-section",
-                                                div { class: "card-detail-section-head",
-                                                    div { class: "card-detail-section-title",
-                                                        UiIcon { name: "message" }
-                                                        span { "Discussion" }
+                                            section { class: "card-detail-section card-detail-tabs-section",
+                                                div {
+                                                    class: "card-detail-tabs",
+                                                    "data-testid": "card-detail-tabs",
+                                                    role: "tablist",
+                                                    "aria-label": "Flow tracks",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "{description_tab_class}",
+                                                        "data-testid": "card-detail-tab-description",
+                                                        role: "tab",
+                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
+                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Description),
+                                                        "Description"
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "{synthesis_tab_class}",
+                                                        "data-testid": "card-detail-tab-synthesis",
+                                                        role: "tab",
+                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
+                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Synthesis),
+                                                        "Synthesis"
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "{discussion_tab_class}",
+                                                        "data-testid": "card-detail-tab-discussion",
+                                                        role: "tab",
+                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
+                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Discussion),
+                                                        "Discussion"
                                                     }
                                                 }
-                                                crate::views::chat::ChatPanel {
-                                                    base_url: base_url.clone(),
-                                                    plaintext_service_did: plaintext_service_did.clone(),
-                                                    account_did: account_did.clone(),
-                                                    token,
-                                                    selected_space: selected_space.clone(),
-                                                    selected_space_scope: selected_space_scope.clone(),
-                                                    sync_cursor,
-                                                    frontier_state,
-                                                    state_store,
-                                                    initial_flow_id: card.primary_flow_id.clone(),
-                                                    embedded: true,
+                                                if active_detail_tab == CardDetailContentTab::Description {
+                                                    div {
+                                                        class: "card-detail-description-panel",
+                                                        "data-testid": "card-description-panel",
+                                                        role: "tabpanel",
+                                                        if card.body.trim().is_empty() {
+                                                            div { class: "card-detail-empty", "No description" }
+                                                        } else {
+                                                            div { class: "{description_class}",
+                                                                {crate::content::render_blocks(
+                                                                    &crate::content::parse_message_body(&card.body),
+                                                                )}
+                                                            }
+                                                            if description_is_collapsible {
+                                                                button {
+                                                                    class: "card-detail-description-toggle",
+                                                                    "data-testid": "card-detail-description-toggle",
+                                                                    onclick: move |_| {
+                                                                        card_detail_description_expanded.set(
+                                                                            !card_detail_description_expanded(),
+                                                                        );
+                                                                    },
+                                                                    "{description_toggle_label}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } else if active_detail_tab == CardDetailContentTab::Synthesis {
+                                                    div {
+                                                        class: "card-detail-synthesis-panel",
+                                                        "data-testid": "card-synthesis-panel",
+                                                        role: "tabpanel",
+                                                        div { class: "card-detail-synthesis-empty", "No synthesis yet." }
+                                                    }
+                                                } else {
+                                                    div {
+                                                        class: "card-detail-discussion-panel",
+                                                        "data-testid": "card-discussion-panel",
+                                                        role: "tabpanel",
+                                                        crate::views::chat::ChatPanel {
+                                                            base_url: base_url.clone(),
+                                                            plaintext_service_did: plaintext_service_did.clone(),
+                                                            account_did: account_did.clone(),
+                                                            token,
+                                                            selected_space: selected_space.clone(),
+                                                            selected_space_scope: selected_space_scope.clone(),
+                                                            sync_cursor,
+                                                            frontier_state,
+                                                            state_store,
+                                                            initial_flow_id: card.primary_flow_id.clone(),
+                                                            embedded: true,
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2921,6 +3089,16 @@ fn share_kanban_flow_link(path: &str) {
 }})()"#
     );
     let _ = document::eval(&script);
+}
+
+fn card_summary_text(summary: &str) -> String {
+    summary.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn card_description_should_collapse(description: &str) -> bool {
+    let trimmed = description.trim();
+    trimmed.chars().count() > CARD_DESCRIPTION_COLLAPSE_CHAR_THRESHOLD
+        || trimmed.lines().count() > CARD_DESCRIPTION_COLLAPSE_LINE_THRESHOLD
 }
 
 fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft {
@@ -4156,6 +4334,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 rank: "U".to_owned(),
                 title: "Legal review for public beta".to_owned(),
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
+                body: String::new(),
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
                 assignee: "Alice".to_owned(),
                 due: "May 08".to_owned(),
@@ -4182,6 +4361,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 rank: "U".to_owned(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
+                body: String::new(),
                 labels: vec!["copy".to_owned(), "support".to_owned()],
                 assignee: "Bob".to_owned(),
                 due: "May 10".to_owned(),
@@ -4205,6 +4385,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 rank: "U".to_owned(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
+                body: String::new(),
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],
                 assignee: "Carol".to_owned(),
                 due: "May 01".to_owned(),
@@ -4456,6 +4637,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn card_description_collapse_threshold_handles_long_text_and_many_lines() {
+        assert!(!card_description_should_collapse("Short card summary."));
+        assert!(card_description_should_collapse(
+            &"x".repeat(CARD_DESCRIPTION_COLLAPSE_CHAR_THRESHOLD + 1)
+        ));
+        assert!(card_description_should_collapse(
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven"
+        ));
+    }
+
+    #[test]
+    fn flow_body_display_text_reads_content_block_body() {
+        let body = json!({
+            "kind": "cx.content.text",
+            "body": "Long-form flow body"
+        });
+
+        assert_eq!(flow_body_display_text(Some(&body)), "Long-form flow body");
+    }
+
+    #[test]
+    fn flow_body_display_text_reads_nested_blocks() {
+        let body = json!({
+            "blocks": [
+                { "kind": "cx.content.text", "body": "First block" },
+                { "kind": "cx.content.text", "text": "Second block" }
+            ]
+        });
+
+        assert_eq!(
+            flow_body_display_text(Some(&body)),
+            "First block\nSecond block"
+        );
+    }
+
     /// T20 wire-up — `collection_projection_to_columns` adapter maps the
     /// canonical SDK response into the renderer's KanbanColumn vec. This
     /// is the core integration point; if the spec wire shape changes,
@@ -4482,6 +4699,10 @@ mod tests {
                             "type": "flow",
                             "title": "Legal review",
                             "summary": "ensure GDPR sign-off",
+                            "body": {
+                                "kind": "cx.content.text",
+                                "body": "Review processor wording before beta."
+                            },
                         }),
                         position: None,
                         discussion: Some(CollectionProjectionDiscussion {
@@ -4512,6 +4733,7 @@ mod tests {
         assert_eq!(card.id, "cx:flow:01d2b330-0000-7000-8000-000000000000");
         assert_eq!(card.title, "Legal review");
         assert_eq!(card.description, "ensure GDPR sign-off");
+        assert_eq!(card.body, "Review processor wording before beta.");
         // Locked discussion + lazy_link should populate locked_flow
         // and the cross-Space hint without leaking room contents.
         assert!(card.locked_flow.is_some(), "locked discussion → LockedFlow");
@@ -4603,6 +4825,10 @@ mod tests {
             space_id: "cx:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             title: "Persisted card".to_owned(),
             summary: Some("Loaded from projection".to_owned()),
+            body: Some(json!({
+                "kind": "cx.content.text",
+                "body": "Projection body content"
+            })),
             board_space_id: Some(board_id.to_owned()),
             list_space_id: Some(list_id.to_owned()),
             rank: Some("U".to_owned()),
@@ -4625,6 +4851,7 @@ mod tests {
         let card = &columns[0].cards[0];
         assert_eq!(card.title, "Persisted card");
         assert_eq!(card.description, "Loaded from projection");
+        assert_eq!(card.body, "Projection body content");
         assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
         assert_eq!(card.assignee, "Alice");
         assert_eq!(card.due, "2026-05-22");
@@ -4935,6 +5162,7 @@ mod tests {
             rank: rank.to_owned(),
             title: "test".to_owned(),
             description: String::new(),
+            body: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
             due: String::new(),

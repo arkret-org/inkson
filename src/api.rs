@@ -176,6 +176,8 @@ pub struct FlowProjectionView {
     #[serde(default)]
     pub summary: Option<String>,
     #[serde(default)]
+    pub body: Option<Value>,
+    #[serde(default)]
     pub board_space_id: Option<String>,
     #[serde(default)]
     pub list_space_id: Option<String>,

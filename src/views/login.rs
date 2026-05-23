@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use crate::{
@@ -14,7 +13,7 @@ use crate::{
         session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
-    local_state::{LocalStateStore, PersistedSessionGrant},
+    local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
     views::helpers::{persist_config, short_protocol_id},
 };
 
@@ -24,9 +23,12 @@ struct CompletedLogin {
     actor: String,
     device_id: String,
     access_token: String,
-    /// Coauth session_grant payload to persist so the refresh poller
-    /// can re-mint principal sessions without a fresh login round-trip.
-    grant: PersistedSessionGrant,
+    /// Legacy coauth session_grant fallback. This is only retained when
+    /// the active bearer is still a principal-server bridge token.
+    grant: Option<PersistedSessionGrant>,
+    /// OAuth bearer bundle accepted directly by the principal server.
+    /// When present, this is the durable refresh path.
+    oidc_tokens: Option<OidcTokenBundle>,
 }
 
 const SHOW_PASSKEY_LOGIN_UI: bool = false;
@@ -72,13 +74,16 @@ pub fn LoginPanel(
                 persist_config(
                     config_store,
                     principal_server_url,
-                    completed.actor,
-                    completed.device_id,
-                    completed.access_token,
+                    completed.actor.clone(),
+                    completed.device_id.clone(),
+                    completed.access_token.clone(),
                 );
-                state_store_write
-                    .write()
-                    .set_session_grant(Some(completed.grant));
+                persist_completed_login_state(
+                    state_store_write,
+                    &completed.actor,
+                    completed.grant,
+                    completed.oidc_tokens,
+                );
                 status.set("Online".to_owned());
                 auth_status.set("Signed in".to_owned());
                 on_login.call(());
@@ -221,13 +226,16 @@ pub fn LoginPanel(
                                             persist_config(
                                                 config_store,
                                                 completed.principal_server_url,
-                                                completed.actor,
-                                                completed.device_id,
+                                                completed.actor.clone(),
+                                                completed.device_id.clone(),
                                                 completed.access_token,
                                             );
-                                            state_store_write
-                                                .write()
-                                                .set_session_grant(Some(completed.grant));
+                                            persist_completed_login_state(
+                                                state_store_write,
+                                                &completed.actor,
+                                                completed.grant,
+                                                completed.oidc_tokens,
+                                            );
                                             status.set("Online".to_owned());
                                             auth_status.set("Signed in".to_owned());
                                             on_login.call(());
@@ -358,6 +366,22 @@ pub fn LoginPanel(
                 }
             }
         }
+    }
+}
+
+fn persist_completed_login_state(
+    mut state_store: Signal<LocalStateStore>,
+    actor_did: &str,
+    grant: Option<PersistedSessionGrant>,
+    oidc_tokens: Option<OidcTokenBundle>,
+) {
+    let mut store = state_store.write();
+    if let Some(bundle) = oidc_tokens {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        store.set_oidc_tokens_with_secure_store(Some(bundle), actor_did, secure_store.as_ref());
+        store.set_session_grant(None);
+    } else {
+        store.set_session_grant(grant);
     }
 }
 
@@ -629,10 +653,6 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         ));
     }
 
-    let grant = login
-        .session_grant
-        .as_ref()
-        .ok_or_else(|| "Server sign-in did not return a session grant.".to_owned())?;
     let principal_did = login
         .viewer
         .as_ref()
@@ -643,14 +663,78 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
                 .then(|| scaffold.principal_actor_did.clone())
         })
         .ok_or_else(|| "Server sign-in did not return a principal DID.".to_owned())?;
+    let grant = login.session_grant.as_ref();
     let principal_target = grant
-        .principal_server
-        .as_ref()
+        .and_then(|grant| grant.principal_server.as_ref())
         .map(|server| server.endpoint.clone())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(principal_server_url);
     let principal = ContrixApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
+    let oidc_bundle = match login.oidc_tokens.as_ref() {
+        Some(tokens) => {
+            if tokens
+                .refresh_token
+                .as_deref()
+                .is_some_and(|rt| !rt.trim().is_empty())
+                || !requires_oidc_refresh_token(&principal_target)
+            {
+                Some(tokens.to_persisted_bundle(Some(&plan.principal_audience)))
+            } else {
+                return Err(
+                    "Server sign-in returned OIDC tokens without a refresh_token; refusing a production session without a secure refresh path."
+                        .to_owned(),
+                );
+            }
+        }
+        None if requires_oidc_refresh_token(&principal_target) => {
+            return Err(
+                "Server sign-in did not return an OIDC token bundle; refusing a production session without a secure refresh-token handoff."
+                    .to_owned(),
+            );
+        }
+        None => None,
+    };
+
+    if let Some(bundle) = oidc_bundle.clone()
+        && !bundle.access_token.trim().is_empty()
+    {
+        match principal
+            .clone()
+            .with_bearer(bundle.access_token.clone())
+            .account_me()
+            .await
+        {
+            Ok(account) => {
+                let _ = clear_persisted_oidc_scaffold();
+                return Ok(CompletedLogin {
+                    principal_server_url: principal_target,
+                    actor: if account.did.trim().is_empty() {
+                        principal_did
+                    } else {
+                        account.did
+                    },
+                    device_id: device,
+                    access_token: bundle.access_token.clone(),
+                    grant: None,
+                    oidc_tokens: Some(bundle),
+                });
+            }
+            Err(error) if requires_oidc_refresh_token(&principal_target) => {
+                return Err(format!(
+                    "Principal server did not accept the OIDC bearer token: {error}"
+                ));
+            }
+            Err(_) => {
+                // Local/dev deployments may not have OAuth bearer
+                // introspection wired yet. Fall back to the legacy
+                // session-grant exchange below, but do not persist the
+                // consumed grant as a refresh credential.
+            }
+        }
+    }
+
+    let grant = grant.ok_or_else(|| "Server sign-in did not return a session grant.".to_owned())?;
     let bridge = principal
         .auth_bridge_describe()
         .await
@@ -693,61 +777,16 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         Ok(account) if !account.did.trim().is_empty() => account.did,
         _ => session.actor.clone(),
     };
-    if let Some(tokens) = login.oidc_tokens.as_ref() {
-        if tokens
-            .refresh_token
-            .as_deref()
-            .is_some_and(|rt| !rt.trim().is_empty())
-        {
-            let bundle = tokens.to_persisted_bundle(Some(&plan.principal_audience));
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-            let mut token_store = LocalStateStore::default();
-            token_store.set_oidc_tokens_with_secure_store(
-                Some(bundle),
-                &principal_did,
-                secure_store.as_ref(),
-            );
-        } else if requires_oidc_refresh_token(&principal_target) {
-            return Err(
-                "Server sign-in returned OIDC tokens without a refresh_token; refusing a production session without a secure refresh path."
-                    .to_owned(),
-            );
-        }
-    } else if requires_oidc_refresh_token(&principal_target) {
-        return Err(
-            "Server sign-in did not return an OIDC token bundle; refusing a production session without a secure refresh-token handoff."
-                .to_owned(),
-        );
-    }
     let _ = clear_persisted_oidc_scaffold();
-
-    let persisted_grant = PersistedSessionGrant {
-        grant_jwt: grant.grant_jwt.clone(),
-        session_private_key_pem: grant.session_private_key_pem.clone(),
-        grant_id: grant_id.to_owned(),
-        audience: grant_audience.to_owned(),
-        principal_did: principal_did.clone(),
-        device_id: session.device_id.clone(),
-        principal_server_url: principal_target.clone(),
-        session_grant_exchange_path: bridge.auth.session_grant_exchange_path.clone(),
-        grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
-        session_expires_at: parse_rfc3339_utc(&session.expires_at),
-        stored_at: Utc::now(),
-    };
 
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor,
         device_id: session.device_id,
         access_token: session.access_token,
-        grant: persisted_grant,
+        grant: None,
+        oidc_tokens: oidc_bundle,
     })
-}
-
-fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.trim())
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
 }
 
 fn requires_oidc_refresh_token(principal_server_url: &str) -> bool {
@@ -771,7 +810,7 @@ mod tests {
     use super::*;
 
     fn dummy_grant() -> PersistedSessionGrant {
-        let now = Utc::now();
+        let now = chrono::Utc::now();
         PersistedSessionGrant {
             grant_jwt: "test.grant.jwt".to_owned(),
             session_private_key_pem: "PEM".to_owned(),

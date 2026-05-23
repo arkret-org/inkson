@@ -975,7 +975,80 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.card-detail-summary {
+  max-width: 72ch;
+  color: var(--text, var(--cx-ink));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.card-detail-description.is-collapsed {
+  max-height: 96px;
+  overflow: hidden;
+}
+.card-detail-description-toggle {
+  justify-self: start;
+  min-height: 28px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, var(--cx-brand));
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: none;
+}
+.card-detail-description-toggle:hover,
+.card-detail-description-toggle:focus-visible {
+  text-decoration: underline;
+  background: transparent;
+}
 .card-detail-empty {
+  color: var(--text-3, var(--cx-muted));
+  font-size: 13px;
+}
+.card-detail-tabs-section {
+  min-height: 0;
+}
+.card-detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border, var(--cx-line));
+}
+.card-detail-tab {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2, var(--cx-muted));
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: none;
+}
+.card-detail-tab.active {
+  border-bottom-color: var(--accent, var(--cx-brand));
+  color: var(--text, var(--cx-ink));
+  background: transparent;
+}
+.card-detail-description-panel,
+.card-detail-synthesis-panel,
+.card-detail-discussion-panel {
+  min-height: 0;
+}
+.card-detail-description-panel {
+  display: grid;
+  gap: 8px;
+}
+.card-detail-synthesis-panel {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: var(--surface, var(--cx-surface));
+}
+.card-detail-synthesis-empty {
   color: var(--text-3, var(--cx-muted));
   font-size: 13px;
 }
@@ -1339,11 +1412,6 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-}
-.card-detail-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 @media (max-width: 900px) {
   .card-detail-overlay {
@@ -5336,6 +5404,12 @@ pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
+    let initial_session_token = initial_local_state
+        .oidc_tokens
+        .as_ref()
+        .map(|bundle| bundle.access_token.clone())
+        .filter(|access_token| !access_token.trim().is_empty())
+        .unwrap_or_else(|| initial_config.session_token.clone());
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
@@ -5361,7 +5435,7 @@ pub fn RouterView() -> Element {
         let initial_config = initial_config.clone();
         move || initial_config.device_id
     });
-    let mut token = use_signal(move || initial_config.session_token);
+    let mut token = use_signal(move || initial_session_token);
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
@@ -5485,17 +5559,14 @@ pub fn RouterView() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
-    // Background session-refresh poller. Re-mints the principal
-    // `access_token` from the persisted coauth `session_grant` before it
-    // dies, so an idle user doesn't get bounced to the login page on
-    // their next interaction. The decision logic + IO live in
-    // `session_refresh`; this future is just the dioxus driver.
+    // Background session-refresh poller. Prefer the durable OIDC
+    // refresh_token path; keep the legacy session-grant exchange only as
+    // a fallback for older local deployments.
     use_future({
         let mut token = token;
         let mut state_store = state_store;
         let mut status = status;
         let mut last_error = last_error;
-        let navigator = navigator.clone();
         let config_store = config_store;
         let base_url = base_url;
         let account_did = account_did;
@@ -5510,6 +5581,61 @@ pub fn RouterView() -> Element {
                 // that calls `state_store.write()` while the exchange
                 // is in flight.
                 let active_base = base_url();
+                let active_actor = account_did();
+                let active_device = device_id();
+                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                let oidc_bundle = {
+                    let store = state_store.read();
+                    store.load_oidc_tokens_with_secure_store(&active_actor, secure_store.as_ref())
+                };
+                if let Some(bundle) = oidc_bundle {
+                    if crate::oidc_lifecycle::due_for_refresh(&bundle) {
+                        if crate::oidc_lifecycle::has_refresh_token(&bundle) {
+                            let result = refresh_oidc_bearer_for_server(
+                                &active_base,
+                                &active_actor,
+                                &active_device,
+                                &bundle,
+                            )
+                            .await;
+                            if !same_server_url(&active_base, &base_url()) {
+                                continue;
+                            }
+                            match result {
+                                Ok(next) => {
+                                    let access_token = next.access_token.clone();
+                                    state_store.write().set_oidc_tokens_with_secure_store(
+                                        Some(next),
+                                        &active_actor,
+                                        secure_store.as_ref(),
+                                    );
+                                    token.set(access_token.clone());
+                                    persist_config(
+                                        config_store,
+                                        active_base.clone(),
+                                        active_actor.clone(),
+                                        active_device.clone(),
+                                        access_token,
+                                    );
+                                    status.set("Online".to_owned());
+                                    last_error.set(None);
+                                }
+                                Err(error) => {
+                                    // Keep the current bearer in place. A
+                                    // failed background refresh must not
+                                    // interrupt an otherwise usable page.
+                                    last_error
+                                        .set(Some(format!("OIDC refresh transient: {error}")));
+                                }
+                            }
+                        }
+                    }
+                    crate::api::sleep_for(std::time::Duration::from_secs(
+                        crate::session_refresh::POLL_INTERVAL_SECS,
+                    ))
+                    .await;
+                    continue;
+                }
                 let prepared = {
                     let mut store = state_store.write();
                     crate::session_refresh::prepare_refresh_for_server(&mut store, &active_base)
@@ -5537,17 +5663,10 @@ pub fn RouterView() -> Element {
                         );
                     }
                     crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
-                        token.set(String::new());
-                        persist_config(
-                            config_store,
-                            active_base.clone(),
-                            account_did(),
-                            device_id(),
-                            String::new(),
+                        status.set(
+                            "Session refresh unavailable; current bearer left active".to_owned(),
                         );
-                        status.set("Session expired; sign in again".to_owned());
                         last_error.set(Some(format!("session refresh: {reason}")));
-                        redirect_to_login(navigator.clone());
                     }
                     crate::session_refresh::RefreshOutcome::Transient { reason } => {
                         // Don't disturb the UI — log to last_error so a
@@ -5596,12 +5715,19 @@ pub fn RouterView() -> Element {
         let base = base_url();
         let mut session = token();
         if !session.trim().is_empty() {
-            let stale_for_selected_server = state_store
-                .read()
-                .session_grant()
-                .as_ref()
-                .map(|grant| !crate::session_refresh::grant_matches_principal_server(grant, &base))
-                .unwrap_or(false);
+            let (has_oidc_bundle, stale_for_selected_server) = {
+                let store = state_store.read();
+                let has_oidc_bundle = store.oidc_tokens().is_some();
+                let stale_grant = store
+                    .session_grant()
+                    .as_ref()
+                    .map(|grant| {
+                        !crate::session_refresh::grant_matches_principal_server(grant, &base)
+                    })
+                    .unwrap_or(false);
+                (has_oidc_bundle, stale_grant)
+            };
+            let stale_for_selected_server = !has_oidc_bundle && stale_for_selected_server;
             if stale_for_selected_server {
                 token.set(String::new());
                 persist_config(
@@ -8013,6 +8139,36 @@ fn save_space_scope_preference(state_store: &mut LocalStateStore, mode: SpaceSco
         SPACE_SCOPE_PREFERENCE_KEY,
         mode.preference_value(),
     );
+}
+
+async fn refresh_oidc_bearer_for_server(
+    principal_server_url: &str,
+    actor_did: &str,
+    device_id: &str,
+    previous: &crate::local_state::OidcTokenBundle,
+) -> anyhow::Result<crate::local_state::OidcTokenBundle> {
+    let refresh_token = previous
+        .refresh_token
+        .as_deref()
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("OIDC bundle has no refresh_token"))?;
+    let auth_server_url = crate::coauth::resolve_principal_auth_server_url(principal_server_url)
+        .await
+        .map_err(|error| anyhow::anyhow!("resolve auth server: {error}"))?;
+    let coauth = crate::coauth::CoauthApi::new(&auth_server_url)?;
+    let topology = coauth.inspect_topology().await?;
+    let plan = crate::coauth::build_oidc_code_exchange_plan(
+        &topology,
+        principal_server_url,
+        actor_did,
+        device_id,
+    )?;
+    let response = coauth
+        .refresh_oidc_tokens(&plan.token_endpoint, &plan.client_id, refresh_token)
+        .await?;
+    Ok(crate::oidc_lifecycle::apply_refresh_response(
+        previous, &response,
+    ))
 }
 
 #[derive(Clone, Copy)]

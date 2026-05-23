@@ -80,8 +80,9 @@ pub enum RefreshOutcome {
     /// failure). The persisted grant has been cleared; caller must
     /// route to the login view.
     LoginRequired { reason: String },
-    /// Refresh attempt failed transiently (network down, 5xx, etc.).
-    /// Persisted grant is intact; caller can retry later.
+    /// Refresh attempt failed without proving the active bearer is dead
+    /// (network down, 5xx, or a consumed legacy grant). Caller should
+    /// leave the current bearer alone.
     Transient { reason: String },
 }
 
@@ -256,8 +257,10 @@ pub fn commit_refresh(
         Err(error) => {
             if is_grant_dead_error(&error) {
                 store.set_session_grant(None);
-                RefreshOutcome::LoginRequired {
-                    reason: format!("principal rejected session grant: {error}"),
+                RefreshOutcome::Transient {
+                    reason: format!(
+                        "session grant cannot refresh principal bearer and was cleared: {error}"
+                    ),
                 }
             } else {
                 RefreshOutcome::Transient {
@@ -469,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_clears_grant_when_principal_reports_revoked_session_grant() {
+    fn commit_clears_grant_without_forcing_login_when_principal_reports_revoked_session_grant() {
         let mut store = isolated_store("revoked-grant");
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
         let error: anyhow::Error = crate::api::ContrixApiError {
@@ -483,7 +486,7 @@ mod tests {
 
         let outcome = commit_refresh(&mut store, Err(error));
 
-        assert!(matches!(outcome, RefreshOutcome::LoginRequired { .. }));
+        assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
         assert!(store.session_grant().is_none());
     }
 

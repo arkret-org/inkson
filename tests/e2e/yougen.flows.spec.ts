@@ -38,6 +38,8 @@ async function openDiscussion(page: import("@playwright/test").Page) {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   await expect(page.getByTestId("card-detail-modal")).toBeVisible();
+  await expect(page.getByTestId("card-description-panel")).toBeVisible();
+  await page.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -377,9 +379,11 @@ test("kanban card detail embeds discussion without legacy boundary copy", async 
   await expect(page.getByTestId("card-detail-overlay")).toBeVisible();
   await expect(detailPopup).toHaveAttribute("role", "dialog");
   await expect(detailPopup).toContainText("Discussion");
+  await expect(detailPopup.getByTestId("card-description-panel")).toBeVisible();
   await expect(detailPopup).not.toContainText("Primary discussion");
   await expect(detailPopup).not.toContainText("Launch discussion");
   await expect(detailPopup).not.toContainText("card visibility != discussion visibility");
+  await detailPopup.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
   const popupBox = await detailPopup.boundingBox();
@@ -843,6 +847,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await page.getByTestId("kanban-card").first().click();
+  await page.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   const reloadedMessage = page.getByTestId("chat-message").last();
   await expect(reloadedMessage).toContainText("message before reload");
