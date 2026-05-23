@@ -880,7 +880,7 @@ mod tests {
             "space_id": "cx:space:s1",
             "actor": "did:web:alice",
             "type": "cx.message.create",
-            "causal": {"hlc": "0000018ef01234-00000001-deadbeef", "actor_seq": 1}
+            "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
         });
         assert!(validate_structure(&event, "event").is_ok());
     }
@@ -895,7 +895,7 @@ mod tests {
             "space_id": "cx:space:s1",
             "actor": "did:web:alice",
             "type": "cx.bogus.kind",
-            "causal": {"hlc": "0000018ef01234-00000001-deadbeef", "actor_seq": 1}
+            "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
         });
         match validate_structure(&event, "event") {
             Err(ValidationError::UnknownEventKind(kind)) => {

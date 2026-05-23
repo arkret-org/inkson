@@ -954,8 +954,8 @@ mod tests {
     }
 
     fn fixed_hlc() -> &'static str {
-        // Some 30-char HLC; tests don't enforce wall-clock here.
-        "0189c4d2af00-00000000-aabbccdd"
+        // Some canonical HLC; tests don't enforce wall-clock here.
+        "0189c4d2af00-0000-aabbccdd"
     }
 
     #[test]

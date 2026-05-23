@@ -4284,7 +4284,7 @@ mod tests {
         assert!(sync_v1.presence.is_empty());
 
         let account_frame = parse_account_subscribe_snapshot(
-            br#"{"kind":"delta","cursor":"cx:cursor:account-1","realms":{"join":{"cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"invite":{},"knock":{},"leave":{"cx:realm:left":{}}},"to_device":{"events":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
+            br#"{"kind":"delta","cursor":"cx:cursor:account-1","realms":{"cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"to_device":{"events":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
 {"kind":"catchup_complete","cursor":"cx:cursor:account-1"}
 "#,
         )
@@ -4295,7 +4295,7 @@ mod tests {
                 .spaces
                 .contains_key("cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729")
         );
-        assert_eq!(account_frame.left_spaces, vec!["cx:realm:left".to_owned()]);
+        assert!(account_frame.left_spaces.is_empty());
 
         let directory = parse_directory_describe(json!({
             "service_did": "did:web:server.local",

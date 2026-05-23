@@ -760,6 +760,7 @@ pub mod cx_ops {
             "id": flow_id,
             "space_id": space_id,
             "title": title,
+            "stage": "draft",
             "tracks": { "synthesis": {} },
             "fields": { "document": document_body.clone() },
             "created_by": actor,
@@ -802,6 +803,7 @@ pub mod cx_ops {
             "realm_id": realm_id,
             "space_id": space_id,
             "title": title,
+            "stage": "draft",
             "tracks": {
                 "synthesis": {
                     "is_primary": true,
@@ -1749,7 +1751,7 @@ mod tests {
     #[test]
     fn operation_builder_generates_valid_envelope() {
         let op = OperationBuilder::new("cx:realm:test", "did:web:alice", "cx.message.create")
-            .body(json!({"body": "hello"}))
+            .body(json!({"content": {"kind": "cx.content.text", "body": "hello"}}))
             .build("test_node");
 
         assert!(!op.local_operation_id().is_empty());
@@ -1766,7 +1768,7 @@ mod tests {
     #[test]
     fn operation_round_trip_serde() {
         let op = OperationBuilder::new("cx:space:s1", "did:web:bob", "cx.message.create")
-            .body(json!({"body": "hello world"}))
+            .body(json!({"content": {"kind": "cx.content.text", "body": "hello world"}}))
             .build("node");
         let json = serde_json::to_string(&op).unwrap();
         let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();

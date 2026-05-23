@@ -289,7 +289,7 @@ mod tests {
             "did:web:bob.example.com",
             "yougen",
             "",
-            "01970e589d21-00000001-a13f9c2e",
+            "01970e589d21-0001-a13f9c2e",
         ] {
             let digest = Sha256::digest(input.as_bytes());
             let sdk_node: String = digest[0..4].iter().map(|b| format!("{:02x}", b)).collect();
