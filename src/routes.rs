@@ -107,12 +107,6 @@ pub enum Route {
     #[route("/kanban/:space_id/task/:task_id", KanbanTaskPage)]
     KanbanTask { space_id: String, task_id: String },
 
-    #[route("/chat", crate::app::RouterView)]
-    Chat,
-
-    #[route("/chat/:space_id", ChatSpacePage)]
-    ChatSpace { space_id: String },
-
     #[route("/notifications", crate::app::RouterView)]
     Notifications,
 
@@ -203,12 +197,6 @@ fn KanbanTaskPage(space_id: String, task_id: String) -> Element {
 }
 
 #[component]
-fn ChatSpacePage(space_id: String) -> Element {
-    let _ = space_id;
-    rsx! { crate::app::RouterView {} }
-}
-
-#[component]
 fn DocumentSpacePage(space_id: String) -> Element {
     let _ = space_id;
     rsx! { crate::app::RouterView {} }
@@ -246,7 +234,6 @@ impl Route {
             // `view` signal stays consistent for sidebar / palette state.
             Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
             Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => View::Kanban,
-            Route::Chat | Route::ChatSpace { .. } => View::Chat,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentSpace { .. } => View::Document,
             Route::Recovery => View::Recovery,
@@ -265,7 +252,6 @@ impl Route {
             | Route::TimelineMessage { space_id, .. }
             | Route::KanbanSpace { space_id }
             | Route::KanbanTask { space_id, .. }
-            | Route::ChatSpace { space_id }
             | Route::DocumentSpace { space_id }
             | Route::SpaceAdmin { space_id }
             | Route::SpaceAdminSection { space_id, .. } => Some(space_id.as_str()),
@@ -317,7 +303,6 @@ impl From<View> for Route {
                 space_id: String::new(),
             },
             View::Kanban => Route::Kanban,
-            View::Chat => Route::Chat,
             View::Notifications => Route::Notifications,
             View::Document => Route::Document,
             View::Recovery => Route::Recovery,
@@ -363,7 +348,6 @@ mod tests {
             // exist and still render their panels via the `Route::*` match
             // in `app.rs`; just the View-enum roundtrip no longer applies.
             Route::Kanban,
-            Route::Chat,
             Route::Notifications,
             Route::Document,
             Route::Recovery,
@@ -403,13 +387,6 @@ mod tests {
             Some("cx:space:abc")
         );
         assert_eq!(Route::Timeline.space_id(), None);
-        assert_eq!(
-            Route::ChatSpace {
-                space_id: "cx:space:xyz".to_owned()
-            }
-            .space_id(),
-            Some("cx:space:xyz")
-        );
         assert_eq!(
             Route::SpaceAdminSection {
                 space_id: "cx:space:admin".to_owned(),

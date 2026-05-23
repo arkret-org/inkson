@@ -122,7 +122,6 @@ pub enum View {
     VerifyDevice,
     SpaceAdmin,
     Kanban,
-    Chat,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
     /// The only canonical events feeding this view are `cx.read.marker`,

@@ -312,6 +312,7 @@ fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> 
 ///    starts from the new epoch + member set.
 ///
 /// Each soft failure surfaces verbatim in `status` for the operator.
+#[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
 async fn run_mls_add_member_and_invite(
     base_url: String,
@@ -502,6 +503,7 @@ async fn run_mls_add_member_and_invite(
 }
 
 /// wasm fallback — desktop-only.
+#[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
 async fn run_mls_add_member_and_invite(
     _base_url: String,
@@ -1795,6 +1797,23 @@ fn default_discussion_channel(space_id: &str, space_body: Option<&Value>) -> Cha
     }
 }
 
+fn discussion_channel_for_flow(space_id: &str, flow_id: &str) -> ChannelEntity {
+    let trimmed_flow_id = flow_id.trim();
+    if trimmed_flow_id.is_empty() {
+        return default_discussion_channel(space_id, None);
+    }
+
+    ChannelEntity {
+        flow_id: trimmed_flow_id.to_owned(),
+        name: "Discussion".to_owned(),
+        kind: "discussion".to_owned(),
+        category: "discussion".to_owned(),
+        topic: None,
+        unread: 0,
+        is_default: trimmed_flow_id == default_discussion_flow_id(space_id),
+    }
+}
+
 fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
     if !candidates
@@ -2000,10 +2019,12 @@ pub fn ChatPanel(
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
+    initial_flow_id: String,
+    embedded: bool,
 ) -> Element {
     let navigator = use_navigator();
     let initial_default_channel = (!selected_space.trim().is_empty())
-        .then(|| default_discussion_channel(&selected_space, None));
+        .then(|| discussion_channel_for_flow(&selected_space, &initial_flow_id));
     let initial_selected_channel = initial_default_channel
         .as_ref()
         .map(|channel| channel.flow_id.clone())
@@ -2015,6 +2036,27 @@ pub fn ChatPanel(
             .collect::<Vec<_>>()
     });
     let mut selected_channel = use_signal(move || initial_selected_channel.clone());
+    {
+        let selected_space_for_initial_flow = selected_space.clone();
+        let initial_flow_id_for_effect = initial_flow_id.clone();
+        use_effect(move || {
+            if selected_space_for_initial_flow.trim().is_empty() {
+                return;
+            }
+            let desired_channel =
+                discussion_channel_for_flow(&selected_space_for_initial_flow, &initial_flow_id_for_effect);
+            if selected_channel() != desired_channel.flow_id {
+                selected_channel.set(desired_channel.flow_id.clone());
+            }
+            let has_channel = channels
+                .read()
+                .iter()
+                .any(|channel| channel.flow_id == desired_channel.flow_id);
+            if !has_channel {
+                channels.write().push(desired_channel);
+            }
+        });
+    }
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
     // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
@@ -2041,29 +2083,8 @@ pub fn ChatPanel(
     // to run `group.encrypt_payload()`.
     let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
     let mut mls_passphrase_draft = use_signal(String::new);
-    // Multi-device Welcome flow controls. The
-    // `Invite to MLS group` button fetches the target (actor, device)
-    // key package via `fetch_mls_key_package`, runs `group.add_member`
-    // against the hydrated local group, sends the resulting Welcome
-    // via `send_device_message_envelope` (`type = cx.mls.welcome`),
-    // and submits the commit Operation. Bob's app picks up the
-    // Welcome in its periodic `receive_device_messages` poll and runs
-    // `join_from_welcome` → snapshot save.
-    let mut mls_invite_actor_draft = use_signal(String::new);
-    let mut mls_invite_device_draft = use_signal(String::new);
-    // Local publish-state: did we already publish our key package this
-    // session? Used to gate the "Publish my key package" button so a
-    // duplicate click just refreshes status instead of generating a
-    // fresh package every time.
-    let mls_key_package_published = use_signal(|| false);
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_topic = use_signal(String::new);
-    let mut new_channel_members = use_signal(String::new);
-    // T7.2: typing buffer for the inline pill picker. The committed
-    // entries live in `new_channel_members` (comma-separated, preserves
-    // the existing submit pipeline); `new_channel_member_input` only
-    // holds the current draft handle being typed.
-    let mut new_channel_member_input = use_signal(String::new);
     let mut new_channel_create_card = use_signal(|| false);
     let mut create_dialog_open = use_signal(|| false);
     // T7.2: per-Flow watch level signal for the topbar fast switcher.
@@ -2146,10 +2167,14 @@ pub fn ChatPanel(
         .find(|channel| channel.flow_id == selected_channel_value)
         .cloned()
         .or_else(|| visible_channels.first().cloned());
-    let selected_channel_name = selected_channel_info
-        .as_ref()
-        .map(|channel| channel.name.clone())
-        .unwrap_or_else(|| crate::i18n::tr("chat.empty.title"));
+    let selected_channel_name = if embedded {
+        "Discussion".to_owned()
+    } else {
+        selected_channel_info
+            .as_ref()
+            .map(|channel| channel.name.clone())
+            .unwrap_or_else(|| crate::i18n::tr("chat.empty.title"))
+    };
     let selected_channel_category = selected_channel_info
         .as_ref()
         .map(|channel| channel.category.clone())
@@ -2202,11 +2227,12 @@ pub fn ChatPanel(
     }
     let messages_for_reply_lookup = all_messages_snapshot.clone();
     let messages_for_composer_lookup = all_messages_snapshot.clone();
-    let left_open = left_panel_open();
-    let active_right_panel = right_panel();
+    let left_open = !embedded && left_panel_open();
+    let active_right_panel = if embedded { None } else { right_panel() };
     let right_open = active_right_panel.is_some();
     let shell_class = format!(
-        "discussion-shell{}{}",
+        "discussion-shell{}{}{}",
+        if embedded { " embedded" } else { "" },
         if left_open { "" } else { " left-collapsed" },
         if right_open { "" } else { " right-collapsed" }
     );
@@ -2531,7 +2557,7 @@ pub fn ChatPanel(
                         }
                     }
                 }
-            } else {
+            } else if !embedded {
                 div { class: "discussion-rail discussion-left-rail", "data-testid": "discussion-list-rail",
                     button {
                         class: "secondary icon-button",
@@ -2543,7 +2569,7 @@ pub fn ChatPanel(
                 }
             }
 
-            if create_dialog_open() {
+            if !embedded && create_dialog_open() {
                 div { class: "discussion-modal-backdrop", "data-testid": "channel-create-modal",
                     div { class: "discussion-modal", role: "dialog", "aria-modal": "true", "aria-label": "New Flow",
                         div { class: "discussion-modal-head",
@@ -2573,209 +2599,6 @@ pub fn ChatPanel(
                                 value: "{new_channel_topic}",
                                 placeholder: "Short purpose or context",
                                 oninput: move |evt| new_channel_topic.set(evt.value()),
-                            }
-                            label { {crate::i18n::tr("chat.label.watchers")} }
-                            {
-                                // T7.2: multi-select pill UI. The
-                                // existing submit pipeline still consumes
-                                // `new_channel_members` (comma-separated),
-                                // so commit each accepted token by
-                                // appending it there. The pill rendering
-                                // re-parses on every keystroke so paste-
-                                // bombing `did:web:foo, alice@bar.com,
-                                // bob@baz.com` resolves all entries at
-                                // once.
-                                let committed = new_channel_members();
-                                let pills = parse_watcher_pills(&committed, &participants);
-                                let canonical_already: Vec<String> = pills
-                                    .iter()
-                                    .filter_map(|p| match &p.state {
-                                        WatcherEntryKind::Valid(did) => Some(did.clone()),
-                                        _ => None,
-                                    })
-                                    .collect();
-                                let valid_count = pills
-                                    .iter()
-                                    .filter(|p| matches!(p.state, WatcherEntryKind::Valid(_)))
-                                    .count();
-                                let invalid_count = pills.len() - valid_count;
-                                let current_input = new_channel_member_input();
-                                let query_lower = current_input.trim().trim_start_matches('@').to_ascii_lowercase();
-                                let show_suggestions = !current_input.trim().is_empty();
-                                let suggestions: Vec<SpaceParticipant> = if show_suggestions {
-                                    participants
-                                        .iter()
-                                        .filter(|p| !p.is_self)
-                                        .filter(|p| !canonical_already.iter().any(|d| d == &p.did))
-                                        .filter(|p| {
-                                            if query_lower.is_empty() {
-                                                return true;
-                                            }
-                                            if p.did.to_ascii_lowercase().contains(&query_lower) {
-                                                return true;
-                                            }
-                                            p.display_name
-                                                .as_deref()
-                                                .map(|n| n.to_ascii_lowercase().contains(&query_lower))
-                                                .unwrap_or(false)
-                                        })
-                                        .take(6)
-                                        .cloned()
-                                        .collect()
-                                } else {
-                                    Vec::new()
-                                };
-                                rsx! {
-                                    div {
-                                        class: "watcher-picker",
-                                        "data-testid": "watcher-picker",
-                                        // Existing pills.
-                                        div { class: "watcher-pill-row",
-                                            for (idx, pill) in pills.iter().enumerate() {
-                                                {
-                                                    let raw_for_label = pill.raw.clone();
-                                                    let raw_for_remove = pill.raw.clone();
-                                                    let pill_class = match &pill.state {
-                                                        WatcherEntryKind::Valid(_) => "watcher-pill watcher-pill-valid",
-                                                        WatcherEntryKind::Duplicate(_) => "watcher-pill watcher-pill-warning",
-                                                        WatcherEntryKind::UnknownHandle => "watcher-pill watcher-pill-invalid",
-                                                        WatcherEntryKind::InvalidDid => "watcher-pill watcher-pill-invalid",
-                                                        WatcherEntryKind::UnresolvedName => "watcher-pill watcher-pill-invalid",
-                                                    };
-                                                    let tooltip = match &pill.state {
-                                                        WatcherEntryKind::Valid(did) => format!("{}", did),
-                                                        WatcherEntryKind::Duplicate(_) => crate::i18n::tr("chat.watchers.dupe"),
-                                                        WatcherEntryKind::UnknownHandle => crate::i18n::tr("chat.watchers.unknown_handle"),
-                                                        WatcherEntryKind::InvalidDid => crate::i18n::tr("chat.watchers.invalid_did"),
-                                                        WatcherEntryKind::UnresolvedName => crate::i18n::tr("chat.watchers.unresolved"),
-                                                    };
-                                                    rsx! {
-                                                        span {
-                                                            key: "{idx}-{raw_for_label}",
-                                                            class: "{pill_class}",
-                                                            "data-testid": "watcher-pill",
-                                                            title: "{tooltip}",
-                                                            "{raw_for_label}"
-                                                            button {
-                                                                r#type: "button",
-                                                                class: "watcher-pill-remove",
-                                                                "aria-label": crate::i18n::tr("common.remove"),
-                                                                "data-testid": "watcher-pill-remove",
-                                                                onclick: move |_| {
-                                                                    let current = new_channel_members();
-                                                                    let kept: Vec<String> = current
-                                                                        .split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';'))
-                                                                        .map(|s| s.trim())
-                                                                        .filter(|s| !s.is_empty() && *s != raw_for_remove.as_str())
-                                                                        .map(|s| s.to_owned())
-                                                                        .collect();
-                                                                    new_channel_members.set(kept.join(", "));
-                                                                },
-                                                                "\u{d7}"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            input {
-                                                r#type: "text",
-                                                class: "watcher-pill-input",
-                                                "data-testid": "new-channel-members",
-                                                value: "{current_input}",
-                                                placeholder: crate::i18n::tr("chat.watchers.placeholder"),
-                                                oninput: move |evt| new_channel_member_input.set(evt.value()),
-                                                onkeydown: move |evt| {
-                                                    let key = evt.key().to_string();
-                                                    let raw_now = new_channel_member_input();
-                                                    if key == "Enter" || key == "," || key == "Tab" {
-                                                        let typed = raw_now.trim().trim_end_matches(',').to_owned();
-                                                        if !typed.is_empty() {
-                                                            evt.prevent_default();
-                                                            let mut existing = new_channel_members();
-                                                            if !existing.is_empty() && !existing.trim_end().ends_with(',') {
-                                                                existing.push_str(", ");
-                                                            } else if !existing.is_empty() {
-                                                                existing.push(' ');
-                                                            }
-                                                            existing.push_str(&typed);
-                                                            new_channel_members.set(existing);
-                                                            new_channel_member_input.set(String::new());
-                                                        }
-                                                    } else if key == "Backspace" && raw_now.is_empty() {
-                                                        // Pop the last committed pill.
-                                                        let current = new_channel_members();
-                                                        let mut tokens: Vec<String> = current
-                                                            .split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';'))
-                                                            .map(|s| s.trim().to_owned())
-                                                            .filter(|s| !s.is_empty())
-                                                            .collect();
-                                                        if !tokens.is_empty() {
-                                                            tokens.pop();
-                                                            new_channel_members.set(tokens.join(", "));
-                                                        }
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        div { class: "watcher-pill-summary muted",
-                                            "data-testid": "watcher-pill-summary",
-                                            {format!(
-                                                "{} {} \u{00b7} {} {}",
-                                                valid_count,
-                                                crate::i18n::tr("chat.watchers.valid"),
-                                                invalid_count,
-                                                crate::i18n::tr("chat.watchers.invalid"),
-                                            )}
-                                        }
-                                    }
-                                    p { class: "form-hint muted",
-                                        {crate::i18n::tr("chat.watchers.hint")}
-                                    }
-                                    if !suggestions.is_empty() {
-                                        div {
-                                            class: "mention-suggestions",
-                                            "data-testid": "new-channel-members-suggestions",
-                                            for participant in suggestions {
-                                                {
-                                                    let did_for_click = participant.did.clone();
-                                                    let did_for_label = participant.did.clone();
-                                                    let is_agent = participant.is_agent;
-                                                    let display = participant
-                                                        .display_name
-                                                        .clone()
-                                                        .unwrap_or_else(|| short_principal_label(&participant.did));
-                                                    rsx! {
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "mention-suggestion-item",
-                                                            "data-testid": "new-channel-members-suggestion",
-                                                            onclick: move |_| {
-                                                                let mut existing = new_channel_members();
-                                                                if !existing.is_empty() && !existing.trim_end().ends_with(',') {
-                                                                    existing.push_str(", ");
-                                                                }
-                                                                existing.push_str(&did_for_click);
-                                                                new_channel_members.set(existing);
-                                                                new_channel_member_input.set(String::new());
-                                                            },
-                                                            span { class: "mention-suggestion-name", "{display}" }
-                                                            if is_agent {
-                                                                span {
-                                                                    class: "badge member-badge member-badge-agent",
-                                                                    "data-testid": "member-badge-agent",
-                                                                    title: "Automated member (bot)",
-                                                                    "\u{1f916} "
-                                                                    {crate::i18n::tr("member.badge.agent")}
-                                                                }
-                                                            }
-                                                            span { class: "mention-suggestion-did muted", "{did_for_label}" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                             label { class: "discussion-checkbox-row",
                                 input {
@@ -2809,20 +2632,7 @@ pub fn ChatPanel(
                                         }
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
-                                        let watcher_text = new_channel_members();
                                         let create_card = new_channel_create_card();
-                                        // Per contrix-spec/spec/v1/zh/models/flow-and-message.md §8,
-                                        // initial watchers are no longer stored as
-                                        // `Flow.fields.participants` — that field acted like ACL
-                                        // metadata but had no access semantics. The seed list now
-                                        // produces one `cx.flow.watch.set` event per DID. The Flow
-                                        // creator is excluded from the seed because the spec §8.4
-                                        // creator-implicit-subscribe path covers them.
-                                        let initial_watchers: Vec<String> =
-                                            parse_discussion_principals(&watcher_text)
-                                                .into_iter()
-                                                .filter(|did| did != actor.trim())
-                                                .collect();
                                         let flow_id = format!("cx:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match cx_ops::discussion_flow_create(
@@ -2880,20 +2690,6 @@ pub fn ChatPanel(
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let space = space.clone();
-                                        let watch_ops: Vec<crate::operation::EventEnvelope> = initial_watchers
-                                            .iter()
-                                            .map(|target_did| {
-                                                cx_ops::flow_watch_set(
-                                                    &space,
-                                                    &actor,
-                                                    target_did,
-                                                    &flow_id,
-                                                    Some("participating"),
-                                                    None,
-                                                )
-                                                .build("yougen")
-                                            })
-                                            .collect();
                                         status_msg.set("Creating Flow".to_owned());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
@@ -2932,38 +2728,9 @@ pub fn ChatPanel(
                                                                     }),
                                                                 );
                                                             }
-                                                            // Fan out seed watcher subscriptions.
-                                                            // Best-effort: failures are surfaced
-                                                            // in status, but the Flow is
-                                                            // already created. Default UX places
-                                                            // every seed at `participating`; users
-                                                            // can change their own level later.
-                                                            let mut watch_failures = 0usize;
-                                                            if !watch_ops.is_empty() {
-                                                                let watch_wait = active_sync_token(&sync_cursor());
-                                                                if let Ok(watch_api) = authed_api_with_sync(&base, api_token, watch_wait) {
-                                                                    for watch_op in &watch_ops {
-                                                                        if watch_api
-                                                                            .submit_event_envelope(watch_op)
-                                                                            .await
-                                                                            .is_err()
-                                                                        {
-                                                                            watch_failures += 1;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            if watch_failures > 0 {
-                                                                status_msg.set(format!(
-                                                                    "Flow created; {watch_failures} watcher invite(s) failed"
-                                                                ));
-                                                            } else {
-                                                                status_msg.set("Flow created".to_owned());
-                                                            }
+                                                            status_msg.set("Flow created".to_owned());
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
-                                                            new_channel_members.set(String::new());
-                                                            new_channel_member_input.set(String::new());
                                                             new_channel_create_card.set(false);
                                                             create_dialog_open.set(false);
                                                         }
@@ -2988,6 +2755,7 @@ pub fn ChatPanel(
                             h1 { "{selected_channel_name}" }
                         }
                     }
+                    if !embedded {
                     div { class: "discussion-head-actions",
                         // T7.2: watch-level fast switcher. Issues a
                         // `cx.flow.watch.set` event on selection. We
@@ -3118,6 +2886,7 @@ pub fn ChatPanel(
                             },
                             UiIcon { name: "users" }
                         }
+                    }
                     }
                 }
 
@@ -3955,7 +3724,7 @@ pub fn ChatPanel(
                                                     "data-child-space-id": "{child_space_id}",
                                                     span { "Discussion moved to " }
                                                     a {
-                                                        href: "/chat/{child_space_id}",
+                                                        href: "/kanban/{child_space_id}",
                                                         title: "{child_space_id}",
                                                         "{child_space_id_label}"
                                                     }
@@ -4141,12 +3910,14 @@ pub fn ChatPanel(
                             div { class: "ico", UiIcon { name: "plus" } }
                             div { class: "t", {crate::i18n::tr("chat.empty.title")} }
                             div { class: "s", {crate::i18n::tr("chat.empty.description")} }
-                            div { class: "actions",
-                                button {
-                                    class: "primary",
-                                    "data-testid": "discussion-empty-create-button",
-                                    onclick: move |_| create_dialog_open.set(true),
-                                    {crate::i18n::tr("chat.empty.create_button")}
+                            if !embedded {
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "discussion-empty-create-button",
+                                        onclick: move |_| create_dialog_open.set(true),
+                                        {crate::i18n::tr("chat.empty.create_button")}
+                                    }
                                 }
                             }
                         }
@@ -5366,168 +5137,6 @@ pub fn ChatPanel(
                                 },
                                 {crate::i18n::tr("chat.mls_passphrase_save")}
                             }
-                    // MLS multi-device invite row. Three controls:
-                    //   1. Publish my key package → POST keys/upload with
-                    //      a fresh MlsKeyPackageRecord so peers can
-                    //      fetch + add_member against it.
-                    //   2. Target (actor, device) inputs.
-                    //   3. Invite → fetch_mls_key_package + add_member +
-                    //      send Welcome via /device_messages.
-                    button {
-                        class: "secondary",
-                        "data-testid": "mls-publish-key-package-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let actor = account_did.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let actor = actor.clone();
-                                let api_token = token();
-                                let device_id_for_pub =
-                                    state_store.read().local_identity().map(|i| i.device_did.clone());
-                                let mut published = mls_key_package_published;
-                                spawn(async move {
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    {
-                                        let Some(device_did) = device_id_for_pub else {
-                                            status_msg.set(
-                                                "publish failed: local identity unavailable".to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
-                                            match contrix_sdk::Did::new(actor.clone()) {
-                                                Ok(d) => d,
-                                                Err(err) => {
-                                                    status_msg.set(format!(
-                                                        "publish failed: invalid principal DID: {err:?}"
-                                                    ));
-                                                    return;
-                                                }
-                                            },
-                                            match contrix_sdk::DeviceId::new(device_did.clone()) {
-                                                Ok(d) => d,
-                                                Err(err) => {
-                                                    status_msg.set(format!(
-                                                        "publish failed: invalid device id: {err:?}"
-                                                    ));
-                                                    return;
-                                                }
-                                            },
-                                        ) {
-                                            Ok(i) => i,
-                                            Err(err) => {
-                                                status_msg.set(format!(
-                                                    "publish failed: identity build: {err:?}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        let record = match identity.key_package_record() {
-                                            Ok(r) => r,
-                                            Err(err) => {
-                                                status_msg.set(format!(
-                                                    "publish failed: key_package_record: {err:?}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        match crate::views::helpers::with_authed_api(
-                                            &base,
-                                            api_token,
-                                            move |api| {
-                                                let device_did = device_did.clone();
-                                                let record = record.clone();
-                                                async move {
-                                                    api.publish_mls_key_package(
-                                                        &device_did,
-                                                        &record,
-                                                    )
-                                                    .await
-                                                }
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(_) => {
-                                                published.set(true);
-                                                status_msg.set(
-                                                    "MLS key package published; peers can now add this device".to_owned(),
-                                                );
-                                            }
-                                            Err(err) => {
-                                                status_msg.set(format!(
-                                                    "publish failed: {}", err.display()
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                        let _ = (base, actor, api_token, device_id_for_pub);
-                                        status_msg.set(
-                                            "MLS publish requires desktop client (no OpenMLS in browser)".to_owned(),
-                                        );
-                                    }
-                                });
-                            }
-                        },
-                        {crate::i18n::tr("chat.mls_publish_key_package")}
-                    }
-                    input {
-                        class: "secondary",
-                        "data-testid": "mls-invite-actor-input",
-                        placeholder: crate::i18n::tr("chat.mls_invite_actor_placeholder"),
-                        value: "{mls_invite_actor_draft}",
-                        oninput: move |evt| mls_invite_actor_draft.set(evt.value()),
-                    }
-                    input {
-                        class: "secondary",
-                        "data-testid": "mls-invite-device-input",
-                        placeholder: crate::i18n::tr("chat.mls_invite_device_placeholder"),
-                        value: "{mls_invite_device_draft}",
-                        oninput: move |evt| mls_invite_device_draft.set(evt.value()),
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "mls-invite-member-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let space = selected_space.clone();
-                            let _actor_outer = account_did.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let space = space.clone();
-                                let api_token = token();
-                                let target_actor_input = mls_invite_actor_draft();
-                                let target_actor =
-                                    crate::identity_handle::principal_did_from_identifier(
-                                        &target_actor_input,
-                                    )
-                                    .unwrap_or_else(|| target_actor_input.trim().to_owned());
-                                let target_device = mls_invite_device_draft().trim().to_owned();
-                                let passphrase: String = mls_passphrase_store
-                                    .read()
-                                    .get(&space)
-                                    .map(str::to_owned)
-                                    .unwrap_or_default();
-                                spawn(async move {
-                                    run_mls_add_member_and_invite(
-                                        base,
-                                        api_token,
-                                        state_store,
-                                        space,
-                                        target_actor,
-                                        target_device,
-                                        passphrase,
-                                        status_msg,
-                                    )
-                                    .await;
-                                });
-                            }
-                        },
-                        {crate::i18n::tr("chat.mls_invite_member")}
-                    }
                     button {
                         class: "secondary",
                         "data-testid": "send-e2ee-move-button",

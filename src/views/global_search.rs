@@ -111,7 +111,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
         "kanban" | "board" => Route::KanbanSpace {
             space_id: space_id.to_owned(),
         },
-        "chat" | "discussion" => Route::ChatSpace {
+        "chat" | "discussion" => Route::KanbanSpace {
             space_id: space_id.to_owned(),
         },
         "document" => Route::DocumentSpace {

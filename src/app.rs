@@ -9,8 +9,8 @@ use crate::{
     components::UiIcon,
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     conformance::{
-        PROFILE_CHAT_MVP, PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP,
-        PROFILE_MINIMAL_CLIENT, PROFILE_PUSH_GATEWAY, profile_ready,
+        PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
+        PROFILE_PUSH_GATEWAY, profile_ready,
     },
     i18n::{Locale, TextDirection},
     local_state::LocalStateStore,
@@ -728,6 +728,21 @@ body {
 .board-column-actions {
   display: inline-flex;
   justify-content: flex-end;
+}
+.board-column-actions [data-testid="list-archive-button"],
+.board-card-footer [data-testid="card-archive-button"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+.board-column:hover .board-column-actions [data-testid="list-archive-button"],
+.board-column:focus-within .board-column-actions [data-testid="list-archive-button"],
+.board-card:hover .board-card-footer [data-testid="card-archive-button"],
+.board-card:focus-within .board-card-footer [data-testid="card-archive-button"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 .board-column-actions button,
 .board-card-footer button,
@@ -5748,7 +5763,6 @@ pub fn RouterView() -> Element {
     let account_session_label = account_session_state();
     let queue_label = device_queue().to_string();
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
-    let chat_ready = profile_ready(active_server_description.as_ref(), PROFILE_CHAT_MVP);
     let kanban_ready = profile_ready(active_server_description.as_ref(), PROFILE_KANBAN_MVP);
     let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
     let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
@@ -5772,10 +5786,7 @@ pub fn RouterView() -> Element {
     if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface) {
         if matches!(
             &route,
-            Route::TimelineSpace { .. }
-                | Route::KanbanSpace { .. }
-                | Route::ChatSpace { .. }
-                | Route::DocumentSpace { .. }
+            Route::TimelineSpace { .. } | Route::KanbanSpace { .. } | Route::DocumentSpace { .. }
         ) {
             let stored_surface =
                 load_space_surface_preference(&state_store(), &account_did(), space_id);
@@ -5846,7 +5857,7 @@ pub fn RouterView() -> Element {
         });
     let topbar_surface_label = if route_uses_space_context {
         match resolved_space_surface {
-            Some(SpaceSurface::Discussion | SpaceSurface::Document) => None,
+            Some(SpaceSurface::Document) => None,
             Some(surface) => Some(surface.title()),
             None => Some(route_label(&route)),
         }
@@ -6989,7 +7000,6 @@ pub fn RouterView() -> Element {
                         state_store,
                         minimal_ready,
                         kanban_ready,
-                        chat_ready,
                         full_ready,
                     }
                 }
@@ -7064,6 +7074,7 @@ pub fn RouterView() -> Element {
                                     rsx! {
                                         crate::views::kanban::KanbanPanel {
                                             base_url: base_url(),
+                                            plaintext_service_did: active_service_did.clone(),
                                             token,
                                             account_did: account_did(),
                                             selected_space: active_space_id.clone(),
@@ -7077,25 +7088,6 @@ pub fn RouterView() -> Element {
                                     }
                                 } else {
                                     rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
-                                }
-                            }
-                            SpaceSurface::Discussion => {
-                                if chat_ready {
-                                    rsx! {
-                                        crate::views::chat::ChatPanel {
-                                            base_url: base_url(),
-                                            plaintext_service_did: active_service_did.clone(),
-                                            account_did: account_did(),
-                                            token,
-                                            selected_space: active_space_id.clone(),
-                                            selected_space_scope: active_space_scope_ids.clone(),
-                                            sync_cursor,
-                                            frontier_state,
-                                            state_store,
-                                        }
-                                    }
-                                } else {
-                                    rsx! { ProfileGateNotice { profile: "chat_mvp" } }
                                 }
                             }
                             SpaceSurface::Document => {
@@ -7278,6 +7270,7 @@ pub fn RouterView() -> Element {
                             rsx! {
                                 crate::views::kanban::KanbanPanel {
                                     base_url: base_url(),
+                                    plaintext_service_did: active_service_did.clone(),
                                     token,
                                     account_did: account_did(),
                                     selected_space: active_space_id.clone(),
@@ -7291,30 +7284,6 @@ pub fn RouterView() -> Element {
                             }
                         } else {
                             rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
-                        }
-                    },
-                    Route::Chat | Route::ChatSpace { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
-                        }
-                        if chat_ready {
-                            rsx! {
-                                crate::views::chat::ChatPanel {
-                                    base_url: base_url(),
-                                    plaintext_service_did: active_service_did.clone(),
-                                    account_did: account_did(),
-                                    token,
-                                    selected_space: active_space_id.clone(),
-                                    selected_space_scope: active_space_scope_ids.clone(),
-                                    sync_cursor,
-                                    frontier_state,
-                                    state_store,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "chat_mvp" } }
                         }
                     },
                     Route::Notifications => rsx! {
@@ -7430,7 +7399,6 @@ fn SpaceContextBar(
     state_store: Signal<LocalStateStore>,
     minimal_ready: bool,
     kanban_ready: bool,
-    chat_ready: bool,
     full_ready: bool,
 ) -> Element {
     let _ = (&scope_label, scope_count);
@@ -7438,7 +7406,7 @@ fn SpaceContextBar(
         div { class: "event", "data-testid": "space-context-bar",
             div { class: "actions",
                 for surface in SpaceSurface::top_nav() {
-                    if surface.is_available(minimal_ready, kanban_ready, chat_ready, full_ready) {
+                    if surface.is_available(minimal_ready, kanban_ready, full_ready) {
                         Link {
                             class: if current_surface == Some(surface) { "primary" } else { "secondary" },
                             to: surface.route(space_id.clone()),
@@ -7682,14 +7650,11 @@ fn ProfileGateNotice(profile: &'static str) -> Element {
 enum SpaceSurface {
     Timeline,
     Board,
-    Discussion,
     Document,
 }
 
 impl SpaceSurface {
     fn top_nav() -> [Self; 3] {
-        // Discussion/Chat remains routeable, but it is no longer a top Space
-        // surface because it is a Flow track, not a Space kind.
         [Self::Timeline, Self::Board, Self::Document]
     }
 
@@ -7697,7 +7662,6 @@ impl SpaceSurface {
         match self {
             Self::Timeline => "Timeline",
             Self::Board => "Board",
-            Self::Discussion => "Discussion",
             Self::Document => "Document",
         }
     }
@@ -7706,7 +7670,6 @@ impl SpaceSurface {
         match self {
             Self::Timeline => "Timeline View",
             Self::Board => "Board View",
-            Self::Discussion => "Discussion View",
             Self::Document => "Document View",
         }
     }
@@ -7715,7 +7678,6 @@ impl SpaceSurface {
         match self {
             Self::Timeline => "timeline",
             Self::Board => "board",
-            Self::Discussion => "message",
             Self::Document => "file",
         }
     }
@@ -7724,7 +7686,6 @@ impl SpaceSurface {
         match self {
             Self::Timeline => "timeline",
             Self::Board => "board",
-            Self::Discussion => "discussion",
             Self::Document => "document",
         }
     }
@@ -7733,7 +7694,7 @@ impl SpaceSurface {
         match value {
             "timeline" => Some(Self::Timeline),
             "board" => Some(Self::Board),
-            "discussion" => Some(Self::Discussion),
+            "discussion" => Some(Self::Board),
             "document" => Some(Self::Document),
             _ => None,
         }
@@ -7743,22 +7704,14 @@ impl SpaceSurface {
         match self {
             Self::Timeline => Route::TimelineSpace { space_id },
             Self::Board => Route::KanbanSpace { space_id },
-            Self::Discussion => Route::ChatSpace { space_id },
             Self::Document => Route::DocumentSpace { space_id },
         }
     }
 
-    fn is_available(
-        self,
-        minimal_ready: bool,
-        kanban_ready: bool,
-        chat_ready: bool,
-        full_ready: bool,
-    ) -> bool {
+    fn is_available(self, minimal_ready: bool, kanban_ready: bool, full_ready: bool) -> bool {
         match self {
             Self::Timeline => minimal_ready,
             Self::Board => kanban_ready,
-            Self::Discussion => chat_ready,
             Self::Document => full_ready,
         }
     }
@@ -7819,7 +7772,6 @@ fn resolve_space_surface(
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
             Some(SpaceSurface::Board)
         }
-        Route::Chat | Route::ChatSpace { .. } => Some(SpaceSurface::Discussion),
         Route::Document | Route::DocumentSpace { .. } => Some(SpaceSurface::Document),
         Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => None,
         _ => None,
@@ -7836,8 +7788,6 @@ fn route_uses_space_context(route: &Route) -> bool {
             | Route::Kanban
             | Route::KanbanSpace { .. }
             | Route::KanbanTask { .. }
-            | Route::Chat
-            | Route::ChatSpace { .. }
             | Route::Document
             | Route::DocumentSpace { .. }
             | Route::SpaceAdmin { .. }
@@ -7879,7 +7829,6 @@ fn route_label(route: &Route) -> &'static str {
         Route::Audit => "Audit",
         Route::Developer => "Developer Tools",
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => "Board View",
-        Route::Chat | Route::ChatSpace { .. } => "Discussion View",
         Route::Notifications => "Notifications",
         Route::Document | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
@@ -8955,10 +8904,9 @@ mod tests {
                 SpaceSurface::Document
             ]
         );
-        assert!(!surfaces.contains(&SpaceSurface::Discussion));
         assert_eq!(
             SpaceSurface::from_preference("discussion"),
-            Some(SpaceSurface::Discussion)
+            Some(SpaceSurface::Board)
         );
     }
 

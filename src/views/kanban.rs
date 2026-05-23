@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use dioxus_router::Link;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -10,7 +9,6 @@ use crate::{
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
-    routes::Route,
     views::helpers::{short_protocol_id, with_authed_api},
 };
 
@@ -76,8 +74,6 @@ struct KanbanCard {
     assignee: String,
     due: String,
     primary_flow_id: String,
-    primary_flow: String,
-    linked_flows: Vec<FlowLink>,
     locked_flow: Option<LockedFlow>,
     external_visibility: String,
     history_visibility: String,
@@ -114,13 +110,6 @@ enum FlowLifecycleState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct FlowLink {
-    flow_id: String,
-    name: String,
-    access_state: DiscussionAccessState,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct LockedFlow {
     flow_id_hash: String,
     reason: String,
@@ -154,13 +143,6 @@ enum BoardToolbarPopover {
     CreateBoard,
     Projection,
     Queue,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum CardDetailTrack {
-    #[default]
-    Synthesis,
-    Discussion,
 }
 
 const TOAST_EDITOR_SCRIPT_URL: &str =
@@ -362,28 +344,6 @@ fn toast_editor_bootstrap_script(
     registry.set(config.hostId, editor);
 }})();"##
     ))
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum DiscussionAccessState {
-    Readable,
-    External,
-}
-
-impl DiscussionAccessState {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Readable => "readable",
-            Self::External => "external",
-        }
-    }
-
-    fn class_name(&self) -> &'static str {
-        match self {
-            Self::Readable => "badge blue",
-            Self::External => "badge green",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -620,7 +580,6 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
         .unwrap_or("(untitled)")
         .to_owned();
     let primary_flow_id = id.clone();
-    let primary_flow = title.clone();
     let (external_visibility, history_visibility) = item
         .discussion
         .as_ref()
@@ -707,8 +666,6 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
             .unwrap_or("—")
             .to_owned(),
         primary_flow_id,
-        primary_flow,
-        linked_flows: Vec::new(),
         locked_flow,
         external_visibility,
         history_visibility,
@@ -1045,6 +1002,7 @@ fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
 #[component]
 pub fn KanbanPanel(
     base_url: String,
+    plaintext_service_did: String,
     token: Signal<String>,
     account_did: String,
     selected_space: String,
@@ -1102,7 +1060,6 @@ pub fn KanbanPanel(
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
-    let mut card_detail_track = use_signal(CardDetailTrack::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
@@ -1932,7 +1889,6 @@ pub fn KanbanPanel(
                         div { class: "event-head board-column-head",
                             div { class: "board-column-title",
                                 span { class: "space-title", "{column.title}" }
-                                div { class: "board-column-meta", "rank {column.rank} / {column.cards.len()}" }
                             }
                             div { class: "board-column-actions",
                             {
@@ -2078,7 +2034,6 @@ pub fn KanbanPanel(
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
-                                        card_detail_track.set(CardDetailTrack::Synthesis);
                                         card_detail_overlay_press_started.set(false);
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
@@ -2096,12 +2051,6 @@ pub fn KanbanPanel(
                                 div { class: "muted", "{card.description}" }
                                 div { class: "space-meta", "assignee {card.assignee} / due {card.due}" }
                                 div { class: "board-card-footer",
-                                    div { class: "board-card-discussion",
-                                        span { class: "badge blue", "Discussion: {card.primary_flow}" }
-                                        if card.locked_flow.is_some() {
-                                            span { class: "badge amber", "Locked discussion hidden" }
-                                        }
-                                    }
                                     {
                                         let gate = capability_gate_for_flow(
                                             &capability_engine,
@@ -2444,7 +2393,6 @@ pub fn KanbanPanel(
 
             if let Some(ref card) = selected_card() {
                 {
-                    let active_track = card_detail_track();
                     let card_id_label = short_protocol_id(&card.id);
                     rsx! {
                         div {
@@ -2656,124 +2604,25 @@ pub fn KanbanPanel(
                                                 }
                                             }
 
-                                            section { class: "card-detail-section card-detail-track-section",
+                                            section { class: "card-detail-section card-detail-discussion-section",
                                                 div { class: "card-detail-section-head",
                                                     div { class: "card-detail-section-title",
-                                                        UiIcon { name: "activity" }
-                                                        span { "Flow tracks" }
+                                                        UiIcon { name: "message" }
+                                                        span { "Discussion" }
                                                     }
                                                 }
-                                                div {
-                                                    class: "card-detail-track-tabs",
-                                                    "data-testid": "card-flow-tracks",
-                                                    role: "tablist",
-                                                    "aria-label": "Flow tracks",
-                                                    button {
-                                                        class: if active_track == CardDetailTrack::Synthesis { "card-detail-track-tab active" } else { "card-detail-track-tab" },
-                                                        role: "tab",
-                                                        "aria-selected": if active_track == CardDetailTrack::Synthesis { "true" } else { "false" },
-                                                        onclick: move |_| card_detail_track.set(CardDetailTrack::Synthesis),
-                                                        span { "synthesis" }
-                                                        small { "primary" }
-                                                    }
-                                                    button {
-                                                        class: if active_track == CardDetailTrack::Discussion { "card-detail-track-tab active" } else { "card-detail-track-tab" },
-                                                        role: "tab",
-                                                        "aria-selected": if active_track == CardDetailTrack::Discussion { "true" } else { "false" },
-                                                        onclick: move |_| card_detail_track.set(CardDetailTrack::Discussion),
-                                                        span { "discussion" }
-                                                        small { "{card.linked_flows.len()} linked" }
-                                                    }
-                                                }
-
-                                                if active_track == CardDetailTrack::Synthesis {
-                                                    div { class: "card-detail-track-panel", "data-testid": "card-synthesis-track-panel",
-                                                        div { class: "card-detail-track-summary",
-                                                            div {
-                                                                strong { "Card synthesis" }
-                                                                span { class: "badge green", "read + write" }
-                                                            }
-                                                            div {
-                                                                strong { "List position" }
-                                                                span { "rank-stable" }
-                                                            }
-                                                            div {
-                                                                strong { "History" }
-                                                                span { "{card.history_visibility}" }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    div { class: "card-detail-track-panel", "data-testid": "card-discussion-track-panel",
-                                                        div { class: "card-detail-discussion-head",
-                                                            div {
-                                                                div { class: "space-meta", "Primary discussion" }
-                                                                strong { "{card.primary_flow}" }
-                                                            }
-                                                            Link {
-                                                                class: "secondary card-detail-open-discussion",
-                                                                "data-testid": "open-primary-discussion",
-                                                                to: Route::ChatSpace { space_id: selected_space.clone() },
-                                                                UiIcon { name: "message" }
-                                                                span { "Open Discussion" }
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-linked-flow-list",
-                                                            for flow in &card.linked_flows {
-                                                                span { class: flow.access_state.class_name(), "{flow.name} / {flow.access_state.label()}" }
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-visibility-note",
-                                                            span { class: "badge amber", if card.locked_flow.is_some() { "fail-closed" } else { "visible" } }
-                                                            span { "card visibility != discussion visibility" }
-                                                        }
-                                                        if let Some(locked_flow) = &card.locked_flow {
-                                                            div { class: "card-detail-policy-note",
-                                                                div {
-                                                                    strong { "Locked discussion" }
-                                                                    span { class: "badge amber", "Hidden by policy" }
-                                                                }
-                                                                div { class: "muted", "Opaque ref: {locked_flow.flow_id_hash}" }
-                                                                div { class: "muted", "{locked_flow.reason}" }
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-track-actions",
-                                                            button {
-                                                                class: "secondary",
-                                                                "data-testid": "queue-link-discussion-event",
-                                                                onclick: {
-                                                                    // This legacy metadata path still uses a schema-valid cx.flow.update patch.
-                                                                    let base = base_url.clone();
-                                                                    let flow_id = card.id.clone();
-                                                                    let track_id = card.primary_flow_id.clone();
-                                                                    let space = selected_space.clone();
-                                                                    let actor = account_did.clone();
-                                                                    move |_| {
-                                                                        let value = json!({
-                                                                            "kind": "flow.track.member",
-                                                                            "flow_id": flow_id,
-                                                                            "track": "discussion",
-                                                                            "track_id": track_id,
-                                                                            "member": true,
-                                                                        });
-                                                                        submit_kanban_move(
-                                                                            base.clone(),
-                                                                            token,
-                                                                            space.clone(),
-                                                                            actor.clone(),
-                                                                            flow_id.clone(),
-                                                                            "cx.flow.track.member",
-                                                                            value,
-                                                                            state_store,
-                                                                            write_records,
-                                                                            board_status,
-                                                                        );
-                                                                    }
-                                                                },
-                                                                {crate::i18n::tr("kanban.queue_track_member")}
-                                                            }
-                                                        }
-                                                    }
+                                                crate::views::chat::ChatPanel {
+                                                    base_url: base_url.clone(),
+                                                    plaintext_service_did: plaintext_service_did.clone(),
+                                                    account_did: account_did.clone(),
+                                                    token,
+                                                    selected_space: selected_space.clone(),
+                                                    selected_space_scope: selected_space_scope.clone(),
+                                                    sync_cursor,
+                                                    frontier_state,
+                                                    state_store,
+                                                    initial_flow_id: card.primary_flow_id.clone(),
+                                                    embedded: true,
                                                 }
                                             }
                                         }
@@ -2845,26 +2694,6 @@ pub fn KanbanPanel(
                                                             UiIcon { name: if target == FlowLifecycleState::Archived { "archive" } else { "refresh" } }
                                                             span { "{label}" }
                                                         }
-                                                    }
-                                                }
-                                            }
-
-                                            div { class: "card-detail-side-section card-detail-discussion-summary", "data-testid": "card-discussion-boundary",
-                                                h3 { "Discussion" }
-                                                div { class: "space-meta", "Primary discussion" }
-                                                strong { "{card.primary_flow}" }
-                                                div { class: "card-detail-visibility-note", "data-testid": "card-vs-discussion-space-visibility",
-                                                    span { class: "badge amber", if card.locked_flow.is_some() { "fail-closed" } else { "visible" } }
-                                                    span { "card visibility != discussion visibility" }
-                                                }
-                                                if let Some(locked_flow) = &card.locked_flow {
-                                                    div { class: "card-detail-policy-note", "data-testid": "locked-discussion-fail-closed",
-                                                        div {
-                                                            strong { "Locked discussion" }
-                                                            span { class: "badge amber", "Hidden by policy" }
-                                                        }
-                                                        div { class: "muted", "Opaque ref: {locked_flow.flow_id_hash}" }
-                                                        div { class: "muted", "{locked_flow.reason}" }
                                                     }
                                                 }
                                             }
