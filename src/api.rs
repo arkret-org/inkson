@@ -3127,10 +3127,7 @@ pub fn build_realm_create_event(
         "federation_policy": effective_federation_policy,
         "anchor_profile": anchor_profile,
         "hash_profile": hash_profile,
-        "anchorer": {
-            "type": "single_did",
-            "did": actor_id,
-        },
+        "anchorer": realm_genesis_anchorer(anchor_profile, actor_id),
         "created_at": created_at_for_object,
     });
     if let Some(summary) = summary
@@ -3187,6 +3184,54 @@ pub fn build_realm_create_event(
         .build("yougen");
     envelope.created_at = created_at_for_object;
     Ok(envelope)
+}
+
+fn realm_genesis_anchorer(anchor_profile: &str, actor_id: &str) -> Value {
+    match anchor_profile {
+        "threshold" => json!({
+            "type": "threshold",
+            "members": [actor_id],
+            "threshold": 1,
+        }),
+        "open_set" => json!({
+            "type": "open_set",
+            "members": [actor_id],
+        }),
+        "mixed" => json!({
+            "type": "mixed",
+            "did": actor_id,
+            "recovery_members": [derived_recovery_member_did(actor_id)],
+        }),
+        _ => {
+            let controller = inferred_controller_organization_did(actor_id);
+            json!({
+                "type": "single_did",
+                "did": actor_id,
+                "recovery_members": [derived_recovery_member_did(&controller)],
+                "controller_organization": controller,
+                "recovery_controller_organizations": [derived_recovery_controller_organization_did(&controller)],
+            })
+        }
+    }
+}
+
+fn inferred_controller_organization_did(actor_id: &str) -> String {
+    let actor_id = actor_id.trim();
+    if let Some(web_specific_id) = actor_id.strip_prefix("did:web:")
+        && let Some(host) = web_specific_id.split(':').next()
+        && !host.is_empty()
+    {
+        return format!("did:web:{host}");
+    }
+    actor_id.to_owned()
+}
+
+fn derived_recovery_controller_organization_did(controller: &str) -> String {
+    format!("{}:recovery", controller.trim())
+}
+
+fn derived_recovery_member_did(controller_or_actor: &str) -> String {
+    format!("{}:recovery:anchorer", controller_or_actor.trim())
 }
 
 /// Build a `cx.space.create` event per spec realm-and-space.md §3.2.
@@ -3404,6 +3449,12 @@ pub fn build_plaintext_visible_services_event(
             json!({
                 "service_did": service,
                 "service_type": "principal_server",
+                "data_classes": [
+                    "message_body",
+                    "full_text_index",
+                    "notification_summary",
+                    "inbox_preview",
+                ],
                 "purposes": ["message_index", "notification_fanout"],
                 "visibility": "private_plaintext",
             })
@@ -4330,6 +4381,20 @@ mod tests {
         );
         assert_eq!(create.payload["object"]["default_join_rule"], "invite");
         assert_eq!(create.payload["object"]["history_visibility"], "shared");
+        assert_eq!(create.payload["object"]["anchorer"]["type"], "single_did");
+        assert_eq!(create.payload["object"]["anchorer"]["did"], create.actor_id);
+        assert_eq!(
+            create.payload["object"]["anchorer"]["recovery_members"][0],
+            "did:web:alice.example:recovery:anchorer",
+        );
+        assert_eq!(
+            create.payload["object"]["anchorer"]["controller_organization"],
+            "did:web:alice.example",
+        );
+        assert_eq!(
+            create.payload["object"]["anchorer"]["recovery_controller_organizations"][0],
+            "did:web:alice.example:recovery",
+        );
         assert_eq!(
             create.effects[0].cell,
             "cx:cell:cx.component.realm.create.v1:cx:realm:0196419b-0000-7000-8000-000000000001"
@@ -4351,6 +4416,15 @@ mod tests {
         assert_eq!(
             events[4].payload["services"][0]["service_did"],
             "did:web:server.example"
+        );
+        assert_eq!(
+            events[4].payload["services"][0]["data_classes"],
+            json!([
+                "message_body",
+                "full_text_index",
+                "notification_summary",
+                "inbox_preview",
+            ])
         );
         assert_eq!(events[5].payload["membership"], "invite");
     }
