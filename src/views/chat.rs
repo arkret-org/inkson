@@ -133,6 +133,7 @@ impl SpaceParticipantRole {
 struct SpaceParticipant {
     did: String,
     display_name: Option<String>,
+    handle_label: Option<String>,
     display_name_rank: u8,
     role: SpaceParticipantRole,
     is_self: bool,
@@ -468,12 +469,302 @@ fn participant_display_name_from_value(value: &Value, did: Option<&str>) -> Opti
     })
 }
 
+fn mention_handle_label_from_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with("did:") {
+        return None;
+    }
+    crate::identity_handle::parse_user_handle(trimmed).map(|handle| handle.display)
+}
+
+fn participant_handle_label_from_value(value: &Value, did: Option<&str>) -> Option<String> {
+    let object = value.as_object()?;
+    [
+        "handle_uri",
+        "handleUri",
+        "user_handle",
+        "userHandle",
+        "acct_alias",
+        "acctAlias",
+        "acct",
+        "handle",
+        "mxid",
+    ]
+    .iter()
+    .find_map(|key| {
+        object
+            .get(*key)
+            .and_then(Value::as_str)
+            .filter(|raw| did != Some(raw.trim()))
+            .and_then(mention_handle_label_from_value)
+    })
+    .or_else(|| {
+        [
+            "profile", "account", "member", "user", "actor", "subject", "details",
+        ]
+        .iter()
+        .find_map(|key| {
+            object
+                .get(*key)
+                .filter(|child| child.is_object())
+                .and_then(|child| participant_handle_label_from_value(child, did))
+        })
+    })
+}
+
+fn mention_label_for_participant(participant: &SpaceParticipant) -> Option<String> {
+    participant.handle_label.clone().or_else(|| {
+        participant
+            .display_name
+            .as_deref()
+            .and_then(mention_handle_label_from_value)
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MentionInlinePart {
+    text: String,
+    mention_label: Option<String>,
+    is_local: bool,
+}
+
+fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> {
+    if let Some(label) = mention_handle_label_from_value(&mention.handle_uri) {
+        return Some(label);
+    }
+    if let Some(label) = mention_handle_label_from_value(&mention.display_snapshot) {
+        return Some(label);
+    }
+    mention
+        .token
+        .strip_prefix('@')
+        .and_then(mention_handle_label_from_value)
+}
+
+fn local_server_domain(base_url: &str) -> Option<String> {
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
+}
+
+fn handle_domain(label: &str) -> Option<String> {
+    crate::identity_handle::parse_user_handle(label).map(|handle| handle.domain)
+}
+
+fn is_local_handle_label(label: &str, base_url: &str) -> bool {
+    let Some(handle_domain) = handle_domain(label) else {
+        return false;
+    };
+    let Some(server_domain) = local_server_domain(base_url) else {
+        return false;
+    };
+    handle_domain == server_domain
+        || server_domain.ends_with(&format!(".{handle_domain}"))
+        || handle_domain.ends_with(&format!(".{server_domain}"))
+}
+
+fn is_leading_mention_punct(ch: char) -> bool {
+    matches!(ch, '(' | '[' | '{' | '"' | '\'')
+}
+
+fn is_trailing_mention_punct(ch: char) -> bool {
+    matches!(
+        ch,
+        ',' | '.' | '!' | '?' | ';' | ')' | ']' | '}' | '"' | '\''
+    )
+}
+
+fn token_core_bounds(token: &str) -> (usize, usize) {
+    let start = token
+        .char_indices()
+        .find(|(_, ch)| !is_leading_mention_punct(*ch))
+        .map(|(idx, _)| idx)
+        .unwrap_or(token.len());
+    let end = token
+        .char_indices()
+        .rev()
+        .find(|(idx, ch)| *idx >= start && !is_trailing_mention_punct(*ch))
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .unwrap_or(start);
+    (start, end)
+}
+
+fn split_preserving_whitespace(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_is_whitespace: Option<bool> = None;
+
+    for ch in text.chars() {
+        let is_whitespace = ch.is_whitespace();
+        if let Some(previous) = current_is_whitespace
+            && previous != is_whitespace
+        {
+            parts.push(std::mem::take(&mut current));
+        }
+        current_is_whitespace = Some(is_whitespace);
+        current.push(ch);
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    parts
+}
+
+fn mention_inline_parts(
+    text: &str,
+    mentions: &[StructuredMention],
+    base_url: &str,
+) -> Vec<MentionInlinePart> {
+    let labels: std::collections::BTreeSet<String> = mentions
+        .iter()
+        .filter_map(mention_label_from_structured)
+        .collect();
+    if labels.is_empty() {
+        return vec![MentionInlinePart {
+            text: text.to_owned(),
+            mention_label: None,
+            is_local: false,
+        }];
+    }
+
+    let mut parts = Vec::new();
+    for segment in split_preserving_whitespace(text) {
+        if segment.chars().all(char::is_whitespace) {
+            parts.push(MentionInlinePart {
+                text: segment,
+                mention_label: None,
+                is_local: false,
+            });
+            continue;
+        }
+
+        let (core_start, core_end) = token_core_bounds(&segment);
+        let core = &segment[core_start..core_end];
+        let parsed_label = core
+            .strip_prefix('@')
+            .and_then(mention_handle_label_from_value);
+        let Some(label) = parsed_label.filter(|label| labels.contains(label)) else {
+            parts.push(MentionInlinePart {
+                text: segment,
+                mention_label: None,
+                is_local: false,
+            });
+            continue;
+        };
+
+        let prefix = &segment[..core_start];
+        if !prefix.is_empty() {
+            parts.push(MentionInlinePart {
+                text: prefix.to_owned(),
+                mention_label: None,
+                is_local: false,
+            });
+        }
+        let mention_text = format!("@{label}");
+        parts.push(MentionInlinePart {
+            text: mention_text,
+            is_local: is_local_handle_label(&label, base_url),
+            mention_label: Some(label),
+        });
+        let suffix = &segment[core_end..];
+        if !suffix.is_empty() {
+            parts.push(MentionInlinePart {
+                text: suffix.to_owned(),
+                mention_label: None,
+                is_local: false,
+            });
+        }
+    }
+    parts
+}
+
+fn render_message_text_block(
+    key: String,
+    text: String,
+    mentions: Vec<StructuredMention>,
+    base_url: String,
+) -> Element {
+    let parts = mention_inline_parts(&text, &mentions, &base_url);
+    rsx! {
+        p {
+            key: "{key}",
+            class: "content-block-text",
+            "data-testid": "content-block-text",
+            for (idx, part) in parts.into_iter().enumerate() {
+                {
+                    let part_key = format!("{key}-part-{idx}");
+                    if let Some(label) = part.mention_label {
+                        let class = if part.is_local {
+                            "mention-token is-local"
+                        } else {
+                            "mention-token is-remote"
+                        };
+                        rsx! {
+                            span {
+                                key: "{part_key}",
+                                class: "{class}",
+                                "data-testid": "timeline-event-mention",
+                                title: "{label}",
+                                "{part.text}"
+                            }
+                        }
+                    } else {
+                        rsx! {
+                            span { key: "{part_key}", "{part.text}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_message_body(body: &str, mentions: &[StructuredMention], base_url: &str) -> Element {
+    let blocks = crate::content::parse_message_body(body);
+    if mentions.is_empty() {
+        return crate::content::render_blocks(&blocks);
+    }
+
+    let owned_mentions = mentions.to_vec();
+    let base_url = base_url.to_owned();
+    rsx! {
+        div { class: "content-blocks", "data-testid": "content-blocks",
+            for (idx, block) in blocks.into_iter().enumerate() {
+                {
+                    let key = format!("content-block-{idx}");
+                    match block {
+                        crate::content::ContentBlock::Text(text) => {
+                            render_message_text_block(
+                                key,
+                                text,
+                                owned_mentions.clone(),
+                                base_url.clone(),
+                            )
+                        }
+                        other => {
+                            let single = vec![other];
+                            rsx! {
+                                div { key: "{key}",
+                                    {crate::content::render_blocks(&single)}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn upsert_participant(
     participants: &mut Vec<SpaceParticipant>,
     did: &str,
     role: SpaceParticipantRole,
     account_did: &str,
     display_name: Option<(String, u8)>,
+    handle_label: Option<String>,
 ) {
     let Some(did) = normalize_participant_id(did) else {
         return;
@@ -493,6 +784,9 @@ fn upsert_participant(
             existing.display_name = Some(display_name);
             existing.display_name_rank = rank;
         }
+        if existing.handle_label.is_none() {
+            existing.handle_label = handle_label;
+        }
     } else {
         let (display_name, display_name_rank) = display_name
             .map(|(name, rank)| (Some(name), rank))
@@ -500,6 +794,7 @@ fn upsert_participant(
         participants.push(SpaceParticipant {
             did,
             display_name,
+            handle_label,
             display_name_rank,
             role,
             is_self,
@@ -595,6 +890,7 @@ fn collect_participant_field(
                     item_role,
                     account_did,
                     participant_display_name_from_value(item, Some(&did)),
+                    participant_handle_label_from_value(item, Some(&did)),
                 );
             }
         }
@@ -605,6 +901,7 @@ fn collect_participant_field(
             role,
             account_did,
             participant_display_name_from_value(field, Some(&did)),
+            participant_handle_label_from_value(field, Some(&did)),
         );
     }
 }
@@ -652,7 +949,16 @@ fn collect_state_participants(
         if let Some(did) = did {
             let display_name = participant_display_name_from_value(body, Some(&did))
                 .or_else(|| participant_display_name_from_value(item, Some(&did)));
-            upsert_participant(participants, &did, role, account_did, display_name);
+            let handle_label = participant_handle_label_from_value(body, Some(&did))
+                .or_else(|| participant_handle_label_from_value(item, Some(&did)));
+            upsert_participant(
+                participants,
+                &did,
+                role,
+                account_did,
+                display_name,
+                handle_label,
+            );
         }
     }
 }
@@ -728,6 +1034,7 @@ fn space_participants(projection: Option<&Value>, account_did: &str) -> Vec<Spac
             account_did,
             SpaceParticipantRole::Member,
             account_did,
+            None,
             None,
         );
     }
@@ -2122,6 +2429,16 @@ pub fn ChatPanel(
         });
     }
 
+    {
+        let messages_for_scroll = messages;
+        let selected_channel_for_scroll = selected_channel;
+        use_effect(move || {
+            let _message_count = { messages_for_scroll.read().len() };
+            let _channel = { selected_channel_for_scroll.read().clone() };
+            scroll_chat_feed_to_latest();
+        });
+    }
+
     let composer_class = "discussion-composer";
 
     rsx! {
@@ -2550,46 +2867,48 @@ pub fn ChatPanel(
                         })
                         .collect();
                     rsx! {
-                        div {
-                            class: "pinned-bar",
-                            "data-testid": "pinned-bar",
-                            if pinned_view.is_empty() {
-                                span {
-                                    class: "pinned-bar-empty",
-                                    "data-testid": "pinned-bar-empty",
-                                    {crate::i18n::tr("pinned_bar.empty")}
-                                }
-                            } else {
-                                for (id, body) in pinned_view {
-                                    {
-                                        let id_for_click = id.clone();
-                                        let preview = if body.len() > 40 {
-                                            format!("{}…", &body[..40])
-                                        } else {
-                                            body
-                                        };
-                                        rsx! {
-                                            button {
-                                                r#type: "button",
-                                                class: "pinned-bar-item",
-                                                "data-testid": "pinned-bar-item",
-                                                title: crate::i18n::tr("pinned_bar.scroll_to"),
-                                                onclick: move |_| {
-                                                    // Best-effort scroll: emit
-                                                    // a console hint via
-                                                    // status_msg so QA can see
-                                                    // the click registered.
-                                                    // Real scroll-into-view
-                                                    // wires into Dioxus's
-                                                    // mounted ref API; deferred
-                                                    // until A6.3 lands the
-                                                    // soland projection.
-                                                    status_msg.set(format!(
-                                                        "jump to pinned message {}",
-                                                        id_for_click
-                                                    ));
-                                                },
-                                                "{preview}"
+                        if !embedded || !pinned_view.is_empty() {
+                            div {
+                                class: "pinned-bar",
+                                "data-testid": "pinned-bar",
+                                if pinned_view.is_empty() {
+                                    span {
+                                        class: "pinned-bar-empty",
+                                        "data-testid": "pinned-bar-empty",
+                                        {crate::i18n::tr("pinned_bar.empty")}
+                                    }
+                                } else {
+                                    for (id, body) in pinned_view {
+                                        {
+                                            let id_for_click = id.clone();
+                                            let preview = if body.len() > 40 {
+                                                format!("{}…", &body[..40])
+                                            } else {
+                                                body
+                                            };
+                                            rsx! {
+                                                button {
+                                                    r#type: "button",
+                                                    class: "pinned-bar-item",
+                                                    "data-testid": "pinned-bar-item",
+                                                    title: crate::i18n::tr("pinned_bar.scroll_to"),
+                                                    onclick: move |_| {
+                                                        // Best-effort scroll: emit
+                                                        // a console hint via
+                                                        // status_msg so QA can see
+                                                        // the click registered.
+                                                        // Real scroll-into-view
+                                                        // wires into Dioxus's
+                                                        // mounted ref API; deferred
+                                                        // until A6.3 lands the
+                                                        // soland projection.
+                                                        status_msg.set(format!(
+                                                            "jump to pinned message {}",
+                                                            id_for_click
+                                                        ));
+                                                    },
+                                                    "{preview}"
+                                                }
                                             }
                                         }
                                     }
@@ -2764,12 +3083,18 @@ pub fn ChatPanel(
                                     }
                                     time { "{msg.timestamp}" }
                                     if msg.failed {
-                                        span { class: "message-failure-icon", title: "Message send failed",
-                                            UiIcon { name: "alert" }
+                                        span {
+                                            class: "message-status-icon is-failed",
+                                            "data-testid": "message-send-status",
+                                            title: "Message send failed",
+                                            "!"
                                         }
-                                        span { class: "badge badge-error", "failed" }
                                     } else if msg.pending {
-                                        span { class: "badge", "pending" }
+                                        span {
+                                            class: "message-status-icon is-pending",
+                                            "data-testid": "message-send-status",
+                                            title: "Sending"
+                                        }
                                     }
                                     if msg.edited { span { class: "badge", "edited" } }
                                 }
@@ -2867,87 +3192,13 @@ pub fn ChatPanel(
                                     }
                                 } else {
                                     div { class: "msg-content",
-                                        {crate::content::render_blocks(
-                                            &crate::content::parse_message_body(&msg.body),
-                                        )}
-                                    }
-                                }
-                                if !msg.mentions.is_empty() {
-                                    div { class: "actions chat-chip-row", "data-testid": "chat-mentions",
-                                        for mention in &msg.mentions {
-                                            {
-                                                // T7.3: prefer the
-                                                // compose-time
-                                                // `display_snapshot` label;
-                                                // when the snapshot's
-                                                // handle still resolves to
-                                                // a different DID than the
-                                                // event's subject, flag a
-                                                // "handle reassigned"
-                                                // badge with a tooltip.
-                                                let snapshot = mention.display_snapshot.clone();
-                                                let label = if !snapshot.is_empty() {
-                                                    snapshot.clone()
-                                                } else {
-                                                    short_protocol_id(&mention.target)
-                                                };
-                                                // Reassignment heuristic:
-                                                // we have a captured
-                                                // snapshot/handle URI but
-                                                // the local participant
-                                                // list now shows a
-                                                // different DID for that
-                                                // display name.
-                                                let reassigned = if !snapshot.is_empty() {
-                                                    let snap_lower = snapshot.to_ascii_lowercase();
-                                                    let current_match = participants_for_messages.iter().find(|p| {
-                                                        p.display_name
-                                                            .as_deref()
-                                                            .map(|n| n.to_ascii_lowercase() == snap_lower)
-                                                            .unwrap_or(false)
-                                                    });
-                                                    match current_match {
-                                                        Some(p) => p.did != mention.target,
-                                                        None => false,
-                                                    }
-                                                } else {
-                                                    false
-                                                };
-                                                let mention_target = mention.target.clone();
-                                                rsx! {
-                                                    span {
-                                                        class: "badge timeline-event-mention",
-                                                        "data-testid": "timeline-event-mention",
-                                                        "data-mention-did": "{mention_target}",
-                                                        title: "{mention.target}",
-                                                        "@{label}"
-                                                    }
-                                                    if reassigned {
-                                                        span {
-                                                            class: "handle-reassigned-badge",
-                                                            "data-testid": "handle-reassigned-badge",
-                                                            title: crate::i18n::tr("chat.handle_reassigned.tooltip"),
-                                                            "\u{26a0} "
-                                                            {crate::i18n::tr("chat.handle_reassigned.badge")}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        {render_message_body(&msg.body, &msg.mentions, &base_url)}
                                     }
                                 }
                                 if !msg.reactions.is_empty() {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-reactions",
                                         for (emoji, senders) in &msg.reactions {
                                             span { class: "badge", "{emoji} {senders.len()}" }
-                                        }
-                                    }
-                                }
-                                if !msg.revisions.is_empty() {
-                                    div { class: "section chat-revision-stack", "data-testid": "chat-revision-chain",
-                                        div { class: "muted", "Edited versions ({msg.revisions.len()})" }
-                                        for revision in &msg.revisions {
-                                            div { class: "muted", "{revision}" }
                                         }
                                     }
                                 }
@@ -3150,26 +3401,6 @@ pub fn ChatPanel(
                                                 move |_| redact_confirm.set(Some(msg_id.clone()))
                                             },
                                             {crate::i18n::tr("chat.button.redact")}
-                                        }
-                                        // G3.Y2 — discussion promote.
-                                        // Opens the modal that creates
-                                        // a new child Space and
-                                        // re-routes future discussion
-                                        // messages to it. See
-                                        // `messaging::discussion_promote`.
-                                        button {
-                                            class: "chat-message-action",
-                                            "data-testid": "discussion-promote-button",
-                                            onclick: {
-                                                let msg_id = msg.id.clone();
-                                                let default_title = selected_channel_name.clone();
-                                                move |_| {
-                                                    promote_discussion_draft
-                                                        .write()
-                                                        .open(msg_id.clone(), default_title.clone());
-                                                }
-                                            },
-                                            "Promote to space"
                                         }
                                     }
                                 }
@@ -3944,7 +4175,7 @@ pub fn ChatPanel(
             // "everyone read up to here" anchor without scrolling
             // around. The marker itself is actor-private — see
             // discovery/read-receipts.md §3.1.
-            if !latest_read_marker().is_empty() {
+            if !embedded && !latest_read_marker().is_empty() {
                 {
                     let latest_read_marker_value = latest_read_marker();
                     let latest_read_marker_label = short_protocol_id(&latest_read_marker_value);
@@ -4250,12 +4481,13 @@ pub fn ChatPanel(
                                 let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
-                                        .map(|p| crate::messaging::mentions::MentionCandidate {
-                                            did: p.did.clone(),
-                                            display_name: p
-                                                .display_name
-                                                .clone()
-                                                .unwrap_or_else(|| p.did.clone()),
+                                        .filter_map(|p| {
+                                            mention_label_for_participant(p).map(|display_name| {
+                                                crate::messaging::mentions::MentionCandidate {
+                                                    did: p.did.clone(),
+                                                    display_name,
+                                                }
+                                            })
                                         })
                                         .collect();
                                 let state_snapshot = mention_picker_state.read().clone();
@@ -4272,13 +4504,13 @@ pub fn ChatPanel(
                                         } else {
                                             for candidate in matches {
                                                 {
-                                                    let candidate_did_label = short_protocol_id(&candidate.did);
                                                     rsx! {
                                                         button {
                                                             r#type: "button",
                                                             class: "mention-suggestion",
                                                             "data-testid": "mention-suggestion",
                                                             "data-mention-did": "{candidate.did}",
+                                                            title: "@{candidate.display_name}",
                                                             onclick: {
                                                                 let candidate = candidate.clone();
                                                                 move |_| {
@@ -4308,10 +4540,7 @@ pub fn ChatPanel(
                                                                 }
                                                             },
                                                             span { class: "mention-suggestion-name",
-                                                                "{candidate.display_name}"
-                                                            }
-                                                            span { class: "muted mono", title: "{candidate.did}",
-                                                                " {candidate_did_label}"
+                                                                "@{candidate.display_name}"
                                                             }
                                                         }
                                                     }
@@ -4527,12 +4756,17 @@ pub fn ChatPanel(
                                     let picker = mention_picker_state.read().inserted.clone();
                                     for chip in picker {
                                         if !mentions.iter().any(|m| m.target == chip.did) {
+                                            let parsed_handle = crate::identity_handle::parse_user_handle(
+                                                &chip.display_name,
+                                            );
                                             mentions.push(crate::views::helpers::StructuredMention {
                                                 kind: "actor".to_owned(),
                                                 target: chip.did.clone(),
                                                 token: format!("@{}", chip.display_name),
                                                 display_snapshot: chip.display_name.clone(),
-                                                handle_uri: String::new(),
+                                                handle_uri: parsed_handle
+                                                    .map(|handle| handle.handle_uri)
+                                                    .unwrap_or_default(),
                                                 resolved_at: String::new(),
                                             });
                                         }
@@ -5081,7 +5315,7 @@ pub fn ChatPanel(
                         }
                     }
                 }
-                if !status_msg().is_empty() {
+                if !embedded && !status_msg().is_empty() {
                     div { class: "muted discussion-status", "data-testid": "chat-status", "{status_msg}" }
                 }
             }
@@ -5132,6 +5366,20 @@ fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<se
             })
         })
         .collect()
+}
+
+fn scroll_chat_feed_to_latest() {
+    let script = r#"
+setTimeout(() => {
+  const panels = document.querySelectorAll('[data-testid="chat-panel"]');
+  const panel = panels[panels.length - 1];
+  const feed = panel && panel.querySelector('[data-testid="message-list"]');
+  if (feed) {
+    feed.scrollTop = feed.scrollHeight;
+  }
+}, 0);
+"#;
+    let _ = document::eval(script);
 }
 
 #[cfg(test)]
@@ -5345,6 +5593,7 @@ mod tests {
         let participants = vec![SpaceParticipant {
             did: "did:web:bob.example".to_owned(),
             display_name: Some("Bobby".to_owned()),
+            handle_label: None,
             display_name_rank: 0,
             role: SpaceParticipantRole::Member,
             is_self: false,
@@ -5393,6 +5642,89 @@ mod tests {
     }
 
     #[test]
+    fn extracts_participant_handle_label_from_projection() {
+        let projection = json!({
+            "members": [
+                {
+                    "actor_id": "did:web:example.com:users:bob",
+                    "handle_uri": "contrix://example.com/users/bob"
+                }
+            ]
+        });
+
+        let participants = space_participants(Some(&projection), "did:web:alice.example");
+        let bob = participants
+            .iter()
+            .find(|participant| participant.did == "did:web:example.com:users:bob")
+            .unwrap();
+
+        assert_eq!(
+            mention_label_for_participant(bob).as_deref(),
+            Some("bob:example.com")
+        );
+    }
+
+    #[test]
+    fn mention_label_for_participant_requires_handle() {
+        let participant = SpaceParticipant {
+            did: "did:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC:local.host:webvh:01ks6dnzv".to_owned(),
+            display_name: None,
+            handle_label: None,
+            display_name_rank: u8::MAX,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: false,
+        };
+
+        assert!(mention_label_for_participant(&participant).is_none());
+    }
+
+    #[test]
+    fn mention_inline_parts_styles_only_full_handles() {
+        let mention = StructuredMention {
+            kind: "actor".to_owned(),
+            target: "did:web:local.host:users:alice".to_owned(),
+            token: "@alice:local.host".to_owned(),
+            display_snapshot: "alice:local.host".to_owned(),
+            handle_uri: "contrix://local.host/users/alice".to_owned(),
+            resolved_at: String::new(),
+        };
+
+        let parts = mention_inline_parts(
+            "@alice Hello @alice:local.host.",
+            &[mention],
+            "https://auth.local.host",
+        );
+        assert!(parts.iter().any(
+            |part| part.mention_label.as_deref() == Some("alice:local.host") && part.is_local
+        ));
+        assert!(
+            parts
+                .iter()
+                .any(|part| part.text == "@alice" && part.mention_label.is_none())
+        );
+    }
+
+    #[test]
+    fn mention_inline_parts_marks_external_handles_remote() {
+        let mention = StructuredMention {
+            kind: "actor".to_owned(),
+            target: "did:web:example.com:users:bob".to_owned(),
+            token: "@bob:example.com".to_owned(),
+            display_snapshot: "bob:example.com".to_owned(),
+            handle_uri: "contrix://example.com/users/bob".to_owned(),
+            resolved_at: String::new(),
+        };
+
+        let parts = mention_inline_parts("@bob:example.com", &[mention], "https://local.host");
+        let mention_part = parts
+            .iter()
+            .find(|part| part.mention_label.as_deref() == Some("bob:example.com"))
+            .unwrap();
+        assert!(!mention_part.is_local);
+    }
+
+    #[test]
     fn participant_with_agent_did_renders_with_agent_badge() {
         // Three participants in the space: Alice (the local account),
         // Bob (a real human member), and a Researcher Agent registered
@@ -5403,6 +5735,7 @@ mod tests {
             SpaceParticipant {
                 did: "did:web:alice.example".to_owned(),
                 display_name: Some("Alice".to_owned()),
+                handle_label: None,
                 display_name_rank: 0,
                 role: SpaceParticipantRole::Owner,
                 is_self: true,
@@ -5411,6 +5744,7 @@ mod tests {
             SpaceParticipant {
                 did: "did:web:bob.example".to_owned(),
                 display_name: Some("Bob".to_owned()),
+                handle_label: None,
                 display_name_rank: 1,
                 role: SpaceParticipantRole::Member,
                 is_self: false,
@@ -5419,6 +5753,7 @@ mod tests {
             SpaceParticipant {
                 did: "did:web:researcher-agent.example".to_owned(),
                 display_name: None,
+                handle_label: None,
                 display_name_rank: u8::MAX,
                 role: SpaceParticipantRole::Member,
                 is_self: false,

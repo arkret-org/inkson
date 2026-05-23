@@ -2495,7 +2495,16 @@ pub fn KanbanPanel(
                     } else {
                         "card-detail-description"
                     };
-                    let description_toggle_label = if description_is_expanded { "Less" } else { "More" };
+                    let description_toggle_label = if description_is_expanded {
+                        "Less"
+                    } else {
+                        "More"
+                    };
+                    let action_menu_class = if editing_card_detail() {
+                        "card-detail-action-menu is-editing"
+                    } else {
+                        "card-detail-action-menu"
+                    };
                     let summary_text = card_summary_text(&card.description);
                     let overlay_navigator = navigator.clone();
                     let overlay_board_route = board_route_after_close.clone();
@@ -2595,62 +2604,37 @@ pub fn KanbanPanel(
                                                 UiIcon { name: "more-horizontal" }
                                             }
                                             if card_detail_actions_open() {
-                                                div { class: "card-detail-action-menu", "data-testid": "card-detail-actions-menu",
+                                                div { class: "{action_menu_class}", "data-testid": "card-detail-actions-menu",
                                                     if editing_card_detail() {
-                                                        button {
-                                                            class: "card-detail-action-menu-item",
-                                                            "data-testid": "card-detail-save-button",
-                                                            onclick: {
-                                                                let base = base_url.clone();
-                                                                let space = selected_space.clone();
-                                                                let actor = account_did.clone();
-                                                                let current = card.clone();
-                                                                move |_| {
-                                                                    let draft = CardDetailDraft {
-                                                                        title: card_edit_title().trim().to_owned(),
-                                                                        description: card_edit_description().trim().to_owned(),
-                                                                        labels: parse_card_labels(&card_edit_labels()),
-                                                                        assignee: card_edit_assignee().trim().to_owned(),
-                                                                        due: card_edit_due().trim().to_owned(),
-                                                                    };
-                                                                    if dispatch_card_detail_update(
-                                                                        base.clone(),
-                                                                        token,
-                                                                        space.clone(),
-                                                                        actor.clone(),
-                                                                        current.clone(),
-                                                                        draft,
-                                                                        columns,
-                                                                        selected_card,
-                                                                        state_store,
-                                                                        board_status,
-                                                                    ) {
-                                                                        editing_card_detail.set(false);
-                                                                        card_detail_actions_open.set(false);
-                                                                    }
-                                                                }
-                                                            },
-                                                            UiIcon { name: "check" }
-                                                            span { {crate::i18n::tr("common.save")} }
+                                                        div { class: "card-detail-action-menu-field",
+                                                            label { "Labels" }
+                                                            input {
+                                                                class: "input",
+                                                                "data-testid": "card-detail-labels-input",
+                                                                value: "{card_edit_labels}",
+                                                                placeholder: "release, ops",
+                                                                oninput: move |evt| card_edit_labels.set(evt.value()),
+                                                            }
                                                         }
-                                                        button {
-                                                            class: "card-detail-action-menu-item",
-                                                            "data-testid": "card-detail-cancel-edit-button",
-                                                            onclick: {
-                                                                let current = card.clone();
-                                                                move |_| {
-                                                                    let draft = card_detail_draft_from_card(&current);
-                                                                    card_edit_title.set(draft.title);
-                                                                    card_edit_description.set(draft.description);
-                                                                    card_edit_labels.set(draft.labels.join(", "));
-                                                                    card_edit_assignee.set(draft.assignee);
-                                                                    card_edit_due.set(draft.due);
-                                                                    editing_card_detail.set(false);
-                                                                    card_detail_actions_open.set(false);
-                                                                }
-                                                            },
-                                                            UiIcon { name: "x" }
-                                                            span { {crate::i18n::tr("common.cancel")} }
+                                                        div { class: "card-detail-action-menu-field",
+                                                            label { "Assignee" }
+                                                            input {
+                                                                class: "input",
+                                                                "data-testid": "card-detail-assignee-input",
+                                                                value: "{card_edit_assignee}",
+                                                                placeholder: "alice:example.com or did:web:...",
+                                                                oninput: move |evt| card_edit_assignee.set(evt.value()),
+                                                            }
+                                                        }
+                                                        div { class: "card-detail-action-menu-field",
+                                                            label { "Due date" }
+                                                            input {
+                                                                class: "input",
+                                                                "data-testid": "card-detail-due-input",
+                                                                value: "{card_edit_due}",
+                                                                placeholder: "2026-05-20",
+                                                                oninput: move |evt| card_edit_due.set(evt.value()),
+                                                            }
                                                         }
                                                     } else {
                                                         button {
@@ -2788,36 +2772,59 @@ pub fn KanbanPanel(
                                                 on_change: move |value| card_edit_description.set(value),
                                             }
                                         }
-                                        div { class: "card-detail-edit-grid",
-                                            div { class: "field",
-                                                label { "Labels" }
-                                                input {
-                                                    class: "input",
-                                                    "data-testid": "card-detail-labels-input",
-                                                    value: "{card_edit_labels}",
-                                                    placeholder: "release, ops",
-                                                    oninput: move |evt| card_edit_labels.set(evt.value()),
-                                                }
+                                        div { class: "card-detail-form-actions",
+                                            button {
+                                                class: "primary",
+                                                "data-testid": "card-detail-save-button",
+                                                onclick: {
+                                                    let base = base_url.clone();
+                                                    let space = selected_space.clone();
+                                                    let actor = account_did.clone();
+                                                    let current = card.clone();
+                                                    move |_| {
+                                                        let draft = CardDetailDraft {
+                                                            title: card_edit_title().trim().to_owned(),
+                                                            description: card_edit_description().trim().to_owned(),
+                                                            labels: parse_card_labels(&card_edit_labels()),
+                                                            assignee: card_edit_assignee().trim().to_owned(),
+                                                            due: card_edit_due().trim().to_owned(),
+                                                        };
+                                                        if dispatch_card_detail_update(
+                                                            base.clone(),
+                                                            token,
+                                                            space.clone(),
+                                                            actor.clone(),
+                                                            current.clone(),
+                                                            draft,
+                                                            columns,
+                                                            selected_card,
+                                                            state_store,
+                                                            board_status,
+                                                        ) {
+                                                            editing_card_detail.set(false);
+                                                            card_detail_actions_open.set(false);
+                                                        }
+                                                    }
+                                                },
+                                                {crate::i18n::tr("common.save")}
                                             }
-                                            div { class: "field",
-                                                label { "Assignee" }
-                                                input {
-                                                    class: "input",
-                                                    "data-testid": "card-detail-assignee-input",
-                                                    value: "{card_edit_assignee}",
-                                                    placeholder: "alice:example.com or did:web:...",
-                                                    oninput: move |evt| card_edit_assignee.set(evt.value()),
-                                                }
-                                            }
-                                            div { class: "field",
-                                                label { "Due date" }
-                                                input {
-                                                    class: "input",
-                                                    "data-testid": "card-detail-due-input",
-                                                    value: "{card_edit_due}",
-                                                    placeholder: "2026-05-20",
-                                                    oninput: move |evt| card_edit_due.set(evt.value()),
-                                                }
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "card-detail-cancel-edit-button",
+                                                onclick: {
+                                                    let current = card.clone();
+                                                    move |_| {
+                                                        let draft = card_detail_draft_from_card(&current);
+                                                        card_edit_title.set(draft.title);
+                                                        card_edit_description.set(draft.description);
+                                                        card_edit_labels.set(draft.labels.join(", "));
+                                                        card_edit_assignee.set(draft.assignee);
+                                                        card_edit_due.set(draft.due);
+                                                        editing_card_detail.set(false);
+                                                        card_detail_actions_open.set(false);
+                                                    }
+                                                },
+                                                {crate::i18n::tr("common.cancel")}
                                             }
                                         }
                                     }

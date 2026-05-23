@@ -245,17 +245,6 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 ',' | '.' | '!' | '?' | ':' | ';' | ')' | '(' | '[' | ']' | '"' | '\''
             )
         });
-        if let Some(actor) = normalized.strip_prefix("@did:") {
-            mentions.push(StructuredMention {
-                kind: "actor".to_owned(),
-                target: format!("did:{actor}"),
-                token: normalized.to_owned(),
-                display_snapshot: String::new(),
-                handle_uri: String::new(),
-                resolved_at: String::new(),
-            });
-            continue;
-        }
         if let Some(handle) = normalized.strip_prefix('@') {
             if !handle.is_empty() {
                 if let Some(parsed) = crate::identity_handle::parse_user_handle(handle) {
@@ -265,15 +254,6 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                         token: normalized.to_owned(),
                         display_snapshot: parsed.display,
                         handle_uri: parsed.handle_uri,
-                        resolved_at: String::new(),
-                    });
-                } else {
-                    mentions.push(StructuredMention {
-                        kind: "actor".to_owned(),
-                        target: format!("did:web:{handle}"),
-                        token: normalized.to_owned(),
-                        display_snapshot: handle.to_owned(),
-                        handle_uri: String::new(),
                         resolved_at: String::new(),
                     });
                 }
@@ -321,14 +301,15 @@ mod tests {
     #[test]
     fn parses_actor_and_entity_mentions() {
         let mentions = parse_structured_mentions(
-            "ping @did:web:bob.example and @carol:example.com about #cx:task:123 and #topic-demo",
+            "ping @did:web:bob.example and @Alice and @carol:example.com about #cx:task:123 and #topic-demo",
         );
 
-        assert_eq!(mentions.len(), 4);
+        assert_eq!(mentions.len(), 3);
+        assert!(!mentions.iter().any(|mention| mention.token == "@Alice"));
         assert!(
-            mentions
+            !mentions
                 .iter()
-                .any(|mention| mention.target == "did:web:bob.example")
+                .any(|mention| mention.token == "@did:web:bob.example")
         );
         assert!(
             mentions

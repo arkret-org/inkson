@@ -63,7 +63,8 @@ pub fn LoginPanel(
         callback_started.set(true);
         is_busy.set(true);
 
-        let result = finish_oidc_callback(device_id()).await;
+        let callback_device = device_id();
+        let result = finish_oidc_callback(callback_device).await;
         match result {
             Ok(completed) => {
                 let principal_server_url = normalize_server_url(&completed.principal_server_url);
@@ -125,6 +126,7 @@ pub fn LoginPanel(
                     onclick: move |_| {
                         let principal = base_url();
                         let device = normalize_device_id(&device_id());
+                        let actor = account_did();
                         device_id.set(device.clone());
                         is_busy.set(true);
                         auth_status.set("Opening server sign-in...".to_owned());
@@ -134,7 +136,7 @@ pub fn LoginPanel(
                                     persist_config(
                                         config_store,
                                         principal,
-                                        account_did(),
+                                        actor,
                                         device,
                                         String::new(),
                                     );
@@ -181,11 +183,12 @@ pub fn LoginPanel(
                                 auth_status.set("Starting passkey registration...".to_owned());
                                 let principal = base_url();
                                 let device = normalize_device_id(&device_id());
+                                let actor = account_did();
                                 device_id.set(device.clone());
                                 spawn(async move {
                                     let result = run_passkey_register(
                                         &principal,
-                                        &account_did(),
+                                        &actor,
                                         &device,
                                         state_store_write,
                                     )
@@ -208,11 +211,12 @@ pub fn LoginPanel(
                                 auth_status.set("Authenticating with passkey...".to_owned());
                                 let principal = base_url();
                                 let device = normalize_device_id(&device_id());
+                                let actor = account_did();
                                 device_id.set(device.clone());
                                 spawn(async move {
                                     let outcome = run_passkey_login(
                                         &principal,
-                                        &account_did(),
+                                        &actor,
                                         &device,
                                         state_store_write,
                                     )
@@ -304,6 +308,9 @@ pub fn LoginPanel(
                                     "data-testid": "refresh-now-button",
                                     disabled: is_busy(),
                                     onclick: move |_| {
+                                        let principal = base_url();
+                                        let actor = account_did();
+                                        let device = device_id();
                                         is_busy.set(true);
                                         auth_status.set("Refreshing session...".to_owned());
                                         spawn(async move {
@@ -311,7 +318,7 @@ pub fn LoginPanel(
                                                 let mut store = state_store_write.write();
                                                 crate::session_refresh::prepare_refresh_for_server(
                                                     &mut store,
-                                                    &base_url(),
+                                                    &principal,
                                                 )
                                             };
                                             let outcome = match prepared {
@@ -327,9 +334,9 @@ pub fn LoginPanel(
                                                     token.set(access_token.clone());
                                                     persist_config(
                                                         config_store,
-                                                        base_url(),
-                                                        account_did(),
-                                                        device_id(),
+                                                        principal.clone(),
+                                                        actor.clone(),
+                                                        device.clone(),
                                                         access_token,
                                                     );
                                                     auth_status.set("Session refreshed".to_owned());
@@ -344,9 +351,9 @@ pub fn LoginPanel(
                                                     token.set(String::new());
                                                     persist_config(
                                                         config_store,
-                                                        base_url(),
-                                                        account_did(),
-                                                        device_id(),
+                                                        principal.clone(),
+                                                        actor.clone(),
+                                                        device.clone(),
                                                         String::new(),
                                                     );
                                                     auth_status.set(format!("Session expired: {reason}"));

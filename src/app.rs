@@ -887,6 +887,24 @@ body {
   background: var(--surface-solid, var(--surface, var(--cx-surface)));
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
 }
+.card-detail-action-menu.is-editing {
+  min-width: min(360px, calc(100vw - 32px));
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+.card-detail-action-menu-field {
+  display: grid;
+  gap: 5px;
+}
+.card-detail-action-menu-field label {
+  color: var(--text-2, var(--cx-muted));
+  font-size: 12px;
+  font-weight: 800;
+}
+.card-detail-action-menu-field .input {
+  width: 100%;
+}
 .card-detail-action-menu-item {
   width: 100%;
   min-height: 42px;
@@ -1408,10 +1426,10 @@ body {
   color: var(--editor-accent);
   border-bottom-color: var(--editor-accent);
 }
-.card-detail-edit-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+.card-detail-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 @media (max-width: 900px) {
   .card-detail-overlay {
@@ -1432,9 +1450,6 @@ body {
   .card-detail-sidebar {
     border-left: 0;
     border-top: 1px solid var(--border, var(--cx-line));
-  }
-  .card-detail-edit-grid {
-    grid-template-columns: 1fr;
   }
 }
 .chat-message-row {
@@ -2012,6 +2027,10 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   grid-row: 1;
 }
 
+.discussion-shell.embedded .discussion-chat-head {
+  display: none;
+}
+
 .discussion-composer {
   grid-column: 2;
   grid-row: 2;
@@ -2023,6 +2042,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .discussion-shell.embedded .discussion-composer {
   grid-column: 1;
   grid-row: 2;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .discussion-details-panel,
@@ -2236,6 +2260,22 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow-y: auto;
 }
 
+.mention-picker {
+  min-width: 0;
+}
+
+.mention-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mention-picker-query {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mention-suggestion,
 .mention-suggestion-item {
   display: flex;
   align-items: center;
@@ -2249,8 +2289,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  min-width: 0;
 }
 
+.mention-suggestion:hover,
+.mention-suggestion:focus-visible,
 .mention-suggestion-item:hover,
 .mention-suggestion-item:focus-visible {
   background: var(--surface-2, color-mix(in srgb, var(--accent) 10%, transparent));
@@ -2258,12 +2301,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .mention-suggestion-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
-}
-
-.mention-suggestion-did {
-  font-size: 12px;
-  font-family: var(--font-mono, monospace);
 }
 
 .discussion-modal-backdrop {
@@ -2546,11 +2588,59 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow-wrap: anywhere;
 }
 
-.message-failure-icon {
+.mention-token {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.mention-token.is-local {
+  border-color: color-mix(in srgb, #22c55e 42%, var(--border));
+  background: color-mix(in srgb, #22c55e 18%, transparent);
+  color: #bbf7d0;
+}
+.mention-token.is-remote {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--accent-ink);
+}
+
+.message-failure-icon,
+.message-status-icon {
   display: inline-grid;
   place-items: center;
   color: var(--danger-ink);
   line-height: 1;
+}
+.message-status-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+.message-status-icon.is-pending {
+  border: 2px solid color-mix(in srgb, var(--accent) 72%, var(--border));
+  border-right-color: transparent;
+  color: transparent;
+  animation: message-send-spin 760ms linear infinite;
+}
+.message-status-icon.is-failed {
+  background: var(--danger);
+  color: var(--text-on-accent);
+}
+@keyframes message-send-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .message-error-row {
@@ -2691,6 +2781,8 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 
 .discussion-composer .mention-chip-row {
   position: relative;
+  display: flex;
+  align-items: center;
   justify-content: flex-start;
   gap: 6px;
 }
@@ -2737,6 +2829,37 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.discussion-shell.embedded .discussion-composer {
+  position: relative;
+}
+
+.discussion-shell.embedded .discussion-composer .mention-chip-row {
+  min-height: 30px;
+  padding-right: 80px;
+}
+
+.discussion-shell.embedded .discussion-composer > .actions {
+  height: 0;
+  min-height: 0;
+  margin-top: -48px;
+  padding: 0 10px;
+  justify-content: flex-end;
+  overflow: visible;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+.discussion-shell.embedded .discussion-composer > .actions > button {
+  pointer-events: auto;
+}
+
+.discussion-shell.embedded .discussion-composer > .actions > button:not([data-testid="send-chat-button"]),
+.discussion-shell.embedded .compose-security-panel,
+.discussion-shell.embedded [data-testid="send-e2ee-move-button"] {
+  display: none;
 }
 
 .compose-security-panel {
@@ -5657,8 +5780,8 @@ pub fn RouterView() -> Element {
                         persist_config(
                             config_store,
                             active_base.clone(),
-                            account_did(),
-                            device_id(),
+                            active_actor.clone(),
+                            active_device.clone(),
                             access_token,
                         );
                     }
@@ -6978,6 +7101,7 @@ pub fn RouterView() -> Element {
                                                     move |_| {
                                                         let base = base.clone();
                                                         let api_token = token();
+                                                        let actor = account_did();
                                                         let device = device_id();
                                                         account_session_state.set("Refreshing session".to_owned());
                                                         spawn(async move {
@@ -7004,7 +7128,7 @@ pub fn RouterView() -> Element {
                                                                             persist_config(
                                                                                 config_store,
                                                                                 base.clone(),
-                                                                                account_did(),
+                                                                                actor.clone(),
                                                                                 device.clone(),
                                                                                 String::new(),
                                                                             );
