@@ -2972,6 +2972,7 @@ impl RealmBootstrapMember {
                 "binding_source": "invite",
                 "delivery_modes": ["events", "sync", "to_device", "push", "key_packages"],
                 "resolved_at": resolved_at,
+                "service_acceptance_ref": format!("cx:event:{}", uuid_v7()),
             })),
         }
     }
@@ -4468,6 +4469,11 @@ mod tests {
             "principal_server"
         );
         assert_eq!(member.payload["delivery_binding"]["binding_scope"], "realm");
+        assert!(
+            member.payload["delivery_binding"]["service_acceptance_ref"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("cx:event:"))
+        );
     }
 
     #[test]
