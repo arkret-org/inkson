@@ -1,0 +1,77 @@
+# yougen — Release-Readiness Tasks
+
+> Parent plan: [`../_todos_all.md`](../_todos_all.md)
+> Project role: cross-platform contrix client.
+> Phase: **3 (track 3a)**.
+
+## State at start (2026-05-24)
+
+- Dioxus 0.7.5; macOS + Windows + Linux build green in CI; iOS + Android stubs only (panic on call).
+- 764 unit tests pass. Cross-browser Playwright matrix (Chromium/Firefox/WebKit × 11 specs).
+- 103 TODO/FIXME + 74 `todo!()`/`panic!()`/`unimplemented!()` macros.
+- Spec alignment (v3 `_api_report.md`, 2026-05-21) — yougen ↔ soland fully aligned via `cx.events.submit`.
+- Push tokens are placeholders; chime server-grant mint is TODO.
+
+## Phase 3 tasks
+
+### Push integration closure (highest user-impact)
+- [ ] §1 `src/push.rs:633-663` + `src/app.rs:4908-4941` — replace `FcmPushTokenProvider` placeholder with a real FCM token bridge (Android JNI / iOS APNs / WebPush).
+- [ ] §2 `src/push.rs:837` — supply real token to chime once §1 lands.
+- [ ] §3 `src/push_registration.rs:146` — mint server grant before `register_device` (depends on coauth §4 grant API).
+- [ ] §4 `src/api.rs:1296` — chime grant mint call wired.
+
+### Mobile decision + execution (Q5 in master plan)
+- [ ] §5 Decision item: ship 1.0 desktop+web only, or invest in iOS+Android CI?
+- [ ] §6 [if shipping mobile] iOS CI matrix in `packages.yml`: macOS runner, Xcode setup, ad-hoc signing, build `.ipa`.
+- [ ] §7 [if shipping mobile] Android CI matrix: Android SDK, Gradle build, signed APK.
+- [ ] §8 [if shipping mobile] Replace panics in `src/secure_key_store.rs:451,508` with real Android Keystore + iOS Keychain integrations.
+
+### Deferred features — explicit gating
+- [ ] §9 `src/messaging/polls.rs:10` — either ship `cx.content.poll.*` in soland and finish polls UI, or hide the poll tab behind a feature flag.
+- [ ] §10 `src/messaging/discussion_promote.rs:14` — same: ship soland endpoints or hide.
+- [ ] §11 `src/views/agents.rs:734,758` — same: G3.Y4 agent supply or hide.
+- [ ] §12 `src/views/applets.rs:452,490` — same: G3.Y4 applet pre-fill or hide.
+- [ ] §13 `src/snapshot.rs:22,45` — finish chunked import staging or fail clearly on partial bootstrap.
+
+### Code-signing pipeline (cannot ship without)
+- [ ] §14 macOS local signing/notarization dry-run: codesign with local credentials when present, validate notarytool input, and document that no submit/staple happens in this local plan.
+- [ ] §15 Windows local code-signing dry-run: support `signtool sign` with a local certificate path/env when present; do not require GHA secrets.
+- [ ] §16 Linux: gpg-sign tarballs + provide a deb/rpm/AppImage/Flatpak.
+- [ ] §17 Web image: build locally and generate SBOM/cosign evidence. Do not push to GHCR or any registry.
+
+### Auth flow closure
+- [ ] §18 `src/coauth.rs:896,913,945-946,963,1018,1034` — finish OIDC callback capture, PKCE verifier auto-exchange, passkey flow.
+- [ ] §19 `src/auth_dpop.rs:33,114,134` — wire DPoP `ath` claim + IndexedDB storage.
+
+### Local state durability
+- [ ] §20 `src/local_state.rs:147,865,880,1105` — IndexedDB key store, secure-key-store handoff, linear-scan cache replacement.
+
+### Tests
+- [ ] §21 Promote the live yougen ↔ soland integration out of `_test_todos_claude.md` Phase 6 into mainline tests (coordinate with cotest §3 of `_cotest_todos.md`).
+- [ ] §22 Add cross-platform smoke spec for push subscribe / receive on each desktop OS (currently only Chromium-on-Linux exercises Web Push).
+
+### Engineering hygiene
+- [ ] §23 Add Trivy scan on web Dockerfile.
+- [ ] §24 Add Lighthouse perf budget on web build.
+- [ ] §25 Add a release-checklist doc (`docs/RELEASING.md`).
+
+### Docs
+- [ ] §26 `docs/deployment.md` covering soland-pairing, push-gateway wiring, mobile build setup.
+- [ ] §27 Add `SECURITY.md` (currently missing).
+- [ ] §28 Threat model doc covering local key storage, push privacy, recovery flow.
+
+### Stale concepts
+- [ ] §29 Cleanup the 4 `TODO(realm-rework)` sites once SDK 0.8.0 removes aliases.
+
+## Exit gate (phase 3)
+
+All of:
+1. §1-§4 closed; push works end-to-end on at least one platform.
+2. §14-§17: local build/signing evidence exists without remote submit, registry push, or tag.
+3. §18-§19 closed; OIDC flow fully exercised in e2e.
+4. Record a local `v0.9.0` milestone without creating a git tag.
+
+## Notes
+
+- The `_api_report.md` v3 audit is comprehensive — when you change endpoint surfaces, refresh that doc too.
+- Phase-3 decision Q5 cascades into §5–§8; don't start mobile work until decided.
