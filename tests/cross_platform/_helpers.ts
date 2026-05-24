@@ -1,6 +1,6 @@
 // Round 27: shared helpers for the cross-platform deployment matrix.
 //
-// The four scenario specs (subtle_crypto / push_subscribe /
+// The scenario specs (subtle_crypto / push_subscribe / push_receive /
 // local_storage / oidc_pkce) all need the same plumbing:
 //   1. Resolve the configured browser engine from `browserName`.
 //   2. Self-skip when the target engine isn't installed locally
@@ -8,8 +8,8 @@
 //      first navigation; the `skipIfBrowserUnavailable` helper turns
 //      that into a `test.skip` so the matrix stays green on partial
 //      installs).
-//   3. Wait for the wasm bundle to boot — `client-shell` is the same
-//      data-testid the existing `tests/e2e` suite already keys off.
+//   3. Wait for the wasm bundle to boot — authenticated sessions expose
+//      `client-shell`, while fresh local profiles expose `auth-shell`.
 //
 // The harness is intentionally light on app-specific knowledge: every
 // scenario uses `page.evaluate` to drive the browser API directly
@@ -38,11 +38,14 @@ export async function gotoOrSkip(page: Page, path: string): Promise<void> {
   }
 }
 
-/** Wait for the wasm bundle's `client-shell` testid to appear. The
- * existing `tests/e2e` suite uses the same selector, so this stays
- * consistent across harnesses. */
+/** Wait for either wasm shell to appear. The platform API specs do not
+ * need an authenticated client session; they only need a booted bundle
+ * and the browser APIs available on the page origin. */
 export async function waitForBundleReady(page: Page): Promise<void> {
-  await page.waitForSelector("[data-testid=client-shell]", { timeout: 60_000 });
+  await page.waitForSelector(
+    "[data-testid=client-shell], [data-testid=auth-shell]",
+    { timeout: 120_000 },
+  );
 }
 
 /** True when the page exposes a working SubtleCrypto. Some Firefox
@@ -71,4 +74,17 @@ export async function ensurePushManagerAvailable(page: Page): Promise<void> {
     );
   });
   test.skip(!ok, "PushManager not exposed in this context");
+}
+
+/** True when a service worker can be registered from the current
+ * origin. Push receive smoke only needs the worker message contract;
+ * real provider delivery stays in the release-channel staging matrix. */
+export async function ensureServiceWorkerAvailable(page: Page): Promise<void> {
+  const ok = await page.evaluate(() => {
+    return (
+      "serviceWorker" in navigator
+      && typeof navigator.serviceWorker.register === "function"
+    );
+  });
+  test.skip(!ok, "ServiceWorker not exposed in this context");
 }

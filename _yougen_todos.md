@@ -87,7 +87,13 @@
 ### Tests
 - [x] §21 Promote the live yougen ↔ soland integration out of `_test_todos_claude.md` Phase 6 into mainline tests (coordinate with cotest §3 of `_cotest_todos.md`).
   - 2026-05-25 local close: cotest owns the live UI↔soland mainline suite; `run-cotest.ps1 -Profile joint` now runs the promoted `joint-yougen` smoke through `run-joint-e2e.ps1` with soland, coauth/PostgreSQL, and the real yougen web build. Yougen keeps its own `tests/e2e` mock-only by design per README.
-- [ ] §22 Add cross-platform smoke spec for push subscribe / receive on each desktop OS (currently only Chromium-on-Linux exercises Web Push).
+- [x] §22 Add cross-platform smoke spec for push subscribe / receive on each desktop OS (currently only Chromium-on-Linux exercises Web Push).
+  - 2026-05-25 local close: `tests/cross_platform/push_receive.spec.ts`
+    registers a local service worker on the same Chromium/Firefox/WebKit
+    matrix as `push_subscribe.spec.ts`, simulates an opaque
+    `background_sync_needed` wakeup, and asserts readable notification
+    fields/collapse metadata are not forwarded to the foreground page. Real
+    APNs/FCM provider delivery remains a staging/host entitlement check.
 
 ### Engineering hygiene
 - [x] §23 Add Trivy scan on web Dockerfile.

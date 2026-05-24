@@ -1,8 +1,8 @@
 # yougen cross-platform deployment test harness
 
-Round 27 deliverable. Drives the four wasm-facing platform contracts
-(SubtleCrypto AES-GCM, PushManager + VAPID, localStorage round-trip
-of `LocalIdentity`, OIDC PKCE flow start) across **Chromium**,
+Round 27 deliverable. Drives the five wasm-facing platform contracts
+(SubtleCrypto AES-GCM, PushManager + VAPID, opaque push receive,
+localStorage round-trip of `LocalIdentity`, OIDC PKCE flow start) across **Chromium**,
 **Firefox**, and **WebKit (Safari)** so we catch per-engine drift
 before it reaches release.
 
@@ -12,7 +12,10 @@ is intentionally narrow: it only validates the platform APIs the
 round-26 `WebCryptoBoundary` / `web_push_subscribe` paths depend on.
 The Rust unit tests in `src/crypto_boundary.rs`, `src/push.rs`,
 `src/local_state.rs`, and `src/coauth.rs` cover the in-Rust logic;
-this matrix only checks the contract on real engines.
+this matrix only checks the contract on real engines. Local developer
+runs do not exercise real APNs/FCM provider delivery; the receive smoke
+pins the service-worker handoff for an opaque `background_sync_needed`
+wakeup without exposing notification text or collapse metadata.
 
 ## Run
 
@@ -48,6 +51,7 @@ The matrix self-skips when:
 |-----------------------|----------|---------|-----------------|--------------|
 | `subtle_crypto.spec`  | full     | full    | full *           | `crypto_boundary::WebCryptoBoundary` (round 26 R5) |
 | `push_subscribe.spec` | full     | full    | partial **       | `push::WebPushTokenProvider` (round 26 A3) |
+| `push_receive.spec`   | full     | full    | partial **       | Push service-worker receive privacy contract |
 | `local_storage.spec`  | full     | full    | partial ***      | `local_state::LocalStateStore` (round 23) |
 | `oidc_pkce.spec`      | full     | full    | full             | `coauth::open_oidc_authorize_url` + PKCE helpers (round 24) |
 
@@ -59,7 +63,10 @@ SubtleCrypto isn't reachable.
 `subscribe()` rejects with `NotAllowedError`. The matrix only asserts
 the contract surface (option-bag shape, VAPID decode); a real subscribe
 attempt is out of scope for the local dev box and lives in the
-release-channel staging matrix.
+release-channel staging matrix. The receive smoke uses a local service
+worker simulation for the same reason: real APNs/FCM delivery needs
+provider credentials, TLS origin policy, and OS notification
+entitlements.
 
 \*** Safari ITP and private browsing both refuse `localStorage.setItem`
 on third-party contexts; the test self-skips when the write returns an
@@ -133,6 +140,7 @@ tests/cross_platform/
   _helpers.ts                shared skip-on-missing helpers
   subtle_crypto.spec.ts      WebCryptoBoundary platform contract
   push_subscribe.spec.ts     PushManager + VAPID platform contract
+  push_receive.spec.ts       service-worker opaque wakeup contract
   local_storage.spec.ts      LocalIdentity round-trip
   oidc_pkce.spec.ts          PKCE S256 + scheme filter
 ```

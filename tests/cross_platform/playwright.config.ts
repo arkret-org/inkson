@@ -1,7 +1,7 @@
 // Round 27: cross-platform deployment test harness for the yougen
 // wasm bundle. Drives the same scenario set across Chromium, Firefox,
 // and WebKit (Safari) so we catch the SubtleCrypto / PushManager /
-// LocalStorage / OIDC PKCE divergences that the round 26
+// service-worker push receive / LocalStorage / OIDC PKCE divergences that the round 26
 // `WebCryptoBoundary` and round 24 `open_oidc_authorize_url` paths
 // have to cope with.
 //
