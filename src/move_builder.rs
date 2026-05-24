@@ -705,7 +705,7 @@ pub fn build_conflict_repair_move(
     });
     let canonical_bytes =
         canonical::canonical_json_bytes(&body).context("canonicalize repair move body")?;
-    let payload_hash_str = canonical::sha256_digest(&canonical_bytes);
+    let payload_digest_str = canonical::sha256_digest(&canonical_bytes);
     let id_hex: String = Sha256::digest(&canonical_bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -732,7 +732,7 @@ pub fn build_conflict_repair_move(
         sig: MoveSignature {
             alg: "EdDSA".to_owned(),
             verification_method: format!("{issuer}#unsigned"),
-            payload_hash: Hash::new(payload_hash_str)
+            payload_digest: Hash::new(payload_digest_str)
                 .map_err(|e| anyhow::anyhow!("payload hash: {e}"))?,
             created_at: chrono::Utc::now(),
             jws: String::new(),
@@ -806,7 +806,7 @@ fn build_move_inner_with_preconditions_and_refs(
     });
     let canonical_bytes =
         canonical::canonical_json_bytes(&body).context("canonicalize move body")?;
-    let payload_hash_str = canonical::sha256_digest(&canonical_bytes);
+    let payload_digest_str = canonical::sha256_digest(&canonical_bytes);
     let id_hex: String = Sha256::digest(&canonical_bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -831,7 +831,7 @@ fn build_move_inner_with_preconditions_and_refs(
         sig: MoveSignature {
             alg: "EdDSA".to_owned(),
             verification_method: format!("{issuer}#unsigned"),
-            payload_hash: Hash::new(payload_hash_str)
+            payload_digest: Hash::new(payload_digest_str)
                 .map_err(|e| anyhow::anyhow!("payload hash: {e}"))?,
             created_at: chrono::Utc::now(),
             jws: String::new(), // filled in by sign_unsigned_move

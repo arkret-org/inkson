@@ -12,7 +12,7 @@ use contrix_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 /// Round 4 (spec a77b995) — outcome of consuming a
 /// [`contrix_sdk::SnapshotBootstrap`] envelope carried alongside a
 /// `cx.events.query` response. The receiver validates the envelope's
-/// structural fields (`signature`, `state_hash`, `snapshot_frontier`,
+/// structural fields (`signature`, `state_digest`, `snapshot_frontier`,
 /// per-chunk digests) BEFORE applying any chunk bytes. Any failure
 /// returns [`SnapshotBootstrapOutcome::FallBackFullSync`] so the
 /// caller falls back to a full `/sync` rebuild rather than trust a
@@ -25,12 +25,12 @@ use contrix_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 #[derive(Clone, Debug, PartialEq)]
 pub enum SnapshotBootstrapOutcome {
     /// All envelope-level invariants held (signature present,
-    /// state_hash non-empty, snapshot_frontier non-empty, every chunk
+    /// state_digest non-empty, snapshot_frontier non-empty, every chunk
     /// has a digest + fetch_ref). The caller may proceed to the
     /// per-chunk fetch + verify step.
     AcceptedHeader {
         chunk_count: usize,
-        state_hash: String,
+        state_digest: String,
     },
     /// Some structural invariant failed. The caller MUST drop the
     /// bootstrap envelope and fall back to a full sync.
@@ -54,9 +54,9 @@ pub fn consume_snapshot_bootstrap(
             "snapshot_bootstrap.signature is null".to_owned(),
         );
     }
-    if bootstrap.state_hash.as_str().trim().is_empty() {
+    if bootstrap.state_digest.as_str().trim().is_empty() {
         return SnapshotBootstrapOutcome::FallBackFullSync(
-            "snapshot_bootstrap.state_hash is empty".to_owned(),
+            "snapshot_bootstrap.state_digest is empty".to_owned(),
         );
     }
     if bootstrap.snapshot_frontier.is_empty() {
@@ -83,7 +83,7 @@ pub fn consume_snapshot_bootstrap(
     }
     SnapshotBootstrapOutcome::AcceptedHeader {
         chunk_count: bootstrap.chunks.len(),
-        state_hash: bootstrap.state_hash.as_str().to_owned(),
+        state_digest: bootstrap.state_digest.as_str().to_owned(),
     }
 }
 
@@ -138,7 +138,7 @@ mod tests {
                 .unwrap(),
             space_version: "0".to_owned(),
             frontier: Vec::new(),
-            state_hash: canonical::sha256_digest(b"empty"),
+            state_digest: canonical::sha256_digest(b"empty"),
             merkle_root: canonical::sha256_digest(b"empty"),
             chunk_count: 0,
             chunks: Vec::new(),

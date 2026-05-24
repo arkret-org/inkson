@@ -179,7 +179,7 @@ fn yougen_accepts_server_contract_payloads() {
 
     let snapshot: yougen::models::SnapshotHeadResponse = serde_json::from_value(json!({
         "snapshot_ref": "cx:snapshot:cx:space:0196419b-0000-7000-8000-000000000000:head",
-        "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "frontier": {"space_id": "cx:space:0196419b-0000-7000-8000-000000000000"},
         "signature": {"kid": "did:web:server.local#dev", "alg": "none", "sig": ""}
     }))
@@ -207,7 +207,7 @@ fn yougen_accepts_server_contract_payloads() {
 
     let grants: yougen::models::EffectiveGrantsResBody = serde_json::from_value(json!({
         "grants": [{"subject": "did:web:alice.example"}],
-        "state_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00Z"
     }))
     .unwrap();

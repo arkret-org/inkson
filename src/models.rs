@@ -455,7 +455,7 @@ pub struct BackfillResBody {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotHeadResponse {
     pub snapshot_ref: String,
-    pub state_hash: String,
+    pub state_digest: String,
     #[serde(default)]
     pub frontier: Value,
     #[serde(default)]
@@ -476,7 +476,7 @@ pub struct AuthzCheckResBody {
 pub struct EffectiveGrantsResBody {
     #[serde(default)]
     pub grants: Vec<Value>,
-    pub state_hash: Option<String>,
+    pub state_digest: Option<String>,
     pub evaluated_at: String,
 }
 

@@ -212,7 +212,7 @@ fn run_local_mls_encrypt(
     // Self-update commit BEFORE encrypting so the payload runs under
     // the rotated epoch — forward secrecy
     // improves and the Move-pipeline `mls_commit` row can carry the
-    // real `(group_id, epoch, commit_hash)` triple instead of a
+    // real `(group_id, epoch, commit_digest)` triple instead of a
     // synthesized `(space_id, prev_epoch+1, _)` placeholder. Failure
     // here is non-fatal: we fall back to encrypt-without-commit so a
     // single Send Secure still succeeds even if `self_update` rejects.

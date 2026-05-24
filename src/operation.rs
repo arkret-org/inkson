@@ -243,7 +243,7 @@ pub struct EventProof {
     pub kind: String,
     pub alg: String,
     pub verification_method: String,
-    pub payload_hash: String,
+    pub payload_digest: String,
     pub created_at: String,
     pub jws: String,
 }
@@ -409,7 +409,7 @@ impl EventEnvelope {
     pub fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
         let digest = self.canonical_digest()?;
         for proof in &mut self.proofs {
-            proof.payload_hash = digest.clone();
+            proof.payload_digest = digest.clone();
         }
         Ok(())
     }
@@ -2293,7 +2293,7 @@ mod tests {
         let proof = op.proofs.first().expect("proof present");
         assert_eq!(proof.alg, "EdDSA");
         assert_eq!(proof.verification_method, "did:web:alice#k1");
-        assert!(proof.payload_hash.starts_with("sha256:"));
+        assert!(proof.payload_digest.starts_with("sha256:"));
         // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
         assert_eq!(proof.jws.matches('.').count(), 2);
         assert!(op.require_proof().is_ok());

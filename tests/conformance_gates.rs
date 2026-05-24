@@ -259,7 +259,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
             "kind": "detached_jws",
             "alg": "EdDSA",
             "verification_method": "did:web:alice.example#device",
-            "payload_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "payload_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "created_at": "2026-05-21T13:00:00Z",
             "jws": "a.b.c"
         }]

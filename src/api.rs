@@ -788,7 +788,7 @@ impl ContrixApi {
     ///
     /// All five create-locked fields per spec §2.3 (`encryption_profile`,
     /// `security_class`, `federation_policy`, `anchor_profile`,
-    /// `hash_profile`) are sent inline on the create event payload —
+    /// `digest_algorithm`) are sent inline on the create event payload —
     /// no field is dropped at the wire, unlike a REST wrapper that
     /// might only accept a subset.
     #[allow(clippy::too_many_arguments)]
@@ -804,7 +804,7 @@ impl ContrixApi {
         security_class: &str,
         federation_policy: &str,
         anchor_profile: &str,
-        hash_profile: &str,
+        digest_algorithm: &str,
         trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
@@ -835,7 +835,7 @@ impl ContrixApi {
             security_class,
             federation_policy,
             anchor_profile,
-            hash_profile,
+            digest_algorithm,
             trust_domain,
             &invitees,
             &plaintext_visible_services,
@@ -3021,7 +3021,7 @@ pub fn build_realm_bootstrap_events(
     security_class: &str,
     federation_policy: &str,
     anchor_profile: &str,
-    hash_profile: &str,
+    digest_algorithm: &str,
     trust_domain: &str,
     invitees: &[String],
     plaintext_visible_services: &[String],
@@ -3045,7 +3045,7 @@ pub fn build_realm_bootstrap_events(
         security_class,
         federation_policy,
         anchor_profile,
-        hash_profile,
+        digest_algorithm,
         trust_domain,
         plaintext_visible_services,
     )?);
@@ -3097,7 +3097,7 @@ pub fn build_realm_create_event(
     security_class: &str,
     federation_policy: &str,
     anchor_profile: &str,
-    hash_profile: &str,
+    digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<EventEnvelope> {
@@ -3127,7 +3127,7 @@ pub fn build_realm_create_event(
         "security_class": security_class,
         "federation_policy": effective_federation_policy,
         "anchor_profile": anchor_profile,
-        "hash_profile": hash_profile,
+        "digest_algorithm": digest_algorithm,
         "anchorer": realm_genesis_anchorer(anchor_profile, actor_id),
         "created_at": created_at_for_object,
     });
@@ -3718,7 +3718,7 @@ pub fn build_signed_device_verification_proof(
             "kind": "detached_jws",
             "alg": "EdDSA",
             "verification_method": format!("{}#yougen-device", from_device),
-            "payload_hash": format!("sha256:{:x}", Sha256::digest(&canonical)),
+            "payload_digest": format!("sha256:{:x}", Sha256::digest(&canonical)),
             "jws": jws,
         }
     }))
@@ -4284,7 +4284,7 @@ mod tests {
         assert!(sync_v1.presence.is_empty());
 
         let account_frame = parse_account_subscribe_snapshot(
-            br#"{"kind":"delta","cursor":"cx:cursor:account-1","realms":{"cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"to_device":{"events":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
+            br#"{"kind":"delta","cursor":"cx:cursor:account-1","realms":{"cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"to_device":{"messages":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
 {"kind":"catchup_complete","cursor":"cx:cursor:account-1"}
 "#,
         )

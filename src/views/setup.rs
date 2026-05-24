@@ -184,7 +184,7 @@ const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-// Spec realm-and-space.md §2.3 — `hash_profile`. Create-locked.
+// Spec realm-and-space.md §2.3 — `digest_algorithm`. Create-locked.
 // `sha256` is the universal default; other choices target hardened
 // or interop-with-other-hash-systems deployments.
 const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
@@ -437,7 +437,7 @@ pub fn SetupPanel(
     // from the safe defaults (`restricted` / `single_did` / `sha256`).
     let mut realm_federation_policy = use_signal(|| "restricted".to_owned());
     let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
-    let mut realm_hash_profile = use_signal(|| "sha256".to_owned());
+    let mut realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     // Phase 3 — `cx.space.create` form state. The Space inherits all
     // security from its home Realm, so the only choices are which
     // Realm to live in, the human-visible metadata, and `kind`.
@@ -468,7 +468,7 @@ pub fn SetupPanel(
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
     let anchor_profile_value = realm_anchor_profile();
-    let hash_profile_value = realm_hash_profile();
+    let digest_algorithm_value = realm_digest_algorithm();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
     // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
     // `selected_space` to the clicked Realm / Space and routes to
@@ -940,18 +940,18 @@ pub fn SetupPanel(
                                                 label { "Digest algorithm for canonical hashing." }
                                                 select {
                                                     "data-testid": "realm-hash-profile-input",
-                                                    value: "{hash_profile_value}",
-                                                    onchange: move |event| realm_hash_profile.set(event.value()),
+                                                    value: "{digest_algorithm_value}",
+                                                    onchange: move |event| realm_digest_algorithm.set(event.value()),
                                                     for (option_value, label, _) in HASH_PROFILE_OPTIONS {
                                                         option {
                                                             value: "{option_value}",
-                                                            selected: hash_profile_value == option_value,
+                                                            selected: digest_algorithm_value == option_value,
                                                             "{label}"
                                                         }
                                                     }
                                                 }
                                                 div { class: "muted",
-                                                    "{HASH_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == hash_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Hash profile is not set.\")}"
+                                                    "{HASH_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == digest_algorithm_value).map(|(_, _, hint)| *hint).unwrap_or(\"Hash profile is not set.\")}"
                                                 }
                                             }
                                         }
@@ -1047,7 +1047,7 @@ pub fn SetupPanel(
                                                     let security_class = realm_security_class();
                                                     let federation_policy = realm_federation_policy();
                                                     let anchor_profile = realm_anchor_profile();
-                                                    let hash_profile = realm_hash_profile();
+                                                    let digest_algorithm = realm_digest_algorithm();
                                                     let seed_text = seed_members();
                                                     let actor = account_did();
                                                     let device = device_id();
@@ -1101,7 +1101,7 @@ pub fn SetupPanel(
                                                                 &security_class,
                                                                 &federation_policy,
                                                                 &anchor_profile,
-                                                                &hash_profile,
+                                                                &digest_algorithm,
                                                                 &trust_domain,
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),

@@ -50,7 +50,7 @@ Closes the round-4 protocol-review commits on the client surfaces. See
 - **Added** `consent_revoke` UI now shows the required `observed_dots[]`
   list and lets the user revoke them as one action.
 - **Added** `SnapshotBootstrap` consumer wires the wire-shape pieces
-  (`signature` / `state_hash` / `snapshot_frontier` / `chunks[]`); full
+  (`signature` / `state_digest` / `snapshot_frontier` / `chunks[]`); full
   chunk import is a `TODO(round4)` — failures fall back to full sync.
 - **Added** DID method-name regex sweep tightened to
   `^did:[a-z0-9]+:[^\s]+$`.

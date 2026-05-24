@@ -212,7 +212,7 @@ impl YougenEventSigner {
         let canonical_bytes = builder
             .canonical_bytes(&canonical)
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let payload_hash = crate::canonical::sha256_digest(&canonical_bytes);
+        let payload_digest = crate::canonical::sha256_digest(&canonical_bytes);
 
         // Run the SDK signer — its `sign` already prepends the b64u
         // header + b64u payload and returns the raw signature bytes.
@@ -236,7 +236,7 @@ impl YougenEventSigner {
             kind: "detached_jws".to_owned(),
             alg: self.algorithm().to_owned(),
             verification_method,
-            payload_hash,
+            payload_digest,
             jws,
             // Canonical RFC3339 UTC (no fractional seconds) per
             // spec encoding.md §3.5 / soland validator
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(proof.kind, "detached_jws");
         assert_eq!(proof.alg, "EdDSA");
         assert_eq!(proof.verification_method, "did:web:bob.example#device");
-        assert!(proof.payload_hash.starts_with("sha256:"));
+        assert!(proof.payload_digest.starts_with("sha256:"));
         // Real detached JWS: header..signature, signature non-empty.
         let parts: Vec<&str> = proof.jws.split('.').collect();
         assert_eq!(parts.len(), 3);

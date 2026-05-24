@@ -739,7 +739,7 @@ export async function mockContrixApi(page: Page) {
           knock: {},
           leave: {},
         },
-        to_device: { events: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
+        to_device: { messages: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
         account_data: { events: [
           {
             kind: "cx.notification",
@@ -858,7 +858,7 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/snapshot/head") {
       return json(route, {
         snapshot_ref: `cx:snapshot:${DEMO_SPACE}:head`,
-        state_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         frontier: { space_id: DEMO_SPACE },
         signature: { alg: "none" },
       });
@@ -930,7 +930,7 @@ export async function mockContrixApi(page: Page) {
             delegation_chain: ["cx:grant:root", "cx:grant:e2e"],
           },
         ],
-        state_hash: "cx:statehash:e2e",
+        state_digest: "cx:statehash:e2e",
         evaluated_at: "2026-04-28T12:00:00Z",
       });
     }

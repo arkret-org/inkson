@@ -916,7 +916,7 @@ mod tests {
             },
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
-                "actor": actor,
+                "actor_id": actor,
                 "key_id": "soland.reference.agent_echo.ed25519_v1",
                 "signature": signed.signature_b64,
                 "public_key_b64": signed.public_key_b64,
@@ -980,7 +980,7 @@ mod tests {
             "result": {"echo": null, "agent_did": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "future_scheme_v9",
-                "actor": "did:web:alice.example",
+                "actor_id": "did:web:alice.example",
                 "signature": "deadbeef",
                 "canonical_subject": "",
             },
@@ -1001,7 +1001,7 @@ mod tests {
             "result": {"echo": {"op": "ping"}, "agent_did": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "hmac_sha256_v1",
-                "actor": "did:web:alice.example",
+                "actor_id": "did:web:alice.example",
                 "key_id": "soland.reference.agent_echo.v1",
                 "signature": "00".repeat(32),
                 "canonical_subject": "",
@@ -1154,7 +1154,7 @@ mod tests {
             "result": {"echo": echo, "agent_did": agent_did},
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
-                "actor": actor,
+                "actor_id": actor,
                 "key_id": "soland.reference.agent_echo.ed25519_v1",
                 "signature": signed.signature_b64,
                 "public_key_b64": signed.public_key_b64,
