@@ -1742,7 +1742,7 @@ pub fn SettingsPanel(
                         {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
                     }
                 }
-                            div { class: "event", "data-testid": "push-settings",
+                div { class: "event", "data-testid": "push-settings",
                     div { class: "event-head", span { "Push delivery" } span { "configure" } }
                     div { class: "muted", "Push notification preferences and gateway registration." }
                     div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
@@ -1755,38 +1755,38 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
+                                    let principal_did = account_did();
+                                    let mut local_store = state_store.read().clone();
                                     spawn(async move {
-                                        let request = match crate::push::build_register_request(&dev) {
-                                            Ok(r) => r,
-                                            Err(error) => {
-                                                let message = format!("push unavailable: {error}");
-                                                push_state.set(message.clone());
-                                                status.set(message);
-                                                return;
-                                            }
+                                        let principal_did = (!principal_did.trim().is_empty())
+                                            .then_some(principal_did);
+                                        let context = crate::push_registration::RegisterContext {
+                                            principal_server_url: base,
+                                            floria_gateway_url: crate::push::DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY.to_owned(),
+                                            device_id: dev,
+                                            principal_did,
+                                            bearer_token: Some(api_token),
+                                            session_grant: None,
                                         };
-                                        let request_for_async = request.clone();
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.register_push_device_with_request(&request_for_async).await
-                                        })
+                                        match crate::push_registration::register_via_chime(
+                                            context,
+                                            &mut local_store,
+                                        )
                                         .await
                                         {
-                                            Ok(push) => {
-                                                let mut local_push = chime::RegisterDeviceResponse::default();
-                                                local_push.ok = push.ok;
-                                                local_push.registration_id = push.registration_id.clone();
-                                                local_push.expires_at = push.expires_at.clone();
-                                                let local_state = crate::push::registration_state_from_response(
-                                                    &request,
-                                                    &local_push,
-                                                );
-                                                state_store.write().save_push_registration(local_state);
-                                                let label = push.registration_id.unwrap_or_else(|| "registered".to_owned());
+                                            Ok(outcome) => {
+                                                state_store
+                                                    .write()
+                                                    .save_push_registration(outcome.state.clone());
+                                                let label = outcome
+                                                    .response
+                                                    .registration_id
+                                                    .unwrap_or_else(|| "registered".to_owned());
                                                 push_state.set(label.clone());
                                                 status.set(format!("Push registered: {label}"));
                                             }
                                             Err(err) => {
-                                                let message = format!("push register failed: {}", err.display());
+                                                let message = format!("push register failed: {err}");
                                                 push_state.set(message.clone());
                                                 status.set(message);
                                             }

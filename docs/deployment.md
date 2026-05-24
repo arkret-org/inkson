@@ -25,15 +25,21 @@ Web deployments must satisfy all of the following:
 ## Push gateway wiring
 
 The client reads push-gateway capability data from service discovery and then
-registers device metadata with soland. For phase 3, live OS token bridges and
-chime server-grant minting remain tracked separately in `_yougen_todos.md`.
+registers device metadata with chime using a coauth session grant. Web builds
+use the browser Push API. Native builds expect host code to pass real FCM/APNs
+tokens into `set_fcm_push_token` or `set_apns_push_token`; local desktop tests
+may inject the same values through `YOUGEN_FCM_PUSH_TOKEN`,
+`YOUGEN_APNS_PUSH_TOKEN`, `FCM_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
+`CHASK_PUSH_KEY`.
 
 Required deployment inputs:
 
 - soland push registration endpoint enabled.
 - chime gateway reachable from the client network.
-- coauth grant mint API available before `register_device`.
+- coauth session grant persisted in local state before `register_device`.
 - Platform push credentials configured on the gateway, not embedded in yougen.
+- The client principal server URL and device ID match the persisted grant; the
+  registration path fails closed on mismatch.
 
 Privacy requirements:
 
@@ -75,14 +81,13 @@ the phase-3 local release plan.
 
 ## Mobile build setup
 
-Mobile release scope is still a phase-3 decision item. If mobile remains in
-scope, prepare:
+The phase-3 local milestone ships desktop plus web. Mobile remains out of the
+local 1.0 scope, so no iOS `.ipa` or Android APK is produced by this plan. If a
+future phase accepts mobile scope, prepare:
 
 - macOS runner with Xcode and iOS signing material for ad-hoc `.ipa` builds.
 - Android SDK, NDK, Gradle, and a local signing keystore for APK builds.
 - Real Android Keystore and iOS Keychain implementations in
   `src/secure_key_store.rs`.
-- Real FCM/APNs token bridges before push registration can be considered
-  production-ready.
-
-Until that decision closes, the release target is desktop plus web.
+- Thin host adapters that forward FCM/APNs tokens into the Rust bridge before
+  push registration.

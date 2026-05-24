@@ -39,11 +39,15 @@ use chime::{
     build_register_device_request,
 };
 
+use crate::coauth::{
+    build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
+};
 use crate::local_state::LocalStateStore;
 use crate::push::{
     DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY, ensure_production_register_request,
     registration_state_from_response,
 };
+use crate::session_refresh::grant_matches_principal_server;
 
 /// Errors the orchestrator surfaces back to the UI / login flow.
 #[derive(Debug)]
@@ -66,6 +70,13 @@ pub enum PushRegistrationError {
     BuildRequest(anyhow::Error),
     /// chime SDK reported a transport / HTTP failure.
     Transport(String),
+    /// No coauth session grant is available to populate
+    /// `X-Contrix-Session-Grant`.
+    MissingSessionGrant,
+    /// The persisted grant is not usable for this registration.
+    SessionGrantMismatch { reason: String },
+    /// The persisted grant exists but its proof material could not be minted.
+    SessionGrantProof(anyhow::Error),
     /// An unexpected internal error.
     Other(anyhow::Error),
 }
@@ -82,6 +93,18 @@ impl std::fmt::Display for PushRegistrationError {
             }
             Self::BuildRequest(err) => write!(f, "build register request failed: {err}"),
             Self::Transport(msg) => write!(f, "chime transport failure: {msg}"),
+            Self::MissingSessionGrant => {
+                write!(
+                    f,
+                    "no coauth session grant available for chime registration"
+                )
+            }
+            Self::SessionGrantMismatch { reason } => {
+                write!(f, "coauth session grant cannot be used for chime: {reason}")
+            }
+            Self::SessionGrantProof(err) => {
+                write!(f, "could not mint chime session-grant proof: {err}")
+            }
             Self::Other(err) => write!(f, "push registration failed: {err}"),
         }
     }
@@ -110,9 +133,9 @@ pub struct RegisterContext {
     /// API access token (chime client posts `Authorization: Bearer …`).
     pub bearer_token: Option<String>,
     /// X-Contrix-Session-Grant header (coauth-issued grant). `None`
-    /// means yougen falls back to the bearer-only path; the chime client
-    /// is configured to NOT fail-closed on the missing grant header in
-    /// that mode (matches the existing `api.rs` behaviour).
+    /// means yougen loads the persisted coauth session grant from
+    /// `LocalStateStore`, mints the matching introspection proof headers,
+    /// and fails closed if no grant is available.
     pub session_grant: Option<String>,
 }
 
@@ -125,6 +148,13 @@ pub struct RegisterOutcome {
     pub response: RegisterDeviceResponse,
 }
 
+#[derive(Clone, Debug)]
+struct ChimeSessionGrantHeaders {
+    grant_jwt: String,
+    challenge: Option<String>,
+    proof_jwt: Option<String>,
+}
+
 /// Resolve a real token via the installed `PushTokenProvider`, build a
 /// chime register-device request, post it through the chime SDK, and
 /// persist the resulting `PushRegistrationState` to `LocalStateStore`.
@@ -134,25 +164,30 @@ pub struct RegisterOutcome {
 /// backend (no rustls, no tokio runtime), so the browser build drives a
 /// real HTTP POST to the principal server.
 pub async fn register_via_chime(
-    ctx: RegisterContext,
+    mut ctx: RegisterContext,
     state_store: &mut LocalStateStore,
 ) -> Result<RegisterOutcome, PushRegistrationError> {
+    let session_grant = resolve_chime_session_grant(&mut ctx, state_store)?;
     let token = resolve_real_token(&ctx).await?;
     let request = build_request(&ctx, &token)?;
     ensure_production_register_request(&request)
         .map_err(|err| PushRegistrationError::PlaceholderTokenRejected(err.to_string()))?;
 
-    // Fail-closed on session grant — the chime server is expected to mint
-    // a grant before the device can register. TODO(chime): server must mint
-    // grant.
     let mut client =
         ContrixPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
     if let Some(token) = ctx.bearer_token.as_deref() {
         client = client.with_bearer_token(token);
     }
-    if let Some(grant) = ctx.session_grant.as_deref() {
+    client = client
+        .with_session_grant(&session_grant.grant_jwt)
+        .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
+    if let (Some(challenge), Some(proof_jwt)) = (
+        session_grant.challenge.as_deref(),
+        session_grant.proof_jwt.as_deref(),
+    ) {
         client = client
-            .with_session_grant(grant)
+            .with_header("X-Contrix-Session-Grant-Challenge", challenge)
+            .and_then(|client| client.with_header("X-Contrix-Session-Grant-Proof", proof_jwt))
             .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
     }
 
@@ -167,6 +202,60 @@ pub async fn register_via_chime(
     Ok(RegisterOutcome {
         state,
         response: response.body,
+    })
+}
+
+fn resolve_chime_session_grant(
+    ctx: &mut RegisterContext,
+    state_store: &LocalStateStore,
+) -> Result<ChimeSessionGrantHeaders, PushRegistrationError> {
+    if let Some(grant_jwt) = ctx
+        .session_grant
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(ChimeSessionGrantHeaders {
+            grant_jwt: grant_jwt.to_owned(),
+            challenge: None,
+            proof_jwt: None,
+        });
+    }
+
+    let grant = state_store
+        .session_grant()
+        .ok_or(PushRegistrationError::MissingSessionGrant)?;
+    if !grant_matches_principal_server(&grant, &ctx.principal_server_url) {
+        return Err(PushRegistrationError::SessionGrantMismatch {
+            reason: "persisted grant belongs to a different principal server".to_owned(),
+        });
+    }
+    if grant.device_id != ctx.device_id {
+        return Err(PushRegistrationError::SessionGrantMismatch {
+            reason: format!(
+                "persisted grant device_id {} does not match {}",
+                grant.device_id, ctx.device_id
+            ),
+        });
+    }
+    if ctx.principal_did.is_none() {
+        ctx.principal_did = Some(grant.principal_did.clone());
+    }
+
+    let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
+        .map_err(PushRegistrationError::SessionGrantProof)?;
+    let proof = build_session_grant_introspection_proof_bundle(
+        &grant.grant_id,
+        &grant.grant_jwt,
+        &grant.audience,
+        &signing_key,
+    )
+    .map_err(PushRegistrationError::SessionGrantProof)?;
+
+    Ok(ChimeSessionGrantHeaders {
+        grant_jwt: grant.grant_jwt,
+        challenge: Some(proof.challenge),
+        proof_jwt: Some(proof.proof_jwt),
     })
 }
 
@@ -276,8 +365,16 @@ fn current_platform_str() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, Utc};
+    use ed25519_dalek::pkcs8::EncodePrivateKey as _;
     use std::sync::Arc;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
+    use crate::local_state::PersistedSessionGrant;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
 
     /// Test-only token source that hands back a fixed real-looking
@@ -321,6 +418,44 @@ mod tests {
         }
     }
 
+    fn persisted_grant(device: &str) -> PersistedSessionGrant {
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let pem = signing
+            .to_pkcs8_pem(Default::default())
+            .expect("encode session grant key")
+            .to_string();
+        PersistedSessionGrant {
+            grant_jwt: "header.payload.signature".to_owned(),
+            session_private_key_pem: pem,
+            grant_id: "cx:grant:push-local".to_owned(),
+            audience: "https://principal.example/".to_owned(),
+            principal_did: "did:web:alice.example".to_owned(),
+            device_id: device.to_owned(),
+            principal_server_url: "https://principal.example/".to_owned(),
+            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            grant_expires_at: Some(Utc::now() + Duration::hours(1)),
+            session_expires_at: None,
+            stored_at: Utc::now(),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn isolated_store(tag: &str) -> LocalStateStore {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("push-registration-{tag}-{stamp}.json"));
+        LocalStateStore::with_path(path)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn isolated_store(_tag: &str) -> LocalStateStore {
+        LocalStateStore::default()
+    }
+
     #[test]
     fn build_request_uses_floria_url_as_push_gateway() {
         let request = build_request(&ctx("dev_yougen"), "apns:01234567890abcdef").expect("build");
@@ -340,6 +475,32 @@ mod tests {
         c.floria_gateway_url = "   ".to_owned();
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
         assert_eq!(request.push_gateway, DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY);
+    }
+
+    #[test]
+    fn resolves_persisted_grant_into_chime_headers() {
+        let mut store = isolated_store("grant-headers");
+        store.set_session_grant(Some(persisted_grant("dev_yougen")));
+        let mut context = ctx("dev_yougen");
+        context.principal_did = None;
+
+        let headers = resolve_chime_session_grant(&mut context, &store).expect("grant headers");
+
+        assert_eq!(headers.grant_jwt, "header.payload.signature");
+        assert!(headers.challenge.as_deref().is_some_and(|v| !v.is_empty()));
+        assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
+        assert_eq!(
+            context.principal_did.as_deref(),
+            Some("did:web:alice.example")
+        );
+    }
+
+    #[test]
+    fn missing_grant_fails_closed_before_register() {
+        let mut context = ctx("dev_yougen");
+        let store = isolated_store("missing-grant");
+        let err = resolve_chime_session_grant(&mut context, &store).unwrap_err();
+        assert!(matches!(err, PushRegistrationError::MissingSessionGrant));
     }
 
     #[test]

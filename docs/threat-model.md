@@ -45,7 +45,8 @@ Controls:
 Open phase-3 items:
 
 - IndexedDB key-store hardening is tracked in `_yougen_todos.md` §20.
-- Android Keystore and iOS Keychain work is tracked in §8.
+- Android Keystore and iOS Keychain work is out of the desktop/web local
+  milestone and remains tracked behind the mobile scope gate in §5-§8.
 
 ## Push privacy risks
 
@@ -63,10 +64,13 @@ Controls:
 - Device revocation must clear local push registration state.
 - Gateway credentials stay server-side.
 
-Open phase-3 items:
+Controls now in place:
 
-- Real FCM/APNs/WebPush token bridges are tracked in §1 and §2.
-- coauth/chime server grant minting is tracked in §3 and §4.
+- WebPush uses the browser Push API, and native FCM/APNs providers accept only
+  host-supplied or local-env injected real tokens.
+- chime registration loads the persisted coauth grant, validates principal
+  server and device binding, mints introspection proof headers, and fails
+  closed when grant material is missing or mismatched.
 
 ## Recovery flow risks
 

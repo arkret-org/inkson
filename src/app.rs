@@ -4904,11 +4904,11 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 /// Runs once on first App render. On wasm32 we install
 /// `WebPushTokenProvider::new()` (drives the service-worker +
 /// `pushManager.subscribe` path described in `push.rs::WebPushTokenProvider`).
-/// On native builds we install `FcmPushTokenProvider` / `ApnsPushTokenProvider`
-/// stubs so `push_token_provider()` is `Some(_)` and the device-summary
-/// `"no PushTokenProvider installed"` warning goes away. Subsequent
-/// renders short-circuit via `OnceLock` semantics inside
-/// `set_push_token_provider`.
+/// On native builds we install `FcmPushTokenProvider` / `ApnsPushTokenProvider`.
+/// The host adapter supplies the actual OS token through
+/// `set_fcm_push_token` / `set_apns_push_token` after Firebase/APNs returns
+/// it; local dev can inject the same token via env vars. Subsequent renders
+/// short-circuit via `OnceLock` semantics inside `set_push_token_provider`.
 fn ensure_default_push_token_provider() {
     if crate::push::push_token_provider().is_some() {
         return;
@@ -4938,11 +4938,10 @@ fn ensure_default_push_token_provider() {
     ))]
     {
         // Desktop / server builds: install the FCM provider as the
-        // safe default. The default `FcmPushTokenProvider` stub returns
-        // `Ok(None)` from `subscribe()`, which is the "no push token
-        // available on this platform" signal `device-summary` reads —
-        // not a misconfiguration. The point is to install *something*
-        // so `push_token_provider().is_some()`.
+        // safe default. It reads `YOUGEN_FCM_PUSH_TOKEN`,
+        // `FCM_PUSH_TOKEN`, or `CHASK_PUSH_KEY` for local bridge
+        // testing, and otherwise reports "no token" without emitting a
+        // placeholder to the gateway.
         crate::push::set_push_token_provider(std::sync::Arc::new(
             crate::push::FcmPushTokenProvider,
         ));

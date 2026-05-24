@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chime::{
     GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig,
@@ -387,6 +387,9 @@ fn acquire_platform_push_key() -> String {
     if let Ok(env_key) = std::env::var("CHASK_PUSH_KEY") {
         return env_key;
     }
+    if let Ok(Some(token)) = resolve_provider_push_token(None) {
+        return token;
+    }
     push_token_source()
         .current_token(current_platform())
         .unwrap_or_else(|| "desktop:yougen-dev-placeholder-token".to_owned())
@@ -467,6 +470,94 @@ pub fn set_push_token_provider(provider: Arc<dyn PushTokenProvider>) {
 /// [`set_push_token_provider`] runs.
 pub fn push_token_provider() -> Option<Arc<dyn PushTokenProvider>> {
     PUSH_TOKEN_PROVIDER.get().cloned()
+}
+
+static FCM_PUSH_TOKEN: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static APNS_PUSH_TOKEN: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn fcm_token_slot() -> &'static Mutex<Option<String>> {
+    FCM_PUSH_TOKEN.get_or_init(|| Mutex::new(None))
+}
+
+fn apns_token_slot() -> &'static Mutex<Option<String>> {
+    APNS_PUSH_TOKEN.get_or_init(|| Mutex::new(None))
+}
+
+fn set_token(slot: &Mutex<Option<String>>, token: impl Into<String>) {
+    let token = token.into();
+    let value = (!token.trim().is_empty()).then(|| token.trim().to_owned());
+    if let Ok(mut guard) = slot.lock() {
+        *guard = value;
+    }
+}
+
+fn clear_token(slot: &Mutex<Option<String>>) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = None;
+    }
+}
+
+fn read_token(slot: &Mutex<Option<String>>) -> Option<String> {
+    slot.lock().ok().and_then(|guard| guard.clone())
+}
+
+/// Bridge a real Firebase Cloud Messaging registration token into the Rust
+/// push layer. Android host code should call this after
+/// `FirebaseMessaging.getInstance().getToken()` resolves. Desktop dev builds
+/// may use the same hook to inject a token harvested by an external helper.
+pub fn set_fcm_push_token(token: impl Into<String>) {
+    set_token(fcm_token_slot(), token);
+}
+
+/// Clear the bridged FCM token, for example after the OS reports token
+/// revocation or the user disables notifications.
+pub fn clear_fcm_push_token() {
+    clear_token(fcm_token_slot());
+}
+
+/// Bridge a real APNs device token into the Rust push layer. iOS/macOS host
+/// code should call this from `didRegisterForRemoteNotificationsWithDeviceToken`.
+pub fn set_apns_push_token(token: impl Into<String>) {
+    set_token(apns_token_slot(), token);
+}
+
+/// Clear the bridged APNs token after revocation or notification opt-out.
+pub fn clear_apns_push_token() {
+    clear_token(apns_token_slot());
+}
+
+fn normalize_provider_token(prefix: &str, token: &str) -> Option<String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let expected = format!("{prefix}:");
+    if trimmed
+        .get(..expected.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(&expected))
+    {
+        return Some(trimmed.to_owned());
+    }
+    Some(format!("{prefix}:{trimmed}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn env_provider_token(prefix: &str, names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find_map(|value| normalize_provider_token(prefix, &value))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn bridged_or_env_token(
+    prefix: &str,
+    slot: &Mutex<Option<String>>,
+    env_names: &[&str],
+) -> Option<String> {
+    read_token(slot)
+        .and_then(|value| normalize_provider_token(prefix, &value))
+        .or_else(|| env_provider_token(prefix, env_names))
 }
 
 /// Real Web Push provider for wasm32 targets. Drives
@@ -630,10 +721,10 @@ async fn web_push_subscribe(
     Ok(stringified.as_string())
 }
 
-/// FCM provider stub. Production wiring will call into
-/// `firebase_messaging::Messaging::get_token`. Until that crate lands the
-/// stub returns `Ok(None)` so registration falls back to the placeholder
-/// guard rather than emitting a fake-but-real-looking FCM token.
+/// FCM provider. Android host code feeds this provider via
+/// [`set_fcm_push_token`] after Firebase returns a registration token; local
+/// desktop/dev runs can inject the same value through `YOUGEN_FCM_PUSH_TOKEN`,
+/// `FCM_PUSH_TOKEN`, or `CHASK_PUSH_KEY`.
 #[derive(Clone, Debug, Default)]
 pub struct FcmPushTokenProvider;
 
@@ -656,12 +747,18 @@ impl PushTokenProvider for FcmPushTokenProvider {
         &self,
         _vapid_application_server_key: Option<&str>,
     ) -> anyhow::Result<Option<String>> {
-        Ok(None)
+        Ok(bridged_or_env_token(
+            "fcm",
+            fcm_token_slot(),
+            &["YOUGEN_FCM_PUSH_TOKEN", "FCM_PUSH_TOKEN", "CHASK_PUSH_KEY"],
+        ))
     }
 }
 
-/// APNs provider stub. Wiring lives in the macOS / iOS
-/// host adapter — the trait surface here is what yougen registers with.
+/// APNs provider. iOS/macOS host code feeds this provider via
+/// [`set_apns_push_token`] after APNs returns a device token; local runs can
+/// inject it through `YOUGEN_APNS_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
+/// `CHASK_PUSH_KEY`.
 #[derive(Clone, Debug, Default)]
 pub struct ApnsPushTokenProvider;
 
@@ -684,7 +781,15 @@ impl PushTokenProvider for ApnsPushTokenProvider {
         &self,
         _vapid_application_server_key: Option<&str>,
     ) -> anyhow::Result<Option<String>> {
-        Ok(None)
+        Ok(bridged_or_env_token(
+            "apns",
+            apns_token_slot(),
+            &[
+                "YOUGEN_APNS_PUSH_TOKEN",
+                "APNS_DEVICE_TOKEN",
+                "CHASK_PUSH_KEY",
+            ],
+        ))
     }
 }
 
@@ -920,6 +1025,24 @@ mod tests {
     fn fcm_and_apns_providers_advertise_correct_platform_strings() {
         assert_eq!(FcmPushTokenProvider.platform(), "fcm");
         assert_eq!(ApnsPushTokenProvider.platform(), "apns");
+    }
+
+    #[test]
+    fn fcm_provider_returns_bridged_host_token() {
+        clear_fcm_push_token();
+        set_fcm_push_token("native-token-123");
+        let token = FcmPushTokenProvider.subscribe(None).unwrap().unwrap();
+        assert_eq!(token, "fcm:native-token-123");
+        clear_fcm_push_token();
+    }
+
+    #[test]
+    fn apns_provider_returns_bridged_host_token() {
+        clear_apns_push_token();
+        set_apns_push_token("apns:abcdef012345");
+        let token = ApnsPushTokenProvider.subscribe(None).unwrap().unwrap();
+        assert_eq!(token, "apns:abcdef012345");
+        clear_apns_push_token();
     }
 
     #[test]

@@ -10,15 +10,29 @@
 - 764 unit tests pass. Cross-browser Playwright matrix (Chromium/Firefox/WebKit × 11 specs).
 - 103 TODO/FIXME + 74 `todo!()`/`panic!()`/`unimplemented!()` macros.
 - Spec alignment (v3 `_api_report.md`, 2026-05-21) — yougen ↔ soland fully aligned via `cx.events.submit`.
-- Push tokens are placeholders; chime server-grant mint is TODO.
+- Push tokens and chime session-grant proof wiring are closed for local
+  desktop/web development. Native host adapters feed real FCM/APNs tokens
+  through the Rust bridge; no placeholder token is submitted.
 
 ## Phase 3 tasks
 
 ### Push integration closure (highest user-impact)
-- [ ] §1 `src/push.rs:633-663` + `src/app.rs:4908-4941` — replace `FcmPushTokenProvider` placeholder with a real FCM token bridge (Android JNI / iOS APNs / WebPush).
-- [ ] §2 `src/push.rs:837` — supply real token to chime once §1 lands.
-- [ ] §3 `src/push_registration.rs:146` — mint server grant before `register_device` (depends on coauth §4 grant API).
-- [ ] §4 `src/api.rs:1296` — chime grant mint call wired.
+- [x] §1 `src/push.rs:633-663` + `src/app.rs:4908-4941` — replace `FcmPushTokenProvider` placeholder with a real FCM token bridge (Android JNI / iOS APNs / WebPush).
+  - 2026-05-25: native FCM/APNs providers now read host-supplied tokens via
+    `set_fcm_push_token` / `set_apns_push_token`, with local env injection for
+    desktop verification. WebPush remains the browser bridge.
+- [x] §2 `src/push.rs:837` — supply real token to chime once §1 lands.
+  - 2026-05-25: `acquire_platform_push_key` and `register_via_chime` resolve
+    the installed provider token and refuse placeholder material before chime
+    registration.
+- [x] §3 `src/push_registration.rs:146` — mint server grant before `register_device` (depends on coauth §4 grant API).
+  - 2026-05-25: `register_via_chime` loads the persisted coauth session grant,
+    validates principal-server/device binding, mints introspection proof
+    headers, and fails closed when grant material is absent or mismatched.
+- [x] §4 `src/api.rs:1296` — chime grant mint call wired.
+  - 2026-05-25: `ContrixApi::with_chime_session_grant` wires the chime
+    session-grant/proof headers, and the Settings push registration path uses
+    `register_via_chime` instead of the bearer-only API helper.
 
 ### Mobile decision + execution (Q5 in master plan)
 - [ ] §5 Decision item: ship 1.0 desktop+web only, or invest in iOS+Android CI?

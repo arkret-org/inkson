@@ -239,6 +239,10 @@ pub struct ContrixApi {
     /// bearer (the hook's caller knows that signal because the
     /// `ContrixApi` is freshly minted with the bound token).
     dpop_refresh_hook: Option<DpopRefreshHook>,
+    /// Coauth-issued session grant and optional introspection proof headers
+    /// used by chime push register/unregister calls.
+    chime_session_grant: Option<String>,
+    chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
     /// H1 — cached `GET /api/v1/events/describe` response. Used so callers
@@ -264,6 +268,14 @@ impl fmt::Debug for ContrixApi {
             .field(
                 "dpop_refresh_hook",
                 &self.dpop_refresh_hook.as_ref().map(|_| "<closure>"),
+            )
+            .field(
+                "chime_session_grant",
+                &self.chime_session_grant.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "chime_session_grant_proof",
+                &self.chime_session_grant_proof.as_ref().map(|_| "<proof>"),
             )
             .field("cancel_token", &self.cancel_token)
             .field(
@@ -504,6 +516,8 @@ impl ContrixApi {
             retry: options.retry,
             refresh_token: None,
             dpop_refresh_hook: None,
+            chime_session_grant: None,
+            chime_session_grant_proof: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
             events_describe_cache: Arc::new(OnceCell::new()),
@@ -519,6 +533,19 @@ impl ContrixApi {
     /// `redirect_to_login` machinery).
     pub fn with_dpop_refresh_hook(mut self, hook: DpopRefreshHook) -> Self {
         self.dpop_refresh_hook = Some(hook);
+        self
+    }
+
+    /// Attach the coauth session-grant material chime requires for
+    /// push registration. `proof` should be present when the Principal
+    /// Server validates the grant through coauth introspection.
+    pub fn with_chime_session_grant(
+        mut self,
+        grant_jwt: impl Into<String>,
+        proof: Option<SessionGrantIntrospectionProof>,
+    ) -> Self {
+        self.chime_session_grant = Some(grant_jwt.into());
+        self.chime_session_grant_proof = proof;
         self
     }
 
@@ -1290,14 +1317,25 @@ impl ContrixApi {
         register_device_path: Option<&str>,
         unregister_device_path: Option<&str>,
     ) -> ContrixPushClient {
-        // Fail-closed on session grant: chime server is expected to mint a
-        // grant that scopes the push surface to this session. The
-        // access_token is the session's bearer credential.
-        // TODO(chime): server must mint grant for register/unregister.
         let mut client =
             ContrixPushClient::new(self.base_url.as_str()).with_required_session_grant(true);
         if let Some(token) = self.access_token.as_deref() {
             client = client.with_bearer_token(token);
+        }
+        if let Some(grant) = self.chime_session_grant.as_deref()
+            && let Ok(next) = client.clone().with_session_grant(grant)
+        {
+            client = next;
+        }
+        if let Some(proof) = self.chime_session_grant_proof.as_ref()
+            && let Ok(next) = client
+                .clone()
+                .with_header("X-Contrix-Session-Grant-Challenge", &proof.challenge)
+                .and_then(|client| {
+                    client.with_header("X-Contrix-Session-Grant-Proof", &proof.proof_jwt)
+                })
+        {
+            client = next;
         }
         if let Some(path) = register_device_path {
             client = client.with_register_device_path(path);
