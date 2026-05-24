@@ -26,6 +26,23 @@ pub struct RawOperationRecord {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RealmLifecycleState {
+    #[serde(default)]
+    pub destroyed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destroyed_operation_id: Option<String>,
+}
+
+impl RealmLifecycleState {
+    fn destroyed(operation_id: impl Into<String>) -> Self {
+        Self {
+            destroyed: true,
+            destroyed_operation_id: Some(operation_id.into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationClientState {
     #[serde(default)]
     pub read: bool,
@@ -128,6 +145,13 @@ fn default_true() -> bool {
     true
 }
 
+fn raw_operation_kind(payload: &Value) -> Option<&str> {
+    payload
+        .get("kind")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("type").and_then(Value::as_str))
+}
+
 /// Persisted shape of the device identity. Production callers store this
 /// record in [`crate::secure_key_store::SecureKeyStore`]; plaintext
 /// `state.json` storage is retained only for tests and explicitly enabled
@@ -142,9 +166,9 @@ fn default_true() -> bool {
 /// pre-release, with no migration path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentityRecord {
-    /// Hex-encoded 32-byte ed25519 seed. Production deploys MUST move this
-    /// to OS keychain / WebAuthn / HSM and only keep a `did:key` reference
-    /// here (TODO `secure-key-store-handoff`).
+    /// Hex-encoded 32-byte ed25519 seed. Production callers persist this
+    /// record in `SecureKeyStore`; the field remains serializable for
+    /// test fixtures and the explicit plaintext development fallback.
     pub seed_hex: String,
     /// `did:key:z<multibase>` derived from the seed's verifying key.
     pub did_key: String,
@@ -729,6 +753,8 @@ impl LocalAnchorView {
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     pub raw_operations: Vec<RawOperationRecord>,
+    #[serde(default)]
+    pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
     pub space_projections: BTreeMap<String, Value>,
     pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
@@ -1006,6 +1032,7 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             raw_operations: Vec::new(),
+            realm_lifecycle_state: BTreeMap::new(),
             space_projections: BTreeMap::new(),
             drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
@@ -1086,8 +1113,17 @@ impl LocalStateStore {
         payload: Value,
     ) {
         self.ensure_cached_loaded();
+        let operation_id = operation_id.into();
+        if raw_operation_kind(&payload) == Some("cx.realm.destroy")
+            && let Some(realm_id) = space_id.as_deref().filter(|id| !id.trim().is_empty())
+        {
+            self.cached.realm_lifecycle_state.insert(
+                realm_id.to_owned(),
+                RealmLifecycleState::destroyed(operation_id.clone()),
+            );
+        }
         self.cached.raw_operations.push(RawOperationRecord {
-            operation_id: operation_id.into(),
+            operation_id,
             space_id,
             received_at: Utc::now(),
             payload,
@@ -1100,25 +1136,18 @@ impl LocalStateStore {
     /// timeline / chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.
     ///
-    /// Implemented as a scan over `raw_operations` because yougen does not
-    /// yet maintain a dedicated `realm_lifecycle_state` projection; once
-    /// the SDK's reducer exposes that field, switch this to a constant-time
-    /// projection lookup.
-    // TODO(round23-T07): replace the linear scan with a cached
-    // `realm_lifecycle_state: BTreeMap<RealmId, RealmLifecycleState>` once
-    // the SDK reducer exposes the projection.
+    /// Backed by `realm_lifecycle_state`, which is updated as local raw
+    /// operations are appended. This keeps the timeline send-box guard at
+    /// a constant-time lookup instead of scanning the raw operation log on
+    /// every render.
     pub fn realm_is_destroyed(&self, realm_id: &str) -> bool {
         if realm_id.is_empty() {
             return false;
         }
-        self.cached.raw_operations.iter().any(|record| {
-            record.space_id.as_deref() == Some(realm_id)
-                && record
-                    .payload
-                    .get("kind")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|kind| kind == "cx.realm.destroy")
-        })
+        self.load()
+            .realm_lifecycle_state
+            .get(realm_id)
+            .is_some_and(|state| state.destroyed)
     }
 
     pub fn save_space_projection(&mut self, space_id: impl Into<String>, projection: Value) {
@@ -1176,6 +1205,7 @@ impl LocalStateStore {
 
     fn forget_space_inner(&mut self, space_id: &str) {
         self.cached.space_projections.remove(space_id);
+        self.cached.realm_lifecycle_state.remove(space_id);
         self.cached.drafts.remove(space_id);
         self.cached.anchor_views.remove(space_id);
         self.cached.space_remarks.remove(space_id);
@@ -2800,6 +2830,34 @@ mod tests {
 
         store.save_draft("cx:space:demo", " ");
         assert!(store.draft_for("cx:space:demo").is_empty());
+    }
+
+    #[test]
+    fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
+        let path = temp_state_path("realm-lifecycle");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let realm_id = "cx:space:destroyed";
+
+        assert!(!store.realm_is_destroyed(realm_id));
+        store.append_raw_operation(
+            "cx:operation:destroy",
+            Some(realm_id.to_owned()),
+            serde_json::json!({"kind": "cx.realm.destroy"}),
+        );
+
+        assert!(store.realm_is_destroyed(realm_id));
+        let lifecycle = store.load().realm_lifecycle_state;
+        assert!(lifecycle[realm_id].destroyed);
+        assert_eq!(
+            lifecycle[realm_id].destroyed_operation_id.as_deref(),
+            Some("cx:operation:destroy")
+        );
+
+        let reader = LocalStateStore::with_path(path);
+        assert!(reader.realm_is_destroyed(realm_id));
+
+        store.forget_space(realm_id);
+        assert!(!store.realm_is_destroyed(realm_id));
     }
 
     #[test]

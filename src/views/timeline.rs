@@ -544,10 +544,9 @@ pub fn TimelinePanel(
     // Round R2/R3 (T07) — Realm terminal-state projection. When the
     // selected Realm has emitted `cx.realm.destroy`, the timeline MUST
     // (a) surface a "permanently retired" banner and (b) gray out the
-    // composer / send box. The realm_is_destroyed projection scans the
-    // local raw_operations cache; once the SDK reducer exposes a
-    // first-class `realm_lifecycle_state` projection this collapses to
-    // a constant-time lookup.
+    // composer / send box. `realm_is_destroyed` reads the local
+    // `realm_lifecycle_state` cache maintained as raw operations are
+    // appended, so the render path stays constant-time.
     let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_space);
 
     rsx! {

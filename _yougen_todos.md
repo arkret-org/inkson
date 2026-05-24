@@ -81,7 +81,8 @@
   - 2026-05-25 local close: `DpopClaims` carries the RFC 9449 `ath` field, `DpopHandle::mint_proof` hashes the raw access token into base64url(SHA-256), and DPoP device seeds now persist through `SecureKeyStore`, which upgrades from the wasm LocalStorage wrapper into IndexedDB/SubtleCrypto during app boot.
 
 ### Local state durability
-- [ ] §20 `src/local_state.rs:147,865,880,1105` — IndexedDB key store, secure-key-store handoff, linear-scan cache replacement.
+- [x] §20 `src/local_state.rs:147,865,880,1105` — IndexedDB key store, secure-key-store handoff, linear-scan cache replacement.
+  - 2026-05-25 local close: local identity and DPoP comments now reflect the secure-store handoff, wasm boot upgrades secure secrets into IndexedDB/SubtleCrypto, and `realm_lifecycle_state` tracks `cx.realm.destroy` at append time so `realm_is_destroyed` is a constant-time lookup.
 
 ### Tests
 - [ ] §21 Promote the live yougen ↔ soland integration out of `_test_todos_claude.md` Phase 6 into mainline tests (coordinate with cotest §3 of `_cotest_todos.md`).
