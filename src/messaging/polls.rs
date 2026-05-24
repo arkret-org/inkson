@@ -7,15 +7,19 @@
 //!   `{ poll_id, choices: [id, ...] }` (multi-select)
 //! * `cx.content.poll.close` — `{ poll_id }`
 //!
-//! TODO(G3.Y2-followup): soland reducer for `cx.content.poll.*` is not
-//! confirmed to be implemented. The composer builds the canonical wire
-//! shape regardless, so when the reducer lands we only need to flip
-//! from local-only state to projection-derived state.
+//! The local 1.0 UI hides the composer unless the `experimental-polls`
+//! feature is enabled. Builders remain compiled so the canonical wire
+//! shape stays covered by unit tests while soland's reducer is completed.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+
+/// Whether the local UI should expose poll composer / vote controls.
+pub fn polls_enabled() -> bool {
+    cfg!(feature = "experimental-polls")
+}
 
 /// In-flight draft of a poll being composed by the user.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -11,15 +11,19 @@
 //! 3. `cx.flow.update` on the original Flow, setting
 //!    `discussion_space_ref = <new_space_id>`.
 //!
-//! TODO(G3.Y2-followup): all three of those soland endpoints are
-//! partially implemented at best (see `discussion-upgrade.md`
-//! Implementation notes). This module exposes the wire builders and
-//! confirmation-modal state so the UI can light up; the server-side
-//! plumbing lands in a follow-up.
+//! The local 1.0 UI hides the promote modal unless the
+//! `experimental-discussion-promote` feature is enabled. This module keeps
+//! the wire builders covered by unit tests while the soland reducer is
+//! completed.
 
 use serde_json::{Value, json};
 
 use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+
+/// Whether the local UI should expose the discussion promote modal.
+pub fn discussion_promote_enabled() -> bool {
+    cfg!(feature = "experimental-discussion-promote")
+}
 
 /// Modal state for the "promote discussion" confirmation dialog.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -51,10 +51,18 @@
     panicking when no host bridge is installed.
 
 ### Deferred features — explicit gating
-- [ ] §9 `src/messaging/polls.rs:10` — either ship `cx.content.poll.*` in soland and finish polls UI, or hide the poll tab behind a feature flag.
-- [ ] §10 `src/messaging/discussion_promote.rs:14` — same: ship soland endpoints or hide.
-- [ ] §11 `src/views/agents.rs:734,758` — same: G3.Y4 agent supply or hide.
-- [ ] §12 `src/views/applets.rs:452,490` — same: G3.Y4 applet pre-fill or hide.
+- [x] §9 `src/messaging/polls.rs:10` — either ship `cx.content.poll.*` in soland and finish polls UI, or hide the poll tab behind a feature flag.
+  - 2026-05-25: poll composer/cards stay compiled for unit coverage but are
+    hidden from the default UI behind `experimental-polls`.
+- [x] §10 `src/messaging/discussion_promote.rs:14` — same: ship soland endpoints or hide.
+  - 2026-05-25: discussion promote modal stays compiled for builder tests but
+    is hidden behind `experimental-discussion-promote`.
+- [x] §11 `src/views/agents.rs:734,758` — same: G3.Y4 agent supply or hide.
+  - 2026-05-25: `/agents` renders the default-off deferred gate unless
+    `experimental-agents` is enabled.
+- [x] §12 `src/views/applets.rs:452,490` — same: G3.Y4 applet pre-fill or hide.
+  - 2026-05-25: `/applets` renders the default-off deferred gate unless
+    `experimental-applets` is enabled.
 - [x] §13 `src/snapshot.rs:22,45` — fail clearly on partial bootstrap before chunk import.
   - 2026-05-25: SDK 1.0 typed `SnapshotBootstrapSignature` is validated for
     non-empty fields plus payload-digest binding. Partial or drifted bootstrap

@@ -634,8 +634,7 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("directory-advanced-diagnostics")).not.toHaveAttribute("open", "");
 
   await page.goto("/agents", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("agents-panel")).toBeVisible();
-  await expect(page.getByTestId("agent-incoming-results")).not.toContainText("error decoding response body");
+  await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute("data-feature", "experimental-agents");
 
   await page.goto("/call", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("call-panel")).toContainText("Controls ready");

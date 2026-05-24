@@ -7611,21 +7611,29 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Applets => rsx! {
-                        crate::views::applets::AppletsPanel {
-                            base_url: base_url(),
-                            account_did,
-                            token,
-                            selected_space: selected_space(),
-                            state_store,
+                        if crate::views::applets::applets_enabled() {
+                            crate::views::applets::AppletsPanel {
+                                base_url: base_url(),
+                                account_did,
+                                token,
+                                selected_space: selected_space(),
+                                state_store,
+                            }
+                        } else {
+                            DeferredFeatureGate { feature: "experimental-applets" }
                         }
                     },
                     Route::Agents => rsx! {
-                        crate::views::agents::AgentsPanel {
-                            base_url: base_url(),
-                            account_did,
-                            token,
-                            selected_space: selected_space(),
-                            state_store,
+                        if crate::views::agents::agents_enabled() {
+                            crate::views::agents::AgentsPanel {
+                                base_url: base_url(),
+                                account_did,
+                                token,
+                                selected_space: selected_space(),
+                                state_store,
+                            }
+                        } else {
+                            DeferredFeatureGate { feature: "experimental-agents" }
                         }
                     },
                     // A6.1 — global cross-Space message search panel.
@@ -7901,6 +7909,17 @@ fn ProfileGateNotice(profile: &'static str) -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn DeferredFeatureGate(feature: &'static str) -> Element {
+    rsx! {
+        div {
+            class: "timeline",
+            "data-testid": "deferred-feature-gate",
+            "data-feature": "{feature}",
         }
     }
 }

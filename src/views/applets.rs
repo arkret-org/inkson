@@ -35,6 +35,11 @@ use serde_json::Value;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+/// Whether the local UI should expose applet install / registration panels.
+pub fn applets_enabled() -> bool {
+    cfg!(feature = "experimental-applets")
+}
+
 /// Stable hash for a manifest body. `manifest_hash` is what soland's
 /// applet registry will eventually pin per applet; the value is
 /// rendered on `applet-row` via `data-applet-manifest-hash` so the
@@ -449,17 +454,10 @@ pub fn AppletsPanel(
                                                 .set("manifest must be a URL or JSON body".to_owned());
                                         }
                                         ManifestInputKind::Url(u) => {
-                                            // TODO(G3.Y4-followup):
-                                            // GET the URL through
-                                            // with_authed_api and
-                                            // verify the
-                                            // mock-applet-registry
-                                            // signature; today we
-                                            // accept any well-formed
-                                            // URL because the
-                                            // mock-applet-registry
-                                            // verifier endpoint is
-                                            // server-side.
+                                            // Experimental-only surface:
+                                            // default builds hide this panel
+                                            // until server-side manifest
+                                            // verification is owned by soland.
                                             install_verified.set(true);
                                             install_status.set(format!(
                                                 "manifest URL accepted: {u}"
@@ -487,13 +485,10 @@ pub fn AppletsPanel(
                                     install_open.set(false);
                                     install_manifest.set(String::new());
                                     install_verified.set(false);
-                                    // TODO(G3.Y4-followup): pre-fill
-                                    // the registration form fields
-                                    // from the parsed manifest +
-                                    // POST cx.applet.registration
-                                    // directly so the user does not
-                                    // have to round-trip through the
-                                    // two-form flow.
+                                    // Experimental-only surface:
+                                    // default builds hide this panel
+                                    // until manifest prefill and direct
+                                    // registration submission are complete.
                                 },
                                 "Confirm install"
                             }
@@ -544,13 +539,10 @@ pub fn AppletsPanel(
                                                     install_status.set(format!(
                                                         "uninstall requested for {sd}"
                                                     ));
-                                                    // TODO(G3.Y4-followup):
-                                                    // POST a cx.applet.revoke
-                                                    // / cx.applet.uninstall
-                                                    // event once soland accepts
-                                                    // it; for now we surface
-                                                    // the request locally so
-                                                    // operators can audit.
+                                                    // Experimental-only surface:
+                                                    // default builds hide this panel
+                                                    // until soland accepts applet
+                                                    // revoke/uninstall events.
                                                 }
                                             },
                                             "Uninstall"

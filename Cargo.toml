@@ -33,6 +33,12 @@ dev_proof = []
 # this feature, those entry points return an error before any wire byte
 # leaves the device. There is NO runtime env-var override.
 demo-crypto = []
+# Deferred protocol surfaces are compiled by default for unit coverage but
+# hidden from the local 1.0 UI unless explicitly opted in.
+experimental-polls = []
+experimental-discussion-promote = []
+experimental-agents = []
+experimental-applets = []
 
 [dependencies]
 anyhow = "1.0.100"

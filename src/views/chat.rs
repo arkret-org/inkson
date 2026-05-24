@@ -3453,10 +3453,14 @@ pub fn ChatPanel(
                                 // composer in the attachment menu
                                 // pushes a new PollCard here on send.
                                 {
-                                    let card_lookup = poll_cards()
-                                        .iter()
-                                        .find(|card| card.message_id == msg.id)
-                                        .cloned();
+                                    let card_lookup = if crate::messaging::polls::polls_enabled() {
+                                        poll_cards()
+                                            .iter()
+                                            .find(|card| card.message_id == msg.id)
+                                            .cloned()
+                                    } else {
+                                        None
+                                    };
                                     match card_lookup {
                                         Some(card) => {
                                             let poll_id = card.poll_id.clone();
@@ -3517,14 +3521,10 @@ pub fn ChatPanel(
                                                                                 let option_id = option_id.clone();
                                                                                 let api_token = api_token.clone();
                                                                                 spawn(async move {
-                                                                                    // TODO(G3.Y2-followup):
-                                                                                    // soland's
-                                                                                    // `cx.content.poll.response`
-                                                                                    // reducer is not yet
-                                                                                    // implemented; the submit
-                                                                                    // below succeeds locally
-                                                                                    // but the server may
-                                                                                    // currently reject it.
+                                                                                    // Experimental poll responses
+                                                                                    // are hidden from the default
+                                                                                    // local UI until soland's
+                                                                                    // reducer is enabled.
                                                                                     let _ = crate::views::helpers::with_authed_api(
                                                                                         &base,
                                                                                         api_token,
@@ -4070,7 +4070,9 @@ pub fn ChatPanel(
             // a single input for the child Space title + a confirm
             // button that fires the cx.space.create + cx.space.child
             // + cx.space.parent + cx.flow.update batch.
-            if promote_discussion_draft.read().is_open() {
+            if crate::messaging::discussion_promote::discussion_promote_enabled()
+                && promote_discussion_draft.read().is_open()
+            {
                 div { class: "discussion-modal-backdrop",
                     "data-testid": "discussion-promote-modal",
                     div { class: "discussion-modal",
@@ -4126,16 +4128,9 @@ pub fn ChatPanel(
                                         let api_token = token();
                                         let ids_clone = ids.clone();
                                         spawn(async move {
-                                            // TODO(G3.Y2-followup):
-                                            // soland's discussion-promote
-                                            // reducer is partially
-                                            // implemented. We submit each
-                                            // envelope through the generic
-                                            // event submit path here so
-                                            // the UI shows progress; the
-                                            // server may currently reject
-                                            // `cx.space.child`/`parent`
-                                            // until the reducer lands.
+                                            // Experimental discussion promote is
+                                            // hidden from the default local UI
+                                            // until soland's reducer is enabled.
                                             let _ = crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
@@ -4408,34 +4403,31 @@ pub fn ChatPanel(
                         }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
-                                button {
-                                    r#type: "button",
-                                    class: "attachment-menu-item",
-                                    "data-testid": "attachment-menu-poll",
-                                    onclick: move |_| {
-                                        attachment_menu_open.set(false);
-                                        poll_draft.set(Some(
-                                            crate::messaging::polls::PollDraft::new(),
-                                        ));
-                                    },
-                                    "Create poll"
-                                }
-                                // G3.Y2 — cotest references this short-cut
-                                // testid (`open-poll-composer-button`); we
-                                // alias it onto the same handler so existing
-                                // specs and the new attachment menu both
-                                // open the same composer.
-                                button {
-                                    r#type: "button",
-                                    class: "secondary",
-                                    "data-testid": "open-poll-composer-button",
-                                    onclick: move |_| {
-                                        attachment_menu_open.set(false);
-                                        poll_draft.set(Some(
-                                            crate::messaging::polls::PollDraft::new(),
-                                        ));
-                                    },
-                                    "Poll"
+                                if crate::messaging::polls::polls_enabled() {
+                                    button {
+                                        r#type: "button",
+                                        class: "attachment-menu-item",
+                                        "data-testid": "attachment-menu-poll",
+                                        onclick: move |_| {
+                                            attachment_menu_open.set(false);
+                                            poll_draft.set(Some(
+                                                crate::messaging::polls::PollDraft::new(),
+                                            ));
+                                        },
+                                        "Create poll"
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "secondary",
+                                        "data-testid": "open-poll-composer-button",
+                                        onclick: move |_| {
+                                            attachment_menu_open.set(false);
+                                            poll_draft.set(Some(
+                                                crate::messaging::polls::PollDraft::new(),
+                                            ));
+                                        },
+                                        "Poll"
+                                    }
                                 }
                             }
                         }
@@ -4567,6 +4559,7 @@ pub fn ChatPanel(
                         "{compose_upload_status}"
                     }
                 }
+                if crate::messaging::polls::polls_enabled() {
                 if let Some(draft) = poll_draft.read().clone() {
                     div { class: "poll-composer",
                         "data-testid": "poll-composer",
@@ -4662,16 +4655,9 @@ pub fn ChatPanel(
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
                                         spawn(async move {
-                                            // TODO(G3.Y2-followup):
-                                            // soland's `cx.content.poll.create`
-                                            // reducer is unconfirmed —
-                                            // the submit succeeds locally
-                                            // but the server may not yet
-                                            // route the event. The wire
-                                            // shape we emit matches
-                                            // `models/content-types.md §4.9`
-                                            // so flipping the server on
-                                            // requires no client change.
+                                            // Experimental poll creation is
+                                            // hidden from the default local UI
+                                            // until soland's reducer is enabled.
                                             let _ = crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
@@ -4731,6 +4717,7 @@ pub fn ChatPanel(
                             }
                         }
                     }
+                }
                 }
                 div { class: "actions",
                     button {

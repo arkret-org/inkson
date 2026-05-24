@@ -384,29 +384,23 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/applets.html
   // spec: extensions/applet-integration.md
   test("applets: register new applet writes signed cx.applet.registration", async ({ page }) => {
-    // applets view is not yet implemented in
-    // yougen — the feature surface lives in
-    // `contrix-spec/spec/v1/extensions/applet-integration.md` and the
-    // builder events (cx.applet.registration / cx.applet.invocation)
-    // exist in the operation registry. Until the dedicated view lands,
-    // this test pins the routing contract: navigating to `/applets`
-    // MUST NOT crash the client-shell (Dioxus router falls through to
-    // a generic surface). Once the view ships, swap the assertion to
-    // the registration form's data-testids.
+    // The applet surface is compiled for unit coverage but hidden in
+    // the default local 1.0 UI until the `experimental-applets`
+    // feature is explicitly enabled.
     await page.goto("/applets", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
+      "data-feature",
+      "experimental-applets",
+    );
   });
 
   test("applets: agent capability approval writes signed event chain", async ({ page }) => {
-    // agent capability approval is gated by the
-    // shared CapabilityEngine + soland's policy engine — both
-    // exercised in unit tests. The /applets route currently has no
-    // dedicated view; once it lands the per-agent approval row will
-    // expose a data-testid like `agent-approval-row`. For now we pin
-    // routing robustness — the agent approval flow MUST be reachable
-    // without crashing.
+    // Applet/agent approval remains behind the same default-off gate.
     await page.goto("/applets", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
+      "data-feature",
+      "experimental-applets",
+    );
   });
 
   // ---- WebRTC call ----

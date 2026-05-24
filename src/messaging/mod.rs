@@ -4,10 +4,9 @@
 //! This module hosts the *client-side* state machines and serialisers
 //! for the advanced messaging surfaces (mentions, polls, typing,
 //! presence, read receipts, discussion promote) so the chat view file
-//! stays focused on rendering. Most of the soland-side semantics for
-//! these features are deferred (see `// TODO(G3.Y2-followup): ...`
-//! markers); the goal here is to ship the UI surface so the cotest
-//! e2e suite can assert against stable testids.
+//! stays focused on rendering. Polls and discussion promote are compiled
+//! for builder/unit coverage but hidden from the default local UI behind
+//! `experimental-polls` and `experimental-discussion-promote`.
 //!
 //! Submodules:
 //! * [`polls`] — poll draft + result-tally state used by the composer

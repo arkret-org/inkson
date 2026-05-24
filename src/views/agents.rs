@@ -39,6 +39,11 @@ use serde_json::Value;
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+/// Whether the local UI should expose the agent endpoint / handoff panel.
+pub fn agents_enabled() -> bool {
+    cfg!(feature = "experimental-agents")
+}
+
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
 /// machine is purely client-side (the durable counterpart is the
@@ -731,12 +736,10 @@ pub fn AgentsPanel(
                                                 &target,
                                                 &session_id,
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
-                                                // TODO(G3.Y4-followup): supply a real
-                                                // capability_grant_ref once the
-                                                // handoff modal collects it; today
-                                                // we send an empty proof so the
-                                                // start event lands and the
-                                                // controller flow is exercised.
+                                                // Experimental-only surface:
+                                                // default builds hide this panel
+                                                // until soland's agent bridge
+                                                // owns capability grant refs.
                                                 serde_json::Value::Null,
                                             )
                                             .build("yougen");
@@ -755,18 +758,12 @@ pub fn AgentsPanel(
                                                         "cx.agent.protocol_session.status".to_owned(),
                                                         "running (in-process echo bridge)".to_owned(),
                                                     ));
-                                                    // TODO(G3.Y4-followup):
-                                                    // poll for the result
-                                                    // event and transition
-                                                    // to Completed/Failed
-                                                    // based on its
-                                                    // payload; today the
-                                                    // dedicated incoming
-                                                    // results poll loop
-                                                    // above handles the
-                                                    // result rendering, but
-                                                    // does not feed into
-                                                    // handoff_state.
+                                                    // Experimental-only surface:
+                                                    // the incoming results poll
+                                                    // above renders terminal
+                                                    // events while the default
+                                                    // local UI keeps this panel
+                                                    // hidden.
                                                 }
                                                 Err(err) => {
                                                     handoff_state.set(HandoffState::Failed);
