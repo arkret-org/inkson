@@ -3,7 +3,7 @@ name = "yougen"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
-description = "Dioxus cross-platform Contrix v1 reference client (macOS/Windows/Linux/iOS/Android/Web)"
+description = "Dioxus desktop and web Contrix v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/contrix/yougen"
 
@@ -77,12 +77,12 @@ pulldown-cmark = { version = "0.10", default-features = false, features = ["html
 # canonical-bytes-only and the active-write signing path has nothing to
 # call into.
 contrix-sdk = { package = "contrix", version = "1.0.0", path = "../contrix-rust-sdk/crates/sdk", features = ["full-surface", "signer"] }
-dioxus = { version = "=0.7.5", features = ["desktop", "mobile", "web"] }
+dioxus = { version = "=0.7.5", features = ["desktop", "web"] }
 # C33.2: OS-keychain handoff for `secure_key_store::KeyringSecureKeyStore`.
 # Routes to macOS Keychain Services / freedesktop Secret Service / Windows
 # Credential Manager via the platform-feature flags on stable native
-# targets. The wasm32 + mobile builds fall back to MemorySecureKeyStore
-# (mobile FFI lands next round).
+# targets. Mobile host-bridge types remain behind target cfgs, but no
+# iOS/Android artifact is part of the local 1.0 milestone.
 #
 # Pinned to 3.6.x because the 4.x line moved its public API to
 # `keyring-core` (the 4.x `keyring` crate itself is now a CLI / sample

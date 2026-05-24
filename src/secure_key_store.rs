@@ -18,7 +18,7 @@
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
 //! | wasm32          | [`MemorySecureKeyStore`] | Browser has no symmetric secret store yet — fall back to in-memory + TODO for IndexedDB-backed encryption. |
-//! | iOS / Android   | [`MemorySecureKeyStore`] | Mobile FFI lands next round (planned: Android Keystore + iOS Keychain). |
+//! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
 //!
@@ -137,9 +137,9 @@ pub trait SecureKeyStore: Send + Sync {
 }
 
 /// In-memory fallback store. Wraps an `Arc<Mutex<HashMap>>` so clones
-/// share state. Used on wasm32 and as the mobile fallback until the
-/// FFI keystores land. Also useful for tests that don't want to
-/// touch the real OS keychain.
+/// share state. Used on wasm32 and as the mobile fallback when a host
+/// bridge has not been installed. Also useful for tests that don't
+/// want to touch the real OS keychain.
 ///
 /// **WARNING**: this store keeps secrets in plaintext in the process
 /// heap. Production callers should prefer [`KeyringSecureKeyStore`]
@@ -552,16 +552,16 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 /// | Target          | Backend |
 /// |-----------------|---------|
 /// | macOS / Linux / Windows | [`KeyringSecureKeyStore`] |
-/// | Android         | [`AndroidKeystoreSecureKeyStore`] (C34.1 stub — calls panic until JNI lands) |
-/// | iOS             | [`IosKeychainSecureKeyStore`] (C34.1 stub — calls panic until Security.framework lands) |
+/// | Android         | [`AndroidKeystoreSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
+/// | iOS             | [`IosKeychainSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
 /// | wasm32          | [`MemorySecureKeyStore`] (no symmetric secret store available in the browser) |
 ///
 /// The returned trait object is `Arc`-shared so one selection can be
-/// installed process-wide. **Mobile callers** should treat the
-/// returned store as compile-time-stable but runtime-unimplemented
-/// until the FFI shim lands — either gate the call site behind a
-/// runtime feature flag, or substitute [`MemorySecureKeyStore`]
-/// explicitly with the usual "secrets in plaintext heap" UX warning.
+/// installed process-wide. **Mobile app artifacts are not shipped in
+/// the local 1.0 milestone**; the Android/iOS branches remain for a
+/// future host runtime and never panic when no bridge is installed.
+/// They fall back to [`MemorySecureKeyStore`] with the usual "secrets
+/// in plaintext heap" UX warning.
 ///
 /// **wasm32 callers**: this returns the synchronous fallback
 /// [`LocalStorageSecureKeyStore`] for first-paint usability. Once the

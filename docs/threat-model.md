@@ -2,10 +2,12 @@
 
 ## Scope
 
-This model covers the yougen client: web, desktop, and the planned mobile
-surface. Server authorization, federation, and push gateway internals are
-owned by soland, coauth, and chime, but yougen is responsible for preserving
-their security properties at the client boundary.
+This model covers the yougen client surfaces in the local 1.0 milestone:
+desktop and web. Mobile host-bridge references exist for a future phase, but
+iOS and Android artifacts are not built or shipped by this plan. Server
+authorization, federation, and push gateway internals are owned by soland,
+coauth, and chime, but yougen is responsible for preserving their security
+properties at the client boundary.
 
 ## Assets
 
@@ -32,7 +34,8 @@ Threats:
 
 - A renderer XSS or compromised dependency reads IndexedDB/local storage.
 - Desktop filesystem compromise reads fallback state.
-- Mobile stubs bypass platform secure storage.
+- A future mobile host forgets to install the secure-store bridge and falls
+  back to in-memory secret storage.
 - Logs accidentally include DPoP proofs, key identifiers, or recovery data.
 
 Controls:
@@ -40,13 +43,14 @@ Controls:
 - Prefer OS secure storage for long-lived keys.
 - Keep browser storage scoped and avoid plaintext secret duplication.
 - Keep recovery material out of logs, UI telemetry, and crash reports.
-- Replace mobile secure-store stubs before mobile release scope is accepted.
+- Keep iOS/Android artifacts out of the local milestone until host secure-store
+  bridges are owned by a platform shell.
 
 Open phase-3 items:
 
 - IndexedDB key-store hardening is tracked in `_yougen_todos.md` §20.
-- Android Keystore and iOS Keychain work is out of the desktop/web local
-  milestone and remains tracked behind the mobile scope gate in §5-§8.
+- Android Keystore and iOS Keychain package work is out of the desktop/web
+  local milestone and remains behind the mobile scope gate in §5-§8.
 
 ## Push privacy risks
 

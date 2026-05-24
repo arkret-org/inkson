@@ -6,7 +6,8 @@
 
 ## State at start (2026-05-24)
 
-- Dioxus 0.7.5; macOS + Windows + Linux build green in CI; iOS + Android stubs only (panic on call).
+- Dioxus 0.7.5; local 1.0 scope is desktop + web only. iOS/Android package
+  work is explicitly out of scope for this local milestone.
 - 764 unit tests pass. Cross-browser Playwright matrix (Chromium/Firefox/WebKit × 11 specs).
 - 103 TODO/FIXME + 74 `todo!()`/`panic!()`/`unimplemented!()` macros.
 - Spec alignment (v3 `_api_report.md`, 2026-05-21) — yougen ↔ soland fully aligned via `cx.events.submit`.
@@ -35,10 +36,19 @@
     `register_via_chime` instead of the bearer-only API helper.
 
 ### Mobile decision + execution (Q5 in master plan)
-- [ ] §5 Decision item: ship 1.0 desktop+web only, or invest in iOS+Android CI?
-- [ ] §6 [if shipping mobile] iOS CI matrix in `packages.yml`: macOS runner, Xcode setup, ad-hoc signing, build `.ipa`.
-- [ ] §7 [if shipping mobile] Android CI matrix: Android SDK, Gradle build, signed APK.
-- [ ] §8 [if shipping mobile] Replace panics in `src/secure_key_store.rs:451,508` with real Android Keystore + iOS Keychain integrations.
+- [x] §5 Decision item: ship 1.0 desktop+web only, or invest in iOS+Android CI?
+  - 2026-05-25: decided desktop + web only for the local 1.0 milestone.
+    Dioxus `mobile` feature is not enabled for the packaged native build.
+- [x] §6 [if shipping mobile] iOS CI matrix in `packages.yml`: macOS runner, Xcode setup, ad-hoc signing, build `.ipa`.
+  - 2026-05-25: not shipping mobile; `packages.yml` remains desktop-only and
+    does not build or upload `.ipa` artifacts.
+- [x] §7 [if shipping mobile] Android CI matrix: Android SDK, Gradle build, signed APK.
+  - 2026-05-25: not shipping mobile; no Android SDK/Gradle/APK matrix is part
+    of the local milestone.
+- [x] §8 [if shipping mobile] Replace panics in `src/secure_key_store.rs:451,508` with real Android Keystore + iOS Keychain integrations.
+  - 2026-05-25: mobile artifacts are out of scope. The secure-store Android/iOS
+    cfg paths already use a `HostSecretBridge` delegation and fall back without
+    panicking when no host bridge is installed.
 
 ### Deferred features — explicit gating
 - [ ] §9 `src/messaging/polls.rs:10` — either ship `cx.content.poll.*` in soland and finish polls UI, or hide the poll tab behind a feature flag.
@@ -92,4 +102,4 @@ All of:
 ## Notes
 
 - The `_api_report.md` v3 audit is comprehensive — when you change endpoint surfaces, refresh that doc too.
-- Phase-3 decision Q5 cascades into §5–§8; don't start mobile work until decided.
+- Phase-3 decision Q5 closed on 2026-05-25: local 1.0 remains desktop + web.

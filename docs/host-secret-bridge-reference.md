@@ -15,6 +15,10 @@ project pastes these in, swaps the module path / package, then
 calls `install_host_secret_bridge(Arc::new(...))` from its
 `AppDelegate.didFinishLaunching` / `MainActivity.onCreate`.
 
+The phase-3 local 1.0 milestone does not ship iOS or Android artifacts. Treat
+this document as a future host-runtime contract, not a required build step for
+the local desktop/web release.
+
 [bridge]: ../src/secure_key_store.rs
 [install]: ../src/secure_key_store.rs
 
