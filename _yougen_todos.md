@@ -85,7 +85,8 @@
   - 2026-05-25 local close: local identity and DPoP comments now reflect the secure-store handoff, wasm boot upgrades secure secrets into IndexedDB/SubtleCrypto, and `realm_lifecycle_state` tracks `cx.realm.destroy` at append time so `realm_is_destroyed` is a constant-time lookup.
 
 ### Tests
-- [ ] §21 Promote the live yougen ↔ soland integration out of `_test_todos_claude.md` Phase 6 into mainline tests (coordinate with cotest §3 of `_cotest_todos.md`).
+- [x] §21 Promote the live yougen ↔ soland integration out of `_test_todos_claude.md` Phase 6 into mainline tests (coordinate with cotest §3 of `_cotest_todos.md`).
+  - 2026-05-25 local close: cotest owns the live UI↔soland mainline suite; `run-cotest.ps1 -Profile joint` now runs the promoted `joint-yougen` smoke through `run-joint-e2e.ps1` with soland, coauth/PostgreSQL, and the real yougen web build. Yougen keeps its own `tests/e2e` mock-only by design per README.
 - [ ] §22 Add cross-platform smoke spec for push subscribe / receive on each desktop OS (currently only Chromium-on-Linux exercises Web Push).
 
 ### Engineering hygiene
