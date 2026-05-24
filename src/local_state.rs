@@ -853,16 +853,17 @@ pub struct ClientLocalState {
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
-    /// G3.Y0 — per-device DPoP signing key persisted across launches.
+    /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
     /// Used to mint `DPoP:` proofs for session-grant issuance and the
     /// G3.C1 `POST /api/v1/session-grants/refresh` endpoint, which both
     /// require a key the server can bind to `cnf.jkt`.
     ///
-    /// Security tradeoff: the wasm32 build persists this in `localStorage`
-    /// (via the parent `state.json` blob). A future hardening pass MUST
-    /// move it into IndexedDB with `extractable: false` SubtleCrypto keys
-    /// so the private bytes can't be exfiltrated by an XSS payload.
-    /// TODO(G3.Y0-followup): IndexedDB-backed `SubtleCrypto` key handle.
+    /// Production callers store the private seed in `SecureKeyStore`
+    /// under `auth.dpop.device_key.v1`; this state record keeps the
+    /// public `jkt` + creation timestamp for diagnostics. The wasm32
+    /// boot path starts with the synchronous LocalStorage wrapper and
+    /// upgrades the same secure-store entries into IndexedDB +
+    /// SubtleCrypto during app initialization.
     #[serde(default)]
     pub dpop_device_key: Option<DpopDeviceKeyRecord>,
 }
@@ -877,10 +878,10 @@ pub struct ClientLocalState {
 /// algorithm out of the box. Sticking with ed25519 keeps a single
 /// key-format story across the client.
 ///
-/// TODO(G3.Y0-followup): wrap with `crate::secure_key_store::SecureKeyStore`
-/// so the seed bytes don't sit in plaintext `state.json` (the equivalent
-/// of the localStorage wrapping the wasm32 build already does for
-/// `LocalIdentityRecord`).
+/// Production code writes the full record into
+/// [`crate::secure_key_store::SecureKeyStore`] and stores an empty
+/// `seed_b64` in `state.json` so diagnostics can still show the `jkt`.
+/// Unit tests use the plaintext record directly.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DpopDeviceKeyRecord {
     /// Base64url-no-pad of the 32-byte ed25519 seed.
@@ -1054,6 +1055,7 @@ impl Default for LocalStateStore {
 
 impl LocalStateStore {
     const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
+    const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
     pub fn load(&self) -> ClientLocalState {
         if self.cached != ClientLocalState::default() {
@@ -1250,6 +1252,11 @@ impl LocalStateStore {
     /// soft keeps device material so the user can re-authenticate on
     /// the same `cnf.jkt`; hard rotates the device key.
     pub fn clear_device_scoped(&mut self) {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let _ = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY);
+        }
         self.ensure_cached_loaded();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
@@ -1262,9 +1269,65 @@ impl LocalStateStore {
 
     /// G3.Y0 — persist (or clear via `None`) the device DPoP key.
     pub fn set_dpop_device_key(&mut self, record: Option<DpopDeviceKeyRecord>) {
+        #[cfg(not(test))]
+        if record.is_none() {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            if let Err(error) = secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY) {
+                tracing::debug!(
+                    ?error,
+                    "secure_key_store DPoP key delete on clear failed (likely already missing)",
+                );
+            }
+        }
         self.ensure_cached_loaded();
         self.cached.dpop_device_key = record;
         let _ = self.flush();
+    }
+
+    /// Persist the DPoP key through `SecureKeyStore`. The private seed
+    /// is written to the secure backend; `state.json` keeps only the
+    /// public diagnostics (`jkt`, `created_at`) with an empty seed.
+    pub fn set_dpop_device_key_with_secure_store(
+        &mut self,
+        record: Option<DpopDeviceKeyRecord>,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
+        let public_record = match record {
+            Some(record) => {
+                store_dpop_device_key_in_secure_store(secure_store, &record)?;
+                let mut public_record = record;
+                public_record.seed_b64.clear();
+                Some(public_record)
+            }
+            None => {
+                secure_store.delete_secret(Self::SECURE_DPOP_DEVICE_KEY)?;
+                None
+            }
+        };
+        self.ensure_cached_loaded();
+        self.cached.dpop_device_key = public_record.clone();
+        let _ = self.flush();
+        Ok(public_record)
+    }
+
+    /// Load the DPoP key from `SecureKeyStore`, migrating a legacy
+    /// plaintext seed from `state.json` when one is present.
+    pub fn load_dpop_device_key_with_secure_store(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
+        if let Some(record) = load_dpop_device_key_from_secure_store(secure_store)? {
+            return Ok(Some(record));
+        }
+
+        let Some(record) = self.dpop_device_key() else {
+            return Ok(None);
+        };
+        if record.seed_b64.trim().is_empty() {
+            return Ok(None);
+        }
+        store_dpop_device_key_in_secure_store(secure_store, &record)?;
+        Ok(Some(record))
     }
 
     pub fn save_draft(&mut self, space_id: impl Into<String>, draft: impl Into<String>) {
@@ -2540,6 +2603,32 @@ fn store_identity_record_in_secure_store(
     secure_store.store_secret(LocalStateStore::SECURE_IDENTITY_KEY, &json)
 }
 
+fn load_dpop_device_key_from_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
+    let Some(json) = secure_store.get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)? else {
+        return Ok(None);
+    };
+    let record = serde_json::from_str(&json).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "parse DPoP device key record: {error}"
+        ))
+    })?;
+    Ok(Some(record))
+}
+
+fn store_dpop_device_key_in_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    record: &DpopDeviceKeyRecord,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    let json = serde_json::to_string(record).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "serialize DPoP device key record: {error}"
+        ))
+    })?;
+    secure_store.store_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY, &json)
+}
+
 fn plaintext_identity_seed_fallback_allowed() -> bool {
     cfg!(test)
         || std::env::var("YOUGEN_ALLOW_PLAINTEXT_IDENTITY_SEED")
@@ -2923,6 +3012,50 @@ mod tests {
             secure
                 .get_secret(&format!("coauth.refresh_token.{actor}"))
                 .expect("read ok after clear")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn dpop_device_key_migrates_into_secure_key_store() {
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+        let path = temp_state_path("dpop-secure-store");
+        let mut store = LocalStateStore::with_path(path);
+        let secure = MemorySecureKeyStore::default();
+        let record = DpopDeviceKeyRecord {
+            seed_b64: "seed-material".to_owned(),
+            jkt: "jkt-1".to_owned(),
+            created_at: Utc::now(),
+        };
+
+        let public_record = store
+            .set_dpop_device_key_with_secure_store(Some(record.clone()), &secure)
+            .expect("store dpop key")
+            .expect("public record");
+        assert_eq!(public_record.jkt, "jkt-1");
+        assert!(public_record.seed_b64.is_empty());
+        assert!(store.dpop_device_key().unwrap().seed_b64.is_empty());
+
+        let secure_json = secure
+            .get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)
+            .expect("read secure dpop")
+            .expect("secure dpop present");
+        assert!(secure_json.contains("seed-material"));
+
+        let loaded = store
+            .load_dpop_device_key_with_secure_store(&secure)
+            .expect("load dpop key")
+            .expect("dpop key present");
+        assert_eq!(loaded, record);
+
+        store
+            .set_dpop_device_key_with_secure_store(None, &secure)
+            .expect("clear dpop key");
+        assert!(store.dpop_device_key().is_none());
+        assert!(
+            secure
+                .get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)
+                .expect("read secure dpop after clear")
                 .is_none()
         );
     }

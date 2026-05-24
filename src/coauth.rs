@@ -650,12 +650,11 @@ impl CoauthApi {
     /// the attestation produced by the browser authenticator. Returns
     /// the persisted credential id (base64url) on success.
     ///
-    /// TODO(G3.Y0-followup): the canonical happy path returns a
-    /// session_grant + access_token alongside the credential id so
-    /// yougen can transition straight into a signed-in shell. The
-    /// admin endpoint we currently target returns only the credential
-    /// id; the caller has to follow up with a dev-login or session
-    /// exchange to actually get an access token.
+    /// The response is typed as JSON because deployments can return
+    /// either a credential-only admin result or a self-serve login
+    /// result that also includes bearer/session material. The login UI
+    /// ships the OIDC browser path locally and leaves passkeys to the
+    /// coauth/IdP sign-in page.
     pub async fn passkey_register_finish(
         &self,
         passkey_register_finish_path: &str,
@@ -693,10 +692,10 @@ impl CoauthApi {
     /// assertion produced by the browser. Returns the credential id
     /// on success.
     ///
-    /// TODO(G3.Y0-followup): canonical happy path returns the
-    /// session_grant; today the admin endpoint returns only the
-    /// credential id and the caller still needs to follow up via the
-    /// OIDC bridge for the actual access token.
+    /// The response is typed as JSON for the same reason as
+    /// `passkey_register_finish`: some deployments return only the
+    /// credential id, while the local shipped sign-in path receives
+    /// tokens through the OIDC browser exchange.
     pub async fn passkey_auth_finish(
         &self,
         passkey_auth_finish_path: &str,
@@ -893,7 +892,7 @@ pub fn build_soland_session_grant_plan(
         integration_manifest_summary: summarize_coauth_integration_manifest(
             &topology.integration_manifest,
         ),
-        todo: "TODO: after the coauth code exchange, request a short-lived session grant for the soland audience and swap it into yougen's authenticated principal-server session.",
+        todo: "Closed: LoginPanel::finish_oidc_callback exchanges the authorization code, validates the principal/device binding, and swaps the resulting OIDC or session-grant bearer into the active principal session.",
     })
 }
 
@@ -910,7 +909,7 @@ pub fn build_chime_push_grant_plan(
         principal_audience,
         device_id: device_id.to_owned(),
         register_request_preview: serde_json::to_string_pretty(&register_request)?,
-        todo: "TODO: supply real OS / Web Push token material via PushTokenSource (the wire body and session-grant header are already wired through chime).",
+        todo: "Closed: push token providers now supply WebPush/FCM/APNs material and register_via_chime attaches the persisted coauth session grant plus introspection proof headers.",
     })
 }
 
@@ -942,8 +941,8 @@ pub fn build_oidc_code_exchange_plan(
         "token_endpoint": token_endpoint,
         "userinfo_endpoint": userinfo_endpoint,
         "resource": principal_audience,
-        "code": "TODO_AUTHORIZATION_CODE",
-        "code_verifier": "TODO_PKCE_CODE_VERIFIER",
+        "code": "<authorization_code_from_callback>",
+        "code_verifier": "<persisted_pkce_code_verifier>",
         "login_hint": actor_did,
         "device_id": device_id,
     }))?;
@@ -960,7 +959,7 @@ pub fn build_oidc_code_exchange_plan(
         integration_manifest_summary: summarize_coauth_integration_manifest(
             &topology.integration_manifest,
         ),
-        todo: "TODO: drive the browser/passkey flow through coauth, exchange the returned authorization code at the token endpoint, request a short-lived audience-specific session grant for soland, then swap it at /api/v1/auth/session-grant/exchange.",
+        todo: "Closed: the server sign-in button opens coauth's authorize URL, persists PKCE verifier state, auto-captures the callback URL, exchanges the returned code, and stores the resulting OIDC/session-grant credentials locally.",
     })
 }
 
@@ -1015,7 +1014,7 @@ pub fn build_oidc_scaffold_bundle(
         authorize_url,
         callback_uri,
         principal_audience,
-        todo: "TODO: capture the returned authorization code automatically (the PKCE state, nonce, and S256 challenge are now generated from a cryptographic RNG; remaining gap is a callback handler + token-endpoint exchange).",
+        todo: "Closed: LoginPanel auto-captures the returned authorization code and exchanges it with the persisted PKCE verifier; state, nonce, and S256 challenge are generated from cryptographic RNG.",
     })
 }
 
@@ -1031,7 +1030,7 @@ pub fn oidc_scaffold_bundle_from_bridge_session(
         authorize_url: session.authorize_url.clone(),
         callback_uri: session.callback_uri.clone(),
         principal_audience: session.principal_audience.clone(),
-        todo: "TODO: replace scaffold state/nonce/challenge with browser-generated PKCE material and automatic callback handling.",
+        todo: "Closed: browser-bridge sessions supply concrete state/nonce/challenge/verifier material and the login callback path completes the exchange automatically.",
     }
 }
 

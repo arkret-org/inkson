@@ -17,7 +17,7 @@
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
-//! | wasm32          | [`MemorySecureKeyStore`] | Browser has no symmetric secret store yet — fall back to in-memory + TODO for IndexedDB-backed encryption. |
+//! | wasm32          | [`LocalStorageSecureKeyStore`] first paint, then [`IndexedDbSecureKeyStore`] after async upgrade | LocalStorage keeps the synchronous boot path working; IndexedDB + SubtleCrypto becomes the default once `upgrade_wasm_secure_key_store_async` completes. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
@@ -30,12 +30,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_arch = "wasm32")]
+use std::sync::OnceLock;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use chacha20poly1305::{
     AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
     aead::{Aead, OsRng},
 };
+
+#[cfg(target_arch = "wasm32")]
+static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore>> = OnceLock::new();
 
 /// AEAD-wrap a UTF-8 secret string with
 /// ChaCha20-Poly1305 + a 32-byte wrapping key. Returns a base64
@@ -571,6 +577,9 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     #[cfg(target_arch = "wasm32")]
     {
+        if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+            return store.clone();
+        }
         // The wasm32 build persists AEAD-wrapped secrets to `localStorage`
         // rather than dropping them on a memory-only fallback. See
         // `LocalStorageSecureKeyStore` doc-comment for the wrapping-key
@@ -1593,9 +1602,8 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///      `upgrade_wasm_secure_key_store_async(service_name).await`,
 ///      which returns either:
 ///        * `Ok(Some(store))` — a fully-initialised
-///          [`IndexedDbSecureKeyStore`] ready to replace the
-///          LocalStorage store. The app should hot-swap the
-///          `Arc<dyn SecureKeyStore>` in its app state.
+///          [`IndexedDbSecureKeyStore`] installed as the process-wide
+///          default returned by [`default_secure_key_store`].
 ///        * `Ok(None)` — IndexedDB or SubtleCrypto were
 ///          unavailable (private-mode Firefox, file:// origin,
 ///          Tor Browser hardened). Keep the LocalStorage store.
@@ -1635,7 +1643,9 @@ pub async fn upgrade_wasm_secure_key_store_async(
     if migrated > 0 {
         tracing::info!("H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB");
     }
-    Ok(Some(Arc::new(store)))
+    let store: Arc<dyn SecureKeyStore> = Arc::new(store);
+    let _ = WASM_UPGRADED_SECURE_KEY_STORE.set(store.clone());
+    Ok(Some(store))
 }
 
 /// Walk `localStorage` looking for keys under the

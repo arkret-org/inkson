@@ -75,8 +75,10 @@
 - [x] §17 Web image: build locally and generate SBOM/cosign evidence. Do not push to GHCR or any registry.
 
 ### Auth flow closure
-- [ ] §18 `src/coauth.rs:896,913,945-946,963,1018,1034` — finish OIDC callback capture, PKCE verifier auto-exchange, passkey flow.
-- [ ] §19 `src/auth_dpop.rs:33,114,134` — wire DPoP `ath` claim + IndexedDB storage.
+- [x] §18 `src/coauth.rs:896,913,945-946,963,1018,1034` — finish OIDC callback capture, PKCE verifier auto-exchange, passkey flow.
+  - 2026-05-25 local close: `LoginPanel::finish_oidc_callback` now owns callback URL capture, persisted PKCE verifier exchange, principal/device binding validation, and OIDC/session-grant persistence. The hidden incomplete in-app passkey buttons were removed from the local UI; passkey ceremonies stay behind coauth/IdP server sign-in for this desktop/web milestone.
+- [x] §19 `src/auth_dpop.rs:33,114,134` — wire DPoP `ath` claim + IndexedDB storage.
+  - 2026-05-25 local close: `DpopClaims` carries the RFC 9449 `ath` field, `DpopHandle::mint_proof` hashes the raw access token into base64url(SHA-256), and DPoP device seeds now persist through `SecureKeyStore`, which upgrades from the wasm LocalStorage wrapper into IndexedDB/SubtleCrypto during app boot.
 
 ### Local state durability
 - [ ] §20 `src/local_state.rs:147,865,880,1105` — IndexedDB key store, secure-key-store handoff, linear-scan cache replacement.

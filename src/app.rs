@@ -5608,6 +5608,44 @@ pub fn RouterView() -> Element {
     let server_description = use_signal(|| Option::<ServerDescription>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut state_store_for_secure_upgrade = state_store;
+        use_future(move || async move {
+            match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
+                Ok(Some(secure_store)) => {
+                    let dpop_record = {
+                        let store = state_store_for_secure_upgrade.read();
+                        store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
+                    };
+                    match dpop_record {
+                        Ok(Some(record)) => {
+                            if let Err(error) = state_store_for_secure_upgrade
+                                .write()
+                                .set_dpop_device_key_with_secure_store(
+                                    Some(record),
+                                    secure_store.as_ref(),
+                                )
+                            {
+                                tracing::warn!(
+                                    ?error,
+                                    "IndexedDB DPoP key metadata refresh failed",
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(?error, "IndexedDB DPoP key load failed");
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(?error, "IndexedDB secure-key-store upgrade failed");
+                }
+            }
+        });
+    }
     // Provide i18n context for views that call `crate::i18n::tr(key)`.
     // The locale field stays in sync with `locale` via the use_effect
     // below; the dictionary tables are baked once at boot.

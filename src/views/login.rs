@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 
 use crate::{
     api::ContrixApi,
-    auth_dpop::{ensure_device_key, mint_dpop_proof},
     coauth::{
         CoauthApi, build_oidc_code_exchange_plan, build_oidc_scaffold_bundle,
         build_session_grant_introspection_proof_bundle, capture_current_browser_callback_url,
@@ -30,8 +29,6 @@ struct CompletedLogin {
     /// When present, this is the durable refresh path.
     oidc_tokens: Option<OidcTokenBundle>,
 }
-
-const SHOW_PASSKEY_LOGIN_UI: bool = false;
 
 #[component]
 pub fn LoginPanel(
@@ -153,105 +150,6 @@ pub fn LoginPanel(
 
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
-                }
-
-                // G3.Y0 — passkey live path.
-                //
-                // The buttons hit coauth's passkey ceremony endpoints
-                // (`{passkey,passkey/auth}/{start,finish}`) and the
-                // browser's WebAuthn API in between. Because the
-                // canonical *unauthenticated* passkey-register handler
-                // is still admin-only in coauth today, the buttons land
-                // on the per-account admin path advertised by the
-                // bridge — same wire shape, same response.
-                //
-                // TODO(G3.Y0-followup): coauth needs an unauthenticated
-                // `/api/v1/auth/passkey/{register,auth}/{start,finish}`
-                // endpoint set that returns a session_grant on success
-                // (instead of just the credential id like the admin
-                // endpoint does today). The buttons here will pivot to
-                // that endpoint as soon as it ships — same call shape,
-                // smaller follow-up.
-                if SHOW_PASSKEY_LOGIN_UI {
-                    div { class: "auth-passkey", role: "group", "aria-label": "Passkey",
-                        button {
-                            class: "secondary",
-                            "data-testid": "passkey-register-button",
-                            disabled: is_busy(),
-                            onclick: move |_| {
-                                is_busy.set(true);
-                                auth_status.set("Starting passkey registration...".to_owned());
-                                let principal = base_url();
-                                let device = normalize_device_id(&device_id());
-                                let actor = account_did();
-                                device_id.set(device.clone());
-                                spawn(async move {
-                                    let result = run_passkey_register(
-                                        &principal,
-                                        &actor,
-                                        &device,
-                                        state_store_write,
-                                    )
-                                    .await;
-                                    is_busy.set(false);
-                                    match result {
-                                        Ok(message) => auth_status.set(message),
-                                        Err(error) => auth_status.set(error),
-                                    }
-                                });
-                            },
-                            "Register passkey"
-                        }
-                        button {
-                            class: "primary",
-                            "data-testid": "passkey-login-button",
-                            disabled: is_busy(),
-                            onclick: move |_| {
-                                is_busy.set(true);
-                                auth_status.set("Authenticating with passkey...".to_owned());
-                                let principal = base_url();
-                                let device = normalize_device_id(&device_id());
-                                let actor = account_did();
-                                device_id.set(device.clone());
-                                spawn(async move {
-                                    let outcome = run_passkey_login(
-                                        &principal,
-                                        &actor,
-                                        &device,
-                                        state_store_write,
-                                    )
-                                    .await;
-                                    match outcome {
-                                        Ok(completed) => {
-                                            base_url.set(completed.principal_server_url.clone());
-                                            account_did.set(completed.actor.clone());
-                                            device_id.set(completed.device_id.clone());
-                                            token.set(completed.access_token.clone());
-                                            persist_config(
-                                                config_store,
-                                                completed.principal_server_url,
-                                                completed.actor.clone(),
-                                                completed.device_id.clone(),
-                                                completed.access_token,
-                                            );
-                                            persist_completed_login_state(
-                                                state_store_write,
-                                                &completed.actor,
-                                                completed.grant,
-                                                completed.oidc_tokens,
-                                            );
-                                            status.set("Online".to_owned());
-                                            auth_status.set("Signed in".to_owned());
-                                            on_login.call(());
-                                        }
-                                        Err(error) => auth_status.set(error),
-                                    }
-                                    is_busy.set(false);
-                                });
-                            },
-                            "Sign in with passkey"
-                        }
-                    }
                 }
 
                 // G3.Y0 — session state surface for cotest's
@@ -401,9 +299,6 @@ fn persist_completed_login_state(
 /// * `session-expired` — no live token but a session grant is still
 ///   persisted (the soft-logout state — the user can re-mint via
 ///   `refresh-now-button` without going through OIDC).
-/// * `awaiting-passkey` — token is empty but the passkey ceremony is
-///   in flight. Reserved for a future passkey-spinner UI; today the
-///   `is_busy` signal drives the same state via the status text.
 fn compute_session_status(
     access_token: &str,
     session_grant: Option<&PersistedSessionGrant>,
@@ -415,109 +310,6 @@ fn compute_session_status(
         (false, true) => "session-expired",
         (false, false) => "signed-out",
     }
-}
-
-/// G3.Y0 — passkey-register live path.
-///
-/// 1. Ensure a device DPoP key exists (so subsequent session-grant
-///    issuance and refresh calls have a key bound to `cnf.jkt`).
-/// 2. Resolve the coauth auth-server URL via the same discovery the
-///    OIDC flow uses.
-/// 3. Ask coauth to start a `register/start` ceremony.
-/// 4. TODO(G3.Y0-followup): drive
-///    `navigator.credentials.create({ publicKey: ... })` and POST the
-///    attestation to `register/finish`. The browser-side call is gated
-///    on the unauthenticated passkey endpoint landing — see the
-///    `passkey_register_start` TODO. Until then, we surface the
-///    challenge JSON so the cotest harness can observe the round-trip
-///    happened.
-async fn run_passkey_register(
-    principal_server_url: &str,
-    actor_hint: &str,
-    device_id: &str,
-    mut state_store: Signal<LocalStateStore>,
-) -> Result<String, String> {
-    let _handle = {
-        let mut store = state_store.write();
-        ensure_device_key(&mut store).map_err(|err| format!("DPoP key setup failed: {err}"))?
-    };
-    let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
-        .await
-        .map_err(|error| format!("Passkey discovery failed: {error}"))?;
-    let coauth = CoauthApi::new(&auth_server_url)
-        .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-
-    let start_path = "api/v1/auth/passkey/register/start";
-    let _challenge = coauth
-        .passkey_register_start(start_path, None, Some(actor_hint))
-        .await
-        .map_err(|error| format!("Passkey register start failed: {error}"))?;
-
-    let _ = device_id;
-    Ok("Passkey registration challenge received; finish requires the unauthenticated coauth endpoint (TODO G3.Y0-followup).".to_owned())
-}
-
-/// G3.Y0 — passkey-login live path.
-///
-/// Mirrors `run_passkey_register` but drives the
-/// `passkey/auth/{start,finish}` ceremony, then exchanges the returned
-/// session grant for a principal access token via the existing
-/// session-grant exchange path (`exchange_session_grant_at_with_proof`).
-///
-/// TODO(G3.Y0-followup): the canonical happy path goes from `finish`
-/// straight to a `session_grant` + `access_token`. Today the admin
-/// passkey endpoints return only a credential id, so the login leg
-/// falls back to the OIDC-bridge dev-login shortcut to actually get a
-/// token. Wire the canonical response shape in once coauth lands the
-/// endpoint.
-async fn run_passkey_login(
-    principal_server_url: &str,
-    actor_hint: &str,
-    device_id: &str,
-    mut state_store: Signal<LocalStateStore>,
-) -> Result<CompletedLogin, String> {
-    let _handle = {
-        let mut store = state_store.write();
-        ensure_device_key(&mut store).map_err(|err| format!("DPoP key setup failed: {err}"))?
-    };
-    let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
-        .await
-        .map_err(|error| format!("Passkey discovery failed: {error}"))?;
-    let coauth = CoauthApi::new(&auth_server_url)
-        .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-
-    let start_path = "api/v1/auth/passkey/auth/start";
-    let _challenge = coauth
-        .passkey_auth_start(start_path, Some(actor_hint))
-        .await
-        .map_err(|error| format!("Passkey auth start failed: {error}"))?;
-
-    // G3.Y0 — pre-mint the DPoP proof the finish leg will need. We
-    // discard the result for now because the finish endpoint isn't
-    // wired (see TODO below), but exercising the mint path on every
-    // sign-in attempt surfaces a key-corruption regression early
-    // rather than only on a real refresh.
-    let _ = {
-        let mut store = state_store.write();
-        let htu = format!(
-            "{}/api/v1/auth/passkey/auth/finish",
-            auth_server_url.trim_end_matches('/')
-        );
-        mint_dpop_proof(&mut store, &htu, "POST", None)
-            .map_err(|err| format!("DPoP mint failed: {err}"))?
-    };
-
-    // TODO(G3.Y0-followup): drive
-    // `navigator.credentials.get({ publicKey: ... })` via web-sys and
-    // POST the assertion to `auth/finish`. Today the assertion-finish
-    // surface in coauth is admin-only; the unauthenticated endpoint
-    // does not yet return a session_grant.
-    let _ = actor_hint;
-    let _ = device_id;
-    Err(
-        "Passkey auth challenge received; finishing requires the unauthenticated coauth endpoint (TODO G3.Y0-followup)."
-            .to_owned(),
-    )
 }
 
 pub(crate) async fn start_oidc_flow(

@@ -29,18 +29,19 @@
 //!
 //! ## Storage choice
 //!
-//! Plaintext-in-`state.json` (which on wasm32 is `localStorage`) for
-//! now, with a clear `TODO(G3.Y0-followup)` to move into IndexedDB +
-//! `SubtleCrypto.generateKey({ extractable: false })`. The shortcut is
-//! deliberate: the e2e harness needs the key to be mintable from Rust
-//! synchronously, and IndexedDB is async-only. A follow-up pass will
-//! introduce a `DpopKeyStore` trait that the cotest harness can
-//! satisfy with the deterministic in-process seed.
+//! Production builds persist the seed through
+//! [`crate::secure_key_store::SecureKeyStore`]. On wasm32 the default
+//! boot path starts with the synchronous localStorage wrapper and
+//! upgrades to the IndexedDB/SubtleCrypto tier via
+//! `upgrade_wasm_secure_key_store_async`, so the DPoP seed follows the
+//! same handoff as OIDC refresh tokens. Tests keep using plaintext
+//! state records to remain deterministic and dependency-free.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use ed25519_dalek::SigningKey;
+use sha2::{Digest, Sha256};
 
 use crate::{
     dpop::{
@@ -54,6 +55,8 @@ use crate::{
 pub enum AuthDpopError {
     /// Could not generate randomness for a fresh key.
     Rng(String),
+    /// The secure-key-store backend could not read or write the seed.
+    SecureStore(String),
     /// The persisted seed was malformed (truncated / not base64url).
     PersistedSeed(String),
     /// The underlying [`crate::dpop::build_dpop_proof_ed25519`] failed.
@@ -64,6 +67,7 @@ impl std::fmt::Display for AuthDpopError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Rng(msg) => write!(f, "DPoP RNG failed: {msg}"),
+            Self::SecureStore(msg) => write!(f, "DPoP secure store failed: {msg}"),
             Self::PersistedSeed(msg) => write!(f, "DPoP persisted seed invalid: {msg}"),
             Self::Mint(err) => write!(f, "DPoP mint failed: {err}"),
         }
@@ -100,9 +104,9 @@ impl DpopHandle {
     }
 
     /// Mint a fresh DPoP proof JWS for the given `(htm, htu)` pair.
-    /// `ath` carries the access token hash when the proof accompanies a
-    /// bearer token (refresh, grant-using calls). Pass `None` for the
-    /// grant-issuance leg.
+    /// `ath` carries the raw access token when the proof accompanies a
+    /// bearer token (refresh, grant-using calls); this helper hashes it
+    /// into the RFC 9449 `ath` claim. Pass `None` for grant issuance.
     pub fn mint_proof(
         &self,
         htm: &str,
@@ -110,38 +114,69 @@ impl DpopHandle {
         ath: Option<&str>,
     ) -> Result<String, AuthDpopError> {
         let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None);
-        if let Some(ath_value) = ath {
-            // TODO(G3.Y0-followup): the `ath` claim is RFC 9449 §4.1.4;
-            // base64url-no-pad(sha256(access_token)). We surface it via
-            // the API caller because it requires the bearer that's
-            // about to be sent; the helper is in
-            // [`crate::dpop::session_grant_jwt_hash`] equivalent.
-            attach_ath_claim(&mut claims, ath_value);
-        }
+        claims.ath = ath.map(dpop_access_token_hash);
         build_dpop_proof_ed25519(&self.signing_key, &claims).map_err(AuthDpopError::Mint)
     }
 }
 
-/// Attach an `ath` claim to the canonical claims. We extend the JSON
-/// payload manually because [`DpopClaims`] doesn't yet model the
-/// optional access-token hash — adding it as a typed field belongs in
-/// the `dpop` module proper, but we keep the surface minimal here so
-/// G3.Y0 doesn't touch the audit-stable proof builder.
-///
-/// The receiver tolerates extra fields per RFC 9449 §4.2 because the
-/// signature covers the full payload.
-fn attach_ath_claim(_claims: &mut DpopClaims, _ath: &str) {
-    // TODO(G3.Y0-followup): once `crate::dpop::DpopClaims` carries an
-    // optional `ath` field, plug it in here. Until then, the refresh
-    // endpoint (`POST /api/v1/session-grants/refresh`) checks the
-    // grant_jwt's `cnf.jkt` directly so the missing `ath` doesn't
-    // gate the happy path — but token-revocation race scenarios
-    // require it for soundness.
+/// RFC 9449 access-token hash:
+/// `base64url-no-pad(sha256(access_token))`.
+pub fn dpop_access_token_hash(access_token: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(access_token.as_bytes()))
 }
 
 /// Generate or load the device DPoP key. Calls return the same handle
 /// for the lifetime of the persisted record.
 pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, AuthDpopError> {
+    #[cfg(not(test))]
+    {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        return ensure_device_key_with_secure_store(store, secure_store.as_ref());
+    }
+
+    #[cfg(test)]
+    {
+        ensure_device_key_in_plaintext_state(store)
+    }
+}
+
+/// Generate or load the DPoP key using the supplied secure-key backend.
+/// The on-disk state keeps only public metadata; private seed bytes live
+/// in the secure store.
+pub fn ensure_device_key_with_secure_store(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<DpopHandle, AuthDpopError> {
+    if let Some(record) = store
+        .load_dpop_device_key_with_secure_store(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
+    {
+        let handle = decode_record(&record)?;
+        store
+            .set_dpop_device_key_with_secure_store(Some(record), secure_store)
+            .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+        return Ok(handle);
+    }
+
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).map_err(|err| AuthDpopError::Rng(err.to_string()))?;
+    let signing_key = SigningKey::from_bytes(&seed);
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let record = DpopDeviceKeyRecord {
+        seed_b64: URL_SAFE_NO_PAD.encode(seed),
+        jkt: jkt.clone(),
+        created_at: Utc::now(),
+    };
+    store
+        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    Ok(DpopHandle { signing_key, jkt })
+}
+
+#[cfg(test)]
+fn ensure_device_key_in_plaintext_state(
+    store: &mut LocalStateStore,
+) -> Result<DpopHandle, AuthDpopError> {
     if let Some(record) = store.dpop_device_key() {
         return decode_record(&record);
     }
@@ -161,7 +196,31 @@ pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, Auth
 /// Read the persisted device DPoP key without generating a new one.
 /// Returns `Ok(None)` when no key has been persisted yet.
 pub fn load_device_key(store: &LocalStateStore) -> Result<Option<DpopHandle>, AuthDpopError> {
-    let Some(record) = store.dpop_device_key() else {
+    #[cfg(not(test))]
+    {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        return load_device_key_with_secure_store(store, secure_store.as_ref());
+    }
+
+    #[cfg(test)]
+    {
+        let Some(record) = store.dpop_device_key() else {
+            return Ok(None);
+        };
+        decode_record(&record).map(Some)
+    }
+}
+
+/// Read the persisted DPoP key from the supplied secure-key backend
+/// without generating a new one.
+pub fn load_device_key_with_secure_store(
+    store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    let Some(record) = store
+        .load_dpop_device_key_with_secure_store(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
+    else {
         return Ok(None);
     };
     decode_record(&record).map(Some)
@@ -209,6 +268,7 @@ pub fn mint_dpop_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secure_key_store::MemorySecureKeyStore;
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
     #[cfg(not(target_arch = "wasm32"))]
@@ -256,6 +316,50 @@ mod tests {
         }
     }
 
+    fn proof_payload(proof: &str) -> serde_json::Value {
+        let payload_b64 = proof.split('.').nth(1).expect("payload segment");
+        let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).expect("payload b64");
+        serde_json::from_slice(&payload_bytes).expect("payload json")
+    }
+
+    #[test]
+    fn access_token_hash_matches_rfc9449_ath_encoding() {
+        assert_eq!(
+            dpop_access_token_hash("access-token-1"),
+            URL_SAFE_NO_PAD.encode(Sha256::digest(b"access-token-1"))
+        );
+    }
+
+    #[test]
+    fn handle_mints_ath_when_access_token_supplied() {
+        let mut store = isolated_store("mint-ath");
+        let handle = ensure_device_key(&mut store).unwrap();
+        let proof = handle
+            .mint_proof(
+                "POST",
+                "https://example.test/api/v1/session-grants/refresh",
+                Some("access-token-1"),
+            )
+            .unwrap();
+        let payload = proof_payload(&proof);
+        assert_eq!(payload["ath"], dpop_access_token_hash("access-token-1"));
+    }
+
+    #[test]
+    fn handle_omits_ath_when_no_access_token_supplied() {
+        let mut store = isolated_store("mint-no-ath");
+        let handle = ensure_device_key(&mut store).unwrap();
+        let proof = handle
+            .mint_proof(
+                "POST",
+                "https://example.test/api/v1/session-grants/refresh",
+                None,
+            )
+            .unwrap();
+        let payload = proof_payload(&proof);
+        assert!(payload.get("ath").is_none());
+    }
+
     #[test]
     fn load_returns_none_when_unset() {
         let store = isolated_store("load-none");
@@ -281,5 +385,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(proof.split('.').count(), 3);
+    }
+
+    #[test]
+    fn secure_store_seed_round_trips_without_plaintext_state_seed() {
+        let mut store = isolated_store("secure");
+        let secure = MemorySecureKeyStore::default();
+        let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
+        let public_record = store.dpop_device_key().expect("public record");
+        assert_eq!(public_record.jkt, first.jkt());
+        assert!(public_record.seed_b64.is_empty());
+
+        let second = load_device_key_with_secure_store(&store, &secure)
+            .unwrap()
+            .expect("loaded");
+        assert_eq!(second.jkt(), first.jkt());
     }
 }

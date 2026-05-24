@@ -82,6 +82,12 @@ pub struct DpopClaims {
     /// detect replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
+    /// Access-token hash (RFC 9449 §4.2). When a proof accompanies an
+    /// access token, callers set this to
+    /// `base64url-no-pad(sha256(access_token))` so the proof cannot be
+    /// replayed with a different bearer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ath: Option<String>,
 }
 
 /// F-DPOP-1: build a serialised, attached JWS that yougen can stamp
@@ -189,6 +195,7 @@ pub fn fresh_dpop_claims(
         iat: chrono::Utc::now().timestamp(),
         jti: URL_SAFE_NO_PAD.encode(bytes),
         nonce,
+        ath: None,
     }
 }
 
@@ -209,6 +216,7 @@ mod tests {
             iat: 1_716_000_000,
             jti: "fixed-nonce-1234".to_owned(),
             nonce: None,
+            ath: None,
         }
     }
 
@@ -337,5 +345,18 @@ mod tests {
         // jti should be base64url 22 chars (16 bytes encoded
         // without padding).
         assert_eq!(claims.jti.len(), 22);
+        assert!(claims.ath.is_none());
+    }
+
+    #[test]
+    fn optional_ath_serializes_when_present() {
+        let key = signing_key_with_seed(0x42);
+        let mut claims = fixed_claims();
+        claims.ath = Some("token-hash".to_owned());
+        let proof = build_dpop_proof_ed25519(&key, &claims).unwrap();
+        let payload_b64 = proof.split('.').nth(1).unwrap();
+        let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
+        assert_eq!(payload["ath"], "token-hash");
     }
 }
