@@ -1176,7 +1176,7 @@ mod cross_signing_view_tests {
         let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "cx:device:01a");
         let kinds = plan.event_kinds();
         assert!(kinds.contains(&"cx.cross_signing.publish"));
-        assert!(kinds.contains(&"cx.device.authorized"));
+        assert!(kinds.contains(&"cx.device.authorize"));
         assert!(matches!(plan.mode, CrossSigningSetupMode::InitialSetup));
     }
 }

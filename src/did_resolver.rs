@@ -143,7 +143,7 @@ pub fn verify_principal(
 ///   also lazily removes them so size bookkeeping stays honest.
 /// - `invalidate(did)` is for revocation pushes — the spec requires
 ///   clients to drop cached evidence when a `cx.cross_signing.reset`
-///   or `cx.device.revoked` event arrives for the actor.
+///   or `cx.device.revoke` event arrives for the actor.
 ///
 /// Persistence to IndexedDB / local state is a follow-up; this revision
 /// is in-memory only so the cache survives a single login session.
@@ -221,7 +221,7 @@ impl DidResolutionCache {
     }
 
     /// Drop the cached entry (if any) for `did`. Called by
-    /// `cx.cross_signing.reset` / `cx.device.revoked` handlers so a
+    /// `cx.cross_signing.reset` / `cx.device.revoke` handlers so a
     /// rotated key set isn't masked by stale cache.
     pub fn invalidate(&mut self, did: &Did) {
         self.entries.remove(did.as_str());

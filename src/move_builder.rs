@@ -10,7 +10,7 @@
 //!   `cx.member.state`, `cx.realm.{create,update,destroy,...}`,
 //!   `cx.space.{create,update,archive,restore,...}` (container Spaces),
 //!   `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
-//! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read.marker`,
+//! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read_cursor.advance`,
 //!   `cx.relation.*`, `cx.redaction` — these stay on the durable Event
 //!   Envelope endpoint (`/api/v1/events`) per spec.
 //!

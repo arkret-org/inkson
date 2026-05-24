@@ -73,7 +73,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Cross-signing bootstrap and reset",
             stage: WorkflowStage::ClientReady,
             client_surface: "Verify Device panel: renders CrossSigningSetupPlan steps + canonical events",
-            server_dependency: "Needs cx.cross_signing.publish / cx.cross_signing.reset / cx.device.authorized acceptance endpoints",
+            server_dependency: "Needs cx.cross_signing.publish / cx.cross_signing.reset / cx.device.authorize acceptance endpoints",
         },
         ClientWorkflow {
             id: "space.discovery",

@@ -2077,10 +2077,10 @@ pub fn ChatPanel(
     // `discussion-promoted-indicator` row. Populated optimistically
     // on submit and updated from the server response.
     let mut promoted_targets = use_signal(std::collections::BTreeMap::<String, String>::new);
-    // G3.Y2 — `cx.read.marker` book-keeping. `latest_read_marker`
+    // G3.Y2 — `cx.read_cursor.advance` book-keeping. `latest_read_cursor`
     // stores the highest event_id we've posted a read marker for so
     // we don't spam soland on every render tick.
-    let mut latest_read_marker = use_signal(String::new);
+    let mut latest_read_cursor = use_signal(String::new);
     // A5 — personal blocklist. `blocked_did_set` snapshots the local
     // store at render time; `blocked_show_anyway` tracks per-message
     // reveal opt-ins so the user can peek at an otherwise-hidden body
@@ -2144,7 +2144,7 @@ pub fn ChatPanel(
         .collect::<Vec<_>>();
     let visible_message_count = visible_messages.len();
     // G3.Y2 — derive the highest visible event id so we can post a
-    // `cx.read.marker` covering everything we've rendered. The marker
+    // `cx.read_cursor.advance` covering everything we've rendered. The marker
     // itself is actor-private (`discovery/read-receipts.md §3.1`).
     let highest_visible_event_id: Option<String> = visible_messages
         .iter()
@@ -2152,8 +2152,8 @@ pub fn ChatPanel(
         .find(|msg| !msg.id.is_empty() && !msg.pending)
         .map(|msg| msg.id.clone());
     if let Some(top_event) = highest_visible_event_id.as_ref() {
-        if latest_read_marker().as_str() != top_event {
-            latest_read_marker.set(top_event.clone());
+        if latest_read_cursor().as_str() != top_event {
+            latest_read_cursor.set(top_event.clone());
             // Post the visible read receipt through the canonical
             // ephemeral channel; local marker state keeps the rendered
             // testid surface stable while server projection catches up.
@@ -3406,13 +3406,13 @@ pub fn ChatPanel(
                                 }
                                 // G3.Y2 — per-message read-receipt
                                 // indicator. Surfaces the set of actors
-                                // who have published a `cx.read.marker`
+                                // who have published a `cx.read_cursor.advance`
                                 // covering this message via
                                 // `presence_aggregate`. Empty (`hidden`)
                                 // until the receive path is wired.
                                 //
                                 // TODO(G3.Y2-followup): subscribe to
-                                // `cx.read.marker` ephemeral channel +
+                                // `cx.read_cursor.advance` ephemeral channel +
                                 // populate from
                                 // `presence_rx::PresenceAggregate`.
                                 {
@@ -3420,7 +3420,7 @@ pub fn ChatPanel(
                                     // `presence_rx::PresenceAggregate`
                                     // once the chat view subscribes to
                                     // soland's ephemeral channel for
-                                    // `cx.read.marker`. For now the
+                                    // `cx.read_cursor.advance`. For now the
                                     // list is empty — the testid still
                                     // mounts when there is data so
                                     // cotest can assert against it.
@@ -4170,22 +4170,22 @@ pub fn ChatPanel(
 
             // G3.Y2 — read-receipt marker bar. A horizontal divider
             // anchored at the highest event id we've sent a
-            // `cx.read.marker` for; renders only when we have one. The
+            // `cx.read_cursor.advance` for; renders only when we have one. The
             // bar appears below the message list so users can see the
             // "everyone read up to here" anchor without scrolling
             // around. The marker itself is actor-private — see
             // discovery/read-receipts.md §3.1.
-            if !embedded && !latest_read_marker().is_empty() {
+            if !embedded && !latest_read_cursor().is_empty() {
                 {
-                    let latest_read_marker_value = latest_read_marker();
-                    let latest_read_marker_label = short_protocol_id(&latest_read_marker_value);
+                    let latest_read_cursor_value = latest_read_cursor();
+                    let latest_read_cursor_label = short_protocol_id(&latest_read_cursor_value);
                     rsx! {
                         div {
                             class: "read-receipt-marker-bar",
                             "data-testid": "read-receipt-marker-bar",
-                            "data-up-to-event-id": "{latest_read_marker_value}",
+                            "data-up-to-event-id": "{latest_read_cursor_value}",
                             span { "Read up to " }
-                            span { class: "mono", title: "{latest_read_marker_value}", "{latest_read_marker_label}" }
+                            span { class: "mono", title: "{latest_read_cursor_value}", "{latest_read_cursor_label}" }
                         }
                     }
                 }

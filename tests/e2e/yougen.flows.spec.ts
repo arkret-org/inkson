@@ -504,7 +504,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await page.getByTestId("mimi-proxy-download").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download cx:blob:sha256:e2e");
 
-  const submit = page.waitForRequest("**/api/v1/mimi/rooms/01JSMIMI/messages");
+  const submit = page.waitForRequest("**/api/v1/mimi/flows/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
   expect((await submit).postDataJSON().source_format).toBe("text/markdown;variant=GFM-MIMI");
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("submit-message mimi-msg-e2e");
@@ -892,7 +892,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
             message: "transient send failure",
           },
         },
-        request_id: "cx:req:e2e-send-failed",
+        request_id: "cx:request:e2e-send-failed",
       }),
     });
   });
@@ -931,7 +931,7 @@ test("chat membership denial restores draft without panicking", async ({ page })
           code: "capability_denied",
           message: "actor is not a member of the event Space",
         },
-        request_id: "cx:req:01964137-0000-7000-8000-000000000013",
+        request_id: "cx:request:01964137-0000-7000-8000-000000000013",
       }),
     });
   });
@@ -976,7 +976,7 @@ test("chat retries plaintext sends after granting current service visibility", a
               "private plaintext message operations require this service in plaintext_visible_services",
           },
         },
-        request_id: "cx:req:e2e-policy-denied",
+        request_id: "cx:request:e2e-policy-denied",
       }),
     });
   });
@@ -1090,8 +1090,8 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   expect(receiptBody.payload.schema).toBe("cx.schema.read_receipt.v1");
   expect(receiptBody.payload.event_id).toContain("summary-cx:space");
   await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
-  await expect(page.getByTestId("read-marker-status")).toContainText("Read marker:");
-  await expect(page.getByTestId("read-marker-badge")).toContainText("Read marker here");
+  await expect(page.getByTestId("read-cursor-status")).toContainText("Read marker:");
+  await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
 });
 
 test("timeline blob flow verifies hashes and authenticated downloads", async ({ page }) => {

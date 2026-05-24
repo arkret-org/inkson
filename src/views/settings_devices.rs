@@ -31,8 +31,8 @@
 //! Spec references:
 //! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2
 //!   (revoke), §5.1–§5.2 (cross-signing binding), §6 (device list)
-//! - `identity/key-management.md` §5.0–§5.2 (`cx.device.authorized` /
-//!   `cx.device.revoked`)
+//! - `identity/key-management.md` §5.0–§5.2 (`cx.device.authorize` /
+//!   `cx.device.revoke`)
 //!
 //! ## Soland / coauth endpoints
 //!
@@ -399,7 +399,7 @@ fn render_revoke_modal(
                 }
                 p {
                     "This will write "
-                    code { "cx.device.revoked" }
+                    code { "cx.device.revoke" }
                     " to your principal control space and remove the device from any E2EE space it participates in. The action cannot be undone."
                 }
                 div { class: "actions",
@@ -549,7 +549,7 @@ fn render_pair_flow(
                             // TODO(G3.Y1-followup): the soland scaffold
                             // currently returns the challenge with a
                             // `proof_envelope` placeholder. When
-                            // `cx.device.authorized` includes the
+                            // `cx.device.authorize` includes the
                             // cross_signing_binding (spec
                             // crypto-media/device-lifecycle.md §5.2),
                             // fold that binding into the QR payload so

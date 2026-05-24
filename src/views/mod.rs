@@ -7,14 +7,14 @@
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
-// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorized                            |
+// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list container)|
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.tracks.update (unified), cx.message.*                      |
 // | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | cx.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.realm.discovery state event              |
-// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read.marker / cx.receipt.read / @-mention) |
+// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read_cursor.advance / cx.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
 // | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.policy.{rule,action,set}, cx.capability.{grant,revoke,delegate}  |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
@@ -33,7 +33,7 @@
 // 4. Push paths default to masked payloads (`background_sync_needed`); the
 //    body is decrypted locally.
 // 5. The Auth Service can only issue short-lived `cx.session.grant`; any
-//    change to the long-lived device set must go through `cx.device.authorized`.
+//    change to the long-lived device set must go through `cx.device.authorize`.
 
 pub mod agents;
 pub mod applets;
@@ -124,7 +124,7 @@ pub enum View {
     Kanban,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
-    /// The only canonical events feeding this view are `cx.read.marker`,
+    /// The only canonical events feeding this view are `cx.read_cursor.advance`,
     /// `cx.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not
     /// on a synthetic `cx.notification.*` event.

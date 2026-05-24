@@ -10,7 +10,7 @@
 //!
 //! - `CrossSigningPublishContent` / `SignedCrossSigningKey` /
 //!   `CrossSigningBinding`: spec §5.1 wire envelope.
-//! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorized.cross_signing_binding`
+//! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorize.cross_signing_binding`
 //!   field.
 //! - `CrossSigningResetContent`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset`
@@ -59,7 +59,7 @@ pub enum CrossSigningSetupStep {
     EmitCrossSigningPublish,
     /// Use the SSK to issue a `cross_signing_binding` over the current
     /// device's verify_key (spec §5.2), and attach it to the latest
-    /// `cx.device.authorized` event.
+    /// `cx.device.authorize` event.
     SignCurrentDeviceBinding,
     /// Trigger trust-chain re-evaluation for every known device of this
     /// principal; devices ending up in `NeedsReverification` are flagged in
@@ -92,7 +92,7 @@ impl CrossSigningSetupStep {
             Self::SignSubordinateBindings => None,
             Self::PublishSecretStorageBackup => Some("cx.schema.key_backup.v1"),
             Self::EmitCrossSigningPublish => Some("cx.cross_signing.publish"),
-            Self::SignCurrentDeviceBinding => Some("cx.device.authorized"),
+            Self::SignCurrentDeviceBinding => Some("cx.device.authorize"),
             Self::RecomputeDeviceTrustStates => None,
         }
     }
@@ -413,7 +413,7 @@ impl CrossSigningTrustState {
 ///     (preferred) or hand them to the recovery vault for backup. Both
 ///     paths are downstream consumers of [`CrossSigningSetupOutput`].
 ///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish`, or
-///     `cx.device.authorized` to the server. Those are API-bound side
+///     `cx.device.authorize` to the server. Those are API-bound side
 ///     effects; the executor returns the canonical event bodies and the
 ///     caller (a view handler / orchestrator) drives the API.
 ///   * Recompute device trust states. That requires reading the device
@@ -763,7 +763,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 7);
         let kinds = plan.event_kinds();
         assert!(kinds.contains(&"cx.cross_signing.publish"));
-        assert!(kinds.contains(&"cx.device.authorized"));
+        assert!(kinds.contains(&"cx.device.authorize"));
         assert!(kinds.contains(&"cx.schema.key_backup.v1"));
     }
 

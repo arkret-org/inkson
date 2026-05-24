@@ -398,13 +398,13 @@ pub fn TimelinePanel(
     let account_did_key = account_did.clone();
     let device_id_key = device_id.clone();
     let selected_space_key = selected_space.clone();
-    let latest_read_marker = state_store.read().latest_read_marker(&selected_space);
-    let latest_read_marker_event_id = latest_read_marker
+    let latest_read_cursor = state_store.read().latest_read_cursor(&selected_space);
+    let latest_read_cursor_event_id = latest_read_cursor
         .as_ref()
         .map(|marker| marker.body.event_id.clone());
-    let read_marker_status = latest_read_marker
+    let read_cursor_status = latest_read_cursor
         .as_ref()
-        .map(read_marker_status_label)
+        .map(read_cursor_status_label)
         .unwrap_or_else(|| "Read marker: none".to_owned());
 
     let timeline_snapshot = timeline();
@@ -613,8 +613,8 @@ pub fn TimelinePanel(
                             }
                         }
 
-                        if latest_read_marker_event_id.as_deref() == Some(event.id.as_str()) {
-                            div { class: "muted", "data-testid": "read-marker-badge",
+                        if latest_read_cursor_event_id.as_deref() == Some(event.id.as_str()) {
+                            div { class: "muted", "data-testid": "read-cursor-badge",
                                 "Read marker here"
                             }
                         }
@@ -755,7 +755,7 @@ pub fn TimelinePanel(
                                                 return;
                                             }
 
-                                            let marker = state_store.write().save_read_marker(
+                                            let marker = state_store.write().save_read_cursor(
                                                 actor.clone(),
                                                 device.clone(),
                                                 space.clone(),
@@ -1184,7 +1184,7 @@ pub fn TimelinePanel(
             div { class: "muted", "data-testid": "blob-status", "{blob_status}" }
         }
 
-        div { class: "muted", "data-testid": "read-marker-status", "{read_marker_status}" }
+        div { class: "muted", "data-testid": "read-cursor-status", "{read_cursor_status}" }
         div { class: "muted", "data-testid": "read-receipt-status", "{receipt_status}" }
 
         if !read_receipts().is_empty() {
@@ -1998,7 +1998,7 @@ fn timestamp_now() -> String {
     Utc::now().format("%Y-%m-%d %H:%M").to_string()
 }
 
-fn read_marker_status_label(marker: &ReadMarkerRecord) -> String {
+fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
     let scope = marker
         .body
         .topic_id

@@ -267,9 +267,9 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.container.move_item",
         "cx.container.rebalance",
         // Devices (crypto-media/device-lifecycle)
-        "cx.device.authorized",
+        "cx.device.authorize",
         "cx.device.list_update",
-        "cx.device.revoked",
+        "cx.device.revoke",
         // Identity (DID proof + progressive disclosure §16 + C45 accountability grant)
         "cx.did.proof",
         // Round C45: issuer-signed endorsement that a subject DID is
@@ -324,7 +324,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.mls.proposal",
         "cx.mls.welcome",
         // Moderation (governance/content-moderation)
-        "cx.moderation.frank",
+        "cx.moderation.franking_proof",
         "cx.moderation.report",
         // Morph (C45 — schema_migrate is the first-class schema_refs[]
         // evolution event with explicit compatibility_class; replaces ad-hoc
@@ -349,13 +349,13 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.reaction.remove",
         // Read receipts / markers (discovery/read-receipts §6); notification
         // itself is a derived projection, not a canonical event.
-        "cx.read.marker",
+        "cx.read_cursor.advance",
         "cx.receipt.read",
         // Redaction (cross-object — separate from cx.message.redact)
         "cx.redaction",
         // Relation
         "cx.relation.create",
-        "cx.relation.delete",
+        "cx.relation.tombstone",
         "cx.relation.update",
         // Schema evolution
         "cx.schema.define",
@@ -435,7 +435,7 @@ impl EventKindWireScope {
 const ACTOR_PRIVATE_EVENT_KINDS: &[&str] = &[
     "cx.account.blocklist",
     "cx.account_data.set",
-    "cx.read.marker",
+    "cx.read_cursor.advance",
 ];
 
 /// Event kinds whose wire_scope is `ephemeral_event`. Reducers must NOT take
@@ -988,14 +988,14 @@ mod tests {
         assert!(kinds.contains(&"cx.flow.reorder"));
         // device-lifecycle §1.2 (login / authorization / verification three axes)
         assert!(kinds.contains(&"cx.session.grant"));
-        assert!(kinds.contains(&"cx.device.authorized"));
-        assert!(kinds.contains(&"cx.device.revoked"));
+        assert!(kinds.contains(&"cx.device.authorize"));
+        assert!(kinds.contains(&"cx.device.revoke"));
         // device-lifecycle §7-§9 verification ceremony events.
         assert!(kinds.contains(&"cx.key.verification.start"));
         assert!(kinds.contains(&"cx.key.verification.done"));
         // discovery/read-receipts §6 — read marker is a wire event,
         // notification is *not* (it's a derived projection).
-        assert!(kinds.contains(&"cx.read.marker"));
+        assert!(kinds.contains(&"cx.read_cursor.advance"));
         assert!(kinds.contains(&"cx.receipt.read"));
         assert!(!kinds.contains(&"cx.notification.dismiss"));
         // audited-e2ee — attested + disclosed audit profiles

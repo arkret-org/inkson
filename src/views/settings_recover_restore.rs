@@ -10,7 +10,7 @@
 //!   decrypts the backup envelope
 //! - `recovery-restore-status` — feedback
 //!
-//! This panel does NOT push `cx.device.authorized` on its own —
+//! This panel does NOT push `cx.device.authorize` on its own —
 //! that's the domain of the device-pairing flow (`settings_devices.rs`)
 //! and the SDK's cross-signing executor. We only re-hydrate the
 //! private payload so the caller can re-establish identity locally.

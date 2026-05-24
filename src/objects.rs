@@ -60,9 +60,9 @@ pub fn build_relation_create(
         }))
 }
 
-/// Build a `cx.relation.delete` operation by id.
+/// Build a `cx.relation.tombstone` operation by id.
 pub fn build_relation_delete(space_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.relation.delete")
+    OperationBuilder::new(space_id, actor, "cx.relation.tombstone")
         .target_ref(relation_id)
         .body(json!({"relation_id": relation_id}))
 }

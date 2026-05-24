@@ -2297,7 +2297,7 @@ pub fn SpaceAdminPanel(
             // Moderation events — governance/content-moderation.md
             // Two canonical events drive content-level moderation:
             //   cx.moderation.report — an actor files a report (against a message / flow / morph / actor)
-            //   cx.moderation.frank  — E2EE franking proof (so encrypted content remains reviewable)
+            //   cx.moderation.franking_proof  — E2EE franking proof (so encrypted content remains reviewable)
             // Outcomes like quarantine / require_review are reducer decisions, not separate events.
             div { class: "event", "data-testid": "moderation-events",
                 div { class: "event-head",
@@ -2309,7 +2309,7 @@ pub fn SpaceAdminPanel(
                 }
                 div { class: "actions",
                     span { class: "badge blue", title: "cx.moderation.report", "Report" }
-                    span { class: "badge accent", title: "cx.moderation.frank", "Franking proof" }
+                    span { class: "badge accent", title: "cx.moderation.franking_proof", "Franking proof" }
                     span { class: "muted", "→ reducer decides deny / quarantine / require_review" }
                 }
             }

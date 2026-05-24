@@ -30,9 +30,9 @@ cx.capability.grant
 cx.capability.revoke
 cx.container.move_item
 cx.container.rebalance
-cx.device.authorized
+cx.device.authorize
 cx.device.list_update
-cx.device.revoked
+cx.device.revoke
 cx.did.proof
 cx.flow.archive
 cx.flow.create
@@ -71,7 +71,7 @@ cx.mls.genesis
 cx.mls.keypackage
 cx.mls.proposal
 cx.mls.welcome
-cx.moderation.frank
+cx.moderation.franking_proof
 cx.moderation.report
 cx.morph.archive
 cx.morph.create
@@ -89,7 +89,7 @@ cx.profile.space_override
 cx.profile.update
 cx.reaction.add
 cx.reaction.remove
-cx.read.marker
+cx.read_cursor.advance
 cx.realm.child
 cx.realm.create
 cx.realm.organization
@@ -99,7 +99,7 @@ cx.realm.upgrade
 cx.receipt.read
 cx.redaction
 cx.relation.create
-cx.relation.delete
+cx.relation.tombstone
 cx.relation.update
 cx.schema.define
 cx.schema.update

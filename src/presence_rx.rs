@@ -1,5 +1,5 @@
 //! F-PRESENCE-RX-1: receive-side helpers for `cx.typing`, `cx.presence`,
-//! and `cx.read.marker` events.
+//! and `cx.read_cursor.advance` events.
 //!
 //! Yougen currently emits these three event kinds (see
 //! `api.rs::send_typing` etc.) but never parses them on the receive
@@ -9,7 +9,7 @@
 //! aggregate the chat / dashboard views can render off of.
 //!
 //! Spec sources:
-//! - `discovery/read-receipts.md §6` — `cx.read.marker` carries
+//! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries
 //!   `{space_id, actor_did, last_read_event_id, last_read_hlc}`.
 //! - `discovery/profiles-presence.md` — `cx.presence` carries
 //!   `{actor_did, status, last_seen?}` with status ∈
@@ -83,7 +83,7 @@ pub struct PresenceEvent {
     pub last_seen: Option<i64>,
 }
 
-/// `cx.read.marker` event parsed from the wire. Same shape as
+/// `cx.read_cursor.advance` event parsed from the wire. Same shape as
 /// [`crate::discovery::ReadMarker`] but with HLC kept as a string
 /// (no `Hlc` parsing) so a malformed HLC doesn't reject the row.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,18 +151,18 @@ pub fn parse_presence(
     })
 }
 
-/// Parse a `cx.read.marker` envelope's payload into a [`ReadMarkerEvent`].
-pub fn parse_read_marker(
+/// Parse a `cx.read_cursor.advance` envelope's payload into a [`ReadMarkerEvent`].
+pub fn parse_read_cursor(
     envelope: &crate::operation::EventEnvelope,
 ) -> Result<ReadMarkerEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "cx.read.marker")?;
+    require_kind(&envelope.kind, "cx.read_cursor.advance")?;
     let payload = &envelope.payload;
     Ok(ReadMarkerEvent {
-        space_id: required_str(payload, "cx.read.marker", "space_id")?.to_owned(),
-        actor_did: required_str(payload, "cx.read.marker", "actor_did")?.to_owned(),
-        last_read_event_id: required_str(payload, "cx.read.marker", "last_read_event_id")?
+        space_id: required_str(payload, "cx.read_cursor.advance", "space_id")?.to_owned(),
+        actor_did: required_str(payload, "cx.read_cursor.advance", "actor_did")?.to_owned(),
+        last_read_event_id: required_str(payload, "cx.read_cursor.advance", "last_read_event_id")?
             .to_owned(),
-        last_read_hlc: required_str(payload, "cx.read.marker", "last_read_hlc")?.to_owned(),
+        last_read_hlc: required_str(payload, "cx.read_cursor.advance", "last_read_hlc")?.to_owned(),
     })
 }
 
@@ -201,7 +201,7 @@ pub struct PresenceAggregate {
     /// `(actor_did, flow_id) -> received_unix_seconds`.
     typing: HashMap<(String, String), i64>,
     /// `(space_id, actor_did) -> ReadMarkerEvent`.
-    read_markers: HashMap<(String, String), ReadMarkerEvent>,
+    read_cursors: HashMap<(String, String), ReadMarkerEvent>,
 }
 
 /// TTL after which a typing indicator is treated as stale.
@@ -221,9 +221,9 @@ impl PresenceAggregate {
         self.presence.insert(event.actor_did.clone(), event);
     }
 
-    pub fn ingest_read_marker(&mut self, event: ReadMarkerEvent) {
+    pub fn ingest_read_cursor(&mut self, event: ReadMarkerEvent) {
         let key = (event.space_id.clone(), event.actor_did.clone());
-        self.read_markers.insert(key, event);
+        self.read_cursors.insert(key, event);
     }
 
     /// Active typing indicators in `flow_id`, filtered by TTL.
@@ -246,8 +246,8 @@ impl PresenceAggregate {
         self.presence.get(actor_did)
     }
 
-    pub fn read_marker(&self, space_id: &str, actor_did: &str) -> Option<&ReadMarkerEvent> {
-        self.read_markers
+    pub fn read_cursor(&self, space_id: &str, actor_did: &str) -> Option<&ReadMarkerEvent> {
+        self.read_cursors
             .get(&(space_id.to_owned(), actor_did.to_owned()))
     }
 
@@ -356,9 +356,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_read_marker_round_trip_carries_hlc_verbatim() {
+    fn parse_read_cursor_round_trip_carries_hlc_verbatim() {
         let env = envelope(
-            "cx.read.marker",
+            "cx.read_cursor.advance",
             json!({
                 "space_id": "cx:space:1",
                 "actor_did": "did:web:alice",
@@ -366,7 +366,7 @@ mod tests {
                 "last_read_hlc": "01970e589d21-0001-a13f9c2e"
             }),
         );
-        let parsed = parse_read_marker(&env).expect("parse");
+        let parsed = parse_read_cursor(&env).expect("parse");
         assert_eq!(parsed.space_id, "cx:space:1");
         assert_eq!(parsed.last_read_event_id, "cx:event:42");
         assert_eq!(parsed.last_read_hlc, "01970e589d21-0001-a13f9c2e");
@@ -395,14 +395,14 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_presence_and_read_marker_round_trip() {
+    fn aggregate_presence_and_read_cursor_round_trip() {
         let mut agg = PresenceAggregate::new();
         agg.ingest_presence(PresenceEvent {
             actor_did: "did:web:alice".to_owned(),
             status: PresenceStatus::Away,
             last_seen: Some(1000),
         });
-        agg.ingest_read_marker(ReadMarkerEvent {
+        agg.ingest_read_cursor(ReadMarkerEvent {
             space_id: "cx:space:1".to_owned(),
             actor_did: "did:web:alice".to_owned(),
             last_read_event_id: "cx:event:42".to_owned(),
@@ -410,7 +410,7 @@ mod tests {
         });
         let presence = agg.presence_for("did:web:alice").unwrap();
         assert_eq!(presence.status, PresenceStatus::Away);
-        let marker = agg.read_marker("cx:space:1", "did:web:alice").unwrap();
+        let marker = agg.read_cursor("cx:space:1", "did:web:alice").unwrap();
         assert_eq!(marker.last_read_event_id, "cx:event:42");
     }
 

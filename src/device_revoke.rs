@@ -8,7 +8,7 @@
 //! Spec sources:
 //! - `crypto-media/device-lifecycle.md` — the three concerns stay separate
 //!   (login factor / device authorization / device verification), and
-//!   `cx.device.revoked` is the only event that mutates the device set.
+//!   `cx.device.revoke` is the only event that mutates the device set.
 //! - `crypto-media/encryption-and-audit.md` — MLS leaf removal is performed
 //!   via the chain `cx.mls.proposal` (Remove) → `cx.mls.commit` (epoch++) →
 //!   `cx.mls.welcome` (to bring still-present members up to the new epoch).
@@ -47,7 +47,7 @@ pub enum DeviceRevokeStep {
     /// change only, no outbound event.
     LocalRevoke,
     /// Write the revocation proof into the actor event chain.
-    /// canonical event = `cx.device.revoked`.
+    /// canonical event = `cx.device.revoke`.
     CxDeviceRevoked,
     /// Issue a Remove proposal in every affected MLS group.
     /// canonical event = `cx.mls.proposal` (type = remove).
@@ -78,7 +78,7 @@ impl DeviceRevokeStep {
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::LocalRevoke => None,
-            Self::CxDeviceRevoked => Some("cx.device.revoked"),
+            Self::CxDeviceRevoked => Some("cx.device.revoke"),
             Self::MlsProposeRemove { .. } => Some("cx.mls.proposal"),
             Self::MlsCommit { .. } => Some("cx.mls.commit"),
             Self::MlsWelcome { .. } => Some("cx.mls.welcome"),
@@ -92,7 +92,7 @@ impl DeviceRevokeStep {
     pub fn description(&self) -> String {
         match self {
             Self::LocalRevoke => "Mark revoked in local DeviceManager + E2eeManager".to_owned(),
-            Self::CxDeviceRevoked => "Write cx.device.revoked to the actor event chain".to_owned(),
+            Self::CxDeviceRevoked => "Write cx.device.revoke to the actor event chain".to_owned(),
             Self::MlsProposeRemove { group_id } => {
                 format!("Issue MLS Remove proposal · group={group_id}")
             }
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                "cx.device.revoked",
+                "cx.device.revoke",
                 "cx.mls.proposal",
                 "cx.mls.commit",
                 "cx.mls.welcome",

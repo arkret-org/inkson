@@ -765,7 +765,7 @@ pub struct ClientLocalState {
     pub private_data: BTreeMap<String, String>,
     /// Private cx.marker.read cursors keyed by space + topic/thread scope.
     #[serde(default)]
-    pub read_markers: BTreeMap<String, ReadMarkerRecord>,
+    pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
     /// Persisted OIDC token bundle - access_token, refresh_token, expiry,
     /// audience. Written when the PKCE token endpoint exchange succeeds;
     /// read at boot to seed the API client. The KeyStore abstraction
@@ -996,7 +996,7 @@ impl Default for ClientLocalState {
             local_identity: None,
             move_submissions: BTreeMap::new(),
             private_data: BTreeMap::new(),
-            read_markers: BTreeMap::new(),
+            read_cursors: BTreeMap::new(),
             oidc_tokens: None,
             session_grant: None,
             telemetry_log: Vec::new(),
@@ -1108,7 +1108,7 @@ impl LocalStateStore {
     /// lingering as ghost entries in the sidebar.
     ///
     /// Also prunes the auxiliary per-space caches (`drafts`,
-    /// `anchor_views`, `read_markers`, `space_remarks`,
+    /// `anchor_views`, `read_cursors`, `space_remarks`,
     /// `mls_snapshots`, `move_submissions` keyed by space, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
     /// `muted_spaces`, and any leftover encrypted-message draft) so a
@@ -1156,11 +1156,11 @@ impl LocalStateStore {
         self.cached.muted_spaces.remove(space_id);
         self.cached.read_receipt_space_overrides.remove(space_id);
         self.cached.read_receipt_policy_snapshots.remove(space_id);
-        // `read_markers` are keyed by `"{space}\n{topic}"` — strip every
+        // `read_cursors` are keyed by `"{space}\n{topic}"` — strip every
         // marker whose space prefix matches.
         let prefix = format!("{space_id}\n");
         self.cached
-            .read_markers
+            .read_cursors
             .retain(|key, _| !key.starts_with(&prefix));
         // `move_submissions` carry a `space_id` field; drop matching entries.
         self.cached
@@ -1320,7 +1320,7 @@ impl LocalStateStore {
             .unwrap_or_default()
     }
 
-    pub fn save_read_marker(
+    pub fn save_read_cursor(
         &mut self,
         actor: impl Into<String>,
         device_id: impl Into<String>,
@@ -1342,28 +1342,28 @@ impl LocalStateStore {
             device_id: device_id.into(),
             updated_at: Utc::now(),
         };
-        self.cached.read_markers.insert(
-            read_marker_key(&space_id, topic_id.as_deref()),
+        self.cached.read_cursors.insert(
+            read_cursor_key(&space_id, topic_id.as_deref()),
             marker.clone(),
         );
         let _ = self.flush();
         marker
     }
 
-    pub fn read_marker_for(
+    pub fn read_cursor_for(
         &self,
         space_id: &str,
         topic_id: Option<&str>,
     ) -> Option<ReadMarkerRecord> {
         self.load()
-            .read_markers
-            .get(&read_marker_key(space_id, topic_id))
+            .read_cursors
+            .get(&read_cursor_key(space_id, topic_id))
             .cloned()
     }
 
-    pub fn latest_read_marker(&self, space_id: &str) -> Option<ReadMarkerRecord> {
+    pub fn latest_read_cursor(&self, space_id: &str) -> Option<ReadMarkerRecord> {
         self.load()
-            .read_markers
+            .read_cursors
             .into_values()
             .filter(|marker| marker.body.space_id == space_id)
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
@@ -2378,7 +2378,7 @@ impl LocalStateStore {
     }
 }
 
-fn read_marker_key(space_id: &str, topic_id: Option<&str>) -> String {
+fn read_cursor_key(space_id: &str, topic_id: Option<&str>) -> String {
     let topic = topic_id
         .map(str::trim)
         .filter(|topic| !topic.is_empty())
@@ -2685,10 +2685,10 @@ mod tests {
     }
 
     #[test]
-    fn local_state_store_persists_private_read_markers() {
-        let path = temp_state_path("read-marker");
+    fn local_state_store_persists_private_read_cursors() {
+        let path = temp_state_path("read-cursor");
         let mut store = LocalStateStore::with_path(path.clone());
-        let marker = store.save_read_marker(
+        let marker = store.save_read_cursor(
             "did:web:alice.example",
             "device-1",
             "cx:space:demo",
@@ -2712,7 +2712,7 @@ mod tests {
 
         let reader = LocalStateStore::with_path(path);
         let persisted = reader
-            .read_marker_for("cx:space:demo", None)
+            .read_cursor_for("cx:space:demo", None)
             .expect("read marker persisted");
         assert_eq!(persisted.actor, "did:web:alice.example");
         assert_eq!(persisted.device_id, "device-1");
@@ -2720,17 +2720,17 @@ mod tests {
     }
 
     #[test]
-    fn local_state_store_keeps_thread_read_markers_separate() {
-        let path = temp_state_path("thread-read-marker");
+    fn local_state_store_keeps_thread_read_cursors_separate() {
+        let path = temp_state_path("thread-read-cursor");
         let mut store = LocalStateStore::with_path(path);
-        store.save_read_marker(
+        store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
             "cx:space:demo",
             None,
             "cx:event:topic",
         );
-        store.save_read_marker(
+        store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
             "cx:space:demo",
@@ -2740,7 +2740,7 @@ mod tests {
 
         assert_eq!(
             store
-                .read_marker_for("cx:space:demo", None)
+                .read_cursor_for("cx:space:demo", None)
                 .expect("topic marker")
                 .body
                 .event_id,
@@ -2748,7 +2748,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .read_marker_for("cx:space:demo", Some("cx:thread:reply-1"))
+                .read_cursor_for("cx:space:demo", Some("cx:thread:reply-1"))
                 .expect("thread marker")
                 .body
                 .event_id,
@@ -2866,14 +2866,14 @@ mod tests {
             store.set_space_muted(id, true);
         }
         // Independently keyed records that should follow the prune.
-        store.save_read_marker(
+        store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
             "cx:space:drop-a",
             None,
             "cx:event:42",
         );
-        store.save_read_marker(
+        store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
             "cx:space:keep",
@@ -2895,7 +2895,7 @@ mod tests {
         assert!(state.anchor_views.contains_key("cx:space:keep"));
         assert!(!state.muted_spaces.contains_key("cx:space:drop-b"));
         assert!(state.muted_spaces.contains_key("cx:space:keep"));
-        let kept_marker_keys: Vec<&str> = state.read_markers.keys().map(String::as_str).collect();
+        let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
         assert!(
             kept_marker_keys
                 .iter()

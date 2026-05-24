@@ -11,7 +11,7 @@
 //! - `identity/identity-handles.md` — handles are only human-readable entry
 //!   points.
 //! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant;
-//!   device authorization → cx.device.authorized; device verification →
+//!   device authorization → cx.device.authorize; device verification →
 //!   cx.key.verification.*.
 //! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS /
 //!   recovery key.
@@ -20,7 +20,7 @@
 //!   1. Choose a DID method (default: did:webvh; did:web is test/local only;
 //!      placeholder methods are visible but not selectable).
 //!   2. Bind a handle.
-//!   3. Generate the local device key + cx.device.authorized.
+//!   3. Generate the local device key + cx.device.authorize.
 //!   4. Configure a recovery policy (vault passphrase / SSS guardian /
 //!      recovery key).
 

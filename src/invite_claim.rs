@@ -187,7 +187,7 @@ impl InviteBindingTranscript {
 /// Round 4 — assemble a `cx.invite.claim` event body carrying the
 /// device-signed [`InviteSubjectProof`] + the
 /// [`InviteBindingTranscript`]. The device signing key MUST be the
-/// keypair registered on the claimant's `cx.device.authorized` event.
+/// keypair registered on the claimant's `cx.device.authorize` event.
 ///
 /// Returns the raw JSON body for the caller to wrap in an
 /// `OperationBuilder` / `EventEnvelope` and submit through

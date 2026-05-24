@@ -2092,7 +2092,7 @@ impl ContrixApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiRoomUpdateResBody> {
-        self.put_json(&format!("api/v1/mimi/rooms/{room_id}/update"), request)
+        self.put_json(&format!("api/v1/mimi/flows/{room_id}/update"), request)
             .await
     }
 
@@ -2101,7 +2101,7 @@ impl ContrixApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiNotifyResBody> {
-        self.post_json(&format!("api/v1/mimi/rooms/{room_id}/notify"), request)
+        self.post_json(&format!("api/v1/mimi/flows/{room_id}/notify"), request)
             .await
     }
 
@@ -2110,12 +2110,12 @@ impl ContrixApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiSubmitMessageResBody> {
-        self.post_json(&format!("api/v1/mimi/rooms/{room_id}/messages"), request)
+        self.post_json(&format!("api/v1/mimi/flows/{room_id}/messages"), request)
             .await
     }
 
     pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResBody> {
-        self.get_json(&format!("api/v1/mimi/rooms/{room_id}/group-info"))
+        self.get_json(&format!("api/v1/mimi/flows/{room_id}/group-info"))
             .await
     }
 
@@ -2247,7 +2247,7 @@ impl ContrixApi {
         // Real anchor_ref for reducer-input kinds. The simple heuristic
         // is: any envelope that already carries `effects[]` is a
         // reducer-input write and MUST point at the current Realm
-        // anchor head. Non-reducer kinds (cx.read.marker,
+        // anchor head. Non-reducer kinds (cx.read_cursor.advance,
         // cx.account_data.set, cx.account.blocklist, etc.) have no
         // effects and keep `anchor_ref: None`.
         if signed.anchor_ref.is_none() && !signed.effects.is_empty() {
@@ -4723,7 +4723,7 @@ mod tests {
     fn decodes_canonical_error_envelope_with_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:req:01964137-0000-7000-8000-000000000010"}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:request:01964137-0000-7000-8000-000000000010"}"#,
         );
 
         assert_eq!(decoded.code(), "capability_denied");
@@ -4733,7 +4733,7 @@ mod tests {
         );
         assert_eq!(
             decoded.request_id,
-            "cx:req:01964137-0000-7000-8000-000000000010"
+            "cx:request:01964137-0000-7000-8000-000000000010"
         );
     }
 
@@ -4741,14 +4741,14 @@ mod tests {
     fn decodes_wrapped_error_envelope_without_inner_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:req:01964137-0000-7000-8000-000000000011"}"#,
+            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:request:01964137-0000-7000-8000-000000000011"}"#,
         );
 
         assert_eq!(decoded.code(), "auth_expired");
         assert_eq!(decoded.message(), "session expired");
         assert_eq!(
             decoded.request_id,
-            "cx:req:01964137-0000-7000-8000-000000000011"
+            "cx:request:01964137-0000-7000-8000-000000000011"
         );
     }
 
@@ -4857,7 +4857,7 @@ mod tests {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:req:01964137-0000-7000-8000-000000000010"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:request:01964137-0000-7000-8000-000000000010"}"#,
             ),
         }
         .into();

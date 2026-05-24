@@ -36,9 +36,9 @@ cx.capability.grant	durable_event
 cx.capability.revoke	durable_event
 cx.container.move_item	durable_event
 cx.container.rebalance	durable_event
-cx.device.authorized	durable_event
+cx.device.authorize	durable_event
 cx.device.list_update	durable_event
-cx.device.revoked	durable_event
+cx.device.revoke	durable_event
 cx.did.proof	durable_event
 cx.flow.archive	durable_event
 cx.flow.create	durable_event
@@ -77,7 +77,7 @@ cx.mls.genesis	durable_event
 cx.mls.keypackage	durable_event
 cx.mls.proposal	durable_event
 cx.mls.welcome	durable_event
-cx.moderation.frank	durable_event
+cx.moderation.franking_proof	durable_event
 cx.moderation.report	durable_event
 cx.morph.archive	durable_event
 cx.morph.create	durable_event
@@ -95,7 +95,7 @@ cx.profile.space_override	durable_event
 cx.profile.update	durable_event
 cx.reaction.add	durable_event
 cx.reaction.remove	durable_event
-cx.read.marker	actor_private_event
+cx.read_cursor.advance	actor_private_event
 cx.realm.child	durable_event
 cx.realm.create	durable_event
 cx.realm.organization	durable_event
@@ -105,7 +105,7 @@ cx.realm.upgrade	durable_event
 cx.receipt.read	ephemeral_event
 cx.redaction	durable_event
 cx.relation.create	durable_event
-cx.relation.delete	durable_event
+cx.relation.tombstone	durable_event
 cx.relation.update	durable_event
 cx.schema.define	durable_event
 cx.schema.update	durable_event
