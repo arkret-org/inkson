@@ -31,7 +31,10 @@
 - [ ] §10 `src/messaging/discussion_promote.rs:14` — same: ship soland endpoints or hide.
 - [ ] §11 `src/views/agents.rs:734,758` — same: G3.Y4 agent supply or hide.
 - [ ] §12 `src/views/applets.rs:452,490` — same: G3.Y4 applet pre-fill or hide.
-- [ ] §13 `src/snapshot.rs:22,45` — finish chunked import staging or fail clearly on partial bootstrap.
+- [x] §13 `src/snapshot.rs:22,45` — fail clearly on partial bootstrap before chunk import.
+  - 2026-05-25: SDK 1.0 typed `SnapshotBootstrapSignature` is validated for
+    non-empty fields plus payload-digest binding. Partial or drifted bootstrap
+    headers now fall back to full sync with explicit reasons.
 
 ### Code-signing pipeline (cannot ship without)
 - [x] §14 macOS local signing/notarization dry-run: codesign with local credentials when present, validate notarytool input, and document that no submit/staple happens in this local plan.
@@ -61,7 +64,7 @@
 - [x] §28 Threat model doc covering local key storage, push privacy, recovery flow.
 
 ### Stale concepts
-- [x] §29 Cleanup the 4 `TODO(realm-rework)` sites once SDK 0.8.0 removes aliases.
+- [x] §29 Cleanup the 4 `TODO(realm-rework)` sites once SDK 1.0.0 removes aliases.
   - 2026-05-25 sweep: `rg "TODO\(realm-rework\)" src tests docs README.md CHANGELOG.md` found no code/doc sites. Remaining `space_id`/`cx:space:` references are protocol/container fields or tests, not realm-rework TODO aliases.
 
 ## Exit gate (phase 3)

@@ -49,10 +49,24 @@ pub enum SnapshotBootstrapOutcome {
 pub fn consume_snapshot_bootstrap(
     bootstrap: &contrix_sdk::SnapshotBootstrap,
 ) -> SnapshotBootstrapOutcome {
-    if bootstrap.signature.is_null() {
+    if bootstrap.signature.alg.trim().is_empty()
+        || bootstrap.signature.verification_method.trim().is_empty()
+        || bootstrap.signature.jws.trim().is_empty()
+        || bootstrap
+            .signature
+            .payload_digest
+            .as_str()
+            .trim()
+            .is_empty()
+    {
         return SnapshotBootstrapOutcome::FallBackFullSync(
-            "snapshot_bootstrap.signature is null".to_owned(),
+            "snapshot_bootstrap.signature is incomplete".to_owned(),
         );
+    }
+    if let Err(err) = bootstrap.validate_signature_binding() {
+        return SnapshotBootstrapOutcome::FallBackFullSync(format!(
+            "snapshot_bootstrap.signature binding failed: {err}"
+        ));
     }
     if bootstrap.state_digest.as_str().trim().is_empty() {
         return SnapshotBootstrapOutcome::FallBackFullSync(
@@ -128,7 +142,10 @@ pub fn verify_snapshot(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use contrix_sdk::{SnapshotChunkManifest, canonical, identifiers::SpaceId};
+    use contrix_sdk::{
+        EventId, Hash, SnapshotBootstrap, SnapshotBootstrapChunk, SnapshotBootstrapSignature,
+        SnapshotChunkManifest, canonical, identifiers::SpaceId,
+    };
 
     fn empty_manifest() -> ReducerSnapshotManifest {
         ReducerSnapshotManifest {
@@ -145,6 +162,70 @@ mod tests {
             created_at: Utc::now(),
             signatures: Vec::new(),
         }
+    }
+
+    fn test_hash(byte: char) -> Hash {
+        Hash::new(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
+    }
+
+    fn valid_bootstrap() -> SnapshotBootstrap {
+        let mut bootstrap = SnapshotBootstrap {
+            signature: SnapshotBootstrapSignature {
+                alg: "EdDSA".to_owned(),
+                verification_method: "did:web:alice.example#device".to_owned(),
+                payload_digest: test_hash('0'),
+                created_at: Utc::now(),
+                jws: "header..signature".to_owned(),
+            },
+            state_digest: test_hash('1'),
+            snapshot_frontier: vec![
+                EventId::new("cx:event:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
+            ],
+            chunks: vec![SnapshotBootstrapChunk {
+                chunk_id: "chunk-0".to_owned(),
+                digest: test_hash('2'),
+                size_bytes: 128,
+                fetch_ref: "cx:blob:snapshot-chunk-0".to_owned(),
+            }],
+        };
+        bootstrap.signature.payload_digest = bootstrap.signing_payload_digest().unwrap();
+        bootstrap
+    }
+
+    #[test]
+    fn snapshot_bootstrap_header_accepts_bound_signature() {
+        let outcome = consume_snapshot_bootstrap(&valid_bootstrap());
+        assert_eq!(
+            outcome,
+            SnapshotBootstrapOutcome::AcceptedHeader {
+                chunk_count: 1,
+                state_digest: test_hash('1').as_str().to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_bootstrap_header_rejects_partial_signature() {
+        let mut bootstrap = valid_bootstrap();
+        bootstrap.signature.jws.clear();
+        let outcome = consume_snapshot_bootstrap(&bootstrap);
+        assert!(matches!(
+            outcome,
+            SnapshotBootstrapOutcome::FallBackFullSync(reason)
+                if reason.contains("signature is incomplete")
+        ));
+    }
+
+    #[test]
+    fn snapshot_bootstrap_header_rejects_signature_digest_drift() {
+        let mut bootstrap = valid_bootstrap();
+        bootstrap.signature.payload_digest = test_hash('3');
+        let outcome = consume_snapshot_bootstrap(&bootstrap);
+        assert!(matches!(
+            outcome,
+            SnapshotBootstrapOutcome::FallBackFullSync(reason)
+                if reason.contains("signature binding failed")
+        ));
     }
 
     #[test]
