@@ -10,7 +10,7 @@
 //!
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries
-//!   `{space_id, actor_did, last_read_event_id, last_read_hlc}`.
+//!   a `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
 //! - `discovery/profiles-presence.md` — `cx.presence` carries
 //!   `{actor_did, status, last_seen?}` with status ∈
 //!   {`online`, `away`, `dnd`, `offline`}.
@@ -83,15 +83,31 @@ pub struct PresenceEvent {
     pub last_seen: Option<i64>,
 }
 
-/// `cx.read_cursor.advance` event parsed from the wire. Same shape as
-/// [`crate::discovery::ReadMarker`] but with HLC kept as a string
-/// (no `Hlc` parsing) so a malformed HLC doesn't reject the row.
+/// `cx.read_cursor.advance` event parsed from the wire. HLC is kept as a
+/// string so this receive helper does not need to share the writer's clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerEvent {
-    pub space_id: String,
-    pub actor_did: String,
-    pub last_read_event_id: String,
-    pub last_read_hlc: String,
+    pub realm_id: String,
+    pub actor_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    pub read_scope: ReadScopeEvent,
+    pub position: ReadCursorPositionEvent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadScopeEvent {
+    pub kind: String,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadCursorPositionEvent {
+    pub event_id: String,
+    pub hlc: String,
 }
 
 /// Errors surfaced by the typed parsers when the payload is missing
@@ -157,12 +173,40 @@ pub fn parse_read_cursor(
 ) -> Result<ReadMarkerEvent, PresenceRxError> {
     require_kind(&envelope.kind, "cx.read_cursor.advance")?;
     let payload = &envelope.payload;
+    let read_scope = required_value(payload, "cx.read_cursor.advance", "read_scope")?;
+    let read_scope =
+        serde_json::from_value::<ReadScopeEvent>(read_scope.clone()).map_err(|_| {
+            PresenceRxError::MissingField {
+                event_kind: "cx.read_cursor.advance",
+                field: "read_scope.kind",
+            }
+        })?;
+    if !matches!(
+        read_scope.kind.as_str(),
+        "realm" | "flow" | "thread" | "view" | "message" | "morph"
+    ) {
+        return Err(PresenceRxError::MissingField {
+            event_kind: "cx.read_cursor.advance",
+            field: "read_scope.kind",
+        });
+    }
+    let position = required_value(payload, "cx.read_cursor.advance", "position")?;
+    let position =
+        serde_json::from_value::<ReadCursorPositionEvent>(position.clone()).map_err(|_| {
+            PresenceRxError::MissingField {
+                event_kind: "cx.read_cursor.advance",
+                field: "position.event_id",
+            }
+        })?;
     Ok(ReadMarkerEvent {
-        space_id: required_str(payload, "cx.read_cursor.advance", "space_id")?.to_owned(),
-        actor_did: required_str(payload, "cx.read_cursor.advance", "actor_did")?.to_owned(),
-        last_read_event_id: required_str(payload, "cx.read_cursor.advance", "last_read_event_id")?
-            .to_owned(),
-        last_read_hlc: required_str(payload, "cx.read_cursor.advance", "last_read_hlc")?.to_owned(),
+        realm_id: required_str(payload, "cx.read_cursor.advance", "realm_id")?.to_owned(),
+        actor_id: required_str(payload, "cx.read_cursor.advance", "actor_id")?.to_owned(),
+        device_id: payload
+            .get("device_id")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+        read_scope,
+        position,
     })
 }
 
@@ -188,6 +232,16 @@ fn required_str<'a>(
         .ok_or(PresenceRxError::MissingField { event_kind, field })
 }
 
+fn required_value<'a>(
+    payload: &'a Value,
+    event_kind: &'static str,
+    field: &'static str,
+) -> Result<&'a Value, PresenceRxError> {
+    payload
+        .get(field)
+        .ok_or(PresenceRxError::MissingField { event_kind, field })
+}
+
 /// F-PRESENCE-RX-1: in-memory aggregate the chat / dashboard views
 /// can read off of without re-parsing the event stream.
 ///
@@ -200,8 +254,8 @@ pub struct PresenceAggregate {
     presence: HashMap<String, PresenceEvent>,
     /// `(actor_did, flow_id) -> received_unix_seconds`.
     typing: HashMap<(String, String), i64>,
-    /// `(space_id, actor_did) -> ReadMarkerEvent`.
-    read_cursors: HashMap<(String, String), ReadMarkerEvent>,
+    /// `(realm_id, actor_id, read_scope) -> ReadMarkerEvent`.
+    read_cursors: HashMap<(String, String, String), ReadMarkerEvent>,
 }
 
 /// TTL after which a typing indicator is treated as stale.
@@ -222,7 +276,11 @@ impl PresenceAggregate {
     }
 
     pub fn ingest_read_cursor(&mut self, event: ReadMarkerEvent) {
-        let key = (event.space_id.clone(), event.actor_did.clone());
+        let key = (
+            event.realm_id.clone(),
+            event.actor_id.clone(),
+            read_scope_key(&event.read_scope),
+        );
         self.read_cursors.insert(key, event);
     }
 
@@ -246,9 +304,17 @@ impl PresenceAggregate {
         self.presence.get(actor_did)
     }
 
-    pub fn read_cursor(&self, space_id: &str, actor_did: &str) -> Option<&ReadMarkerEvent> {
-        self.read_cursors
-            .get(&(space_id.to_owned(), actor_did.to_owned()))
+    pub fn read_cursor(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        read_scope: &ReadScopeEvent,
+    ) -> Option<&ReadMarkerEvent> {
+        self.read_cursors.get(&(
+            realm_id.to_owned(),
+            actor_id.to_owned(),
+            read_scope_key(read_scope),
+        ))
     }
 
     /// Drop typing indicators older than [`TYPING_TTL_SECONDS`].
@@ -269,6 +335,15 @@ pub fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs() as i64
+}
+
+fn read_scope_key(read_scope: &ReadScopeEvent) -> String {
+    format!(
+        "{}\n{}\n{}",
+        read_scope.kind.as_str(),
+        read_scope.object_ref.as_deref().unwrap_or(""),
+        read_scope.track.as_deref().unwrap_or("")
+    )
 }
 
 #[cfg(test)]
@@ -360,16 +435,54 @@ mod tests {
         let env = envelope(
             "cx.read_cursor.advance",
             json!({
-                "space_id": "cx:space:1",
-                "actor_did": "did:web:alice",
-                "last_read_event_id": "cx:event:42",
-                "last_read_hlc": "01970e589d21-0001-a13f9c2e"
+                "schema": "cx.schema.read_cursor.v1",
+                "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+                "actor_id": "did:web:alice",
+                "device_id": "cx:device:01904100-0000-7000-8000-000000000001",
+                "read_scope": {
+                    "kind": "flow",
+                    "ref": "cx:flow:01904100-0000-7000-8000-000000000001",
+                    "track": "discussion"
+                },
+                "position": {
+                    "event_id": "cx:event:01904100-0000-7000-8000-000000000042",
+                    "hlc": "01970e589d21-0001-a13f9c2e"
+                }
             }),
         );
         let parsed = parse_read_cursor(&env).expect("parse");
-        assert_eq!(parsed.space_id, "cx:space:1");
-        assert_eq!(parsed.last_read_event_id, "cx:event:42");
-        assert_eq!(parsed.last_read_hlc, "01970e589d21-0001-a13f9c2e");
+        assert_eq!(
+            parsed.realm_id,
+            "cx:realm:01904100-0000-7000-8000-000000000001"
+        );
+        assert_eq!(parsed.actor_id, "did:web:alice");
+        assert_eq!(parsed.read_scope.kind, "flow");
+        assert_eq!(parsed.read_scope.track.as_deref(), Some("discussion"));
+        assert_eq!(
+            parsed.position.event_id,
+            "cx:event:01904100-0000-7000-8000-000000000042"
+        );
+        assert_eq!(parsed.position.hlc, "01970e589d21-0001-a13f9c2e");
+    }
+
+    #[test]
+    fn parse_read_cursor_rejects_removed_flow_discussion_kind() {
+        let env = envelope(
+            "cx.read_cursor.advance",
+            json!({
+                "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+                "actor_id": "did:web:alice",
+                "read_scope": {
+                    "kind": "flow_discussion",
+                    "ref": "cx:flow:01904100-0000-7000-8000-000000000001"
+                },
+                "position": {
+                    "event_id": "cx:event:01904100-0000-7000-8000-000000000042",
+                    "hlc": "01970e589d21-0001-a13f9c2e"
+                }
+            }),
+        );
+        assert!(parse_read_cursor(&env).is_err());
     }
 
     #[test]
@@ -403,15 +516,37 @@ mod tests {
             last_seen: Some(1000),
         });
         agg.ingest_read_cursor(ReadMarkerEvent {
-            space_id: "cx:space:1".to_owned(),
-            actor_did: "did:web:alice".to_owned(),
-            last_read_event_id: "cx:event:42".to_owned(),
-            last_read_hlc: "01970e589d21-0001-a13f9c2e".to_owned(),
+            realm_id: "cx:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
+            device_id: Some("cx:device:01904100-0000-7000-8000-000000000001".to_owned()),
+            read_scope: ReadScopeEvent {
+                kind: "flow".to_owned(),
+                object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+                track: Some("discussion".to_owned()),
+            },
+            position: ReadCursorPositionEvent {
+                event_id: "cx:event:01904100-0000-7000-8000-000000000042".to_owned(),
+                hlc: "01970e589d21-0001-a13f9c2e".to_owned(),
+            },
         });
         let presence = agg.presence_for("did:web:alice").unwrap();
         assert_eq!(presence.status, PresenceStatus::Away);
-        let marker = agg.read_cursor("cx:space:1", "did:web:alice").unwrap();
-        assert_eq!(marker.last_read_event_id, "cx:event:42");
+        let scope = ReadScopeEvent {
+            kind: "flow".to_owned(),
+            object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+            track: Some("discussion".to_owned()),
+        };
+        let marker = agg
+            .read_cursor(
+                "cx:realm:01904100-0000-7000-8000-000000000001",
+                "did:web:alice",
+                &scope,
+            )
+            .unwrap();
+        assert_eq!(
+            marker.position.event_id,
+            "cx:event:01904100-0000-7000-8000-000000000042"
+        );
     }
 
     #[test]

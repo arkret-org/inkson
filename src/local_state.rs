@@ -12,6 +12,8 @@ use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::hlc::Hlc;
+
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
 
@@ -32,11 +34,26 @@ pub struct NotificationClientState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadMarkerBody {
-    pub space_id: String,
+pub struct ReadScope {
+    pub kind: String,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub topic_id: Option<String>,
+    pub track: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadCursorPosition {
     pub event_id: String,
+    pub hlc: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerBody {
+    pub schema: String,
+    pub realm_id: String,
+    pub read_scope: ReadScope,
+    pub position: ReadCursorPosition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,10 +67,18 @@ pub struct ReadMarkerRecord {
 }
 
 impl ReadMarkerRecord {
-    pub fn cx_marker_read_operation(&self) -> Value {
+    pub fn cx_read_cursor_operation(&self) -> Value {
         json!({
-            "type": self.marker_type,
-            "body": &self.body,
+            "kind": &self.marker_type,
+            "payload": {
+                "schema": &self.body.schema,
+                "actor_id": &self.actor,
+                "device_id": &self.device_id,
+                "realm_id": &self.body.realm_id,
+                "read_scope": &self.body.read_scope,
+                "position": &self.body.position,
+                "updated_at": self.updated_at,
+            },
         })
     }
 }
@@ -763,7 +788,7 @@ pub struct ClientLocalState {
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
     pub private_data: BTreeMap<String, String>,
-    /// Private cx.marker.read cursors keyed by space + topic/thread scope.
+    /// Private cx.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
     /// Persisted OIDC token bundle - access_token, refresh_token, expiry,
@@ -1156,8 +1181,8 @@ impl LocalStateStore {
         self.cached.muted_spaces.remove(space_id);
         self.cached.read_receipt_space_overrides.remove(space_id);
         self.cached.read_receipt_policy_snapshots.remove(space_id);
-        // `read_cursors` are keyed by `"{space}\n{topic}"` — strip every
-        // marker whose space prefix matches.
+        // `read_cursors` are keyed by `"{realm}\n{kind}\n{ref}\n{track}"` —
+        // strip every marker whose Realm prefix matches.
         let prefix = format!("{space_id}\n");
         self.cached
             .read_cursors
@@ -1329,23 +1354,30 @@ impl LocalStateStore {
         event_id: impl Into<String>,
     ) -> ReadMarkerRecord {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let realm_id = space_id.into();
+        let device_id = device_id.into();
+        let event_id = event_id.into();
         let topic_id = topic_id.filter(|topic| !topic.trim().is_empty());
+        let read_scope = read_scope_for_cursor(&realm_id, topic_id.as_deref());
+        let position = ReadCursorPosition {
+            event_id,
+            hlc: Hlc::now(&device_id).to_string(),
+        };
         let marker = ReadMarkerRecord {
-            marker_type: "cx.marker.read".to_owned(),
+            marker_type: "cx.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
-                space_id: space_id.clone(),
-                topic_id: topic_id.clone(),
-                event_id: event_id.into(),
+                schema: "cx.schema.read_cursor.v1".to_owned(),
+                realm_id: realm_id.clone(),
+                read_scope: read_scope.clone(),
+                position,
             },
             actor: actor.into(),
-            device_id: device_id.into(),
+            device_id,
             updated_at: Utc::now(),
         };
-        self.cached.read_cursors.insert(
-            read_cursor_key(&space_id, topic_id.as_deref()),
-            marker.clone(),
-        );
+        self.cached
+            .read_cursors
+            .insert(read_cursor_key(&realm_id, &read_scope), marker.clone());
         let _ = self.flush();
         marker
     }
@@ -1357,7 +1389,10 @@ impl LocalStateStore {
     ) -> Option<ReadMarkerRecord> {
         self.load()
             .read_cursors
-            .get(&read_cursor_key(space_id, topic_id))
+            .get(&read_cursor_key(
+                space_id,
+                &read_scope_for_cursor(space_id, topic_id),
+            ))
             .cloned()
     }
 
@@ -1365,7 +1400,7 @@ impl LocalStateStore {
         self.load()
             .read_cursors
             .into_values()
-            .filter(|marker| marker.body.space_id == space_id)
+            .filter(|marker| marker.body.realm_id == space_id)
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
@@ -2378,12 +2413,42 @@ impl LocalStateStore {
     }
 }
 
-fn read_cursor_key(space_id: &str, topic_id: Option<&str>) -> String {
-    let topic = topic_id
-        .map(str::trim)
-        .filter(|topic| !topic.is_empty())
-        .unwrap_or("-");
-    format!("{space_id}\n{topic}")
+fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
+    match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
+        Some(topic) if topic.starts_with("cx:thread:") => ReadScope {
+            kind: "thread".to_owned(),
+            object_ref: Some(topic.to_owned()),
+            track: None,
+        },
+        Some(topic) if topic.starts_with("cx:flow:") => ReadScope {
+            kind: "flow".to_owned(),
+            object_ref: Some(topic.to_owned()),
+            track: Some("discussion".to_owned()),
+        },
+        _ => ReadScope {
+            kind: "flow".to_owned(),
+            object_ref: Some(default_flow_id_for_realm(realm_id)),
+            track: Some("discussion".to_owned()),
+        },
+    }
+}
+
+fn default_flow_id_for_realm(realm_id: &str) -> String {
+    realm_id
+        .strip_prefix("cx:realm:")
+        .or_else(|| realm_id.strip_prefix("cx:space:"))
+        .map(|suffix| format!("cx:flow:{suffix}"))
+        .unwrap_or_else(|| realm_id.to_owned())
+}
+
+fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {
+    format!(
+        "{}\n{}\n{}\n{}",
+        realm_id,
+        read_scope.kind.as_str(),
+        read_scope.object_ref.as_deref().unwrap_or(""),
+        read_scope.track.as_deref().unwrap_or("")
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2696,16 +2761,30 @@ mod tests {
             "cx:event:read-1",
         );
 
-        assert_eq!(marker.marker_type, "cx.marker.read");
-        assert_eq!(marker.body.space_id, "cx:space:demo");
-        assert_eq!(marker.body.event_id, "cx:event:read-1");
+        assert_eq!(marker.marker_type, "cx.read_cursor.advance");
+        assert_eq!(marker.body.realm_id, "cx:space:demo");
+        assert_eq!(marker.body.position.event_id, "cx:event:read-1");
+        assert_eq!(marker.body.read_scope.kind, "flow");
+        assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
         assert_eq!(
-            marker.cx_marker_read_operation(),
+            marker.cx_read_cursor_operation(),
             serde_json::json!({
-                "type": "cx.marker.read",
-                "body": {
-                    "space_id": "cx:space:demo",
-                    "event_id": "cx:event:read-1",
+                "kind": "cx.read_cursor.advance",
+                "payload": {
+                    "schema": "cx.schema.read_cursor.v1",
+                    "actor_id": "did:web:alice.example",
+                    "device_id": "device-1",
+                    "realm_id": "cx:space:demo",
+                    "read_scope": {
+                        "kind": "flow",
+                        "ref": "cx:flow:demo",
+                        "track": "discussion"
+                    },
+                    "position": {
+                        "event_id": "cx:event:read-1",
+                        "hlc": &marker.body.position.hlc
+                    },
+                    "updated_at": &marker.updated_at,
                 },
             })
         );
@@ -2716,7 +2795,7 @@ mod tests {
             .expect("read marker persisted");
         assert_eq!(persisted.actor, "did:web:alice.example");
         assert_eq!(persisted.device_id, "device-1");
-        assert_eq!(persisted.body.event_id, "cx:event:read-1");
+        assert_eq!(persisted.body.position.event_id, "cx:event:read-1");
     }
 
     #[test]
@@ -2743,6 +2822,7 @@ mod tests {
                 .read_cursor_for("cx:space:demo", None)
                 .expect("topic marker")
                 .body
+                .position
                 .event_id,
             "cx:event:topic"
         );
@@ -2751,6 +2831,7 @@ mod tests {
                 .read_cursor_for("cx:space:demo", Some("cx:thread:reply-1"))
                 .expect("thread marker")
                 .body
+                .position
                 .event_id,
             "cx:event:thread"
         );

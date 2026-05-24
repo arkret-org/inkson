@@ -223,27 +223,42 @@ impl Default for SpacePresencePolicy {
 /// Read marker for multi-device sync.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadMarker {
-    /// Space ID.
-    pub space_id: String,
+    /// Realm ID.
+    pub realm_id: String,
     /// Actor DID.
-    pub actor_did: String,
+    pub actor_id: String,
     /// Device ID that set this marker.
     pub device_id: String,
-    /// Last read event ID.
-    pub last_read_event_id: String,
-    /// HLC timestamp of the last read event.
-    pub last_read_hlc: Hlc,
+    /// Read scope `{kind, ref?, track?}`.
+    pub read_scope: ReadMarkerScope,
+    /// Last read position.
+    pub position: ReadMarkerPosition,
     /// Read count (number of events read).
     pub read_count: u64,
     /// When this marker was set.
     pub set_at: Hlc,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerScope {
+    pub kind: String,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadMarkerPosition {
+    pub event_id: String,
+    pub hlc: Hlc,
+}
+
 /// Multi-device marker merge logic.
 #[derive(Clone, Debug, Default)]
 pub struct MarkerMerger {
-    /// Markers indexed by (space_id, actor_did) -> device_id -> marker.
-    markers: HashMap<(String, String), HashMap<String, ReadMarker>>,
+    /// Markers indexed by (realm_id, actor_id, read_scope) -> device_id -> marker.
+    markers: HashMap<(String, String, String), HashMap<String, ReadMarker>>,
 }
 
 impl MarkerMerger {
@@ -253,26 +268,48 @@ impl MarkerMerger {
 
     /// Add or update a read marker.
     pub fn set_marker(&mut self, marker: ReadMarker) {
-        let key = (marker.space_id.clone(), marker.actor_did.clone());
+        let key = (
+            marker.realm_id.clone(),
+            marker.actor_id.clone(),
+            read_marker_scope_key(&marker.read_scope),
+        );
         let device_markers = self.markers.entry(key).or_default();
         device_markers.insert(marker.device_id.clone(), marker);
     }
 
-    /// Get the merged read marker for a space/actor.
+    /// Get the merged read marker for a Realm/actor/scope.
     /// Uses the causal latest marker (highest HLC) across all devices.
-    pub fn get_merged_marker(&self, space_id: &str, actor_did: &str) -> Option<ReadMarker> {
-        let key = (space_id.to_owned(), actor_did.to_owned());
+    pub fn get_merged_marker(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        read_scope: &ReadMarkerScope,
+    ) -> Option<ReadMarker> {
+        let key = (
+            realm_id.to_owned(),
+            actor_id.to_owned(),
+            read_marker_scope_key(read_scope),
+        );
         let device_markers = self.markers.get(&key)?;
 
         device_markers
             .values()
-            .max_by_key(|m| &m.last_read_hlc)
+            .max_by_key(|m| &m.position.hlc)
             .cloned()
     }
 
-    /// Get all device-specific markers for a space/actor.
-    pub fn get_device_markers(&self, space_id: &str, actor_did: &str) -> Vec<&ReadMarker> {
-        let key = (space_id.to_owned(), actor_did.to_owned());
+    /// Get all device-specific markers for a Realm/actor/scope.
+    pub fn get_device_markers(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        read_scope: &ReadMarkerScope,
+    ) -> Vec<&ReadMarker> {
+        let key = (
+            realm_id.to_owned(),
+            actor_id.to_owned(),
+            read_marker_scope_key(read_scope),
+        );
         self.markers
             .get(&key)
             .map(|m| m.values().collect())
@@ -282,13 +319,27 @@ impl MarkerMerger {
     /// Get the read position for a specific device.
     pub fn get_device_marker(
         &self,
-        space_id: &str,
-        actor_did: &str,
+        realm_id: &str,
+        actor_id: &str,
+        read_scope: &ReadMarkerScope,
         device_id: &str,
     ) -> Option<&ReadMarker> {
-        let key = (space_id.to_owned(), actor_did.to_owned());
+        let key = (
+            realm_id.to_owned(),
+            actor_id.to_owned(),
+            read_marker_scope_key(read_scope),
+        );
         self.markers.get(&key)?.get(device_id)
     }
+}
+
+fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
+    format!(
+        "{}\n{}\n{}",
+        scope.kind.as_str(),
+        scope.object_ref.as_deref().unwrap_or(""),
+        scope.track.as_deref().unwrap_or("")
+    )
 }
 
 /// Push notification E2EE metadata (minimal metadata sent to push gateway).
@@ -463,80 +514,103 @@ mod tests {
     #[test]
     fn test_marker_merger_single_device() {
         let mut merger = MarkerMerger::new();
+        let scope = flow_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            space_id: "cx:space:test".to_owned(),
-            actor_did: "did:web:alice".to_owned(),
+            realm_id: "cx:realm:test".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
-            last_read_event_id: "event-5".to_owned(),
-            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_scope: scope.clone(),
+            position: ReadMarkerPosition {
+                event_id: "event-5".to_owned(),
+                hlc: Hlc::from_parts(5000, 0, 1),
+            },
             read_count: 5,
             set_at: Hlc::now("yougen"),
         });
 
-        let merged = merger.get_merged_marker("cx:space:test", "did:web:alice");
+        let merged = merger.get_merged_marker("cx:realm:test", "did:web:alice", &scope);
         assert!(merged.is_some());
-        assert_eq!(merged.unwrap().last_read_event_id, "event-5");
+        assert_eq!(merged.unwrap().position.event_id, "event-5");
     }
 
     #[test]
     fn test_marker_merger_multi_device() {
         let mut merger = MarkerMerger::new();
+        let scope = flow_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            space_id: "cx:space:test".to_owned(),
-            actor_did: "did:web:alice".to_owned(),
+            realm_id: "cx:realm:test".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
-            last_read_event_id: "event-5".to_owned(),
-            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_scope: scope.clone(),
+            position: ReadMarkerPosition {
+                event_id: "event-5".to_owned(),
+                hlc: Hlc::from_parts(5000, 0, 1),
+            },
             read_count: 5,
             set_at: Hlc::now("yougen"),
         });
 
         merger.set_marker(ReadMarker {
-            space_id: "cx:space:test".to_owned(),
-            actor_did: "did:web:alice".to_owned(),
+            realm_id: "cx:realm:test".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
             device_id: "device-2".to_owned(),
-            last_read_event_id: "event-8".to_owned(),
-            last_read_hlc: Hlc::from_parts(8000, 0, 2),
+            read_scope: scope.clone(),
+            position: ReadMarkerPosition {
+                event_id: "event-8".to_owned(),
+                hlc: Hlc::from_parts(8000, 0, 2),
+            },
             read_count: 8,
             set_at: Hlc::now("yougen"),
         });
 
         let merged = merger
-            .get_merged_marker("cx:space:test", "did:web:alice")
+            .get_merged_marker("cx:realm:test", "did:web:alice", &scope)
             .unwrap();
         // Should use the device with the highest HLC (device-2)
-        assert_eq!(merged.last_read_event_id, "event-8");
+        assert_eq!(merged.position.event_id, "event-8");
         assert_eq!(merged.device_id, "device-2");
 
-        let devices = merger.get_device_markers("cx:space:test", "did:web:alice");
+        let devices = merger.get_device_markers("cx:realm:test", "did:web:alice", &scope);
         assert_eq!(devices.len(), 2);
     }
 
     #[test]
     fn test_marker_merger_per_device() {
         let mut merger = MarkerMerger::new();
+        let scope = flow_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            space_id: "cx:space:test".to_owned(),
-            actor_did: "did:web:alice".to_owned(),
+            realm_id: "cx:realm:test".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
-            last_read_event_id: "event-5".to_owned(),
-            last_read_hlc: Hlc::from_parts(5000, 0, 1),
+            read_scope: scope.clone(),
+            position: ReadMarkerPosition {
+                event_id: "event-5".to_owned(),
+                hlc: Hlc::from_parts(5000, 0, 1),
+            },
             read_count: 5,
             set_at: Hlc::now("yougen"),
         });
 
-        let marker = merger.get_device_marker("cx:space:test", "did:web:alice", "device-1");
+        let marker = merger.get_device_marker("cx:realm:test", "did:web:alice", &scope, "device-1");
         assert!(marker.is_some());
-        assert_eq!(marker.unwrap().last_read_event_id, "event-5");
+        assert_eq!(marker.unwrap().position.event_id, "event-5");
 
         assert!(
             merger
-                .get_device_marker("cx:space:test", "did:web:alice", "device-99")
+                .get_device_marker("cx:realm:test", "did:web:alice", &scope, "device-99")
                 .is_none()
         );
+    }
+
+    fn flow_discussion_scope() -> ReadMarkerScope {
+        ReadMarkerScope {
+            kind: "flow".to_owned(),
+            object_ref: Some("cx:flow:test".to_owned()),
+            track: Some("discussion".to_owned()),
+        }
     }
 
     #[test]

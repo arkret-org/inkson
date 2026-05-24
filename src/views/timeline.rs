@@ -401,7 +401,7 @@ pub fn TimelinePanel(
     let latest_read_cursor = state_store.read().latest_read_cursor(&selected_space);
     let latest_read_cursor_event_id = latest_read_cursor
         .as_ref()
-        .map(|marker| marker.body.event_id.clone());
+        .map(|marker| marker.body.position.event_id.clone());
     let read_cursor_status = latest_read_cursor
         .as_ref()
         .map(read_cursor_status_label)
@@ -762,21 +762,28 @@ pub fn TimelinePanel(
                                                 topic_id.clone(),
                                                 event_id.clone(),
                                             );
-                                            write_status.set(format!("read marker saved {}", marker.body.event_id));
+                                            write_status.set(format!(
+                                                "read marker saved {}",
+                                                marker.body.position.event_id
+                                            ));
 
                                             // Resolve effective send preference per spec
                                             // discovery/client-preferences.md §3.6 (flow → space →
                                             // default). Server-side Realm `cx.realm.read_receipt_policy`
                                             // is not yet exposed to the client; until it is, treat
                                             // policy as `Optional` (no override) and defer to user pref.
-                                            let topic_for_pref = marker.body.topic_id.clone();
+                                            let topic_for_pref = if marker.body.read_scope.kind == "thread" {
+                                                marker.body.read_scope.object_ref.clone()
+                                            } else {
+                                                None
+                                            };
                                             let should_send = state_store.read().read_receipt_should_send(
                                                 topic_for_pref.as_deref(),
-                                                Some(marker.body.space_id.as_str()),
+                                                Some(marker.body.realm_id.as_str()),
                                             );
                                             if !should_send {
                                                 let marker_event_id_label =
-                                                    short_protocol_id(&marker.body.event_id);
+                                                    short_protocol_id(&marker.body.position.event_id);
                                                 receipt_status.set(format!(
                                                     "Read receipt: skipped per preference for {}",
                                                     marker_event_id_label
@@ -784,14 +791,14 @@ pub fn TimelinePanel(
                                                 return;
                                             }
                                             let marker_event_id_label =
-                                                short_protocol_id(&marker.body.event_id);
+                                                short_protocol_id(&marker.body.position.event_id);
                                             receipt_status.set(format!("Read receipt: sending {marker_event_id_label}"));
 
                                             let base = base.clone();
                                             let api_token = token();
                                             let wait_for = active_sync_token(sync_cursor());
-                                            let receipt_space = marker.body.space_id.clone();
-                                            let receipt_event_id = marker.body.event_id.clone();
+                                            let receipt_space = marker.body.realm_id.clone();
+                                            let receipt_event_id = marker.body.position.event_id.clone();
                                             let actor_for_status = marker.actor.clone();
                                             let actor_for_audit = marker.actor.clone();
                                             let device_for_audit = marker.device_id.clone();
@@ -1999,15 +2006,21 @@ fn timestamp_now() -> String {
 }
 
 fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
-    let scope = marker
-        .body
-        .topic_id
-        .as_deref()
-        .map(|topic_id| format!("thread {}", short_protocol_id(topic_id)))
-        .unwrap_or_else(|| "space timeline".to_owned());
+    let scope = match (
+        marker.body.read_scope.kind.as_str(),
+        marker.body.read_scope.object_ref.as_deref(),
+        marker.body.read_scope.track.as_deref(),
+    ) {
+        ("thread", Some(object_ref), _) => format!("thread {}", short_protocol_id(object_ref)),
+        ("flow", Some(object_ref), Some(track)) => {
+            format!("{track} {}", short_protocol_id(object_ref))
+        }
+        ("flow", Some(object_ref), None) => format!("flow {}", short_protocol_id(object_ref)),
+        (kind, _, _) => kind.to_owned(),
+    };
     format!(
         "Read marker: {} ({scope}) at {}",
-        short_protocol_id(&marker.body.event_id),
+        short_protocol_id(&marker.body.position.event_id),
         marker.updated_at.format("%Y-%m-%d %H:%M")
     )
 }
