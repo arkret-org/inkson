@@ -116,9 +116,9 @@ npm run release:check
 The repository includes CI for:
 
 - `Typos`: spell checking through `crate-ci/typos`.
-- `CI`: Rust format, clippy, tests, and Dioxus web build on Ubuntu.
-- `Packages`: release binary artifacts for Linux, Windows, and macOS runners.
-- `Docker`: web image build on pull requests and GHCR push on `main`, `master`, or `v*` tags.
+- `CI`: Rust format, clippy, tests, Dioxus web build, and Lighthouse budget on Ubuntu.
+- `Packages`: release binary artifacts and local signing dry-run evidence for Linux, Windows, and macOS runners.
+- `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
 CI checks out `contrix-rust-sdk` and `chime` next to `yougen` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/contrix-rust-sdk` and `${OWNER}/chime`.
@@ -143,6 +143,8 @@ The Docker image serves the Dioxus web build with nginx. Build it from a clean c
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
 docker build -f docker-context/yougen/Dockerfile -t yougen-web docker-context
 ```
+
+Local release evidence commands are documented in [`docs/RELEASING.md`](docs/RELEASING.md). The release plan is local-only: no tag creation, registry push, crates.io publish, notarization submit, ticket stapling, timestamp authority, or Sigstore transparency-log upload is part of the phase-3 workflow.
 
 By default the UI points at `https://local.host`. Start `soland` first:
 

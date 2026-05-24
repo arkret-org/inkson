@@ -86,3 +86,29 @@ jobs:
           name: ${{ matrix.package_name }}
           path: dist/${{ matrix.package_name }}
           if-no-files-found: error
+
+      - name: Local signing dry-run evidence
+        working-directory: yougen
+        shell: pwsh
+        run: ./scripts/signing-dry-run.ps1 -ArtifactPath "${{ matrix.artifact_path }}" -NoBuild
+
+      - name: Upload signing dry-run evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package_name }}-signing-dry-run
+          path: yougen/dist/signing/
+          if-no-files-found: error
+
+      - name: Build local Linux package
+        if: runner.os == 'Linux'
+        working-directory: yougen
+        shell: pwsh
+        run: ./scripts/linux-package-local.ps1 -BinaryPath "${{ matrix.artifact_path }}"
+
+      - name: Upload local Linux package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package_name }}-deb-local
+          path: yougen/dist/linux-packages/
+          if-no-files-found: error

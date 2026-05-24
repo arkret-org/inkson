@@ -82,3 +82,29 @@ jobs:
       - name: Web build
         working-directory: yougen
         run: dx build --platform web
+
+      - name: Start web preview for Lighthouse
+        working-directory: yougen
+        shell: bash
+        run: |
+          nohup dx serve --platform web --port 4528 --open false > ../yougen-lighthouse-server.log 2>&1 &
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:4528 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat ../yougen-lighthouse-server.log
+          exit 1
+
+      - name: Lighthouse budget
+        working-directory: yougen
+        run: npx --yes lighthouse@12 http://127.0.0.1:4528 --output=json --output-path=dist/lighthouse/lighthouse.json --budget-path=docs/lighthouse-budget.json --chrome-flags="--headless=new --no-sandbox"
+
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report
+          path: yougen/dist/lighthouse/
+          if-no-files-found: ignore

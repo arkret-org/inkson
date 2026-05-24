@@ -4,18 +4,16 @@ on:
   pull_request:
   push:
     branches: ["main", "master"]
-    tags: ["v*"]
 
 permissions:
   contents: read
-  packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/yougen-web
+  IMAGE_NAME: yougen-web:local
 
 jobs:
   image:
-    name: Build web image
+    name: Build and scan local web image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout yougen
@@ -37,24 +35,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
 
       - name: Prepare Docker context
         run: |
@@ -80,8 +60,37 @@ jobs:
         with:
           context: docker-context
           file: docker-context/yougen/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: json
+          output: trivy-image.json
+          exit-code: "0"
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.20.6
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4
+
+      - name: Generate local image evidence
+        shell: pwsh
+        working-directory: yougen
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/web-image | Out-Null
+          Move-Item -Force ../trivy-image.json dist/web-image/trivy-image.json
+          ./scripts/web-image-evidence.ps1 -ImageTag "${{ env.IMAGE_NAME }}" -SkipBuild
+
+      - name: Upload local-only image evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: yougen-web-local-evidence
+          path: yougen/dist/web-image/
+          if-no-files-found: error

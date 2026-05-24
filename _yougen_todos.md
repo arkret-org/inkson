@@ -34,10 +34,10 @@
 - [ ] §13 `src/snapshot.rs:22,45` — finish chunked import staging or fail clearly on partial bootstrap.
 
 ### Code-signing pipeline (cannot ship without)
-- [ ] §14 macOS local signing/notarization dry-run: codesign with local credentials when present, validate notarytool input, and document that no submit/staple happens in this local plan.
-- [ ] §15 Windows local code-signing dry-run: support `signtool sign` with a local certificate path/env when present; do not require GHA secrets.
-- [ ] §16 Linux: gpg-sign tarballs + provide a deb/rpm/AppImage/Flatpak.
-- [ ] §17 Web image: build locally and generate SBOM/cosign evidence. Do not push to GHCR or any registry.
+- [x] §14 macOS local signing/notarization dry-run: codesign with local credentials when present, validate notarytool input, and document that no submit/staple happens in this local plan.
+- [x] §15 Windows local code-signing dry-run: support `signtool sign` with a local certificate path/env when present; do not require GHA secrets.
+- [x] §16 Linux: gpg-sign tarballs + provide a deb/rpm/AppImage/Flatpak.
+- [x] §17 Web image: build locally and generate SBOM/cosign evidence. Do not push to GHCR or any registry.
 
 ### Auth flow closure
 - [ ] §18 `src/coauth.rs:896,913,945-946,963,1018,1034` — finish OIDC callback capture, PKCE verifier auto-exchange, passkey flow.
@@ -51,17 +51,18 @@
 - [ ] §22 Add cross-platform smoke spec for push subscribe / receive on each desktop OS (currently only Chromium-on-Linux exercises Web Push).
 
 ### Engineering hygiene
-- [ ] §23 Add Trivy scan on web Dockerfile.
-- [ ] §24 Add Lighthouse perf budget on web build.
-- [ ] §25 Add a release-checklist doc (`docs/RELEASING.md`).
+- [x] §23 Add Trivy scan on web Dockerfile.
+- [x] §24 Add Lighthouse perf budget on web build.
+- [x] §25 Add a release-checklist doc (`docs/RELEASING.md`).
 
 ### Docs
-- [ ] §26 `docs/deployment.md` covering soland-pairing, push-gateway wiring, mobile build setup.
-- [ ] §27 Add `SECURITY.md` (currently missing).
-- [ ] §28 Threat model doc covering local key storage, push privacy, recovery flow.
+- [x] §26 `docs/deployment.md` covering soland-pairing, push-gateway wiring, mobile build setup.
+- [x] §27 Add `SECURITY.md` (currently missing).
+- [x] §28 Threat model doc covering local key storage, push privacy, recovery flow.
 
 ### Stale concepts
-- [ ] §29 Cleanup the 4 `TODO(realm-rework)` sites once SDK 0.8.0 removes aliases.
+- [x] §29 Cleanup the 4 `TODO(realm-rework)` sites once SDK 0.8.0 removes aliases.
+  - 2026-05-25 sweep: `rg "TODO\(realm-rework\)" src tests docs README.md CHANGELOG.md` found no code/doc sites. Remaining `space_id`/`cx:space:` references are protocol/container fields or tests, not realm-rework TODO aliases.
 
 ## Exit gate (phase 3)
 

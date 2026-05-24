@@ -6,6 +6,10 @@
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
     "test:cross-platform": "playwright test --config tests/cross_platform/playwright.config.ts",
+    "release:signing-dry-run": "powershell -ExecutionPolicy Bypass -File scripts/signing-dry-run.ps1",
+    "release:linux-package": "powershell -ExecutionPolicy Bypass -File scripts/linux-package-local.ps1",
+    "release:web-image-evidence": "powershell -ExecutionPolicy Bypass -File scripts/web-image-evidence.ps1",
+    "release:lighthouse": "powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1",
     "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1"
   },
   "devDependencies": {
