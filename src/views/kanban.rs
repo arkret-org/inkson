@@ -1057,6 +1057,18 @@ fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+const INCIDENT_INITIAL_STATUS: &str = "investigating";
+
+fn incident_status_transition_local_error(current: &str, target: &str) -> Option<&'static str> {
+    if current == target {
+        return None;
+    }
+    match (current, target) {
+        ("investigating", "resolved") => Some("invalid transition: must mitigate first"),
+        _ => None,
+    }
+}
+
 #[component]
 pub fn KanbanPanel(
     base_url: String,
@@ -1133,6 +1145,11 @@ pub fn KanbanPanel(
     let mut card_edit_due = use_signal(String::new);
     let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
     let mut dragging_column = use_signal(|| Option::<DraggedColumn>::None);
+    let incident_flow_id = use_signal(|| format!("cx:flow:{}", uuid_v7()));
+    let incident_status_current = use_signal(|| INCIDENT_INITIAL_STATUS.to_owned());
+    let mut incident_status_select = use_signal(|| INCIDENT_INITIAL_STATUS.to_owned());
+    let incident_status_error = use_signal(String::new);
+    let incident_flow_initialized = use_signal(|| false);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if initial_source == BoardProjectionSource::Unavailable {
@@ -1857,6 +1874,62 @@ pub fn KanbanPanel(
                                 {crate::i18n::tr("kanban.add_list")}
                             }
                         }
+                    }
+                }
+            }
+
+            div { class: "event incident-status-panel", "data-testid": "incident-status-panel",
+                div { class: "event-head",
+                    span { "Incident status" }
+                    span { title: "{incident_flow_id()}", "{short_protocol_id(&incident_flow_id())}" }
+                }
+                div { class: "actions",
+                    label {
+                        span { "Status" }
+                        select {
+                            "data-testid": "incident-status-select",
+                            value: "{incident_status_select}",
+                            onchange: move |evt| incident_status_select.set(evt.value()),
+                            option { value: "investigating", "Investigating" }
+                            option { value: "mitigated", "Mitigated" }
+                            option { value: "resolved", "Resolved" }
+                        }
+                    }
+                    button {
+                        class: "primary",
+                        "data-testid": "save-incident-status-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let space = selected_space.clone();
+                            let actor = account_did.clone();
+                            move |_| {
+                                submit_incident_status_transition(
+                                    base.clone(),
+                                    token,
+                                    space.clone(),
+                                    actor.clone(),
+                                    incident_flow_id(),
+                                    incident_status_select(),
+                                    incident_status_current,
+                                    incident_flow_initialized,
+                                    incident_status_error,
+                                    board_status,
+                                );
+                            }
+                        },
+                        "Save Status"
+                    }
+                }
+                div {
+                    class: "muted",
+                    "data-testid": "incident-status-current",
+                    "Current: {incident_status_current}"
+                }
+                if !incident_status_error().is_empty() {
+                    div {
+                        class: "muted",
+                        "data-testid": "incident-status-error",
+                        "{incident_status_error}"
                     }
                 }
             }
@@ -3422,6 +3495,83 @@ fn submit_kanban_operation_event(
             }
             Err(err) => {
                 board_status.set(format!("{kind} operation failed: {}", err.display()));
+            }
+        }
+    });
+}
+
+fn submit_incident_status_transition(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    incident_flow_id: String,
+    target_status: String,
+    mut current_status: Signal<String>,
+    mut initialized: Signal<bool>,
+    mut status_error: Signal<String>,
+    mut board_status: Signal<String>,
+) {
+    let current = current_status();
+    if let Some(message) = incident_status_transition_local_error(&current, &target_status) {
+        status_error.set(message.to_owned());
+        return;
+    }
+    if space_id.trim().is_empty() {
+        status_error.set("select a Space before updating incident status".to_owned());
+        return;
+    }
+    if actor_did.trim().is_empty() {
+        status_error.set("sign in before updating incident status".to_owned());
+        return;
+    }
+    status_error.set("saving incident status".to_owned());
+    board_status.set(format!(
+        "submitting incident status {current} -> {target_status}"
+    ));
+    let api_token = token();
+    spawn(async move {
+        let should_create = !initialized();
+        let create_op = should_create.then(|| {
+            crate::operation::cx_ops::incident_flow_create(
+                &space_id,
+                &actor_did,
+                &incident_flow_id,
+                "Incident response",
+                &current,
+                "sev2",
+            )
+            .build("yougen")
+        });
+        let update_op = (target_status != current).then(|| {
+            crate::operation::cx_ops::incident_status_update(
+                &space_id,
+                &actor_did,
+                &incident_flow_id,
+                &target_status,
+            )
+            .build("yougen")
+        });
+        let result = with_authed_api(&base_url, api_token, |api| async move {
+            if let Some(op) = create_op {
+                api.submit_event_envelope(&op).await?;
+            }
+            if let Some(op) = update_op {
+                api.submit_event_envelope(&op).await?;
+            }
+            Ok(())
+        })
+        .await;
+        match result {
+            Ok(()) => {
+                initialized.set(true);
+                current_status.set(target_status.clone());
+                status_error.set(String::new());
+                board_status.set(format!("Incident status saved: {target_status}"));
+            }
+            Err(err) => {
+                status_error.set(format!("invalid transition: {}", err.display()));
+                board_status.set(format!("incident status rejected: {}", err.display()));
             }
         }
     });

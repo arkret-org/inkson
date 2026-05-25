@@ -176,11 +176,25 @@ fn mint_flow_id() -> String {
 }
 
 /// Serialize the editable document for the synthesis-track body.
-fn document_body_payload(blocks: &[DocumentBlock]) -> serde_json::Value {
-    json!({
+fn document_body_payload(
+    blocks: &[DocumentBlock],
+    linked_incident_id: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = json!({
         "schema_version": 1,
         "blocks": blocks,
-    })
+    });
+    if let Some(incident_id) = linked_incident_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload["linked_incident_id"] = json!(incident_id);
+        payload["relations"] = json!([{
+            "rel": "postmortem_for",
+            "target_ref": incident_id,
+        }]);
+    }
+    payload
 }
 
 // `SyncState` is an alias over the shared `SyncBadgeState` so document
@@ -270,6 +284,19 @@ pub fn DocumentPanel(
     let space_id = selected_space.clone();
     let actor_key = account_did.clone();
     let initial = load_draft(&state_store, &actor_key, &space_id);
+    let initial_title = initial
+        .blocks
+        .iter()
+        .find(|block| block.kind == BlockKind::Heading)
+        .map(|block| block.content.clone())
+        .unwrap_or_else(|| "Untitled Document".to_owned());
+    let initial_body = initial
+        .blocks
+        .iter()
+        .find(|block| block.kind == BlockKind::Paragraph)
+        .map(|block| block.content.clone())
+        .unwrap_or_default();
+    let linked_incident_default = space_id.clone();
 
     let mut blocks = use_signal(|| initial.blocks.clone());
     let mut versions = use_signal(|| initial.versions.clone());
@@ -278,6 +305,9 @@ pub fn DocumentPanel(
     let mut show_versions = use_signal(|| false);
     let mut save_status = use_signal(String::new);
     let mut sync_state = use_signal(|| SyncState::Local);
+    let mut document_title_input = use_signal(move || initial_title.clone());
+    let mut document_body_editor = use_signal(move || initial_body.clone());
+    let mut linked_incident_input = use_signal(move || linked_incident_default.clone());
 
     // ─────────────────────────────────────────────────────────────
     // G3.Y4 — collaborative state (cursors, comments, versions)
@@ -347,8 +377,62 @@ pub fn DocumentPanel(
                 div { class: "muted",
                     "Edits save to this device immediately. Save Version writes a cx.flow.create or cx.flow.update event to the Space's document Flow synthesis track."
                 }
+                div { class: "workflow-form", "data-testid": "postmortem-link-controls",
+                    input {
+                        "data-testid": "document-title-input",
+                        value: "{document_title_input}",
+                        placeholder: "Postmortem title",
+                        oninput: move |evt| {
+                            let value = evt.value();
+                            document_title_input.set(value.clone());
+                            let mut draft_blocks = blocks.write();
+                            if let Some(block) = draft_blocks
+                                .iter_mut()
+                                .find(|block| block.kind == BlockKind::Heading)
+                            {
+                                block.content = value;
+                            } else {
+                                draft_blocks.insert(0, DocumentBlock {
+                                    id: format!("block-title-{}", chrono::Utc::now().timestamp_millis()),
+                                    kind: BlockKind::Heading,
+                                    content: value,
+                                });
+                            }
+                        },
+                    }
+                    textarea {
+                        "data-testid": "document-body-editor",
+                        value: "{document_body_editor}",
+                        placeholder: "Impact, root cause, action items.",
+                        style: "width: 100%; min-height: 96px;",
+                        oninput: move |evt| {
+                            let value = evt.value();
+                            document_body_editor.set(value.clone());
+                            let mut draft_blocks = blocks.write();
+                            if let Some(block) = draft_blocks
+                                .iter_mut()
+                                .find(|block| block.kind == BlockKind::Paragraph)
+                            {
+                                block.content = value;
+                            } else {
+                                draft_blocks.push(DocumentBlock {
+                                    id: format!("block-body-{}", chrono::Utc::now().timestamp_millis()),
+                                    kind: BlockKind::Paragraph,
+                                    content: value,
+                                });
+                            }
+                        },
+                    }
+                    input {
+                        "data-testid": "document-link-incident-input",
+                        value: "{linked_incident_input}",
+                        placeholder: "Incident Flow or Space id",
+                        oninput: move |evt| linked_incident_input.set(evt.value()),
+                    }
+                }
                 if !save_status().is_empty() {
                     div { class: "muted", "data-testid": "document-save-status", "{save_status}" }
+                    div { class: "muted", "data-testid": "document-status", "{save_status}" }
                 }
                 div { class: "actions",
                     button {
@@ -358,12 +442,13 @@ pub fn DocumentPanel(
                     }
                     button {
                         class: if show_versions() { "primary" } else { "secondary" },
+                        "data-testid": "document-versions-button",
                         onclick: move |_| show_versions.set(true),
                         "History ({versions().len()})"
                     }
                     button {
                         class: "secondary",
-                        "data-testid": "save-document",
+                        "data-testid": "save-document-button",
                         onclick: {
                             let persist = persist.clone();
                             let mut store = state_store;
@@ -392,13 +477,17 @@ pub fn DocumentPanel(
                                 sync_state.set(SyncState::Pending);
 
                                 let blocks_for_wire = blocks();
+                                let linked_incident_for_wire = linked_incident_input();
                                 let base = base.clone();
                                 let token_val = token();
                                 let actor_key_save = actor_key_save.clone();
                                 let space_id_save = space_id_save.clone();
                                 let mut store_for_sync = store;
                                 spawn(async move {
-                                    let body = document_body_payload(&blocks_for_wire);
+                                    let body = document_body_payload(
+                                        &blocks_for_wire,
+                                        Some(linked_incident_for_wire.as_str()),
+                                    );
                                     let title = blocks_for_wire
                                         .iter()
                                         .find(|b| b.kind == BlockKind::Heading)
@@ -448,13 +537,16 @@ pub fn DocumentPanel(
                                             }
                                             sync_state.set(SyncState::Synced);
                                             save_status.set(format!(
-                                                "Synced flow {} (event {})",
+                                                "Saved and synced flow {} (event {})",
                                                 flow_id, resp.event_id
                                             ));
                                         }
                                         Err(err) => {
                                             sync_state.set(SyncState::Failed);
-                                            save_status.set(format!("sync: {}", err.display()));
+                                            save_status.set(format!(
+                                                "Saved locally; sync: {}",
+                                                err.display()
+                                            ));
                                         }
                                     }
                                 });
@@ -1069,9 +1161,11 @@ mod tests {
     #[test]
     fn document_body_payload_carries_schema_version_and_blocks() {
         let blocks = default_draft().blocks;
-        let body = document_body_payload(&blocks);
+        let body = document_body_payload(&blocks, Some("cx:flow:incident"));
         assert_eq!(body["schema_version"], 1);
         assert_eq!(body["blocks"].as_array().unwrap().len(), 2);
+        assert_eq!(body["linked_incident_id"], "cx:flow:incident");
+        assert_eq!(body["relations"][0]["rel"], "postmortem_for");
     }
 
     #[test]

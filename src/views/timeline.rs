@@ -224,11 +224,37 @@ fn text_content(body: &str) -> serde_json::Value {
     })
 }
 
+fn incident_priority_wire_value(priority: &str) -> Option<&'static str> {
+    match priority {
+        "sev1" => Some("critical"),
+        "sev2" => Some("high"),
+        "sev3" => Some("urgent"),
+        _ => None,
+    }
+}
+
+fn public_update_requires_sanitization(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    [
+        "root cause",
+        "secret",
+        "token",
+        "credential",
+        "private key",
+        "customer data",
+        "exploit",
+        "internal only",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 pub(crate) fn message_create_operation(
     space_id: &str,
     actor: &str,
     thread_id: Option<&str>,
     body: &str,
+    incident_priority: Option<&str>,
 ) -> EventEnvelope {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `flow_id` and `track` (`flow-and-message.md` §2). The default Flow
@@ -244,6 +270,16 @@ pub(crate) fn message_create_operation(
     });
     if let Some(thread_id) = thread_id {
         payload["thread_id"] = json!(thread_id);
+    }
+    if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
+        payload["priority"] = json!(priority);
+        payload["notification_priority"] = json!(priority);
+        payload["priority_override"] = json!(true);
+        payload["content"]["priority"] = json!(priority);
+        payload["content"]["notification"] = json!({
+            "priority": priority,
+            "priority_override": true,
+        });
     }
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .body(payload)
@@ -374,6 +410,9 @@ pub fn TimelinePanel(
     let mut search_query = use_signal(String::new);
     let mut private_plaintext = use_signal(|| false);
     let mut plaintext_ack = use_signal(|| false);
+    let mut incident_priority = use_signal(|| "normal".to_owned());
+    let mut public_update_guard = use_signal(|| true);
+    let mut public_update_guard_status = use_signal(|| "public update guard ready".to_owned());
     let mut initial_sync_requested = use_signal(|| false);
     // A6.2 composer drag-drop attachment state. `compose_dragover`
     // toggles the `is-dragover` outline as the user holds a file
@@ -1202,6 +1241,42 @@ pub fn TimelinePanel(
         div { class: "{composer_class}", "data-testid": "composer",
             div {
                 class: "event",
+                "data-testid": "incident-response-controls",
+                div { class: "event-head",
+                    span { "Incident response" }
+                    span { "priority and public update guard" }
+                }
+                div { class: "actions",
+                    label {
+                        span { "Priority" }
+                        select {
+                            "data-testid": "incident-priority-select",
+                            value: "{incident_priority}",
+                            onchange: move |evt| incident_priority.set(evt.value()),
+                            option { value: "normal", "Normal" }
+                            option { value: "sev3", "SEV-3" }
+                            option { value: "sev2", "SEV-2" }
+                            option { value: "sev1", "SEV-1" }
+                        }
+                    }
+                    label {
+                        input {
+                            r#type: "checkbox",
+                            "data-testid": "public-update-guard-toggle",
+                            checked: public_update_guard(),
+                            onchange: move |evt| public_update_guard.set(evt.value() == "true"),
+                        }
+                        " Public update guard"
+                    }
+                }
+                div {
+                    class: "muted",
+                    "data-testid": "public-update-guard-status",
+                    "{public_update_guard_status}"
+                }
+            }
+            div {
+                class: "event",
                 "data-testid": "plaintext-boundary-panel",
                 role: "note",
                 "aria-label": "Plaintext boundary",
@@ -1431,6 +1506,13 @@ pub fn TimelinePanel(
                         if body.is_empty() {
                             return;
                         }
+                        if public_update_guard() && public_update_requires_sanitization(&body) {
+                            let msg = "public update blocked: remove internal incident details before posting".to_owned();
+                            public_update_guard_status.set(msg.clone());
+                            write_status.set(msg);
+                            return;
+                        }
+                        public_update_guard_status.set("public update guard passed".to_owned());
                         if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
                             write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                             return;
@@ -1441,6 +1523,7 @@ pub fn TimelinePanel(
                         let space_for_encrypt = selected_space_key.clone();
                         let space_for_plain = selected_space_key.clone();
                         let space_for_draft = selected_space_key.clone();
+                        let incident_priority_for_send = incident_priority();
                         if encrypt_toggle() {
                             match compose_local_encrypted_message(
                                 &account_did_key,
@@ -1504,6 +1587,7 @@ pub fn TimelinePanel(
                                         &actor,
                                         thread_id.as_deref(),
                                         &body,
+                                        Some(incident_priority_for_send.as_str()),
                                     );
                                     let op_id = op.local_operation_id().to_owned();
                                     match submit_timeline_message_with_plaintext_retry(
@@ -1683,6 +1767,13 @@ pub fn TimelinePanel(
                             if body.is_empty() {
                                 return;
                             }
+                            if public_update_guard() && public_update_requires_sanitization(&body) {
+                                let msg = "public update blocked: remove internal incident details before posting".to_owned();
+                                public_update_guard_status.set(msg.clone());
+                                write_status.set(msg);
+                                return;
+                            }
+                            public_update_guard_status.set("public update guard passed".to_owned());
                             if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
                                 write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                                 return;
@@ -1694,6 +1785,7 @@ pub fn TimelinePanel(
                             let space_for_encrypt = sc.clone();
                             let space_for_plain = sc.clone();
                             let space_for_draft = sc.clone();
+                            let incident_priority_for_send = incident_priority();
                             if encrypt_toggle() {
                                 match compose_local_encrypted_message(
                                     &ac,
@@ -1755,6 +1847,7 @@ pub fn TimelinePanel(
                                                 &actor,
                                                 thread_id.as_deref(),
                                                 &body_clone,
+                                                Some(incident_priority_for_send.as_str()),
                                             );
                                             let op_id = op.local_operation_id().to_owned();
                                             let mut attempt = 0usize;
@@ -2087,6 +2180,7 @@ mod tests {
             "did:web:bob.example",
             None,
             "hello",
+            None,
         );
 
         assert_eq!(
@@ -2104,12 +2198,30 @@ mod tests {
             "did:web:bob.example",
             None,
             "hello",
+            Some("sev1"),
         );
 
         assert_eq!(
             op.payload["flow_id"],
             "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
+        assert_eq!(op.payload["priority"], "critical");
+        assert_eq!(op.payload["notification_priority"], "critical");
+        assert_eq!(op.payload["priority_override"], true);
+        assert_eq!(
+            op.payload["content"]["notification"]["priority"],
+            "critical"
+        );
+    }
+
+    #[test]
+    fn public_update_guard_flags_internal_details() {
+        assert!(public_update_requires_sanitization(
+            "Public update: root cause is a leaked token"
+        ));
+        assert!(!public_update_requires_sanitization(
+            "Public update: checkout latency is recovering"
+        ));
     }
 
     #[test]

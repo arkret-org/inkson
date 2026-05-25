@@ -755,9 +755,11 @@ pub mod cx_ops {
         title: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
+        let realm_id = scope_id_as_realm_id(space_id);
         let object = json!({
             "schema": "cx.schema.flow.v1",
             "id": flow_id,
+            "realm_id": realm_id,
             "space_id": space_id,
             "title": title,
             "stage": "draft",
@@ -780,6 +782,70 @@ pub mod cx_ops {
                 },
                 "object": object,
             }))
+    }
+
+    /// Build a `cx.flow.create` for an incident response Flow. The
+    /// common incident workflow status is carried in `fields.status` so
+    /// soland can enforce the profile FSM and emit
+    /// `incident.status.transition` audit rows on subsequent updates.
+    pub fn incident_flow_create(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        title: &str,
+        status: &str,
+        priority: &str,
+    ) -> OperationBuilder {
+        let realm_id = scope_id_as_realm_id(space_id);
+        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let object = json!({
+            "schema": "cx.schema.flow.v1",
+            "id": flow_id,
+            "realm_id": realm_id,
+            "space_id": space_id,
+            "title": title,
+            "stage": "draft",
+            "tracks": {
+                "synthesis": {
+                    "is_primary": true,
+                    "profile": "incident_response"
+                },
+                "discussion": {
+                    "profile": "war_room"
+                }
+            },
+            "fields": {
+                "flow_kind": "incident",
+                "status": status,
+                "incident_priority": priority
+            },
+            "created_by": actor,
+            "created_at": created_at,
+        });
+        OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .target_ref(flow_id)
+            .body(json!({
+                "space_id": space_id,
+                "flow_id": flow_id,
+                "title": title,
+                "rank": "r0",
+                "object": object,
+            }))
+    }
+
+    /// Build a `cx.flow.update` for the incident `fields.status` FSM.
+    pub fn incident_status_update(
+        space_id: &str,
+        actor: &str,
+        flow_id: &str,
+        status: &str,
+    ) -> OperationBuilder {
+        flow_update_patch(
+            space_id,
+            actor,
+            flow_id,
+            json!({ "fields.status": { "$op": "set", "value": status } }),
+        )
     }
 
     /// Build a `cx.flow.create` for a Kanban card Flow and include the
