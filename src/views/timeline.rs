@@ -587,6 +587,10 @@ pub fn TimelinePanel(
     // `realm_lifecycle_state` cache maintained as raw operations are
     // appended, so the render path stays constant-time.
     let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_space);
+    let epoch_update_required = state_store
+        .read()
+        .space_has_pending_mls_binding(&selected_space);
+    let composer_blocked = realm_is_destroyed || epoch_update_required;
 
     rsx! {
         div {
@@ -608,6 +612,22 @@ pub fn TimelinePanel(
                     }
                     div { class: "muted",
                         "This realm has been permanently retired. No further messages, reactions, or state changes will be accepted (server-side: realm_terminal_state)."
+                    }
+                }
+            }
+
+            if epoch_update_required {
+                div {
+                    class: "event error-banner",
+                    "data-testid": "epoch-update-required-banner",
+                    role: "alert",
+                    "aria-live": "assertive",
+                    div { class: "event-head",
+                        span { "epoch_update_required" }
+                        span { class: "badge amber", title: "MLS membership frontier pending", "MLS" }
+                    }
+                    div { class: "muted",
+                        "Membership changed in this encrypted Realm. Sending is paused until an MLS Remove/Commit covers the latest governance frontier."
                     }
                 }
             }
@@ -1460,9 +1480,11 @@ pub fn TimelinePanel(
                     // rejects with `realm_terminal_state`; failing closed
                     // in the UI surfaces the boundary before a wasted
                     // round-trip.
-                    disabled: realm_is_destroyed,
+                    disabled: composer_blocked,
                     placeholder: if realm_is_destroyed {
                         "This realm has been permanently retired."
+                    } else if epoch_update_required {
+                        "Waiting for MLS epoch update."
                     } else if encrypt_toggle() {
                         "Write an encrypted message (Ctrl+Enter to send)"
                     } else {
@@ -1504,6 +1526,10 @@ pub fn TimelinePanel(
                     if event.key().to_string() == "Enter" && event.modifiers().ctrl() {
                         let body = draft().trim().to_owned();
                         if body.is_empty() {
+                            return;
+                        }
+                        if epoch_update_required {
+                            write_status.set("epoch_update_required: waiting for MLS Remove/Commit".to_owned());
                             return;
                         }
                         if public_update_guard() && public_update_requires_sanitization(&body) {
@@ -1753,7 +1779,7 @@ pub fn TimelinePanel(
                     // is in the destroy terminal state. Server enforces via
                     // `realm_terminal_state` but failing closed in the UI
                     // avoids a wasted round-trip + confusing error.
-                    disabled: realm_is_destroyed,
+                    disabled: composer_blocked,
                     onclick: {
                         let sc = selected_space_c.clone();
                         let ac = account_did_c.clone();
@@ -1761,6 +1787,10 @@ pub fn TimelinePanel(
                         move |_| {
                             if realm_is_destroyed {
                                 write_status.set("This realm has been permanently retired.".to_owned());
+                                return;
+                            }
+                            if epoch_update_required {
+                                write_status.set("epoch_update_required: waiting for MLS Remove/Commit".to_owned());
                                 return;
                             }
                             let body = draft().trim().to_owned();

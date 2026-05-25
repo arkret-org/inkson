@@ -1450,6 +1450,7 @@ pub fn SpaceAdminPanel(
                                         };
                                         spawn(async move {
                                             let m_for_msg = m.clone();
+                                            let space_for_api = space.clone();
                                             // Spec-canonical "kick" = `join → leave` member-state
                                             // transition (no separate kick FSM verb).
                                             match crate::views::helpers::with_authed_api(
@@ -1457,7 +1458,7 @@ pub fn SpaceAdminPanel(
                                                 api_token,
                                                 |api| async move {
                                                     api.transition_member_state(
-                                                        &space,
+                                                        &space_for_api,
                                                         &actor_did,
                                                         &m,
                                                         Some("join"),
@@ -1469,10 +1470,31 @@ pub fn SpaceAdminPanel(
                                             )
                                             .await
                                             {
-                                                Ok(_) => status_msg.set(format!(
-                                                    "kicked {}",
-                                                    short_protocol_id(&m_for_msg)
-                                                )),
+                                                Ok(resp) => {
+                                                    let mls_encrypted = state_store
+                                                        .read()
+                                                        .space_projection_is_mls_encrypted(&space);
+                                                    if mls_encrypted {
+                                                        state_store.write().record_move_submission(
+                                                            resp.event_id.clone(),
+                                                            space.clone(),
+                                                            "mls_member_remove",
+                                                            MoveSubmissionState::PendingMlsBinding,
+                                                            Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
+                                                            None,
+                                                        );
+                                                    }
+                                                    let suffix = if mls_encrypted {
+                                                        "; epoch_update_required"
+                                                    } else {
+                                                        ""
+                                                    };
+                                                    status_msg.set(format!(
+                                                        "kicked {}{}",
+                                                        short_protocol_id(&m_for_msg),
+                                                        suffix
+                                                    ));
+                                                }
                                                 Err(err) => status_msg.set(format!(
                                                     "kick failed: {}", err.display()
                                                 )),
@@ -1503,19 +1525,41 @@ pub fn SpaceAdminPanel(
                                         };
                                         spawn(async move {
                                             let m_for_msg = m.clone();
+                                            let space_for_api = space.clone();
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.ban_member(&space, &actor_did, &m).await
+                                                    api.ban_member(&space_for_api, &actor_did, &m).await
                                                 },
                                             )
                                             .await
                                             {
-                                                Ok(_) => status_msg.set(format!(
-                                                    "banned {}",
-                                                    short_protocol_id(&m_for_msg)
-                                                )),
+                                                Ok(resp) => {
+                                                    let mls_encrypted = state_store
+                                                        .read()
+                                                        .space_projection_is_mls_encrypted(&space);
+                                                    if mls_encrypted {
+                                                        state_store.write().record_move_submission(
+                                                            resp.event_id.clone(),
+                                                            space.clone(),
+                                                            "mls_member_remove",
+                                                            MoveSubmissionState::PendingMlsBinding,
+                                                            Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
+                                                            None,
+                                                        );
+                                                    }
+                                                    let suffix = if mls_encrypted {
+                                                        "; epoch_update_required"
+                                                    } else {
+                                                        ""
+                                                    };
+                                                    status_msg.set(format!(
+                                                        "banned {}{}",
+                                                        short_protocol_id(&m_for_msg),
+                                                        suffix
+                                                    ));
+                                                }
                                                 Err(err) => status_msg.set(format!(
                                                     "ban failed: {}", err.display()
                                                 )),

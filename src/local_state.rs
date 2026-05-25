@@ -1070,6 +1070,54 @@ pub struct LocalStateStore {
     path: PathBuf,
 }
 
+fn space_projection_value_is_mls_encrypted(body: &Value) -> bool {
+    fn normalized_profile(value: &str) -> String {
+        value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
+    }
+
+    fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+        keys.iter().find_map(|key| {
+            value
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    }
+
+    let null = Value::Null;
+    let summary = body.get("summary").unwrap_or(&null);
+    for container in [
+        body,
+        summary,
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ] {
+        if container
+            .get("encrypted")
+            .or_else(|| container.get("is_encrypted"))
+            .or_else(|| container.get("e2ee"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if let Some(profile) = string_field(
+            container,
+            &["encryption_profile", "encryptionProfile", "encryption"],
+        ) {
+            let profile = normalized_profile(&profile);
+            if matches!(profile.as_str(), "mls" | "mls_rfc9420" | "e2ee") {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
@@ -1985,6 +2033,17 @@ impl LocalStateStore {
             .any(|record| record.state == MoveSubmissionState::PendingMlsBinding)
     }
 
+    /// True when the latest cached Space/Realm projection declares an
+    /// MLS-backed encryption profile. Used by membership/admin surfaces
+    /// to decide whether a membership frontier change must pause sends
+    /// until an MLS commit covers it.
+    pub fn space_projection_is_mls_encrypted(&self, space_id: &str) -> bool {
+        self.load()
+            .space_projections
+            .get(space_id)
+            .is_some_and(space_projection_value_is_mls_encrypted)
+    }
+
     /// Drop a tracked Move (after it terminates and the user
     /// dismisses the row). Idempotent.
     pub fn drop_move_submission(&mut self, move_id: &str) {
@@ -2784,6 +2843,37 @@ mod tests {
         );
         assert!(store.space_has_pending_mls_binding(space));
         assert!(!store.space_has_paused_anchorer(space));
+    }
+
+    #[test]
+    fn mls_encrypted_projection_detects_epoch_pause_scope() {
+        let path = temp_state_path("mls-encrypted-projection");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:realm:0196419b-0000-7000-8000-0000000000ee";
+        store.save_space_projection(
+            space.to_owned(),
+            json!({
+                "schema": "cx.schema.realm.v1",
+                "summary": {
+                    "title": "Encrypted",
+                    "encryption_profile": "mls_rfc9420"
+                }
+            }),
+        );
+        assert!(store.space_projection_is_mls_encrypted(space));
+
+        let plain = "cx:realm:0196419b-0000-7000-8000-0000000000ef";
+        store.save_space_projection(
+            plain.to_owned(),
+            json!({
+                "schema": "cx.schema.realm.v1",
+                "summary": {
+                    "title": "Plain",
+                    "encryption_profile": "none"
+                }
+            }),
+        );
+        assert!(!store.space_projection_is_mls_encrypted(plain));
     }
 
     #[test]
