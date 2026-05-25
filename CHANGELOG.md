@@ -6,6 +6,49 @@ Android / web).
 
 ## [Unreleased]
 
+### Circle rollout (CXP-0007 + cross-stack P3B)
+
+- **Added** Circle UX surface: Space-sidebar Circle list, Flow/Space scope
+  picker, composer banner labelling Circle-scoped writes, timeline accent
+  rail + tooltip on Circle-scoped messages, dedicated `views/circle.rs`
+  Circle-detail view, create-Circle modal in Realm detail page,
+  `Relation::ConfidentialDiscussionOf` cross-link banner above linked
+  Flows, and `sync_engine` envelope routing that selects the right MLS
+  group from each event's `effective_scope`. Chime push subscriptions now
+  pass the active Circle id so `PushNotification.circle_id` filtering and
+  per-Circle mute prefs flow through end-to-end.
+- **Added** CXP-0007 error-code UI surface: 5 reason codes
+  (`circle_realm_mismatch`, `circle_not_active`,
+  `circle_member_must_be_realm_member`, `scope_rebind_forbidden`,
+  `metadata_encryption_floor_violation`) + the top-level
+  `delivery_binding_handed_over` code now render as user-facing toasts
+  with English i18n strings.
+- **Added** multi-account profile switching: `ClientConfig` now holds a
+  `Vec<AccountProfile>` keyed by `active_profile_id`, with an avatar
+  dropdown switcher; `sync_engine` swaps cursor / token / push
+  registration on switch.
+- **Added** offline queue is now the canonical write path for message
+  send, settings write, and push-preference write. A background drain
+  worker replays in FIFO with exponential backoff once the network +
+  sync anchor are healthy. The UI exposes a "pending N" badge.
+- **Added** E2EE `NeedsVerification` badge + Principal / Collaboration
+  Realm class badges next to Realm switcher entries.
+- **Added** desktop bundling DRY-RUN scripts for macOS (.app via
+  `cargo-bundle` / `dx bundle`), Windows (.msi via `cargo-wix`), and
+  Linux (AppImage + .deb). All local-only — nothing is uploaded; the
+  signing path uses a placeholder identity that is rejected by real
+  notarization.
+- **Added** opt-in crash telemetry + in-app "Report a problem" dialog
+  that bundles the last 5 minutes of `tracing` lines + app version + OS.
+  Telemetry default is OFF.
+- **Changed** Floria push URL is now read from the `YOUGEN_FLORIA_URL`
+  env var (or `localhost:9001` in dev), with a no-op fallback when prod
+  is unset rather than the previous `https://push.example/...` hard-coded
+  placeholder.
+- **Notes** mobile (iOS / Android) packaging deferred to the next
+  milestone; version stays at `0.1.0` and no release artifact ships out
+  of this branch.
+
 ### Testing
 
 - **Changed** `tests/e2e/` is now mock-only. The five `live smoke ...` cases in
