@@ -5842,6 +5842,13 @@ pub fn RouterView() -> Element {
     // itself is spawned by the `use_effect` further down.
     let mut sync_generation = use_signal(|| 0u64);
 
+    // CXP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
+    // the sync engine context so the loop can detect a profile rotation
+    // and exit cleanly. The shell is currently single-profile; the
+    // signal stays default-empty until the account switcher writes to
+    // it on the first user-driven add-account / switch action.
+    let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
+
     // Single-source-of-truth for the sidebar. Anything that wants to
     // change the visible Space list writes to
     // `state_store.space_projections` (sync engine, connect()'s initial
@@ -5954,6 +5961,7 @@ pub fn RouterView() -> Element {
             theme,
             account_did,
             selected_space,
+            profiles: profiles_signal,
         };
         spawn(async move {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;

@@ -439,26 +439,42 @@ pub async fn enqueue_push_pref_write(
 }
 
 /// Start the background drain worker. The worker polls the global
-/// queue once per `tick`; whenever network state is `Online`, it
-/// replays the head of the queue via `coordinator.replay_all`. Should
-/// be called once from the app shell — calling twice is benign but
-/// wastes a task.
+/// queue once per `tick`; whenever network state is `Online` AND the
+/// active profile id matches the worker's bound profile, it replays
+/// the head of the queue via `coordinator.replay_all`. Should be
+/// called once per profile from the app shell — calling twice for
+/// the same profile is benign but wastes a task.
 ///
-/// `TODO(circle-rollout-P3B.5.2):` integrate the per-profile cursor
-/// guard once `MultiProfileConfig` lands in `SyncEngineContext`
-/// (P3B.4.3) so a profile switch doesn't replay another profile's
-/// pending writes against the new account.
+/// The per-profile guard prevents a freshly-activated profile from
+/// replaying the prior profile's queued writes against the new
+/// account: when the user switches profiles the shell publishes a new
+/// `MultiProfileConfig.active_profile_id`; this worker observes the
+/// rotation via [`bound_profile_id`] and skips the replay until a
+/// fresh worker is spawned for the new profile.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_offline_drain(
     coordinator: ReconnectionCoordinator,
     api: ContrixApi,
     tick: std::time::Duration,
+    bound_profile_id: Option<String>,
+    active_profile_id: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tick);
         loop {
             interval.tick().await;
-            if coordinator.is_online().await && !global_queue().is_empty().await {
+            if !coordinator.is_online().await {
+                continue;
+            }
+            // Per-profile guard. When the shell rotates the active
+            // profile, the new value here will not match what the
+            // worker was spawned for; skip the replay and let the
+            // app shell spawn a fresh worker for the new profile.
+            let active = active_profile_id.read().await.clone();
+            if active != bound_profile_id {
+                continue;
+            }
+            if !global_queue().is_empty().await {
                 let _ = coordinator.replay_all(&api).await;
             }
         }

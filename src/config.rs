@@ -86,10 +86,13 @@ impl ClientConfig {
 /// (P3B.4.2) calls into the multi-profile API to enumerate / switch /
 /// add profiles.
 ///
-/// `TODO(circle-rollout-P3B.4.3):` `sync_engine.rs` must call
-/// `MultiProfileStore::activate(...)` (instead of mutating
-/// `ClientConfig` in place) so its per-profile cursor / push
-/// registration / coauth grant flips with the active profile.
+/// Profile switching is fully event-driven now. Callers (sync engine,
+/// push registration, offline drain) react to
+/// [`ProfileSwitchEvent`] instead of peeking at `ClientConfig`
+/// directly. The shell publishes the active
+/// [`MultiProfileConfig`] through a `Signal` so subsystems can pick
+/// up the rotation atomically without the previous per-subsystem
+/// peek pattern.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountProfile {
     /// Stable, opaque id (UUIDv7 prefixed `cx:profile:`). NOT derived
@@ -223,6 +226,23 @@ impl MultiProfileConfig {
         ))
     }
 
+    /// Build the typed [`ProfileSwitchEvent`] payload that callers
+    /// (account switcher, login flow, server change) emit when the
+    /// active profile rotates. Returns `None` if the requested
+    /// profile is not in the store.
+    pub fn build_switch_event(&self, target_profile_id: &str) -> Option<ProfileSwitchEvent> {
+        let prior = self.active_profile_id.clone();
+        let target = self
+            .profiles
+            .iter()
+            .find(|p| p.profile_id == target_profile_id)?
+            .clone();
+        Some(ProfileSwitchEvent {
+            prior_profile_id: prior,
+            next_profile: target,
+        })
+    }
+
     /// Convert a legacy single-profile `ClientConfig` into a fresh
     /// multi-profile config seeded with one entry. Used by
     /// [`LocalConfigStore`] migration.
@@ -246,6 +266,34 @@ impl MultiProfileConfig {
             active_profile_id: Some(id),
             profiles: vec![profile],
         }
+    }
+}
+
+/// Typed payload published when the active profile rotates.
+///
+/// CXP-0007 P3B.4.3 — the sync engine, push registration, offline
+/// drain worker, and chat subscription paths each subscribe to this
+/// event so they can rotate per-profile cursors / bearer tokens /
+/// gateway registrations atomically. The previous "each subsystem
+/// peeks at `ClientConfig`" pattern raced when two of them refreshed
+/// out of order across a single user click.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileSwitchEvent {
+    /// `profile_id` that was active before the switch. `None` on the
+    /// first activation after a fresh install.
+    pub prior_profile_id: Option<String>,
+    /// Profile the shell is switching into. Carries the resolved
+    /// `(server_url, account_did, device_id, session_token)` tuple so
+    /// reactors don't need a follow-up store read.
+    pub next_profile: AccountProfile,
+}
+
+impl ProfileSwitchEvent {
+    /// `true` when the prior profile id matches the next profile id —
+    /// i.e. the switcher refreshed the active profile in place (token
+    /// rotation) without actually swapping accounts.
+    pub fn is_in_place_refresh(&self) -> bool {
+        self.prior_profile_id.as_deref() == Some(self.next_profile.profile_id.as_str())
     }
 }
 

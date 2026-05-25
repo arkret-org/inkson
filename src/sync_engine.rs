@@ -47,6 +47,7 @@ use serde_json::Value;
 use crate::api::{
     ContrixApi, is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after, sleep_for,
 };
+use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
 use crate::models::{ClientSyncResponse, SpacePreview};
 
@@ -87,13 +88,15 @@ pub struct SyncEngineContext {
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
     pub selected_space: Signal<String>,
-    // TODO(circle-rollout-P3B.4.3): when the active profile in
-    // `MultiProfileConfig` flips, the engine should rotate
-    // `base_url` / `token` / `account_did` / `sync_cursor` /
-    // push registration atomically. Today the parent component edits
-    // each signal individually; the next iteration introduces a
-    // `Signal<MultiProfileConfig>` here and watches `active_profile_id`
-    // for changes in `run_loop`.
+    /// CXP-0007 P3B.4.3 — the active multi-profile configuration. The
+    /// engine reads `active_profile_id` at the top of every iteration
+    /// and exits early when it differs from the profile id captured
+    /// at spawn time; the lifecycle bumps `generation` so the next
+    /// engine spawn picks up the new profile's cursor / token /
+    /// account_did atomically. This avoids the previous race where
+    /// the engine kept syncing under the prior profile while the UI
+    /// already rendered the new one.
+    pub profiles: Signal<MultiProfileConfig>,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -133,6 +136,10 @@ pub async fn run_sync_engine(
     generation: Signal<u64>,
     ctx: SyncEngineContext,
 ) {
+    // Snapshot the active profile id at spawn time. If the UI rotates
+    // profiles mid-loop, the engine exits cleanly and a fresh spawn
+    // picks up the new profile's cursor / token / account_did.
+    let start_profile_id = ctx.profiles.read().active_profile_id.clone();
     let mut backoff_secs = MIN_BACKOFF_SECS;
     loop {
         // Cancellation check at the top of every iteration. A change to
@@ -142,6 +149,13 @@ pub async fn run_sync_engine(
         // the previous generation may still arrive — `apply_response`
         // re-checks generation before touching signals.
         if generation() != start_generation {
+            return;
+        }
+        // Profile rotation guard. The shell bumps `generation`
+        // separately, but a generation bump can lag the active profile
+        // signal by a tick; comparing the snapshot here keeps the
+        // engine from emitting a stale request under the new profile.
+        if ctx.profiles.read().active_profile_id != start_profile_id {
             return;
         }
 

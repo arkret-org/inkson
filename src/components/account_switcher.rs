@@ -8,22 +8,34 @@
 //! target `profile_id`; the parent (`app.rs`) is responsible for
 //! persisting the new active id and notifying `sync_engine`.
 //!
-//! `TODO(circle-rollout-P3B.4.3):` once the sync engine listens for
-//! profile-switch events, route the active-cursor / push-registration /
-//! coauth-grant swap through a single `ProfileSwitchEvent` so neither
-//! the UI shell nor the API layer have to peek into each subsystem.
+//! Profile rotation runs through [`crate::config::ProfileSwitchEvent`]
+//! — the switcher emits the typed event through `on_switch_event`, and
+//! the parent shell forwards it to the sync engine + push
+//! registration + coauth grant layers. Subsystems no longer peek
+//! directly into `ClientConfig`; they react to the signal published
+//! by the shell.
 
 use dioxus::prelude::*;
 
-use crate::config::{AccountProfile, MultiProfileConfig};
+use crate::config::{AccountProfile, MultiProfileConfig, ProfileSwitchEvent};
 
 #[component]
 pub fn AccountSwitcher(
     profiles: MultiProfileConfig,
+    /// Fires with the legacy `profile_id` string. Retained for
+    /// existing call sites; new callers should prefer
+    /// `on_switch_event` which receives the typed
+    /// [`ProfileSwitchEvent`].
     on_switch: EventHandler<String>,
+    /// Fires with the typed [`ProfileSwitchEvent`] every time the
+    /// active profile rotates. Defaults to a no-op so existing call
+    /// sites can adopt it incrementally without breaking compile.
+    #[props(default)]
+    on_switch_event: Option<EventHandler<ProfileSwitchEvent>>,
     on_add_account: EventHandler<()>,
     on_remove: EventHandler<String>,
 ) -> Element {
+    let profiles_for_event = profiles.clone();
     let mut open = use_signal(|| false);
     let active_id = profiles.active_profile_id.clone();
     let active_label = profiles
@@ -56,6 +68,7 @@ pub fn AccountSwitcher(
                                 let did = profile.account_did.clone();
                                 let label = profile.display_label().to_owned();
                                 let is_active = Some(pid.as_str()) == active_id.as_deref();
+                                let profiles_for_row = profiles_for_event.clone();
                                 rsx! {
                                     li {
                                         key: "{pid}",
@@ -66,6 +79,19 @@ pub fn AccountSwitcher(
                                             class: "account-row-switch",
                                             disabled: is_active,
                                             onclick: move |_| {
+                                                // CXP-0007 P3B.4.3 — emit the typed
+                                                // event when a handler is wired,
+                                                // then fall through to the legacy
+                                                // string handler so existing
+                                                // listeners keep working.
+                                                if let Some(handler) = on_switch_event.as_ref()
+                                                    && let Some(event) =
+                                                        profiles_for_row.build_switch_event(
+                                                            pid_for_switch.as_str(),
+                                                        )
+                                                {
+                                                    handler.call(event);
+                                                }
                                                 on_switch.call(pid_for_switch.clone());
                                                 open.set(false);
                                             },
