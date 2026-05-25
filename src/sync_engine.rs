@@ -87,6 +87,13 @@ pub struct SyncEngineContext {
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
     pub selected_space: Signal<String>,
+    // TODO(circle-rollout-P3B.4.3): when the active profile in
+    // `MultiProfileConfig` flips, the engine should rotate
+    // `base_url` / `token` / `account_did` / `sync_cursor` /
+    // push registration atomically. Today the parent component edits
+    // each signal individually; the next iteration introduces a
+    // `Signal<MultiProfileConfig>` here and watches `active_profile_id`
+    // for changes in `run_loop`.
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
