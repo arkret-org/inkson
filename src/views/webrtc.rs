@@ -23,8 +23,9 @@
 //!
 //! - Real SDP negotiation: the peer connection is created but the
 //!   spec's `cx.call.signal` ephemeral path needs to flow through
-//!   soland's sync to the remote party. Until soland's signal relay
-//!   ships the panel only renders the local-side controls.
+//!   soland's sync to the remote party. Soland exposes the call-state
+//!   and participant-scoped signal session now; this panel keeps a
+//!   local renderer FSM that mirrors those server states.
 //!   `TODO(G3.Y4-followup)`: drive an actual `createOffer` /
 //!   `setLocalDescription` and emit `cx.call.signal { kind: "invite"
 //!   }` via `crate::api::build_call_signal_envelope_v2`.
@@ -52,18 +53,23 @@ pub enum CallStage {
     IncomingRinging,
     /// We're calling someone; waiting for them to accept.
     OutgoingRinging,
+    /// Signaling is negotiating SDP/ICE and waiting for media readiness.
+    Connecting,
     /// Both sides accepted; the in-call panel + media controls are
     /// visible.
     Active,
+    /// Call has ended; a terminal status remains visible until reset.
+    Ended,
 }
 
 impl CallStage {
     pub fn as_str(self) -> &'static str {
         match self {
             CallStage::Idle => "idle",
-            CallStage::IncomingRinging => "incoming",
-            CallStage::OutgoingRinging => "outgoing",
+            CallStage::IncomingRinging | CallStage::OutgoingRinging => "ringing",
+            CallStage::Connecting => "connecting",
             CallStage::Active => "active",
+            CallStage::Ended => "ended",
         }
     }
 }
@@ -177,6 +183,7 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
     let mut recording_state = use_signal(|| RecordingState::Off);
     let mut participants = use_signal(Vec::<CallParticipant>::new);
     let mut incoming_from = use_signal(String::new);
+    let mut outgoing_to = use_signal(String::new);
     let mut last_action = use_signal(String::new);
 
     rsx! {
@@ -191,8 +198,17 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                     span { class: "mono", "{signal_count} signal(s) observed" }
                 }
+                div { class: "actions",
+                    match stage() {
+                        CallStage::Idle => rsx! { span { class: "badge", "data-testid": "call-status-idle", "idle" } },
+                        CallStage::IncomingRinging | CallStage::OutgoingRinging => rsx! { span { class: "badge badge-info", "data-testid": "call-status-ringing", "ringing" } },
+                        CallStage::Connecting => rsx! { span { class: "badge badge-info", "data-testid": "call-status-connecting", "connecting" } },
+                        CallStage::Active => rsx! { span { class: "badge badge-success", "data-testid": "call-status-active", "active" } },
+                        CallStage::Ended => rsx! { span { class: "badge", "data-testid": "call-status-ended", "ended" } },
+                    }
+                }
                 div { class: "muted",
-                    "Real-time call controls. Peer setup uses web-sys RtcPeerConnection when the renderer is in a browser. Signaling envelopes round-trip through cx.call.signal (ephemeral) once soland's relay is wired."
+                    "Real-time call controls. Peer setup uses web-sys RtcPeerConnection when the renderer is in a browser. Signaling envelopes use soland's participant-scoped cx.call.signal session when this renderer is bound to a live call."
                 }
 
                 if stage() == CallStage::Idle {
@@ -202,6 +218,7 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                             "data-testid": "webrtc-call-start-button",
                             onclick: move |_| {
                                 let _ok = maybe_setup_peer_connection();
+                                outgoing_to.set("did:web:bob.example".to_owned());
                                 stage.set(CallStage::OutgoingRinging);
                                 last_action.set("started 1:1 call".to_owned());
                                 // TODO(G3.Y4-followup): drive an
@@ -209,8 +226,8 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                                 // cx.call.signal { kind: "invite" }
                                 // via
                                 // crate::api::build_call_signal_envelope_v2
-                                // once soland's ephemeral relay is
-                                // wired.
+                                // through soland's participant-scoped
+                                // WebRTC session API.
                             },
                             "Start 1:1 call"
                         }
@@ -242,6 +259,41 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                 }
 
+                if stage() == CallStage::OutgoingRinging {
+                    {
+                        let outgoing_to_value = outgoing_to();
+                        let outgoing_to_label = short_protocol_id(&outgoing_to_value);
+                        rsx! {
+                            div { class: "event", "data-testid": "webrtc-outgoing-call-banner",
+                                div { class: "event-head",
+                                    span { "Calling" }
+                                    span { class: "mono", title: "{outgoing_to_value}", "{outgoing_to_label}" }
+                                }
+                                div { class: "actions",
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "webrtc-call-connect-button",
+                                        onclick: move |_| {
+                                            stage.set(CallStage::Connecting);
+                                            last_action.set("signaling connected".to_owned());
+                                        },
+                                        "Connect"
+                                    }
+                                    button {
+                                        class: "danger",
+                                        "data-testid": "webrtc-call-cancel-button",
+                                        onclick: move |_| {
+                                            stage.set(CallStage::Ended);
+                                            last_action.set("cancelled outgoing call".to_owned());
+                                        },
+                                        "Cancel"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if stage() == CallStage::IncomingRinging {
                     {
                         let incoming_from_value = incoming_from();
@@ -265,7 +317,7 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                                                 display_name: incoming_from(),
                                                 stream_state: ParticipantStreamState::Active,
                                             });
-                                            stage.set(CallStage::Active);
+                                            stage.set(CallStage::Connecting);
                                             incoming_from.set(String::new());
                                             last_action.set("accepted incoming call".to_owned());
                                         },
@@ -282,6 +334,38 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                                         "Decline"
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                if stage() == CallStage::Connecting {
+                    div { class: "event", "data-testid": "webrtc-call-connecting-panel",
+                        div { class: "event-head",
+                            span { "Connecting" }
+                            span { class: "badge badge-info", "SDP/ICE" }
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "primary",
+                                "data-testid": "webrtc-call-activate-button",
+                                onclick: move |_| {
+                                    let target = if !outgoing_to().is_empty() {
+                                        outgoing_to()
+                                    } else {
+                                        "did:web:bob.example".to_owned()
+                                    };
+                                    if participants().is_empty() {
+                                        participants.write().push(CallParticipant {
+                                            actor_did: target.clone(),
+                                            display_name: target,
+                                            stream_state: ParticipantStreamState::Active,
+                                        });
+                                    }
+                                    stage.set(CallStage::Active);
+                                    last_action.set("call active".to_owned());
+                                },
+                                "Media active"
                             }
                         }
                     }
@@ -313,8 +397,8 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                                     // TODO(G3.Y4-followup): emit
                                     // cx.call.signal { signal_type:
                                     // "mute_state", payload: { muted:
-                                    // next }} once soland's relay is
-                                    // wired.
+                                    // next }} through the active
+                                    // soland WebRTC session.
                                 },
                                 if mic_muted() { "Unmute" } else { "Mute" }
                             }
@@ -379,12 +463,13 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                                 class: "danger",
                                 "data-testid": "webrtc-leave-call-button",
                                 onclick: move |_| {
-                                    stage.set(CallStage::Idle);
+                                    stage.set(CallStage::Ended);
                                     mic_muted.set(false);
                                     camera_on.set(true);
                                     screen_sharing.set(false);
                                     recording_state.set(RecordingState::Off);
                                     participants.set(Vec::new());
+                                    outgoing_to.set(String::new());
                                     last_action.set("left call".to_owned());
                                     // TODO(G3.Y4-followup): emit
                                     // cx.call.signal { signal_type:
@@ -423,6 +508,28 @@ pub fn WebRtcCallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                 }
 
+                if stage() == CallStage::Ended {
+                    div { class: "event", "data-testid": "webrtc-call-ended-panel",
+                        div { class: "event-head",
+                            span { "Call ended" }
+                            span { class: "badge", "ended" }
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "secondary",
+                                "data-testid": "webrtc-call-reset-button",
+                                onclick: move |_| {
+                                    stage.set(CallStage::Idle);
+                                    outgoing_to.set(String::new());
+                                    incoming_from.set(String::new());
+                                    last_action.set("ready for next call".to_owned());
+                                },
+                                "Reset"
+                            }
+                        }
+                    }
+                }
+
                 if !last_action().is_empty() {
                     div { class: "muted",
                         "data-testid": "webrtc-last-action",
@@ -441,9 +548,11 @@ mod tests {
     #[test]
     fn call_stage_str_is_stable_for_each_variant() {
         assert_eq!(CallStage::Idle.as_str(), "idle");
-        assert_eq!(CallStage::IncomingRinging.as_str(), "incoming");
-        assert_eq!(CallStage::OutgoingRinging.as_str(), "outgoing");
+        assert_eq!(CallStage::IncomingRinging.as_str(), "ringing");
+        assert_eq!(CallStage::OutgoingRinging.as_str(), "ringing");
+        assert_eq!(CallStage::Connecting.as_str(), "connecting");
         assert_eq!(CallStage::Active.as_str(), "active");
+        assert_eq!(CallStage::Ended.as_str(), "ended");
     }
 
     #[test]
