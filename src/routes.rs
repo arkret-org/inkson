@@ -348,6 +348,12 @@ impl From<View> for Route {
             View::Quarantine => Route::Quarantine,
             View::Agents => Route::Agents,
             View::Search => Route::Search,
+            // CXP-0007 P3B.2.5: Circle detail view. Default URL points
+            // at the dashboard because the canonical `/circles/:id`
+            // route carries a Circle id that is not addressable from
+            // the View enum alone. The deep-link entry point is the
+            // sidebar / picker row click, not the sidebar nav rail.
+            View::Circle => Route::Dashboard,
         }
     }
 }

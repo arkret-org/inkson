@@ -1,5 +1,16 @@
 use dioxus::prelude::*;
 
+/// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
+/// Consumes [`crate::circle::CircleErrorKind`] and renders the
+/// localized user-facing string.
+pub mod circle_error_toast;
+/// CXP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
+/// discussion-of cross-link banner. Shared between the new-Flow form,
+/// the composer header, and the Flow detail view.
+pub mod circle_scope_picker;
+/// CXP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
+/// page. Strict-subset validation runs client-side before submit.
+pub mod create_circle_modal;
 pub mod empty_state;
 pub mod permission_pill;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
@@ -10,6 +21,11 @@ pub mod shortcut_help;
 pub mod sync_badge;
 pub mod write_state;
 
+pub use circle_error_toast::{CircleErrorToast, CircleErrorToastProps};
+pub use circle_scope_picker::{
+    CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
+};
+pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
