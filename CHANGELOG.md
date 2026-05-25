@@ -48,6 +48,68 @@ Android / web).
 - **Notes** mobile (iOS / Android) packaging deferred to the next
   milestone; version stays at `0.1.0` and no release artifact ships out
   of this branch.
+- **Changed** `api.rs::create_circle` now serialises its wire body
+  through the SDK's typed
+  [`contrix_sdk::model::CircleDisplay`] / `CircleColorToken` /
+  `CircleGlyph` / `CircleDirectoryVisibility` enums instead of a
+  hand-rolled `json!` literal, so an invalid color token or glyph
+  fails inline instead of being round-tripped through the reducer.
+- **Changed** `circle.rs` now re-exports
+  [`contrix_sdk::model::EffectiveScope`] directly; the local
+  `DecryptedScope` mirror has been deleted. The new
+  `classify_scope_match` helper produces `ScopeMatch::{Realm,Circle,
+  Mismatch}` for the chat renderer.
+- **Changed** `cursor.rs::flow_position_label` accepts an optional
+  `last_read_at` and `last_read_at_from_projection` extracts the
+  field from the raw account-subscribe Space-position JSON, so the
+  label can surface "last read …" until the SDK promotes the field
+  onto `SpacePosition` directly.
+- **Changed** `config.rs` publishes the typed
+  [`ProfileSwitchEvent`] payload and
+  `MultiProfileConfig::build_switch_event`; the avatar
+  `AccountSwitcher` emits it through a new `on_switch_event` prop
+  alongside the legacy `on_switch` string handler.
+- **Changed** `SyncEngineContext` now carries
+  `Signal<MultiProfileConfig>`; the engine snapshots the active
+  `profile_id` at spawn and exits cleanly when the shell rotates
+  profiles so the next generation picks up the new cursor / token /
+  account_did atomically.
+- **Changed** `offline::spawn_offline_drain` now takes a bound
+  profile id + shared active-profile RwLock so a profile rotation
+  no longer replays the prior profile's queued writes against the
+  new account.
+- **Changed** `push_registration::RegisterContext` carries an
+  optional `active_circle_id`; `build_request` forwards it into the
+  chime gateway through the idempotency key and adds the Circle to
+  `PushPreferences.muted_circle_ids` so the gateway de-duplicates
+  Realm-wide and Circle-scoped wakeups.
+- **Removed** the `DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY` back-compat
+  shim in `push.rs`. All call sites now route through
+  `push::floria_gateway_url()` directly (env-driven, with a release
+  no-op fallback).
+- **Added** `views/chat.rs` mounts `CircleComposerBanner` at the
+  top of the composer when the active Flow carries a
+  `scope_circle_id`. The banner surfaces the Circle title plus the
+  visible-member count; Realm-scoped Flows render nothing so the UI
+  stays quiet during normal writes.
+- **Added** `views/chat.rs` per-message Circle accent rail: each
+  message card gets a left-edge coloured ribbon with the Circle
+  title as a tooltip when its enclosing Flow has `scope_circle_id`.
+- **Added** `chat_message_from_event` now compares the envelope's
+  `effective_scope.circle_id` against the payload `scope_circle_id`
+  and routes mismatches into
+  `MessageCryptoState::NeedsVerification` so the UI badge surfaces
+  the disagreement instead of presenting the decrypted body as
+  trustworthy.
+- **Added** `ConfidentialDiscussionOfBanner` accepts an optional
+  `target_space_id` prop that routes the link through
+  `Route::TimelineSpace { space_id }` with a `#flow:<id>` anchor.
+- **Added** `telemetry::sentry_init` initialises the opt-in Sentry
+  client when BOTH the user toggle is on AND the build-time
+  `SENTRY_DSN` env var is non-empty. An empty DSN logs a debug
+  breadcrumb and returns `None` silently. Wasm builds skip the dep
+  entirely. `CrashTelemetryPrefs::load_from_env` honours
+  `YOUGEN_CRASH_TELEMETRY_OPT_IN=1|true|on|yes`.
 
 ### Testing
 
