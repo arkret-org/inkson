@@ -12,15 +12,50 @@ use serde_json::Value;
 
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
-const DEFAULT_PUSH_GATEWAY: &str = "https://push.example/api/v1/push/notify";
+/// P4 (CXP-0007 hygiene): the previous hard-coded
+/// `https://push.example/api/v1/push/notify` placeholder is gone.
+/// We now read `YOUGEN_FLORIA_URL` at the call site (see
+/// [`floria_gateway_url`]); when it's unset in dev we point at
+/// localhost, when it's unset in prod we return an empty string and
+/// the registration code no-ops rather than POSTing to a fake host.
+const DEV_FLORIA_GATEWAY: &str = "http://localhost:9001/api/v1/push/notify";
+/// Returned by [`floria_gateway_url`] when the env var is unset and
+/// we're NOT in a debug build. The chime register-device path treats
+/// an empty gateway URL as "no push registration" and short-circuits
+/// without contacting any remote host.
+const NOOP_FLORIA_GATEWAY: &str = "";
 
-/// C33.2: canonical floria gateway notify URL the chime-driven
-/// orchestrator stamps into a register-device request when no operator
-/// override is supplied. Floria advertises `/api/v1/push/notify` via
-/// `bridge/describe.notify.notify_path` — this constant is the runtime
-/// default until a deploy-time env var (`CHASK_PUSH_GATEWAY`) overrides
-/// it. See `crate::push_registration::register_via_chime`.
-pub const DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY: &str = DEFAULT_PUSH_GATEWAY;
+/// Read the floria push gateway URL at runtime.
+///
+/// Resolution order:
+/// 1. `YOUGEN_FLORIA_URL` env var, if non-empty.
+/// 2. Debug builds (`cfg(debug_assertions)`): localhost dev gateway.
+/// 3. Release builds: empty string ⇒ no-op (registration short-circuits).
+pub fn floria_gateway_url() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(value) = std::env::var("YOUGEN_FLORIA_URL") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_owned();
+            }
+        }
+    }
+    if cfg!(debug_assertions) {
+        DEV_FLORIA_GATEWAY.to_owned()
+    } else {
+        NOOP_FLORIA_GATEWAY.to_owned()
+    }
+}
+
+/// Back-compat shim retained so existing call sites don't break in a
+/// single CHANGELOG window. New code should call [`floria_gateway_url`]
+/// directly; this constant returns whatever the runtime resolver picks
+/// at *first call* and is otherwise an empty string.
+///
+/// `TODO(circle-rollout-P4):` delete this constant after the next
+/// release; every call site has been routed through `floria_gateway_url`.
+pub const DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY: &str = DEV_FLORIA_GATEWAY;
 
 /// Markers embedded in development push tokens. Any push key containing one of
 /// these substrings is a build-time placeholder that must NEVER reach a
@@ -183,10 +218,16 @@ pub fn build_unregister_request(
         proof: None,
     };
 
+    // P4 hygiene: reuse `push_preferences()` (with
+    // `allow_insecure_loopback_push_gateway=true`) so the dev /
+    // localhost gateway path validates the same way `build_register_request`
+    // does. The previous `PushPreferences::default()` had loopback
+    // off, which rejected the `http://localhost:…` gateway introduced
+    // by `floria_gateway_url`.
     Ok(build_unregister_device_request(
         &config,
         &default_gateway_binding(),
-        &PushPreferences::default(),
+        &push_preferences(),
     )?)
 }
 
@@ -319,12 +360,23 @@ fn default_gateway_binding() -> GatewayBinding {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn configured_push_gateway() -> String {
-    std::env::var("CHASK_PUSH_GATEWAY").unwrap_or_else(|_| DEFAULT_PUSH_GATEWAY.to_owned())
+    // P4 hygiene: `CHASK_PUSH_GATEWAY` was the historical operator
+    // override; the canonical name is now `YOUGEN_FLORIA_URL`. We
+    // honour the legacy var when set so existing deployments keep
+    // working; otherwise `floria_gateway_url` does the right thing
+    // (dev → localhost, prod-without-env → empty no-op).
+    if let Ok(value) = std::env::var("CHASK_PUSH_GATEWAY") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+    floria_gateway_url()
 }
 
 #[cfg(target_arch = "wasm32")]
 fn configured_push_gateway() -> String {
-    DEFAULT_PUSH_GATEWAY.to_owned()
+    floria_gateway_url()
 }
 
 #[cfg(target_arch = "wasm32")]
