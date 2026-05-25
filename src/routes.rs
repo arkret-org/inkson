@@ -125,6 +125,9 @@ pub enum Route {
     #[route("/document", crate::app::RouterView)]
     Document,
 
+    #[route("/document/new", crate::app::RouterView)]
+    DocumentNew,
+
     #[route("/document/:space_id", DocumentSpacePage)]
     DocumentSpace { space_id: String },
 
@@ -262,7 +265,7 @@ impl Route {
             Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
             Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => View::Kanban,
             Route::Notifications => View::Notifications,
-            Route::Document | Route::DocumentSpace { .. } => View::Document,
+            Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => View::Document,
             Route::Recovery => View::Recovery,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
@@ -280,9 +283,11 @@ impl Route {
             | Route::Chat { space_id }
             | Route::KanbanSpace { space_id }
             | Route::KanbanTask { space_id, .. }
-            | Route::DocumentSpace { space_id }
             | Route::SpaceAdmin { space_id }
             | Route::SpaceAdminSection { space_id, .. } => Some(space_id.as_str()),
+            Route::DocumentSpace { space_id } if !space_id.starts_with("cx:morph:") => {
+                Some(space_id.as_str())
+            }
             _ => None,
         }
     }
@@ -337,7 +342,7 @@ impl From<View> for Route {
             },
             View::Kanban => Route::Kanban,
             View::Notifications => Route::Notifications,
-            View::Document => Route::Document,
+            View::Document => Route::DocumentNew,
             View::Recovery => Route::Recovery,
             View::Onboarding => Route::Onboarding,
             View::Quarantine => Route::Quarantine,
@@ -383,6 +388,7 @@ mod tests {
             Route::Kanban,
             Route::Notifications,
             Route::Document,
+            Route::DocumentNew,
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,

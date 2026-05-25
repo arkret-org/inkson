@@ -7385,6 +7385,7 @@ pub fn RouterView() -> Element {
                                             base_url: base_url(),
                                             token,
                                             selected_space: active_space_id.clone(),
+                                            document_ref: None,
                                             state_store,
                                             account_did: account_did(),
                                         }
@@ -7619,18 +7620,25 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
-                    Route::Document | Route::DocumentSpace { .. } => {
+                    Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
                         if let Some(sid) = route.space_id() {
                             if selected_space() != sid {
                                 selected_space.set(sid.to_owned());
                             }
                         }
+                        let document_ref = match &route {
+                            Route::DocumentSpace { space_id } if space_id.starts_with("cx:morph:") => {
+                                Some(space_id.clone())
+                            }
+                            _ => None,
+                        };
                         rsx! {
                             if full_ready {
                                 crate::views::document::DocumentPanel {
                                     base_url: base_url(),
                                     token,
                                     selected_space: active_space_id.clone(),
+                                    document_ref,
                                     state_store,
                                     account_did: account_did(),
                                 }
@@ -8126,7 +8134,9 @@ fn resolve_space_surface(
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
             Some(SpaceSurface::Board)
         }
-        Route::Document | Route::DocumentSpace { .. } => Some(SpaceSurface::Document),
+        Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
+            Some(SpaceSurface::Document)
+        }
         Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => None,
         _ => None,
     }
@@ -8144,6 +8154,7 @@ fn route_uses_space_context(route: &Route) -> bool {
             | Route::KanbanSpace { .. }
             | Route::KanbanTask { .. }
             | Route::Document
+            | Route::DocumentNew
             | Route::DocumentSpace { .. }
             | Route::SpaceAdmin { .. }
             | Route::SpaceAdminSection { .. }
@@ -8189,7 +8200,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Developer => "Developer Tools",
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => "Board View",
         Route::Notifications => "Notifications",
-        Route::Document | Route::DocumentSpace { .. } => "Document View",
+        Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
         Route::Recover => "Restore from backup",

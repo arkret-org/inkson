@@ -496,7 +496,7 @@ fn rand_u64() -> u64 {
 
 /// Canonical helper constructors used by the current UI.
 pub mod cx_ops {
-    use super::{OperationBuilder, scope_id_as_realm_id};
+    use super::{OperationBuilder, scope_id_as_realm_id, uuid_v7};
     use serde_json::{Value, json};
 
     fn object_patch_payload_value(
@@ -741,45 +741,38 @@ pub mod cx_ops {
         )
     }
 
-    /// Build a `cx.flow.create` for a document Flow.
-    ///
-    /// Document content travels on the Flow's synthesis track in
-    /// `body.fields.document` (an opaque JSON blob defined by the
-    /// client). The synthesis track is the spec-blessed home for
-    /// human-authored long-form content; see `models/flow-and-message.md`
-    /// §synthesis_track.
-    pub fn document_flow_create(
+    /// Build a `cx.morph.create` for a document Morph.
+    pub fn document_morph_create(
         space_id: &str,
         actor: &str,
-        flow_id: &str,
+        morph_id: &str,
         title: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
+        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let object = json!({
-            "schema": "cx.schema.flow.v1",
-            "id": flow_id,
+            "schema": "cx.schema.morph.v1",
+            "id": morph_id,
             "realm_id": realm_id,
-            "space_id": space_id,
+            "space_id": realm_id,
+            "morph_type": "document",
             "title": title,
             "stage": "draft",
-            "tracks": { "synthesis": {} },
-            "fields": { "document": document_body.clone() },
+            "schema_refs": ["cx.schema.morph.v1"],
+            "facets": {
+                "documentable": {}
+            },
+            "fields": {
+                "document": document_body.clone()
+            },
             "created_by": actor,
-            "created_at": chrono::Utc::now()
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "created_at": created_at,
         });
-        OperationBuilder::new(space_id, actor, "cx.flow.create")
-            .target_ref(space_id)
+        OperationBuilder::new(space_id, actor, "cx.morph.create")
+            .target_ref(morph_id)
             .body(json!({
-                "space_id": space_id,
-                "flow_id": flow_id,
-                "title": title,
-                "rank": "r0",
-                "kind": "document",
-                "fields": {
-                    "document": document_body,
-                },
+                "morph_id": morph_id,
                 "object": object,
             }))
     }
@@ -906,20 +899,85 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.flow.update` carrying a new document body on the
-    /// synthesis track. `flow_id` must already exist on the server (i.e.
-    /// the corresponding `cx.flow.create` has been accepted).
-    pub fn document_flow_update(
+    /// Build a `cx.morph.update` carrying a new document body.
+    pub fn document_morph_update(
         space_id: &str,
         actor: &str,
-        flow_id: &str,
+        morph_id: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
-        let payload =
-            flow_object_patch_payload_value(flow_id, patch_set("fields.document", document_body));
-        OperationBuilder::new(space_id, actor, "cx.flow.update")
-            .target_ref(flow_id)
-            .body(payload)
+        morph_update_patch(
+            space_id,
+            actor,
+            morph_id,
+            json!({
+                "fields": {
+                    "$op": "set",
+                    "value": {
+                        "document": document_body
+                    }
+                }
+            }),
+        )
+    }
+
+    /// Build a range-anchored document comment as `cx.message.create`.
+    pub fn document_comment_create(
+        space_id: &str,
+        actor: &str,
+        morph_id: &str,
+        start: u32,
+        end: u32,
+        body: &str,
+        reply_to: Option<&str>,
+    ) -> OperationBuilder {
+        let realm_id = scope_id_as_realm_id(space_id);
+        let discussion_flow_id = realm_id
+            .strip_prefix("cx:realm:")
+            .map(|suffix| format!("cx:flow:{suffix}"))
+            .unwrap_or_else(|| morph_id.to_owned());
+        let mut content = json!({
+            "anchor_range": {
+                "end": end,
+                "start": start,
+                "target_ref": morph_id
+            },
+            "body": body,
+            "kind": "cx.content.text",
+            "morph_id": morph_id
+        });
+        if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
+            content["reply_to"] = json!(parent);
+        }
+        OperationBuilder::new(space_id, actor, "cx.message.create")
+            .target_ref(morph_id)
+            .body(json!({
+                "flow_id": discussion_flow_id,
+                "thread_id": morph_id,
+                "track": "discussion",
+                "content": content,
+            }))
+    }
+
+    /// Build a Relation linking a document Morph to another object.
+    pub fn document_relation_create(
+        space_id: &str,
+        actor: &str,
+        morph_id: &str,
+        target_ref: &str,
+    ) -> OperationBuilder {
+        let relation_id = format!("cx:relation:{}", uuid_v7());
+        OperationBuilder::new(space_id, actor, "cx.relation.create")
+            .target_ref(morph_id)
+            .body(json!({
+                "relation_id": relation_id,
+                "kind": "references",
+                "from_ref": morph_id,
+                "to_ref": target_ref,
+                "fields": {
+                    "role": "postmortem_for"
+                }
+            }))
     }
 
     /// Build a `cx.flow.update` delta operation using the canonical
@@ -1842,23 +1900,29 @@ mod tests {
     }
 
     #[test]
-    fn document_flow_create_carries_synthesis_body() {
-        let op = cx_ops::document_flow_create(
-            "cx:space:doc-test",
-            "did:web:alice",
-            "cx:flow:doc-1",
+    fn document_morph_create_carries_document_body() {
+        let op = cx_ops::document_morph_create(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:morph:0196419b-0000-7000-8000-000000000002",
             "Untitled Document",
             json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
         )
         .build("test_node");
 
-        assert_eq!(op.kind, "cx.flow.create");
-        assert_eq!(op.payload["flow_id"], "cx:flow:doc-1");
-        assert_eq!(op.payload["kind"], "document");
+        assert_eq!(op.kind, "cx.morph.create");
         assert_eq!(
-            op.payload["fields"]["document"]["blocks"][0]["kind"],
+            op.payload["morph_id"],
+            "cx:morph:0196419b-0000-7000-8000-000000000002"
+        );
+        assert_eq!(op.payload["object"]["morph_type"], "document");
+        assert_eq!(
+            op.payload["object"]["fields"]["document"]["blocks"][0]["kind"],
             "Heading"
         );
+        assert!(op.payload["object"]["facets"]["documentable"].is_object());
+        assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
     }
 
     #[test]
@@ -1900,23 +1964,51 @@ mod tests {
     }
 
     #[test]
-    fn document_flow_update_targets_existing_flow_id() {
-        let op = cx_ops::document_flow_update(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+    fn document_morph_update_targets_existing_morph_id() {
+        let op = cx_ops::document_morph_update(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000002",
+            "cx:morph:0196419b-0000-7000-8000-000000000002",
             json!({"blocks": []}),
         )
         .build("test_node");
 
-        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.kind, "cx.morph.update");
         assert_eq!(
-            op.payload["flow_id"],
-            "cx:flow:0196419b-0000-7000-8000-000000000002"
+            op.payload["morph_id"],
+            "cx:morph:0196419b-0000-7000-8000-000000000002"
         );
-        assert!(op.payload.get("fields").is_none());
-        assert!(op.payload["patch"]["fields.document"]["value"]["blocks"].is_array());
+        assert_eq!(
+            op.payload["target_ref"],
+            "cx:morph:0196419b-0000-7000-8000-000000000002"
+        );
+        assert!(op.payload["patch"]["fields"]["value"]["document"]["blocks"].is_array());
         assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
+    }
+
+    #[test]
+    fn document_comment_create_carries_anchor_range() {
+        let op = cx_ops::document_comment_create(
+            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:morph:0196419b-0000-7000-8000-000000000002",
+            4,
+            9,
+            "needs detail",
+            None,
+        )
+        .build("test_node");
+
+        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(
+            op.payload["content"]["morph_id"],
+            "cx:morph:0196419b-0000-7000-8000-000000000002"
+        );
+        assert_eq!(op.payload["content"]["anchor_range"]["start"], 4);
+        assert_eq!(op.payload["content"]["anchor_range"]["end"], 9);
+        assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
     }
 
     #[test]
@@ -1933,7 +2025,10 @@ mod tests {
         assert_eq!(op.kind, "cx.flow.update");
         assert_eq!(op.payload["flow_id"], flow_id);
         assert!(op.payload["patch"].get("fields.status").is_none());
-        assert_eq!(op.payload["patch"]["fields"]["value"]["status"], "mitigated");
+        assert_eq!(
+            op.payload["patch"]["fields"]["value"]["status"],
+            "mitigated"
+        );
         assert_registered_payload_valid(&op);
         assert_payload_field_names_are_soland_canonical(&op.payload);
     }
@@ -2015,8 +2110,6 @@ mod tests {
         let list_space_id = "cx:space:0196419b-0000-7000-8000-000000000011";
 
         let events = [
-            cx_ops::document_flow_update(space_id, actor, flow_id, json!({"blocks": []}))
-                .build("node"),
             cx_ops::flow_update_patch(
                 space_id,
                 actor,

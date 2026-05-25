@@ -1,12 +1,10 @@
-//! Document view — block editor backed by a Flow synthesis track.
+//! Document view — block editor backed by a document Morph projection.
 //!
 //! - Every edit is mirrored to `LocalStateStore.private_data` so the
 //!   draft survives navigation and offline use.
-//! - Save Version emits a real `cx.flow.create` (first time) or
-//!   `cx.flow.update` (subsequent saves) against the Space's document
-//!   Flow on the synthesis track per `models/flow-and-message.md`
-//!   §synthesis_track. The flow_id is persisted per-Space so subsequent
-//!   saves target the same Flow.
+//! - Save Version emits a real `cx.morph.create` (first time) or
+//!   `cx.morph.update` (subsequent saves). The morph_id is persisted
+//!   per-Space so subsequent saves target the same Morph.
 //! - The header sync badge reports the result of the most recent
 //!   submit: `Synced` / `Pending sync` / `Local draft`. Failed submits
 //!   fall back to local draft without losing the user's edits.
@@ -17,16 +15,13 @@
 //! presence sidebar listing actors actively editing the document, a
 //! comment composer wired to range start/end inputs, version restore /
 //! diff buttons, and the supporting state machines for both. The data
-//! is sourced from the local raw-operation projection — the cotest
-//! harness seeds events directly via `submit_event_envelope` for now;
-//! soland-side collaborative endpoints (cursor presence relay, comment
-//! threads with range anchors, version diff) are tracked as
-//! `TODO(G3.Y4-followup)` until the synthesis-track collaborative model
-//! lands in soland.
+//! is sourced from soland's document Morph projection when a `cx:morph:*`
+//! route or persisted document id is available, with local draft fallback
+//! for offline creation.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     local_state::LocalStateStore,
@@ -93,6 +88,7 @@ pub struct DocumentCommentThread {
     pub body: String,
     pub replies: Vec<DocumentCommentReply>,
     pub resolved: bool,
+    pub orphaned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,15 +160,15 @@ fn storage_key(space_id: &str) -> String {
     format!("document.draft.{space_id}")
 }
 
-fn flow_id_storage_key(space_id: &str) -> String {
-    format!("document.flow_id.{space_id}")
+fn morph_id_storage_key(space_id: &str) -> String {
+    format!("document.morph_id.{space_id}")
 }
 
-/// Mint a fresh document Flow id. The id is local-only until the
-/// matching `cx.flow.create` event is accepted; once accepted, the
+/// Mint a fresh document Morph id. The id is local-only until the
+/// matching `cx.morph.create` event is accepted; once accepted, the
 /// reducer takes ownership.
-fn mint_flow_id() -> String {
-    format!("cx:flow:{}", crate::operation::uuid_v7())
+fn mint_morph_id() -> String {
+    format!("cx:morph:{}", crate::operation::uuid_v7())
 }
 
 /// Serialize the editable document for the synthesis-track body.
@@ -195,6 +191,188 @@ fn document_body_payload(
         }]);
     }
     payload
+}
+
+fn block_kind_from_value(value: &Value) -> BlockKind {
+    match value.as_str().unwrap_or_default() {
+        "Heading" | "heading" => BlockKind::Heading,
+        "BulletList" | "bullet_list" | "list" => BlockKind::BulletList,
+        "CodeBlock" | "code_block" | "code" => BlockKind::CodeBlock,
+        _ => BlockKind::Paragraph,
+    }
+}
+
+fn blocks_from_document_body(value: &Value) -> Vec<DocumentBlock> {
+    if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
+        return blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, block)| {
+                let content = block
+                    .get("content")
+                    .or_else(|| block.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                if content.is_empty() {
+                    return None;
+                }
+                Some(DocumentBlock {
+                    id: block
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| format!("block-{idx}")),
+                    kind: block_kind_from_value(block.get("kind").unwrap_or(&Value::Null)),
+                    content,
+                })
+            })
+            .collect();
+    }
+    value
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| {
+            vec![DocumentBlock {
+                id: "block-1".to_owned(),
+                kind: BlockKind::Paragraph,
+                content: text.to_owned(),
+            }]
+        })
+        .unwrap_or_default()
+}
+
+fn versions_from_projection(value: &Value) -> Vec<DocumentVersion> {
+    value
+        .get("versions")
+        .and_then(Value::as_array)
+        .map(|versions| {
+            versions
+                .iter()
+                .enumerate()
+                .map(|(idx, version)| {
+                    let body = version.get("body").unwrap_or(&Value::Null);
+                    let block_count = blocks_from_document_body(body).len();
+                    DocumentVersion {
+                        id: version
+                            .get("version_id")
+                            .or_else(|| version.get("event_id"))
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| format!("server-v-{idx}")),
+                        timestamp: version
+                            .get("created_at")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_default(),
+                        author: version
+                            .get("author")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| "server".to_owned()),
+                        block_count,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn comments_from_projection(value: &Value) -> Vec<DocumentCommentThread> {
+    value
+        .get("comments")
+        .and_then(Value::as_array)
+        .map(|comments| {
+            comments
+                .iter()
+                .enumerate()
+                .map(|(idx, comment)| {
+                    let replies = comment
+                        .get("replies")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .map(|reply| DocumentCommentReply {
+                                    author_did: reply
+                                        .get("author")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("did:web:unknown")
+                                        .to_owned(),
+                                    body: reply
+                                        .get("body")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_owned(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let range = comment.get("anchor_range").unwrap_or(&Value::Null);
+                    DocumentCommentThread {
+                        comment_id: comment
+                            .get("comment_id")
+                            .or_else(|| comment.get("event_id"))
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| format!("server-comment-{idx}")),
+                        author_did: comment
+                            .get("author")
+                            .and_then(Value::as_str)
+                            .unwrap_or("did:web:unknown")
+                            .to_owned(),
+                        range_start: range.get("start").and_then(Value::as_u64).unwrap_or(0) as u32,
+                        range_end: range.get("end").and_then(Value::as_u64).unwrap_or(0) as u32,
+                        body: comment
+                            .get("body")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        replies,
+                        resolved: comment.get("state").and_then(Value::as_str) == Some("resolved"),
+                        orphaned: comment.get("state").and_then(Value::as_str) == Some("orphaned"),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cursors_from_projection(value: &Value) -> Vec<RemoteCursor> {
+    value
+        .get("cursor_presence")
+        .and_then(Value::as_array)
+        .map(|cursors| {
+            cursors
+                .iter()
+                .filter_map(|cursor| {
+                    let actor_did = cursor
+                        .get("actor_did")
+                        .or_else(|| cursor.get("actor"))
+                        .and_then(Value::as_str)?
+                        .to_owned();
+                    Some(RemoteCursor {
+                        display_name: cursor
+                            .get("display_name")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| short_protocol_id(&actor_did)),
+                        actor_did,
+                        line: cursor
+                            .pointer("/cursor/line")
+                            .or_else(|| cursor.get("line"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as u32,
+                        col: cursor
+                            .pointer("/cursor/col")
+                            .or_else(|| cursor.get("col"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as u32,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // `SyncState` is an alias over the shared `SyncBadgeState` so document
@@ -278,6 +456,7 @@ pub fn DocumentPanel(
     base_url: String,
     token: Signal<String>,
     selected_space: String,
+    document_ref: Option<String>,
     state_store: Signal<LocalStateStore>,
     account_did: String,
 ) -> Element {
@@ -308,6 +487,15 @@ pub fn DocumentPanel(
     let mut document_title_input = use_signal(move || initial_title.clone());
     let mut document_body_editor = use_signal(move || initial_body.clone());
     let mut linked_incident_input = use_signal(move || linked_incident_default.clone());
+    let initial_morph_id = document_ref.clone().or_else(|| {
+        state_store
+            .read()
+            .load_private_data(&actor_key, &morph_id_storage_key(&space_id))
+    });
+    let mut current_morph_id = use_signal(move || initial_morph_id.unwrap_or_default());
+    let document_realm_initial = space_id.clone();
+    let mut document_realm_id = use_signal(move || document_realm_initial.clone());
+    let mut hydrated_document_id = use_signal(String::new);
 
     // ─────────────────────────────────────────────────────────────
     // G3.Y4 — collaborative state (cursors, comments, versions)
@@ -328,7 +516,7 @@ pub fn DocumentPanel(
     // subscription to `state_store`'s presence projection once the
     // soland-side presence relay is in place; for now the panel only
     // renders what the harness seeds via this signal.
-    let remote_cursors = use_signal(Vec::<RemoteCursor>::new);
+    let mut remote_cursors = use_signal(Vec::<RemoteCursor>::new);
     // Comment threads keyed by comment_id; the renderer reads through
     // this list in insertion order so the cotest harness sees a
     // stable per-thread DOM order.
@@ -359,6 +547,82 @@ pub fn DocumentPanel(
     let space_id_label = short_protocol_id(&space_id);
     let actor_key_label = short_protocol_id(&actor_key);
 
+    {
+        let base = base_url.clone();
+        let actor_key = actor_key.clone();
+        use_effect(move || {
+            let morph_id = current_morph_id();
+            if !morph_id.starts_with("cx:morph:") || hydrated_document_id() == morph_id {
+                return;
+            }
+            hydrated_document_id.set(morph_id.clone());
+            sync_state.set(SyncState::Pending);
+            save_status.set(format!("Loading document {}", short_protocol_id(&morph_id)));
+            let base = base.clone();
+            let token_val = token();
+            let actor_key = actor_key.clone();
+            spawn(async move {
+                let morph_id_for_request = morph_id.clone();
+                match with_authed_api(&base, token_val, |api| async move {
+                    api.document_projection(&morph_id_for_request).await
+                })
+                .await
+                {
+                    Ok(projection) => {
+                        let body = projection
+                            .get("document")
+                            .and_then(|document| document.get("body"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        let projected_blocks = blocks_from_document_body(&body);
+                        if !projected_blocks.is_empty() {
+                            blocks.set(projected_blocks.clone());
+                            document_title_input.set(
+                                projected_blocks
+                                    .iter()
+                                    .find(|block| block.kind == BlockKind::Heading)
+                                    .map(|block| block.content.clone())
+                                    .unwrap_or_else(|| "Untitled Document".to_owned()),
+                            );
+                            document_body_editor.set(
+                                projected_blocks
+                                    .iter()
+                                    .find(|block| block.kind == BlockKind::Paragraph)
+                                    .map(|block| block.content.clone())
+                                    .unwrap_or_default(),
+                            );
+                        }
+                        let projected_versions = versions_from_projection(&projection);
+                        if !projected_versions.is_empty() {
+                            versions.set(projected_versions);
+                        }
+                        comment_threads.set(comments_from_projection(&projection));
+                        remote_cursors.set(
+                            cursors_from_projection(&projection)
+                                .into_iter()
+                                .filter(|cursor| cursor.actor_did != actor_key)
+                                .collect(),
+                        );
+                        if let Some(realm_id) = projection
+                            .get("document")
+                            .and_then(|document| document.get("realm_id"))
+                            .and_then(Value::as_str)
+                        {
+                            document_realm_id.set(realm_id.to_owned());
+                        }
+                        sync_state.set(SyncState::Synced);
+                        save_status
+                            .set(format!("Loaded document {}", short_protocol_id(&morph_id)));
+                    }
+                    Err(err) => {
+                        sync_state.set(SyncState::Failed);
+                        save_status.set(format!("Document hydrate failed: {}", err.display()));
+                    }
+                }
+            });
+        });
+    }
+
     rsx! {
         div { class: "timeline", "data-testid": "document-panel",
             // Document header
@@ -375,7 +639,7 @@ pub fn DocumentPanel(
                     span { class: "mono", title: "{space_id}", "{space_id_label}" }
                 }
                 div { class: "muted",
-                    "Edits save to this device immediately. Save Version writes a cx.flow.create or cx.flow.update event to the Space's document Flow synthesis track."
+                    "Edits save locally first. Save Version writes the document Morph projection."
                 }
                 div { class: "workflow-form", "data-testid": "postmortem-link-controls",
                     input {
@@ -494,36 +758,64 @@ pub fn DocumentPanel(
                                         .map(|b| b.content.clone())
                                         .unwrap_or_else(|| "Untitled Document".to_owned());
 
-                                    let flow_id_key = flow_id_storage_key(&space_id_save);
-                                    let existing_flow_id = store_for_sync
-                                        .read()
-                                        .load_private_data(&actor_key_save, &flow_id_key);
+                                    let morph_id_key = morph_id_storage_key(&space_id_save);
+                                    let existing_morph_id = current_morph_id();
+                                    let existing_morph_id = if existing_morph_id.trim().is_empty() {
+                                        store_for_sync
+                                            .read()
+                                            .load_private_data(&actor_key_save, &morph_id_key)
+                                            .unwrap_or_default()
+                                    } else {
+                                        existing_morph_id
+                                    };
 
-                                    let (flow_id, is_create) = match existing_flow_id {
-                                        Some(id) if !id.trim().is_empty() => (id, false),
-                                        _ => (mint_flow_id(), true),
+                                    let (morph_id, is_create) = if existing_morph_id.trim().is_empty() {
+                                        (mint_morph_id(), true)
+                                    } else {
+                                        (existing_morph_id, false)
+                                    };
+                                    let operation_space_id = if document_realm_id().trim().is_empty() {
+                                        space_id_save.clone()
+                                    } else {
+                                        document_realm_id()
                                     };
 
                                     let op = if is_create {
-                                        cx_ops::document_flow_create(
-                                            &space_id_save,
+                                        cx_ops::document_morph_create(
+                                            &operation_space_id,
                                             &actor_key_save,
-                                            &flow_id,
+                                            &morph_id,
                                             &title,
                                             body,
                                         )
                                     } else {
-                                        cx_ops::document_flow_update(
-                                            &space_id_save,
+                                        cx_ops::document_morph_update(
+                                            &operation_space_id,
                                             &actor_key_save,
-                                            &flow_id,
+                                            &morph_id,
                                             body,
                                         )
                                     }
                                     .build("yougen");
+                                    let relation_op = linked_incident_for_wire
+                                        .trim()
+                                        .starts_with("cx:")
+                                        .then(|| {
+                                            cx_ops::document_relation_create(
+                                                &operation_space_id,
+                                                &actor_key_save,
+                                                &morph_id,
+                                                linked_incident_for_wire.trim(),
+                                            )
+                                            .build("yougen")
+                                        });
 
                                     match with_authed_api(&base, token_val, |api| async move {
-                                        api.submit_event_envelope(&op).await
+                                        let resp = api.submit_event_envelope(&op).await?;
+                                        if let Some(relation_op) = relation_op {
+                                            let _ = api.submit_event_envelope(&relation_op).await;
+                                        }
+                                        Ok(resp)
                                     })
                                     .await
                                     {
@@ -531,14 +823,16 @@ pub fn DocumentPanel(
                                             if is_create {
                                                 store_for_sync.write().save_private_data(
                                                     &actor_key_save,
-                                                    flow_id_key,
-                                                    flow_id.clone(),
+                                                    morph_id_key,
+                                                    morph_id.clone(),
                                                 );
                                             }
+                                            current_morph_id.set(morph_id.clone());
+                                            document_realm_id.set(operation_space_id.clone());
                                             sync_state.set(SyncState::Synced);
                                             save_status.set(format!(
-                                                "Saved and synced flow {} (event {})",
-                                                flow_id, resp.event_id
+                                                "Saved and synced document {} (event {})",
+                                                morph_id, resp.event_id
                                             ));
                                         }
                                         Err(err) => {
@@ -842,6 +1136,8 @@ pub fn DocumentPanel(
                             "data-testid": "document-comment-submit-button",
                             onclick: {
                                 let author_did = actor_key.clone();
+                                let base = base_url.clone();
+                                let fallback_space_id = space_id.clone();
                                 move |_| {
                                     let raw_range = comment_range_input();
                                     let body = comment_text_input().trim().to_owned();
@@ -859,6 +1155,7 @@ pub fn DocumentPanel(
                                         "comment-{}",
                                         chrono::Utc::now().timestamp_millis()
                                     );
+                                    let body_for_wire = body.clone();
                                     comment_threads.write().push(DocumentCommentThread {
                                         comment_id: id.clone(),
                                         author_did: author_did.clone(),
@@ -867,18 +1164,50 @@ pub fn DocumentPanel(
                                         body,
                                         replies: Vec::new(),
                                         resolved: false,
+                                        orphaned: false,
                                     });
                                     comment_range_input.set(String::new());
                                     comment_text_input.set(String::new());
                                     comment_composer_open.set(false);
                                     comment_status.set(format!("comment {id} added"));
-                                    // TODO(G3.Y4-followup): once soland
-                                    // exposes a `cx.message.create` on
-                                    // the document Flow's discussion
-                                    // track with anchor_range support,
-                                    // submit this comment as a real
-                                    // event via with_authed_api so
-                                    // peers see it through sync.
+                                    let morph_id = current_morph_id();
+                                    let realm_id = if document_realm_id().trim().is_empty() {
+                                        fallback_space_id.clone()
+                                    } else {
+                                        document_realm_id()
+                                    };
+                                    if !morph_id.starts_with("cx:morph:") || realm_id.trim().is_empty() {
+                                        comment_status.set(format!("comment {id} added locally"));
+                                        return;
+                                    }
+                                    let op = cx_ops::document_comment_create(
+                                        &realm_id,
+                                        &author_did,
+                                        &morph_id,
+                                        start,
+                                        end,
+                                        &body_for_wire,
+                                        None,
+                                    )
+                                    .build("yougen");
+                                    let base = base.clone();
+                                    let token_val = token();
+                                    spawn(async move {
+                                        match with_authed_api(&base, token_val, |api| async move {
+                                            api.submit_event_envelope(&op).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(resp) => comment_status.set(format!(
+                                                "comment {} synced",
+                                                short_protocol_id(&resp.event_id)
+                                            )),
+                                            Err(err) => comment_status.set(format!(
+                                                "comment {id} local; sync: {}",
+                                                err.display()
+                                            )),
+                                        }
+                                    });
                                 }
                             },
                             "Submit"
@@ -897,6 +1226,7 @@ pub fn DocumentPanel(
                         let author_did_label = short_protocol_id(&author_did);
                         let body = thread.body.clone();
                         let resolved = thread.resolved;
+                        let orphaned = thread.orphaned;
                         let replies = thread.replies.clone();
                         rsx! {
                             div { class: "event",
@@ -909,6 +1239,9 @@ pub fn DocumentPanel(
                                     span { class: "badge", "[{range_start}..{range_end})" }
                                     if resolved {
                                         span { class: "badge green", "resolved" }
+                                    }
+                                    if orphaned {
+                                        span { class: "badge warning", "data-testid": "document-comment-orphan-badge", "orphaned" }
                                     }
                                 }
                                 div { class: "muted", "{body}" }
@@ -1115,9 +1448,11 @@ pub fn DocumentPanel(
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockKind, DocumentBlock, DocumentDraft, SyncState, default_draft, document_body_payload,
-        flow_id_storage_key, mint_flow_id, storage_key,
+        BlockKind, DocumentBlock, DocumentDraft, SyncState, blocks_from_document_body,
+        comments_from_projection, default_draft, document_body_payload, mint_morph_id,
+        morph_id_storage_key, storage_key, versions_from_projection,
     };
+    use serde_json::json;
 
     #[test]
     fn storage_key_includes_space_id() {
@@ -1127,11 +1462,11 @@ mod tests {
     }
 
     #[test]
-    fn flow_id_storage_key_is_distinct_from_draft_key() {
+    fn morph_id_storage_key_is_distinct_from_draft_key() {
         let draft_key = storage_key("cx:space:s1");
-        let flow_key = flow_id_storage_key("cx:space:s1");
-        assert_ne!(draft_key, flow_key);
-        assert!(flow_key.starts_with("document.flow_id."));
+        let morph_key = morph_id_storage_key("cx:space:s1");
+        assert_ne!(draft_key, morph_key);
+        assert!(morph_key.starts_with("document.morph_id."));
     }
 
     #[test]
@@ -1169,12 +1504,45 @@ mod tests {
     }
 
     #[test]
-    fn mint_flow_id_emits_typed_cx_flow_prefix() {
-        let id = mint_flow_id();
-        assert!(id.starts_with("cx:flow:"));
-        assert!(id.len() > "cx:flow:".len());
-        let again = mint_flow_id();
+    fn mint_morph_id_emits_typed_cx_morph_prefix() {
+        let id = mint_morph_id();
+        assert!(id.starts_with("cx:morph:"));
+        assert!(id.len() > "cx:morph:".len());
+        let again = mint_morph_id();
         assert_ne!(id, again, "minted ids must be unique");
+    }
+
+    #[test]
+    fn projection_body_versions_and_comments_parse() {
+        let projection = json!({
+            "document": {
+                "body": {
+                    "blocks": [
+                        {"id": "h", "kind": "Heading", "content": "Title"},
+                        {"id": "p", "kind": "Paragraph", "content": "Body"}
+                    ]
+                }
+            },
+            "versions": [{
+                "version_id": "v1",
+                "created_at": "2026-05-25T00:00:00Z",
+                "author": "did:web:alice.example",
+                "body": {"blocks": [{"id": "p", "kind": "Paragraph", "content": "Body"}]}
+            }],
+            "comments": [{
+                "comment_id": "c1",
+                "author": "did:web:bob.example",
+                "body": "needs detail",
+                "anchor_range": {"start": 4, "end": 9},
+                "state": "orphaned"
+            }]
+        });
+        let blocks = blocks_from_document_body(&projection["document"]["body"]);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(versions_from_projection(&projection)[0].block_count, 1);
+        let comments = comments_from_projection(&projection);
+        assert_eq!(comments[0].range_start, 4);
+        assert!(comments[0].orphaned);
     }
 
     #[test]
@@ -1267,6 +1635,7 @@ mod tests {
             body: "please clarify".to_owned(),
             replies: Vec::new(),
             resolved: false,
+            orphaned: false,
         };
         thread.replies.push(DocumentCommentReply {
             author_did: "did:web:bob.example".to_owned(),

@@ -2108,6 +2108,11 @@ impl ContrixApi {
         self.get_json(&path).await
     }
 
+    pub async fn document_projection(&self, morph_id: &str) -> anyhow::Result<Value> {
+        self.get_json(&format!("api/v1/projection/documents/{morph_id}"))
+            .await
+    }
+
     // ── Device & Crypto ─────────────────────────────────────────────
 
     /// User-driven device revoke. Hits soland's deployment-local
