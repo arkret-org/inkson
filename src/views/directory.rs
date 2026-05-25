@@ -625,15 +625,23 @@ pub fn DirectoryPanel(
             if active_tab() == DirectoryTab::Organizations {
                 for org in org_results() {
                     {
-                        let org_id = value_str(&org, "id", "-");
-                        let org_did = value_str(&org, "did", org_id.as_str());
-                        let org_name = value_str(&org, "name", "unknown");
+                        let org_id = value_str_any(&org, &["organization_id", "id"], "-");
+                        let org_did = value_str_any(&org, &["organization_did", "did"], org_id.as_str());
+                        let org_name = value_str_any(&org, &["display_name", "name"], "unknown");
                         let org_description = value_str(&org, "description", "");
                         let org_handle = value_str(&org, "handle", "");
                         let discoverability = value_str(&org, "discoverability", "unknown");
                         let profile_visibility = value_str(&org, "profile_visibility", "unknown");
                         let directory_services = value_vec(&org, "directory_services");
                         let proof_count = value_vec(&org, "proofs").len();
+                        let verified = value_bool_any(&org, &["verified_badge", "verified"]);
+                        let member_count = value_count_any(&org, &["member_count", "actor_count", "members"]);
+                        let space_count = value_count_any(&org, &["space_count", "spaces"]);
+                        let inheritance_hint = if space_count > 0 {
+                            format!("Policy inheritance: active across {space_count} realm(s)")
+                        } else {
+                            "Policy inheritance: no linked realms".to_owned()
+                        };
                         let org_did_label = short_protocol_id(&org_did);
                         let actor_lookup_seed = if !org_handle.is_empty() {
                             org_handle.clone()
@@ -641,17 +649,42 @@ pub fn DirectoryPanel(
                             org_name.clone()
                         };
                         rsx! {
-                            div { class: "event", "data-testid": "org-result",
+                            div {
+                                class: "event",
+                                "data-testid": "org-result",
+                                "data-organization-id": "{org_id}",
+                                "data-organization-did": "{org_did}",
                                 div { class: "event-head",
                                     span { "organization" }
                                     span { title: "{org_did}", "{org_did_label}" }
                                 }
-                                div { class: "space-title", "{org_name}" }
+                                div { class: "space-title",
+                                    "{org_name}"
+                                    if verified {
+                                        span {
+                                            class: "badge badge-success",
+                                            style: "margin-left: 8px;",
+                                            title: "Organization verification badge",
+                                            "data-testid": "organization-verified-badge",
+                                            "verified"
+                                        }
+                                    }
+                                }
                                 if !org_handle.is_empty() {
                                     div { class: "muted", "Handle: {org_handle}" }
                                 }
                                 div { class: "muted", "{org_description}" }
                                 div { class: "actions",
+                                    span {
+                                        class: "badge badge-info",
+                                        "data-testid": "organization-member-count",
+                                        "{member_count} member(s)"
+                                    }
+                                    span {
+                                        class: if space_count > 0 { "badge badge-success" } else { "badge badge-info" },
+                                        "data-testid": "organization-policy-hint",
+                                        "{inheritance_hint}"
+                                    }
                                     span { class: "badge badge-info", "Discoverability: {discoverability}" }
                                     span { class: "badge badge-info", "Profile: {profile_visibility}" }
                                     span { class: "badge badge-success", "{directory_services.len()} directory service(s)" }
@@ -937,6 +970,36 @@ fn value_str(value: &Value, key: &str, fallback: impl Into<String>) -> String {
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| fallback.into())
+}
+
+fn value_str_any(value: &Value, keys: &[&str], fallback: impl Into<String>) -> String {
+    keys.iter()
+        .find_map(|key| {
+            value
+                .get(*key)
+                .and_then(|value| value.as_str())
+                .filter(|text| !text.trim().is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| fallback.into())
+}
+
+fn value_bool_any(value: &Value, keys: &[&str]) -> bool {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|value| value.as_bool()))
+        .unwrap_or(false)
+}
+
+fn value_count_any(value: &Value, keys: &[&str]) -> usize {
+    keys.iter()
+        .find_map(|key| {
+            let current = value.get(*key)?;
+            if let Some(count) = current.as_u64() {
+                return Some(count as usize);
+            }
+            current.as_array().map(Vec::len)
+        })
+        .unwrap_or(0)
 }
 
 fn json_text(value: &Value, key: &str) -> String {
