@@ -1068,7 +1068,7 @@ pub fn DocumentPanel(
                     "data-testid": "document-cursor-self",
                     "data-position-line": "{self_cursor_line()}",
                     "data-position-col": "{self_cursor_col()}",
-                    style: "display: inline-block; width: 1px; background: var(--accent, #4c8bf5); margin: 0 2px;",
+                    style: "display: inline-block; width: 1px; height: 1em; background: var(--accent, #4c8bf5); margin: 0 2px;",
                     ""
                 }
                 for cursor in remote_cursors().iter() {
@@ -1079,7 +1079,7 @@ pub fn DocumentPanel(
                         "data-position-line": "{cursor.line}",
                         "data-position-col": "{cursor.col}",
                         title: "{cursor.display_name}",
-                        style: "display: inline-block; width: 1px; background: var(--warning, #f5a623); margin: 0 2px;",
+                        style: "display: inline-block; width: 1px; height: 1em; background: var(--warning, #f5a623); margin: 0 2px;",
                         ""
                     }
                 }
