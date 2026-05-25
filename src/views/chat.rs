@@ -38,6 +38,28 @@ struct ChannelEntity {
     topic: Option<String>,
     unread: usize,
     is_default: bool,
+    /// CXP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Flow was
+    /// created under, when the Flow projection carries a
+    /// `scope_circle_id`. The composer banner and the per-message
+    /// accent rail read from this field; `None` means the Flow
+    /// inherits the parent Realm scope and no banner / rail is
+    /// rendered.
+    scope_circle: Option<FlowScopeCircle>,
+}
+
+/// Minimal Circle-scope projection embedded on each [`ChannelEntity`].
+/// Mirrors the subset of [`crate::circle::CircleSummary`] needed by
+/// the chat composer banner and timeline accent rail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FlowScopeCircle {
+    /// `cx:circle:…`
+    circle_id: String,
+    /// Circle title used in the banner heading + accent-rail tooltip.
+    title: String,
+    /// Cached member count for the banner subline. `0` means the
+    /// projection has not been hydrated yet — render "members" with
+    /// no count rather than `0 members`.
+    member_count: u32,
 }
 
 /// T7.4: end-to-end encryption decryption state for a message.
@@ -1891,6 +1913,7 @@ fn channel_from_flow_projection(
         }
     });
     let has_synthesis = flow_create_has_synthesis_track(&[flow]);
+    let scope_circle = flow_scope_circle_from_projection(flow);
 
     Some(ChannelEntity {
         flow_id,
@@ -1904,7 +1927,64 @@ fn channel_from_flow_projection(
         topic,
         unread: 0,
         is_default,
+        scope_circle,
     })
+}
+
+/// Extract the optional Circle-scope projection from a Flow
+/// projection JSON. Looks under both the top-level
+/// `scope_circle_id` and the canonical `scope.circle_id` shape so
+/// the helper tolerates both projection layouts.
+fn flow_scope_circle_from_projection(flow: &Value) -> Option<FlowScopeCircle> {
+    let circle_id = first_string_in_candidate_paths(
+        &[flow],
+        &[
+            &["scope_circle_id"],
+            &["scope", "circle_id"],
+            &["scope", "scope_circle_id"],
+            &["fields", "scope_circle_id"],
+        ],
+    )
+    .map(str::trim)
+    .filter(|value| value.starts_with("cx:circle:"))
+    .map(ToOwned::to_owned)?;
+
+    let title = first_string_in_candidate_paths(
+        &[flow],
+        &[
+            &["scope_circle_title"],
+            &["scope", "circle_title"],
+            &["scope", "title"],
+        ],
+    )
+    .filter(|value| !value.trim().is_empty())
+    .map(ToOwned::to_owned)
+    .unwrap_or_else(|| circle_id.clone());
+
+    let member_count = u32_at_path(flow, &["scope_circle_member_count"])
+        .or_else(|| u32_at_path(flow, &["scope", "member_count"]))
+        .unwrap_or(0);
+
+    Some(FlowScopeCircle {
+        circle_id,
+        title,
+        member_count,
+    })
+}
+
+fn u32_at_path(value: &Value, path: &[&str]) -> Option<u32> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(segment)?;
+    }
+    current
+        .as_u64()
+        .and_then(|raw| u32::try_from(raw).ok())
+        .or_else(|| {
+            current
+                .as_str()
+                .and_then(|raw| raw.trim().parse::<u32>().ok())
+        })
 }
 
 fn default_discussion_channel(space_id: &str, space_body: Option<&Value>) -> ChannelEntity {
@@ -1924,6 +2004,7 @@ fn default_discussion_channel(space_id: &str, space_body: Option<&Value>) -> Cha
         topic: Some("Default Flow discussion track".to_owned()),
         unread: 0,
         is_default: true,
+        scope_circle: None,
     }
 }
 
@@ -1941,6 +2022,7 @@ fn discussion_channel_for_flow(space_id: &str, flow_id: &str) -> ChannelEntity {
         topic: None,
         unread: 0,
         is_default: trimmed_flow_id == default_discussion_flow_id(space_id),
+        scope_circle: None,
     }
 }
 
@@ -2021,6 +2103,9 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
     )
     .map(ToOwned::to_owned);
     let has_synthesis = flow_create_has_synthesis_track(&candidates);
+    let scope_circle = candidates
+        .iter()
+        .find_map(|candidate| flow_scope_circle_from_projection(candidate));
 
     Some(ChannelEntity {
         flow_id: flow_id.to_owned(),
@@ -2034,6 +2119,7 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
         topic,
         unread: 0,
         is_default: flow_id == default_discussion_flow_id(space_id),
+        scope_circle,
     })
 }
 
@@ -2950,6 +3036,13 @@ pub fn ChatPanel(
                                                                 topic: channel_topic.clone(),
                                                                 unread: 0,
                                                                 is_default: false,
+                                                                // P3B.2.3 — the new-Flow form
+                                                                // currently creates Realm-scoped
+                                                                // Flows only; Circle scope
+                                                                // selection arrives once the
+                                                                // CircleScopePicker is mounted
+                                                                // on this form.
+                                                                scope_circle: None,
                                                             });
                                                             selected_channel.set(flow_id.clone());
                                                             frontier_state.set(submitted.event_id.clone());
@@ -4513,6 +4606,26 @@ pub fn ChatPanel(
 
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
+                // CXP-0007 P3B.2.3 — Circle composer banner. Rendered
+                // at the top of the composer surface when the active
+                // Flow carries a `scope_circle_id`. The component is
+                // pure: `CircleScope::Realm` renders nothing, so the
+                // surface stays quiet during normal Realm-scoped
+                // writes.
+                {
+                    let scope = selected_channel_info
+                        .as_ref()
+                        .and_then(|channel| channel.scope_circle.clone())
+                        .map(|circle| crate::circle::CircleScope::Circle {
+                            circle_id: circle.circle_id,
+                            title: circle.title,
+                            member_count: circle.member_count,
+                        })
+                        .unwrap_or(crate::circle::CircleScope::Realm);
+                    rsx! {
+                        crate::components::CircleComposerBanner { scope }
+                    }
+                }
                 if let Some(reply_id) = reply_to_message() {
                     div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
                         if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(

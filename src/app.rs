@@ -2579,6 +2579,27 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow-wrap: anywhere;
 }
 
+/* CXP-0007 P3B.2.3 — composer banner colour tokens. */
+.circle-composer-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #1f6b4f) 35%, var(--border, #d8e0e8));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 10%, var(--surface, #ffffff));
+}
+
+.circle-composer-banner .banner-icon {
+  font-size: 18px;
+}
+
+.circle-composer-banner .banner-body {
+  display: grid;
+  gap: 2px;
+}
+
 .mention-token {
   display: inline-flex;
   align-items: center;
