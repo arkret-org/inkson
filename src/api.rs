@@ -1733,6 +1733,25 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn upload_encrypted_mls_attachment_asset(
+        &self,
+        space_id: &str,
+        asset: &crate::blob::EncryptedClientAsset,
+    ) -> anyhow::Result<BlobUploadResBody> {
+        let envelope = serde_json::to_string(&asset.envelope)?;
+        let request = self
+            .http
+            .post(self.endpoint("api/v1/blob/upload")?)
+            .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
+            .header("x-contrix-space-id", space_id)
+            .header("x-contrix-blob-encrypted", "true")
+            .header("x-contrix-attachment-envelope", envelope)
+            .header("x-contrix-sha256", &asset.ciphertext_digest)
+            .body(asset.ciphertext.clone());
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
+    }
+
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let request = self.http.get(self.endpoint(&format!(
             "api/v1/blob/get?blob_ref={blob_ref}&purpose=message_attachment"

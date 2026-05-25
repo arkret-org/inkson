@@ -14,10 +14,37 @@ pub use contrix_sdk::{
     Thumbnail, safe_content_disposition, safe_content_type,
 };
 
+use anyhow::anyhow;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chacha20poly1305::{
+    XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit, Payload},
+};
+use getrandom::fill;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::operation::OperationBuilder;
+
+pub const MLS_ATTACHMENT_AEAD_ALGORITHM: &str = "mls-rfc9420+xchacha20poly1305";
+pub const MLS_ATTACHMENT_NONCE_LEN: usize = 24;
+pub const MLS_ATTACHMENT_KEY_LEN: usize = 32;
+pub const CIPHERTEXT_MEDIA_TYPE: &str = "application/octet-stream";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncryptedClientAsset {
+    pub ciphertext: Vec<u8>,
+    pub nonce: [u8; MLS_ATTACHMENT_NONCE_LEN],
+    pub ciphertext_digest: String,
+    pub aad: String,
+    pub envelope: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncryptedAttachmentBundle {
+    pub attachment: EncryptedClientAsset,
+    pub thumbnail: Option<EncryptedClientAsset>,
+}
 
 /// Content-address a blob payload as `cx:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
@@ -87,6 +114,111 @@ pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     }))
 }
 
+pub fn encrypt_mls_attachment_bundle(
+    attachment_plaintext: &[u8],
+    thumbnail_plaintext: Option<&[u8]>,
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    realm_id: &str,
+    epoch: u64,
+    key_ref: Value,
+) -> anyhow::Result<EncryptedAttachmentBundle> {
+    let attachment = encrypt_mls_asset(
+        attachment_plaintext,
+        "attachment",
+        mls_exported_secret,
+        realm_id,
+        epoch,
+        key_ref.clone(),
+    )?;
+    let thumbnail = thumbnail_plaintext
+        .map(|bytes| {
+            encrypt_mls_asset(
+                bytes,
+                "thumbnail",
+                mls_exported_secret,
+                realm_id,
+                epoch,
+                key_ref.clone(),
+            )
+        })
+        .transpose()?;
+    Ok(EncryptedAttachmentBundle {
+        attachment,
+        thumbnail,
+    })
+}
+
+pub fn encrypt_mls_asset(
+    plaintext: &[u8],
+    asset_kind: &str,
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    realm_id: &str,
+    epoch: u64,
+    key_ref: Value,
+) -> anyhow::Result<EncryptedClientAsset> {
+    let mut nonce = [0u8; MLS_ATTACHMENT_NONCE_LEN];
+    fill(&mut nonce).map_err(|err| anyhow!("attachment nonce rng: {err}"))?;
+    encrypt_mls_asset_with_nonce(
+        plaintext,
+        asset_kind,
+        mls_exported_secret,
+        realm_id,
+        epoch,
+        key_ref,
+        nonce,
+    )
+}
+
+fn encrypt_mls_asset_with_nonce(
+    plaintext: &[u8],
+    asset_kind: &str,
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    realm_id: &str,
+    epoch: u64,
+    key_ref: Value,
+    nonce: [u8; MLS_ATTACHMENT_NONCE_LEN],
+) -> anyhow::Result<EncryptedClientAsset> {
+    if realm_id.trim().is_empty() {
+        anyhow::bail!("realm_id is required for encrypted attachment AAD");
+    }
+    if !key_ref.is_object() && !key_ref.is_string() {
+        anyhow::bail!("key_ref must be an MLS key reference object or string");
+    }
+    let asset_kind = match asset_kind {
+        "attachment" | "thumbnail" => asset_kind,
+        _ => anyhow::bail!("asset_kind must be attachment or thumbnail"),
+    };
+    let aad = format!("contrix:media:v1:{realm_id}:{epoch}:{asset_kind}");
+    let cipher = XChaCha20Poly1305::new(mls_exported_secret.into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: aad.as_bytes(),
+            },
+        )
+        .map_err(|err| anyhow!("xchacha20poly1305 attachment encrypt: {err}"))?;
+    let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&ciphertext));
+    let envelope = json!({
+        "version": "contrix.encrypted_attachment.v1",
+        "algorithm": MLS_ATTACHMENT_AEAD_ALGORITHM,
+        "nonce": URL_SAFE_NO_PAD.encode(nonce),
+        "key_ref": key_ref,
+        "ciphertext_digest": ciphertext_digest,
+        "media_type": CIPHERTEXT_MEDIA_TYPE,
+        "realm_id": realm_id,
+        "epoch": epoch,
+    });
+    Ok(EncryptedClientAsset {
+        ciphertext,
+        nonce,
+        ciphertext_digest,
+        aad,
+        envelope,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +246,73 @@ mod tests {
         .build("node");
         assert_eq!(op.kind, "cx.blob.revoke");
         assert_eq!(op.payload["reason"], "uploaded in error");
+    }
+
+    #[test]
+    fn encrypt_mls_attachment_asset_uses_ciphertext_only_metadata() {
+        let key = [7u8; MLS_ATTACHMENT_KEY_LEN];
+        let nonce = [3u8; MLS_ATTACHMENT_NONCE_LEN];
+        let asset = encrypt_mls_asset_with_nonce(
+            b"plain cat png bytes",
+            "attachment",
+            &key,
+            "cx:realm:encrypted",
+            42,
+            json!({"group_id": "cx:mls:group", "epoch": 42}),
+            nonce,
+        )
+        .unwrap();
+
+        assert_ne!(asset.ciphertext, b"plain cat png bytes");
+        assert_eq!(
+            asset.ciphertext_digest,
+            format!("sha256:{:x}", Sha256::digest(&asset.ciphertext))
+        );
+        assert_eq!(asset.envelope["algorithm"], MLS_ATTACHMENT_AEAD_ALGORITHM);
+        assert_eq!(asset.envelope["media_type"], CIPHERTEXT_MEDIA_TYPE);
+        assert_eq!(asset.envelope["ciphertext_digest"], asset.ciphertext_digest);
+        let envelope = asset.envelope.to_string();
+        assert!(!envelope.contains("cat.png"));
+        assert!(!envelope.contains("image/png"));
+
+        let cipher = XChaCha20Poly1305::new((&key).into());
+        let decrypted = cipher
+            .decrypt(
+                XNonce::from_slice(&asset.nonce),
+                Payload {
+                    msg: &asset.ciphertext,
+                    aad: asset.aad.as_bytes(),
+                },
+            )
+            .unwrap();
+        assert_eq!(decrypted, b"plain cat png bytes");
+    }
+
+    #[test]
+    fn encrypt_mls_attachment_bundle_encrypts_thumbnail_as_separate_asset() {
+        let key = [9u8; MLS_ATTACHMENT_KEY_LEN];
+        let bundle = encrypt_mls_attachment_bundle(
+            b"full-resolution plaintext",
+            Some(b"thumbnail plaintext"),
+            &key,
+            "cx:realm:encrypted",
+            7,
+            json!({"group_id": "cx:mls:group", "epoch": 7}),
+        )
+        .unwrap();
+        let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");
+
+        assert_ne!(bundle.attachment.ciphertext, b"full-resolution plaintext");
+        assert_ne!(thumbnail.ciphertext, b"thumbnail plaintext");
+        assert_ne!(bundle.attachment.nonce, thumbnail.nonce);
+        assert_ne!(
+            bundle.attachment.ciphertext_digest,
+            thumbnail.ciphertext_digest
+        );
+        assert_eq!(thumbnail.envelope["media_type"], CIPHERTEXT_MEDIA_TYPE);
+        assert_eq!(
+            thumbnail.ciphertext_digest,
+            format!("sha256:{:x}", Sha256::digest(&thumbnail.ciphertext))
+        );
     }
 }
