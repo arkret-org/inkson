@@ -1355,7 +1355,7 @@ pub fn SpaceAdminPanel(
                     {
                         let member_label = short_protocol_id(&member);
                         rsx! {
-                            div { class: "event", "data-testid": "member-row",
+                            div { class: "event", "data-testid": "member-row", "data-member-did": "{member}",
                         div { class: "event-head",
                             // A4b — member avatar slot. Avatars are
                             // public via `cx.account.update_profile`
