@@ -752,9 +752,11 @@ pub fn SpaceAdminPanel(
                             onclick: {
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
+                                let actor_account_did = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let space = space.clone();
+                                    let actor_did = actor_account_did.trim().to_owned();
                                     let api_token = token();
                                     let cell = repair_target_cell().trim().to_owned();
                                     let head_a = repair_head_a().trim().to_owned();
@@ -781,18 +783,10 @@ pub fn SpaceAdminPanel(
                                             }
                                         };
                                     let _hlc = Hlc::now("yougen").to_string();
-                                    let actor_did = match state_store
-                                        .write()
-                                        .ensure_local_identity()
-                                    {
-                                        Ok(id) => id.device_did.as_str().to_owned(),
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "identity unavailable: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
+                                    if actor_did.is_empty() {
+                                        status_msg.set("account actor unavailable".to_owned());
+                                        return;
+                                    }
                                     let heads = vec![head_a, head_b];
                                     let envelope = crate::operation::cx_ops::conflict_repair(
                                         &space,

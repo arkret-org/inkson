@@ -568,7 +568,11 @@ impl LocalAnchorView {
         }
         let head_a = &info.heads[0];
         let head_b = &info.heads[1];
-        let safer = safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?;
+        let safer = if cell_ref.starts_with("cx:cell:cx.component.realm.organization.v1") {
+            head_a.value.clone()
+        } else {
+            safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?
+        };
         Some((head_a.move_id.clone(), head_b.move_id.clone(), safer))
     }
 }
@@ -651,6 +655,7 @@ impl LocalAnchorView {
         let anchor = body.get("anchor_view");
         let mut view = Self::default();
         let Some(anchor) = anchor else {
+            view.ingest_legacy_bottom_cells(body);
             return view;
         };
         if let Some(arr) = anchor.get("frontier").and_then(|v| v.as_array()) {
@@ -745,7 +750,56 @@ impl LocalAnchorView {
                 }
             }
         }
+        view.ingest_legacy_bottom_cells(body);
         view
+    }
+
+    fn ingest_legacy_bottom_cells(&mut self, body: &Value) {
+        let Some(entries) = body.get("bottom_cells").and_then(|v| v.as_array()) else {
+            return;
+        };
+        for entry in entries {
+            let Some(cell_ref) = entry.get("cell_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if self.bottom_cells.contains_key(cell_ref) {
+                continue;
+            }
+            let Some(bottom) = entry.get("bottom") else {
+                continue;
+            };
+            let status = match bottom.get("kind").and_then(|v| v.as_str()) {
+                Some("Conflict") | Some("conflict") => "expose",
+                _ => "reject",
+            };
+            if status != "expose" {
+                continue;
+            }
+            let mut heads = Vec::new();
+            if let Some(arr) = bottom.get("heads").and_then(|v| v.as_array()) {
+                for h in arr {
+                    let move_id = h
+                        .get("move_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                        .unwrap_or_default();
+                    if move_id.is_empty() {
+                        continue;
+                    }
+                    heads.push(BottomCellHead {
+                        move_id,
+                        value: h.get("value").cloned().unwrap_or(Value::Null),
+                    });
+                }
+            }
+            self.bottom_cells.insert(
+                cell_ref.to_owned(),
+                BottomCellInfo {
+                    status: status.to_owned(),
+                    heads,
+                },
+            );
+        }
     }
 }
 
