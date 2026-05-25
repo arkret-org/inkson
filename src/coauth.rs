@@ -805,6 +805,20 @@ impl CoauthApi {
 pub async fn resolve_principal_auth_server_url(
     principal_server_url: &str,
 ) -> anyhow::Result<String> {
+    Ok(resolve_principal_auth_server(principal_server_url)
+        .await?
+        .auth_server_url)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PrincipalAuthServerResolution {
+    pub auth_server_url: String,
+    pub service_did: String,
+}
+
+pub(crate) async fn resolve_principal_auth_server(
+    principal_server_url: &str,
+) -> anyhow::Result<PrincipalAuthServerResolution> {
     let principal = ContrixApi::new(principal_server_url)?;
     let description = principal.describe().await?;
     let auth_server_url = description
@@ -815,7 +829,12 @@ pub async fn resolve_principal_auth_server_url(
         .ok_or_else(|| {
             anyhow::anyhow!("principal server did not publish auth_metadata.auth_server_url")
         })?;
-    Ok(validate_server_url(auth_server_url)?.to_string())
+    Ok(validate_server_url(auth_server_url)?.to_string()).map(|auth_server_url| {
+        PrincipalAuthServerResolution {
+            auth_server_url,
+            service_did: description.service_did.to_string(),
+        }
+    })
 }
 
 pub fn active_oidc_redirect_uri() -> String {
@@ -1559,7 +1578,7 @@ fn redirect_uri_matches_client(registered_redirect_uri: &str, actual_redirect_ur
         && registered.port().is_none()
 }
 
-fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
+pub(crate) fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
     Ok(validate_server_url(principal_server_url)?
         .join("api")?
         .to_string()
@@ -1568,7 +1587,7 @@ fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn current_oidc_redirect_uri() -> String {
+pub(crate) fn current_oidc_redirect_uri() -> String {
     web_sys::window()
         .and_then(|window| window.location().origin().ok())
         .map(|origin| format!("{origin}/auth/callback"))
@@ -1576,7 +1595,7 @@ fn current_oidc_redirect_uri() -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn current_oidc_redirect_uri() -> String {
+pub(crate) fn current_oidc_redirect_uri() -> String {
     YOUGEN_OIDC_REDIRECT_URI_NATIVE.to_owned()
 }
 

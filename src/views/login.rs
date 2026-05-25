@@ -3,13 +3,12 @@ use dioxus::prelude::*;
 use crate::{
     api::ContrixApi,
     coauth::{
-        CoauthApi, build_oidc_code_exchange_plan, build_oidc_scaffold_bundle,
-        build_session_grant_introspection_proof_bundle, capture_current_browser_callback_url,
-        clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
-        extract_error_description_from_callback, extract_error_from_callback,
-        extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
-        resolve_principal_auth_server_url, restore_oidc_scaffold,
-        session_grant_signing_key_from_pem,
+        CoauthApi, build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
+        capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
+        extract_authorization_code_from_callback, extract_error_description_from_callback,
+        extract_error_from_callback, extract_state_from_callback,
+        oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
+        resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
@@ -316,21 +315,31 @@ pub(crate) async fn start_oidc_flow(
     principal_server_url: &str,
     device_id: &str,
 ) -> Result<(), String> {
-    let auth_server_url = resolve_principal_auth_server_url(principal_server_url)
+    let principal_auth = resolve_principal_auth_server(principal_server_url)
         .await
         .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
-    let coauth = CoauthApi::new(&auth_server_url)
+    let coauth = CoauthApi::new(&principal_auth.auth_server_url)
         .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-    let topology = coauth
-        .inspect_topology()
+    let bridge = coauth
+        .auth_bridge_describe()
         .await
         .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let bundle = build_oidc_scaffold_bundle(&topology, principal_server_url, "", device_id)
+    let session = coauth
+        .start_oidc_browser_bridge(
+            &bridge.oauth.browser_bridge_session_path,
+            &crate::coauth::current_oidc_redirect_uri(),
+            "",
+            device_id,
+            Some(principal_auth.service_did.as_str()),
+            None,
+        )
+        .await
         .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
+    let bundle = oidc_scaffold_bundle_from_bridge_session(&session);
 
     persist_oidc_scaffold(
         &bundle,
-        &auth_server_url,
+        &principal_auth.auth_server_url,
         principal_server_url,
         "",
         device_id,
