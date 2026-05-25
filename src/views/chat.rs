@@ -1462,6 +1462,12 @@ fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
 
 fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
+    if poll_content_from_candidates(&candidates)
+        .and_then(|content| content.get("kind").and_then(Value::as_str))
+        .is_some_and(|kind| matches!(kind, "cx.content.poll.response" | "cx.content.poll.close"))
+    {
+        return None;
+    }
     let body = text_body_from_message(&candidates)?;
     let explicit_message_kind = candidates
         .iter()
@@ -1543,6 +1549,62 @@ fn chat_messages_from_events(space_id: &str, events: &[Value]) -> Vec<ChatMessag
         .collect()
 }
 
+fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Value> {
+    candidates
+        .iter()
+        .find(|candidate| {
+            candidate.get("kind").and_then(Value::as_str).is_some_and(|kind| {
+                matches!(
+                    kind,
+                    "cx.content.poll"
+                        | "cx.content.poll.response"
+                        | "cx.content.poll.close"
+                )
+            })
+        })
+        .copied()
+}
+
+fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::polls::PollCard> {
+    let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
+    let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
+    for event in events {
+        let candidates = message_candidates(event);
+        let Some(content) = poll_content_from_candidates(&candidates) else {
+            continue;
+        };
+        if let Some((poll_id, choices)) =
+            crate::messaging::polls::poll_response_from_content(content)
+        {
+            let actor = first_string_in_candidates(
+                &candidates,
+                &["sender", "sender_id", "actor_id", "actor"],
+            )
+            .unwrap_or("did:web:unknown");
+            if let Some(index) = by_poll_id.get(&poll_id).copied() {
+                cards[index].vote_choices(actor, &choices);
+            }
+            continue;
+        }
+        if let Some(poll_id) = crate::messaging::polls::poll_close_id_from_content(content) {
+            if let Some(index) = by_poll_id.get(&poll_id).copied() {
+                cards[index].close();
+            }
+            continue;
+        }
+        let Some(message) = chat_message_from_event("", event) else {
+            continue;
+        };
+        if let Some(card) =
+            crate::messaging::polls::PollCard::from_content(message.id.clone(), content)
+        {
+            by_poll_id.insert(card.poll_id.clone(), cards.len());
+            cards.push(card);
+        }
+    }
+    cards
+}
+
 fn chat_messages_from_sync_spaces(
     spaces: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<ChatMessage> {
@@ -1560,6 +1622,23 @@ fn chat_messages_from_sync_spaces(
     messages
 }
 
+fn poll_cards_from_sync_spaces(
+    spaces: &std::collections::BTreeMap<String, Value>,
+) -> Vec<crate::messaging::polls::PollCard> {
+    let mut cards = Vec::new();
+    for body in spaces.values() {
+        let Some(timeline_events) = body
+            .get("timeline")
+            .and_then(|timeline| timeline.get("events"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        cards.extend(poll_cards_from_events(timeline_events));
+    }
+    cards
+}
+
 fn chat_messages_from_local_state(state: &ClientLocalState) -> Vec<ChatMessage> {
     state
         .raw_operations
@@ -1571,6 +1650,15 @@ fn chat_messages_from_local_state(state: &ClientLocalState) -> Vec<ChatMessage> 
             )
         })
         .collect()
+}
+
+fn poll_cards_from_local_state(state: &ClientLocalState) -> Vec<crate::messaging::polls::PollCard> {
+    let events = state
+        .raw_operations
+        .iter()
+        .map(|record| record.payload.clone())
+        .collect::<Vec<_>>();
+    poll_cards_from_events(&events)
 }
 
 fn bool_at_path(value: &Value, path: &[&str]) -> Option<bool> {
@@ -1914,6 +2002,22 @@ fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>
     }
 }
 
+fn merge_poll_cards(
+    target: &mut Vec<crate::messaging::polls::PollCard>,
+    incoming: Vec<crate::messaging::polls::PollCard>,
+) {
+    for card in incoming {
+        if let Some(existing) = target
+            .iter_mut()
+            .find(|candidate| candidate.poll_id == card.poll_id)
+        {
+            *existing = card;
+        } else {
+            target.push(card);
+        }
+    }
+}
+
 async fn submit_chat_operation_with_plaintext_retry(
     api: &ContrixApi,
     space_id: &str,
@@ -2218,6 +2322,7 @@ pub fn ChatPanel(
                 return;
             };
             let mut loaded_messages = chat_messages_from_local_state(&state_store.read().load());
+            let mut loaded_poll_cards = poll_cards_from_local_state(&state_store.read().load());
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
                 && let Some(display_name) = clean_participant_display_name(
@@ -2236,6 +2341,7 @@ pub fn ChatPanel(
                     }
                 }
                 loaded_messages.extend(chat_messages_from_sync_spaces(&sync.spaces));
+                loaded_poll_cards.extend(poll_cards_from_sync_spaces(&sync.spaces));
                 let default_space_ids = if selected_scope_for_load.is_empty() {
                     vec![selected_space_for_load.clone()]
                 } else {
@@ -2263,6 +2369,7 @@ pub fn ChatPanel(
                         channels_from_events(&space_id, &backfill.events),
                     );
                     loaded_messages.extend(chat_messages_from_events(&space_id, &backfill.events));
+                    loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
                 }
             }
 
@@ -2277,6 +2384,9 @@ pub fn ChatPanel(
             }
             if !loaded_messages.is_empty() {
                 merge_chat_messages(&mut messages.write(), loaded_messages);
+            }
+            if !loaded_poll_cards.is_empty() {
+                merge_poll_cards(&mut poll_cards.write(), loaded_poll_cards);
             }
         });
     }
@@ -3453,14 +3563,10 @@ pub fn ChatPanel(
                                 // composer in the attachment menu
                                 // pushes a new PollCard here on send.
                                 {
-                                    let card_lookup = if crate::messaging::polls::polls_enabled() {
-                                        poll_cards()
-                                            .iter()
-                                            .find(|card| card.message_id == msg.id)
-                                            .cloned()
-                                    } else {
-                                        None
-                                    };
+                                    let card_lookup = poll_cards()
+                                        .iter()
+                                        .find(|card| card.message_id == msg.id)
+                                        .cloned();
                                     match card_lookup {
                                         Some(card) => {
                                             let poll_id = card.poll_id.clone();
@@ -3469,12 +3575,17 @@ pub fn ChatPanel(
                                             rsx! {
                                                 div {
                                                     class: "poll-card timeline-event-poll",
-                                                    "data-testid": "timeline-event-poll",
+                                                    "data-testid": "poll-card",
                                                     "data-poll-id": "{poll_id}",
                                                     div {
                                                         class: "poll-question",
                                                         "data-testid": "poll-question-text",
                                                         "{card.question}"
+                                                    }
+                                                    div {
+                                                        class: "poll-state",
+                                                        "data-testid": "poll-state",
+                                                        if card.closed { "closed" } else { "open" }
                                                     }
                                                     for (idx, option) in card.options.iter().enumerate() {
                                                         {
@@ -3490,59 +3601,62 @@ pub fn ChatPanel(
                                                             let base_for_vote = base_url.clone();
                                                             rsx! {
                                                                 div {
-                                                                    class: "poll-option-row",
-                                                                    "data-testid": "poll-option-row",
+                                                                    class: "poll-result-row",
+                                                                    "data-testid": "poll-result-row",
                                                                     "data-option-index": "{option_index_attr}",
                                                                     "data-option-text": "{option_label}",
-                                                                    button {
-                                                                        class: "poll-option poll-vote-button",
-                                                                        "data-testid": "poll-vote-button",
-                                                                        disabled: card_closed,
-                                                                        onclick: {
-                                                                            let card_message_id = card_message_id.clone();
-                                                                            let actor = actor.clone();
-                                                                            let space = space.clone();
-                                                                            let card_poll_id = card_poll_id.clone();
-                                                                            let option_id = option_id.clone();
-                                                                            let api_token = token();
-                                                                            let base_for_vote = base_for_vote.clone();
-                                                                            move |_| {
-                                                                                if let Some(found) = poll_cards
-                                                                                    .write()
-                                                                                    .iter_mut()
-                                                                                    .find(|c| c.message_id == card_message_id)
-                                                                                {
-                                                                                    found.vote(&actor, idx);
-                                                                                }
-                                                                                let base = base_for_vote.clone();
-                                                                                let space = space.clone();
+                                                                    if !card_closed {
+                                                                        button {
+                                                                            class: "poll-option poll-vote-button",
+                                                                            "data-testid": "poll-option",
+                                                                            disabled: card_closed,
+                                                                            onclick: {
+                                                                                let card_message_id = card_message_id.clone();
                                                                                 let actor = actor.clone();
-                                                                                let poll_id = card_poll_id.clone();
+                                                                                let space = space.clone();
+                                                                                let card_poll_id = card_poll_id.clone();
                                                                                 let option_id = option_id.clone();
-                                                                                let api_token = api_token.clone();
-                                                                                spawn(async move {
-                                                                                    // Experimental poll responses
-                                                                                    // are hidden from the default
-                                                                                    // local UI until soland's
-                                                                                    // reducer is enabled.
-                                                                                    let _ = crate::views::helpers::with_authed_api(
-                                                                                        &base,
-                                                                                        api_token,
-                                                                                        |api| async move {
-                                                                                            let op = crate::messaging::polls::build_poll_vote_op(
-                                                                                                &space,
-                                                                                                &actor,
-                                                                                                &poll_id,
-                                                                                                &option_id,
-                                                                                            );
-                                                                                            api.submit_event_envelope(&op).await
-                                                                                        },
-                                                                                    )
-                                                                                    .await;
-                                                                                });
-                                                                            }
-                                                                        },
-                                                                        "{option_label}"
+                                                                                let api_token = token();
+                                                                                let base_for_vote = base_for_vote.clone();
+                                                                                move |_| {
+                                                                                    if let Some(found) = poll_cards
+                                                                                        .write()
+                                                                                        .iter_mut()
+                                                                                        .find(|c| c.message_id == card_message_id)
+                                                                                    {
+                                                                                        found.vote(&actor, idx);
+                                                                                    }
+                                                                                    let base = base_for_vote.clone();
+                                                                                    let space = space.clone();
+                                                                                    let actor = actor.clone();
+                                                                                    let poll_id = card_poll_id.clone();
+                                                                                    let option_id = option_id.clone();
+                                                                                    let api_token = api_token.clone();
+                                                                                    spawn(async move {
+                                                                                        let _ = crate::views::helpers::with_authed_api(
+                                                                                            &base,
+                                                                                            api_token,
+                                                                                            |api| async move {
+                                                                                                let op = crate::messaging::polls::build_poll_vote_op(
+                                                                                                    &space,
+                                                                                                    &actor,
+                                                                                                    &poll_id,
+                                                                                                    &option_id,
+                                                                                                );
+                                                                                                api.submit_event_envelope(&op).await
+                                                                                            },
+                                                                                        )
+                                                                                        .await;
+                                                                                    });
+                                                                                }
+                                                                            },
+                                                                            "{option_label}"
+                                                                        }
+                                                                    } else {
+                                                                        span {
+                                                                            class: "poll-option-label",
+                                                                            "{option_label}"
+                                                                        }
                                                                     }
                                                                     span {
                                                                         class: "poll-vote-count",
@@ -3551,6 +3665,51 @@ pub fn ChatPanel(
                                                                     }
                                                                 }
                                                             }
+                                                        }
+                                                    }
+                                                    if !card.closed {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "secondary poll-close-button",
+                                                            "data-testid": "poll-close-button",
+                                                            onclick: {
+                                                                let card_message_id = card.message_id.clone();
+                                                                let card_poll_id = poll_id.clone();
+                                                                let space = msg.space_id.clone();
+                                                                let actor = account_did.clone();
+                                                                let base_for_close = base_url.clone();
+                                                                let api_token = token();
+                                                                move |_| {
+                                                                    if let Some(found) = poll_cards
+                                                                        .write()
+                                                                        .iter_mut()
+                                                                        .find(|c| c.message_id == card_message_id)
+                                                                    {
+                                                                        found.close();
+                                                                    }
+                                                                    let base = base_for_close.clone();
+                                                                    let space = space.clone();
+                                                                    let actor = actor.clone();
+                                                                    let poll_id = card_poll_id.clone();
+                                                                    let api_token = api_token.clone();
+                                                                    spawn(async move {
+                                                                        let _ = crate::views::helpers::with_authed_api(
+                                                                            &base,
+                                                                            api_token,
+                                                                            |api| async move {
+                                                                                let op = crate::messaging::polls::build_poll_close_op(
+                                                                                    &space,
+                                                                                    &actor,
+                                                                                    &poll_id,
+                                                                                );
+                                                                                api.submit_event_envelope(&op).await
+                                                                            },
+                                                                        )
+                                                                        .await;
+                                                                    });
+                                                                }
+                                                            },
+                                                            "Close poll"
                                                         }
                                                     }
                                                     div {
@@ -4401,6 +4560,22 @@ pub fn ChatPanel(
                             },
                             UiIcon { name: "plus" }
                         }
+                        if crate::messaging::polls::polls_enabled() {
+                            button {
+                                r#type: "button",
+                                class: "composer-tool-button",
+                                "data-testid": "open-poll-composer-button",
+                                title: "Create poll",
+                                "aria-label": "Create poll",
+                                onclick: move |_| {
+                                    attachment_menu_open.set(false);
+                                    poll_draft.set(Some(
+                                        crate::messaging::polls::PollDraft::new(),
+                                    ));
+                                },
+                                "Poll"
+                            }
+                        }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
                                 if crate::messaging::polls::polls_enabled() {
@@ -4415,18 +4590,6 @@ pub fn ChatPanel(
                                             ));
                                         },
                                         "Create poll"
-                                    }
-                                    button {
-                                        r#type: "button",
-                                        class: "secondary",
-                                        "data-testid": "open-poll-composer-button",
-                                        onclick: move |_| {
-                                            attachment_menu_open.set(false);
-                                            poll_draft.set(Some(
-                                                crate::messaging::polls::PollDraft::new(),
-                                            ));
-                                        },
-                                        "Poll"
                                     }
                                 }
                             }
@@ -4655,9 +4818,6 @@ pub fn ChatPanel(
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
                                         spawn(async move {
-                                            // Experimental poll creation is
-                                            // hidden from the default local UI
-                                            // until soland's reducer is enabled.
                                             let _ = crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
@@ -4685,26 +4845,68 @@ pub fn ChatPanel(
                                 r#type: "button",
                                 class: "secondary",
                                 "data-testid": "send-poll-button",
-                                onclick: move |_| {
-                                    // Programmatic click on the
-                                    // primary control. We rely on a
-                                    // shared JS effect rather than
-                                    // duplicating the submit body —
-                                    // duplication risks drift. The
-                                    // cotest flow exercises both
-                                    // testids via .click(), so this
-                                    // pass-through is enough.
-                                    let draft_snapshot = poll_draft.read().clone();
-                                    if let Some(draft_snapshot) = draft_snapshot {
-                                        if draft_snapshot.is_sendable() {
-                                            poll_draft.set(None);
-                                            let poll_id = crate::messaging::polls::new_poll_id();
-                                            let card = crate::messaging::polls::PollCard::from_draft(
-                                                poll_id,
-                                                &draft_snapshot,
-                                            );
-                                            poll_cards.write().push(card);
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let space = selected_space.clone();
+                                    let actor = account_did.clone();
+                                    let selected_flow = selected_channel_value.clone();
+                                    move |_| {
+                                        let Some(draft_snapshot) = poll_draft.read().clone() else {
+                                            return;
+                                        };
+                                        if !draft_snapshot.is_sendable() {
+                                            return;
                                         }
+                                        let poll_id = crate::messaging::polls::new_poll_id();
+                                        let card = crate::messaging::polls::PollCard::from_draft(
+                                            poll_id.clone(),
+                                            &draft_snapshot,
+                                        );
+                                        poll_cards.write().push(card.clone());
+                                        messages.write().push(ChatMessage {
+                                            space_id: space.clone(),
+                                            id: poll_id.clone(),
+                                            sender: actor.clone(),
+                                            body: format!("[poll] {}", draft_snapshot.question),
+                                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                            flow_id: selected_flow.clone(),
+                                            reply_to: None,
+                                            reactions: Vec::new(),
+                                            redacted: false,
+                                            edited: false,
+                                            revisions: Vec::new(),
+                                            pending: true,
+                                            failed: false,
+                                            error: None,
+                                            mentions: Vec::new(),
+                                            crypto_state: MessageCryptoState::Plaintext,
+                                        });
+                                        poll_draft.set(None);
+
+                                        let base = base.clone();
+                                        let space = space.clone();
+                                        let actor = actor.clone();
+                                        let flow_id = selected_flow.clone();
+                                        let api_token = token();
+                                        let draft_for_op = draft_snapshot.clone();
+                                        let poll_id_for_op = poll_id.clone();
+                                        spawn(async move {
+                                            let _ = crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    let op = crate::messaging::polls::build_poll_create_op(
+                                                        &space,
+                                                        &actor,
+                                                        &flow_id,
+                                                        &poll_id_for_op,
+                                                        &draft_for_op,
+                                                    );
+                                                    api.submit_event_envelope(&op).await
+                                                },
+                                            )
+                                            .await;
+                                        });
                                     }
                                 },
                                 "Send"

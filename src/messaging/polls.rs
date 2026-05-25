@@ -1,15 +1,13 @@
 //! G3.Y2 — poll composer + result tally state.
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`):
-//! * `cx.content.poll.create` — `{ poll_id, question, options: [{id, label}],
-//!   max_selections, closes_at? }`
-//! * `cx.content.poll.response` — `{ poll_id, choice }` (single-select) or
-//!   `{ poll_id, choices: [id, ...] }` (multi-select)
-//! * `cx.content.poll.close` — `{ poll_id }`
+//! * `cx.message.create` with `content.kind = cx.content.poll` creates a poll.
+//! * `cx.message.create` with `content.kind = cx.content.poll.response` records
+//!   a response.
+//! * `cx.message.create` with `content.kind = cx.content.poll.close` closes a poll.
 //!
-//! The local 1.0 UI hides the composer unless the `experimental-polls`
-//! feature is enabled. Builders remain compiled so the canonical wire
-//! shape stays covered by unit tests while soland's reducer is completed.
+//! Polls are enabled in the local 1.0 UI because soland now projects the
+//! content-type reducer state.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -18,7 +16,7 @@ use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
 
 /// Whether the local UI should expose poll composer / vote controls.
 pub fn polls_enabled() -> bool {
-    cfg!(feature = "experimental-polls")
+    true
 }
 
 /// In-flight draft of a poll being composed by the user.
@@ -162,9 +160,210 @@ impl PollCard {
         true
     }
 
+    pub fn vote_choices(&mut self, actor: &str, option_ids: &[String]) -> bool {
+        if self.closed || option_ids.is_empty() {
+            return false;
+        }
+        for voters in &mut self.votes {
+            voters.retain(|did| did != actor);
+        }
+        let limit = self.max_selections.max(1) as usize;
+        let mut changed = false;
+        for option_id in option_ids.iter().take(limit) {
+            if let Some(index) = self.options.iter().position(|option| &option.id == option_id) {
+                let voters = &mut self.votes[index];
+                if !voters.iter().any(|did| did == actor) {
+                    voters.push(actor.to_owned());
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub fn close(&mut self) {
         self.closed = true;
     }
+
+    pub fn from_content(message_id: String, content: &Value) -> Option<Self> {
+        if content_kind(content) != Some("cx.content.poll") {
+            return None;
+        }
+        let poll_id = poll_id_from_content(content).unwrap_or_else(|| message_id.clone());
+        let question = content
+            .get("question")
+            .and_then(Value::as_str)
+            .or_else(|| content.get("body").and_then(Value::as_str))
+            .or_else(|| {
+                content
+                    .get("poll")
+                    .and_then(|poll| poll.get("question"))
+                    .and_then(text_body)
+            })?
+            .trim()
+            .to_owned();
+        let options = poll_options_from_content(content);
+        if question.is_empty() || options.len() < 2 {
+            return None;
+        }
+        let mut card = Self {
+            poll_id,
+            message_id,
+            question,
+            votes: vec![Vec::new(); options.len()],
+            options,
+            max_selections: content
+                .get("max_selections")
+                .and_then(Value::as_u64)
+                .or_else(|| {
+                    content
+                        .get("poll")
+                        .and_then(|poll| poll.get("max_selections"))
+                        .and_then(Value::as_u64)
+                })
+                .unwrap_or(1)
+                .max(1) as u32,
+            closed: content
+                .get("closed")
+                .and_then(Value::as_bool)
+                .or_else(|| {
+                    content
+                        .get("poll")
+                        .and_then(|poll| poll.get("closed"))
+                        .and_then(Value::as_bool)
+                })
+                .unwrap_or(false),
+        };
+        if let Some(results) = content.get("results").and_then(Value::as_array) {
+            for row in results {
+                let Some(option_id) = row.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(index) = card.options.iter().position(|option| option.id == option_id)
+                else {
+                    continue;
+                };
+                if let Some(voters) = row.get("voters").and_then(Value::as_array) {
+                    card.votes[index] = voters
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect();
+                }
+            }
+        }
+        Some(card)
+    }
+}
+
+pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String>)> {
+    if content_kind(content) != Some("cx.content.poll.response") {
+        return None;
+    }
+    let poll_id = poll_id_from_content(content)?;
+    let choices = content
+        .get("choices")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .or_else(|| {
+            content
+                .get("choice")
+                .and_then(Value::as_str)
+                .map(|choice| vec![choice.to_owned()])
+        })
+        .unwrap_or_default();
+    if choices.is_empty() {
+        None
+    } else {
+        Some((poll_id, choices))
+    }
+}
+
+pub fn poll_close_id_from_content(content: &Value) -> Option<String> {
+    if content_kind(content) == Some("cx.content.poll.close") {
+        poll_id_from_content(content)
+    } else {
+        None
+    }
+}
+
+fn content_kind(content: &Value) -> Option<&str> {
+    content.get("kind").and_then(Value::as_str)
+}
+
+fn poll_id_from_content(content: &Value) -> Option<String> {
+    content
+        .get("poll_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            content
+                .get("poll")
+                .and_then(|poll| poll.get("id"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn text_body(value: &Value) -> Option<&str> {
+    value.as_str().or_else(|| {
+        value
+            .get("body")
+            .or_else(|| value.get("label"))
+            .and_then(Value::as_str)
+    })
+}
+
+fn poll_options_from_content(content: &Value) -> Vec<PollOption> {
+    let options = content
+        .get("options")
+        .and_then(Value::as_array)
+        .or_else(|| {
+            content
+                .get("poll")
+                .and_then(|poll| poll.get("answers"))
+                .and_then(Value::as_array)
+        });
+    options
+        .map(|items| {
+            items
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, item)| {
+                    if let Some(label) = item.as_str().filter(|value| !value.trim().is_empty()) {
+                        return Some(PollOption {
+                            id: format!("opt-{idx}"),
+                            label: label.trim().to_owned(),
+                        });
+                    }
+                    let id = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| format!("opt-{idx}"));
+                    let label = item
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("text").and_then(text_body))?
+                        .trim()
+                        .to_owned();
+                    if label.is_empty() {
+                        None
+                    } else {
+                        Some(PollOption { id, label })
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Build the `cx.content.poll.create` envelope for the wire.
@@ -182,16 +381,29 @@ pub fn build_poll_create_op(
         .enumerate()
         .map(|(idx, label)| json!({"id": format!("opt-{idx}"), "label": label.trim()}))
         .collect();
-    OperationBuilder::new(space_id, actor, "cx.content.poll.create")
+    let mut envelope = OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
         .body(json!({
+            "body": format!("[poll] {}", draft.question.trim()),
+            "message_id": poll_id,
             "poll_id": poll_id,
             "flow_id": flow_id,
-            "question": draft.question.trim(),
-            "options": options,
-            "max_selections": draft.max_selections.max(1),
+            "track": "discussion",
+            "content": {
+                "kind": "cx.content.poll",
+                "body": draft.question.trim(),
+                "poll_id": poll_id,
+                "question": draft.question.trim(),
+                "options": options,
+                "max_selections": draft.max_selections.max(1),
+            },
+            "encrypted": false,
         }))
-        .build("yougen")
+        .build("yougen");
+    let message_ref = envelope.event_id.replacen("cx:event:", "cx:message:", 1);
+    envelope.payload["message_id"] = json!(message_ref);
+    envelope.payload["content"]["message_id"] = json!(message_ref);
+    envelope
 }
 
 /// Build the `cx.content.poll.response` envelope for a single-select
@@ -203,26 +415,49 @@ pub fn build_poll_vote_op(
     poll_id: &str,
     option_id: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.content.poll.response")
+    let flow_id = flow_id_from_space_id(space_id);
+    OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(poll_id)
         .body(json!({
-            "poll_id": poll_id,
-            "choice": option_id,
+            "flow_id": flow_id,
+            "track": "discussion",
+            "content": {
+                "kind": "cx.content.poll.response",
+                "body": "poll response",
+                "poll_id": poll_id,
+                "choice": option_id,
+            },
+            "encrypted": false,
         }))
         .build("yougen")
 }
 
 /// Build the `cx.content.poll.close` envelope.
 pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.content.poll.close")
+    let flow_id = flow_id_from_space_id(space_id);
+    OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(poll_id)
-        .body(json!({"poll_id": poll_id}))
+        .body(json!({
+            "flow_id": flow_id,
+            "track": "discussion",
+            "content": {
+                "kind": "cx.content.poll.close",
+                "body": "poll closed",
+                "poll_id": poll_id,
+            },
+            "encrypted": false,
+        }))
         .build("yougen")
 }
 
 /// Generate a fresh poll id (`poll-<uuid>`).
 pub fn new_poll_id() -> String {
     format!("poll-{}", uuid_v7())
+}
+
+fn flow_id_from_space_id(space_id: &str) -> String {
+    let suffix = space_id.replace("cx:realm:", "").replace("cx:space:", "");
+    format!("cx:flow:{suffix}")
 }
 
 #[cfg(test)]
@@ -299,12 +534,34 @@ mod tests {
             "poll-x",
             &draft,
         );
-        assert_eq!(op.kind, "cx.content.poll.create");
+        assert_eq!(op.kind, "cx.message.create");
         let options = op
             .payload
-            .get("options")
+            .get("content")
+            .and_then(|content| content.get("options"))
             .and_then(|v| v.as_array())
             .unwrap();
         assert_eq!(options.len(), 2);
+    }
+
+    #[test]
+    fn poll_card_from_content_reads_results() {
+        let content = json!({
+            "kind": "cx.content.poll",
+            "poll_id": "poll-1",
+            "question": "ship?",
+            "options": [
+                {"id": "yes", "label": "Yes"},
+                {"id": "no", "label": "No"}
+            ],
+            "results": [
+                {"id": "yes", "voters": ["did:web:alice.example"]},
+                {"id": "no", "voters": []}
+            ]
+        });
+        let card = PollCard::from_content("cx:event:1".to_owned(), &content).unwrap();
+        assert_eq!(card.poll_id, "poll-1");
+        assert_eq!(card.votes_for(0), 1);
+        assert_eq!(card.votes_for(1), 0);
     }
 }

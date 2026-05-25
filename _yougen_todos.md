@@ -54,6 +54,9 @@
 - [x] §9 `src/messaging/polls.rs:10` — either ship `cx.content.poll.*` in soland and finish polls UI, or hide the poll tab behind a feature flag.
   - 2026-05-25: poll composer/cards stay compiled for unit coverage but are
     hidden from the default UI behind `experimental-polls`.
+  - 2026-05-25 P1-012 update: poll composer/cards are enabled by default
+    after the soland poll content reducer landed; votes and closes use
+    `cx.message.create` with `cx.content.poll.*` content blocks.
 - [x] §10 `src/messaging/discussion_promote.rs:14` — same: ship soland endpoints or hide.
   - 2026-05-25: discussion promote modal stays compiled for builder tests but
     is hidden behind `experimental-discussion-promote`.
