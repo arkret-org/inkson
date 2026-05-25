@@ -374,6 +374,97 @@ impl QueuedOperationBuilder {
     }
 }
 
+/// P3B.5 — process-wide offline queue. The message-send / settings-write /
+/// push-pref-write paths enqueue here; the drain worker started by
+/// [`spawn_offline_drain`] replays in FIFO order with exponential
+/// backoff once the network is healthy and the sync engine has an
+/// anchor cursor.
+static GLOBAL_QUEUE: std::sync::OnceLock<OfflineQueue> = std::sync::OnceLock::new();
+
+/// Returns (and lazily initialises) the global offline queue. All call
+/// sites should go through this rather than constructing their own
+/// queue so the badge counter, the drain worker, and the enqueue
+/// helpers all see the same buffer.
+pub fn global_queue() -> &'static OfflineQueue {
+    GLOBAL_QUEUE.get_or_init(OfflineQueue::default)
+}
+
+/// Synchronous depth snapshot for the UI badge. Returns 0 when the
+/// queue hasn't been initialised yet (e.g. first paint before the
+/// first enqueue).
+pub async fn pending_count() -> usize {
+    global_queue().size().await
+}
+
+/// P3B.5 — enqueue a message send to the global offline queue. The
+/// drain worker replays the POST once `set_network_state(Online)` and
+/// the sync engine is anchored.
+pub async fn enqueue_message_send(
+    space_id: &str,
+    body: serde_json::Value,
+) -> Result<(), OfflineError> {
+    let op = QueuedOperationBuilder::new("/api/v1/events/submit", "POST")
+        .with_body(body)
+        .with_space(space_id)
+        .with_op_type("cx.message.create")
+        .build();
+    global_queue().enqueue(op).await
+}
+
+/// P3B.5 — enqueue a settings write (account_data / push prefs /
+/// blocklist edit). Drains FIFO with exponential backoff.
+pub async fn enqueue_settings_write(
+    endpoint: &str,
+    body: serde_json::Value,
+) -> Result<(), OfflineError> {
+    let op = QueuedOperationBuilder::new(endpoint, "PUT")
+        .with_body(body)
+        .with_op_type("settings.write")
+        .build();
+    global_queue().enqueue(op).await
+}
+
+/// P3B.5 — enqueue a chime push-preference write. Lower max retry
+/// budget than messages because the user can re-toggle the preference
+/// trivially.
+pub async fn enqueue_push_pref_write(
+    body: serde_json::Value,
+) -> Result<(), OfflineError> {
+    let op = QueuedOperationBuilder::new("/api/v1/push/preferences", "PUT")
+        .with_body(body)
+        .with_op_type("push.prefs")
+        .with_max_retries(2)
+        .build();
+    global_queue().enqueue(op).await
+}
+
+/// Start the background drain worker. The worker polls the global
+/// queue once per `tick`; whenever network state is `Online`, it
+/// replays the head of the queue via `coordinator.replay_all`. Should
+/// be called once from the app shell — calling twice is benign but
+/// wastes a task.
+///
+/// `TODO(circle-rollout-P3B.5.2):` integrate the per-profile cursor
+/// guard once `MultiProfileConfig` lands in `SyncEngineContext`
+/// (P3B.4.3) so a profile switch doesn't replay another profile's
+/// pending writes against the new account.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_offline_drain(
+    coordinator: ReconnectionCoordinator,
+    api: ContrixApi,
+    tick: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tick);
+        loop {
+            interval.tick().await;
+            if coordinator.is_online().await && !global_queue().is_empty().await {
+                let _ = coordinator.replay_all(&api).await;
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +587,50 @@ mod tests {
             OfflineError::OperationFailed("test".to_owned()).to_string(),
             "operation failed: test"
         );
+    }
+
+    /// Tokio multi-threaded test runner spawns the three
+    /// `enqueue_*` tests in parallel, but they share
+    /// [`crate::offline::global_queue`]. Serialise them on a sync
+    /// `Mutex` so observed counts are deterministic.
+    static GLOBAL_QUEUE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn enqueue_message_send_records_op_type() {
+        let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
+        global_queue().clear().await;
+        enqueue_message_send("cx:space:test", serde_json::json!({"body": "hi"}))
+            .await
+            .unwrap();
+        let head = global_queue().peek().await.unwrap();
+        assert_eq!(head.op_type.as_deref(), Some("cx.message.create"));
+        assert_eq!(head.space_id.as_deref(), Some("cx:space:test"));
+        assert_eq!(head.method, "POST");
+        global_queue().clear().await;
+    }
+
+    #[tokio::test]
+    async fn enqueue_push_pref_write_uses_low_retry_budget() {
+        let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
+        global_queue().clear().await;
+        enqueue_push_pref_write(serde_json::json!({"enabled": false}))
+            .await
+            .unwrap();
+        let head = global_queue().peek().await.unwrap();
+        assert_eq!(head.endpoint, "/api/v1/push/preferences");
+        assert_eq!(head.max_retries, 2);
+        global_queue().clear().await;
+    }
+
+    #[tokio::test]
+    async fn pending_count_reflects_global_queue() {
+        let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
+        global_queue().clear().await;
+        assert_eq!(pending_count().await, 0);
+        enqueue_settings_write("/api/v1/account/data/blocklist", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(pending_count().await, 1);
+        global_queue().clear().await;
     }
 }

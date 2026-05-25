@@ -4,6 +4,9 @@ use dioxus::prelude::*;
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires `on_switch` / `on_add_account` handlers.
 pub mod account_switcher;
+/// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
+/// next to the connection status indicator.
+pub mod offline_pending_badge;
 /// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
 /// Consumes [`crate::circle::CircleErrorKind`] and renders the
 /// localized user-facing string.
@@ -26,6 +29,7 @@ pub mod sync_badge;
 pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
+pub use offline_pending_badge::OfflinePendingBadge;
 pub use circle_error_toast::{
     CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
     take_circle_error,
