@@ -110,6 +110,8 @@ pub struct NotificationEvalContext {
     pub participating_thread_update: bool,
     pub is_direct_message: bool,
     pub member_count: Option<u32>,
+    pub priority: Option<String>,
+    pub priority_override: bool,
     pub watch_level: Option<WatchLevel>,
     /// Minutes after local midnight in the DND schedule timezone. UI callers
     /// should provide this when rendering deterministic previews; dispatch
@@ -283,6 +285,14 @@ fn apply_dnd(
     if !dnd.enabled || !dnd_active(dnd, ctx.now_minutes.unwrap_or_else(current_local_minute)) {
         return decision;
     }
+    if ctx.priority_override
+        || ctx
+            .priority
+            .as_deref()
+            .is_some_and(|priority| matches!(priority, "critical" | "high" | "urgent"))
+    {
+        return decision;
+    }
     if decision
         .matched_rule_id
         .as_ref()
@@ -448,6 +458,7 @@ fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'
         "flow_id" => ctx.flow_id.as_deref(),
         "sender" => ctx.sender.as_deref(),
         "flow_track" | "track_name" => ctx.flow_track.as_deref(),
+        "priority" | "notification_priority" => ctx.priority.as_deref(),
         "watch_state" => effective_watch_level(ctx).map(watch_level_wire),
         _ => None,
     }

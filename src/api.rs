@@ -1146,6 +1146,15 @@ impl ContrixApi {
         parse_account_subscribe_snapshot(&bytes)
     }
 
+    pub async fn list_notifications(&self) -> anyhow::Result<Value> {
+        self.get_json("api/v1/notifications").await
+    }
+
+    pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
+        self.post_json("api/v1/notifications/mark-all-read", json!({}))
+            .await
+    }
+
     pub async fn search_realms(
         &self,
         query: &str,

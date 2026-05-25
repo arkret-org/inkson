@@ -7479,7 +7479,7 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
-                    Route::Settings | Route::SettingsSection { .. } => rsx! {
+                    Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => rsx! {
                         crate::views::settings::SettingsPanel {
                             base_url,
                             account_did,
@@ -8158,7 +8158,9 @@ fn route_label(route: &Route) -> &'static str {
             "new-space" => "New Space",
             _ => "Setup",
         },
-        Route::Settings | Route::SettingsSection { .. } => "Settings",
+        Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => {
+            "Settings"
+        }
         Route::VerifyDevice => "Verify Device",
         Route::SpaceAdmin { .. } => "Space Admin",
         Route::SpaceAdminSection { section, .. } => match section.as_str() {

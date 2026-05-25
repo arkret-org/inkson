@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use chime::{
     PushRuleEventContext, ShouldNotify, WatchLevel as ChimeWatchLevel, evaluate_watch_level,
@@ -83,7 +83,8 @@ pub fn NotificationsPanel(
         .filter(|notification| {
             (show_archived() || !notification.archived)
                 && notification_kind_enabled(&local_state, &notification.kind)
-                && !space_is_muted(&local_state, &notification.space_id)
+                && (!space_is_muted(&local_state, &notification.space_id)
+                    || notification_overrides_space_mute(notification))
         })
         .collect::<Vec<_>>();
 
@@ -135,6 +136,7 @@ pub fn NotificationsPanel(
                     span { "Notifications" }
                     div { class: "section-tools",
                         HelpTip { text: "Notifications are derived from sync account data and filtered by local mute rules. Push only wakes the client; notification bodies are resolved locally." }
+                        span { "data-testid": "unread-count", "{unread_visible}" }
                         span { "{unread_visible} unread / {server_unread()} server" }
                     }
                 }
@@ -164,19 +166,21 @@ pub fn NotificationsPanel(
                     div { class: "icon-actions",
                         button {
                             class: "btn icon sm ghost",
-                            "data-testid": "mark-all-read",
+                            "data-testid": "mark-all-read-button",
                             title: crate::i18n::tr("notifications.tooltip.mark_all_read"),
                             "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
-                            onclick: move |_| {
-                                let ids = notifications().iter().map(|notification| notification.id.clone()).collect::<Vec<_>>();
-                                for notification in notifications.write().iter_mut() {
-                                    notification.read = true;
+                            onclick: {
+                                let base_url = base_url.clone();
+                                move |_| {
+                                    mark_all_notifications_read(
+                                        base_url.clone(),
+                                        token(),
+                                        state_store,
+                                        notifications,
+                                        status_msg,
+                                        server_unread,
+                                    );
                                 }
-                                let mut store = state_store.write();
-                                for id in ids {
-                                    store.set_notification_read(id, true);
-                                }
-                                status_msg.set("All visible notifications marked read locally.".to_owned());
                             },
                             UiIcon { name: "check" }
                         }
@@ -195,15 +199,18 @@ pub fn NotificationsPanel(
                         "data-testid": "refresh-notifications",
                         title: crate::i18n::tr("notifications.tooltip.refresh"),
                         "aria-label": crate::i18n::tr("notifications.tooltip.refresh"),
-                        onclick: move |_| {
-                            refresh_notifications(
-                                base_url.clone(),
-                                token(),
-                                state_store,
-                                notifications,
-                                status_msg,
-                                server_unread,
-                            );
+                        onclick: {
+                            let base_url = base_url.clone();
+                            move |_| {
+                                refresh_notifications(
+                                    base_url.clone(),
+                                    token(),
+                                    state_store,
+                                    notifications,
+                                    status_msg,
+                                    server_unread,
+                                );
+                            }
                         },
                         UiIcon { name: "refresh" }
                     }
@@ -407,19 +414,42 @@ fn refresh_notifications(
 ) {
     spawn(async move {
         match with_authed_api(&base_url, access_token, |api| async move {
-            api.account_subscribe_snapshot(None).await
+            let response = api.account_subscribe_snapshot(None).await?;
+            let notification_response = api
+                .list_notifications()
+                .await
+                .unwrap_or_else(|_| json!({ "items": [] }));
+            Ok::<_, anyhow::Error>((response, notification_response))
         })
         .await
         {
-            Ok(response) => {
+            Ok((response, notification_response)) => {
                 let push_rules = push_rules_from_account_data(&response.account_data);
                 let dnd = dnd_settings_from_account_data(&response.account_data);
-                let raw_notifications = response
-                    .account_data
-                    .into_iter()
-                    .filter(is_notification_account_data)
-                    .collect::<Vec<_>>();
-                server_unread.set(raw_notifications.len());
+                let server_items = notification_response
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .cloned();
+                let raw_notifications = server_items.unwrap_or_else(|| {
+                    response
+                        .account_data
+                        .into_iter()
+                        .filter(is_notification_account_data)
+                        .collect::<Vec<_>>()
+                });
+                let unread_count = notification_response
+                    .get("unread_count")
+                    .and_then(Value::as_u64)
+                    .and_then(|count| usize::try_from(count).ok())
+                    .unwrap_or_else(|| {
+                        raw_notifications
+                            .iter()
+                            .filter(|value| {
+                                !value.get("read").and_then(Value::as_bool).unwrap_or(false)
+                            })
+                            .count()
+                    });
+                server_unread.set(unread_count);
                 let hydrated = {
                     let mut store = state_store.write();
                     store.save_notification_projection(raw_notifications.clone());
@@ -433,10 +463,46 @@ fn refresh_notifications(
                 };
                 let loaded_count = hydrated.len();
                 notifications.set(hydrated);
-                status_msg.set(format!("Loaded {loaded_count} notification projection(s)."));
+                status_msg.set(format!("Loaded {loaded_count} notification(s)."));
             }
             Err(err) => {
                 status_msg.set(format!("Notification refresh: {}", err.display()));
+            }
+        }
+    });
+}
+
+fn mark_all_notifications_read(
+    base_url: String,
+    access_token: String,
+    mut state_store: Signal<LocalStateStore>,
+    mut notifications: Signal<Vec<Notification>>,
+    mut status_msg: Signal<String>,
+    mut server_unread: Signal<usize>,
+) {
+    spawn(async move {
+        match with_authed_api(&base_url, access_token, |api| async move {
+            api.mark_all_notifications_read().await
+        })
+        .await
+        {
+            Ok(_) => {
+                let ids = notifications()
+                    .iter()
+                    .map(|notification| notification.id.clone())
+                    .collect::<Vec<_>>();
+                for notification in notifications.write().iter_mut() {
+                    notification.read = true;
+                }
+                let mut store = state_store.write();
+                for id in ids {
+                    store.set_notification_read(id, true);
+                }
+                server_unread.set(0);
+                status_msg.set("All visible notifications marked read.".to_owned());
+            }
+            Err(err) => {
+                status_msg.set(format!("Mark all read failed: {}", err.display()));
             }
         }
     });
@@ -617,6 +683,13 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
     let is_e2ee = value_bool(value, "is_e2ee")
         .or_else(|| value_bool(value, "encrypted"))
         .unwrap_or_else(|| value.get("encrypted_payload").is_some());
+    let priority = value_string(value, &["priority", "notification_priority"])
+        .map(|value| value.to_ascii_lowercase());
+    let priority_override = value_bool(value, "priority_override").unwrap_or_else(|| {
+        priority
+            .as_deref()
+            .is_some_and(|value| matches!(value, "critical" | "high" | "urgent" | "priority"))
+    });
     NotificationEvalContext {
         event_kind,
         notification_type,
@@ -634,6 +707,8 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
             .unwrap_or(false),
         is_direct_message: value_bool(value, "is_direct_message").unwrap_or(false),
         member_count: value_u32(value, "member_count"),
+        priority,
+        priority_override,
         watch_level: value_string(value, &["watch_state", "watch_level"])
             .and_then(|level| WatchLevel::from_wire(&level)),
         now_minutes: None,
@@ -655,6 +730,13 @@ fn notification_kind_enabled(local_state: &ClientLocalState, kind: &str) -> bool
         .get(kind)
         .copied()
         .unwrap_or(true)
+}
+
+fn notification_overrides_space_mute(notification: &Notification) -> bool {
+    matches!(
+        notification.kind.as_str(),
+        "mention" | "priority" | "critical" | "urgent"
+    )
 }
 
 #[cfg(test)]

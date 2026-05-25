@@ -113,6 +113,9 @@ pub enum Route {
     #[route("/notifications", crate::app::RouterView)]
     Notifications,
 
+    #[route("/notifications/settings", NotificationsSettingsPage)]
+    NotificationsSettings,
+
     #[route("/document", crate::app::RouterView)]
     Document,
 
@@ -211,6 +214,11 @@ fn DocumentSpacePage(space_id: String) -> Element {
     rsx! { crate::app::RouterView {} }
 }
 
+#[component]
+fn NotificationsSettingsPage() -> Element {
+    rsx! { crate::app::RouterView {} }
+}
+
 impl Route {
     /// Convert a Route to the corresponding View enum variant.
     pub fn to_view(&self) -> View {
@@ -224,7 +232,9 @@ impl Route {
             Route::Chat { .. } => View::Chat,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
-            Route::Settings | Route::SettingsSection { .. } => View::Settings,
+            Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => {
+                View::Settings
+            }
             // G3.Y1 — new device / recovery / security panels render
             // under the existing settings shell visually but are
             // distinct top-level View variants so the sidebar +
@@ -282,6 +292,7 @@ impl Route {
     pub fn settings_section(&self) -> Option<&str> {
         match self {
             Route::SettingsSection { section } => Some(section.as_str()),
+            Route::NotificationsSettings => Some("notifications"),
             _ => None,
         }
     }

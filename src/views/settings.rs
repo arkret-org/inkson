@@ -32,6 +32,12 @@ pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
 pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "cx.account.blocklist";
 
+/// `cx.account_data` key used by notification push-rule preferences.
+pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "cx.push_rules";
+
+/// `cx.account_data` key used by do-not-disturb preferences.
+pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "cx.dnd_schedule";
+
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAvatarCrop {
     bytes: Vec<u8>,
@@ -197,6 +203,117 @@ pub(crate) fn push_blocklist_account_data(
                     "account_data PUT for cx.account.blocklist failed: {}",
                     err.display()
                 );
+            }
+        }
+    });
+}
+
+fn push_notification_rules_account_data(
+    base_url: String,
+    api_token: String,
+    muted_spaces: Vec<String>,
+) {
+    if api_token.trim().is_empty() {
+        return;
+    }
+    let mut rules = vec![
+        json!({
+            "rule_id": "override.priority",
+            "conditions": [
+                {"kind": "field_match", "field": "priority", "pattern": ["critical", "high", "urgent", "priority"]}
+            ],
+            "actions": ["notify", "highlight", "sound_critical"]
+        }),
+        json!({
+            "rule_id": "override.mention",
+            "conditions": [{"kind": "mentions_actor"}],
+            "actions": ["notify", "highlight"]
+        }),
+    ];
+    for space_id in muted_spaces {
+        rules.push(json!({
+            "rule_id": format!("override.mute-space.{space_id}"),
+            "conditions": [
+                {"kind": "field_match", "field": "space_id", "pattern": space_id}
+            ],
+            "actions": ["dont_notify"]
+        }));
+    }
+    rules.push(json!({
+        "rule_id": "default.notify",
+        "conditions": [],
+        "actions": ["notify"]
+    }));
+    let body = json!({ "rules": rules });
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(PUSH_RULES_ACCOUNT_DATA_KEY, body)
+                .await
+        })
+        .await
+        {
+            Ok(AccountDataSetOutcome::Stored { .. }) => {}
+            Ok(AccountDataSetOutcome::Unsupported { status }) => {
+                tracing::debug!(
+                    "soland account_data PUT for cx.push_rules returned {status}; local notification rules remain authoritative"
+                );
+            }
+            Err(err) => {
+                tracing::debug!(
+                    "account_data PUT for cx.push_rules failed: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
+fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_json::Value {
+    let periods = if enabled && mode == "now" {
+        vec![json!({"start": "00:00", "end": "23:59"})]
+    } else {
+        Vec::new()
+    };
+    json!({
+        "dnd": {
+            "enabled": enabled,
+            "schedule": {
+                "timezone": "local",
+                "periods": periods
+            },
+            "exceptions": ["override.priority"]
+        }
+    })
+}
+
+fn push_dnd_account_data(
+    base_url: String,
+    api_token: String,
+    enabled: bool,
+    mode: String,
+    mut notification_settings_status: Signal<String>,
+) {
+    if api_token.trim().is_empty() {
+        notification_settings_status.set("DND settings require a signed-in session.".to_owned());
+        return;
+    }
+    let body = build_dnd_account_data_body(enabled, &mode);
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.set_account_data(DND_ACCOUNT_DATA_KEY, body).await
+        })
+        .await
+        {
+            Ok(AccountDataSetOutcome::Stored { .. })
+            | Ok(AccountDataSetOutcome::Unsupported { .. }) => {
+                notification_settings_status.set(if enabled {
+                    "Do not disturb enabled.".to_owned()
+                } else {
+                    "DND disabled.".to_owned()
+                });
+            }
+            Err(err) => {
+                notification_settings_status.set(format!("DND save failed: {}", err.display()));
             }
         }
     });
@@ -566,6 +683,11 @@ pub fn SettingsPanel(
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
     let mut presence_visible = use_signal(|| true);
+    let mut notification_space_input = use_signal(String::new);
+    let mut notification_space_muted = use_signal(|| false);
+    let mut dnd_enabled = use_signal(|| false);
+    let mut dnd_mode = use_signal(|| "off".to_owned());
+    let mut notification_settings_status = use_signal(String::new);
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so the timeline view can resolve
@@ -1730,6 +1852,87 @@ pub fn SettingsPanel(
                     // ── Notification settings ────────────────────────────
                     if active_section == SettingsSection::Notifications {
                         div { class: "settings-content-stack",
+                            div { class: "event", "data-testid": "notification-settings-panel",
+                                div { class: "event-head",
+                                    span { "Notification preferences" }
+                                    span { "synced" }
+                                }
+                                label {
+                                    "Space"
+                                    input {
+                                        "data-testid": "space-notification-target-input",
+                                        value: "{notification_space_input}",
+                                        placeholder: "cx:realm:...",
+                                        oninput: move |evt| notification_space_input.set(evt.value()),
+                                    }
+                                }
+                                label {
+                                    input {
+                                        r#type: "checkbox",
+                                        "data-testid": "space-mute-toggle",
+                                        checked: notification_space_muted(),
+                                        onchange: move |evt| {
+                                            let muted = evt.value() == "true";
+                                            notification_space_muted.set(muted);
+                                            let space_id = notification_space_input().trim().to_owned();
+                                            if space_id.is_empty() {
+                                                notification_settings_status.set("Enter a Space ID before changing mute.".to_owned());
+                                                return;
+                                            }
+                                            state_store.write().set_space_muted(space_id.clone(), muted);
+                                            push_notification_rules_account_data(
+                                                base_url(),
+                                                token(),
+                                                state_store.read().muted_spaces(),
+                                            );
+                                            notification_settings_status.set(format!(
+                                                "{} {}.",
+                                                short_protocol_id(&space_id),
+                                                if muted { "muted" } else { "unmuted" }
+                                            ));
+                                        },
+                                    }
+                                    " Mute this Space"
+                                }
+                                div { class: "actions",
+                                    label {
+                                        input {
+                                            r#type: "checkbox",
+                                            "data-testid": "dnd-enabled-toggle",
+                                            checked: dnd_enabled(),
+                                            onchange: move |evt| dnd_enabled.set(evt.value() == "true"),
+                                        }
+                                        " Do not disturb"
+                                    }
+                                    select {
+                                        "data-testid": "dnd-mode-select",
+                                        value: "{dnd_mode}",
+                                        onchange: move |evt| dnd_mode.set(evt.value()),
+                                        option { value: "off", "Off" }
+                                        option { value: "now", "Now" }
+                                    }
+                                    button {
+                                        class: "primary",
+                                        "data-testid": "save-notification-settings-button",
+                                        onclick: move |_| {
+                                            push_dnd_account_data(
+                                                base_url(),
+                                                token(),
+                                                dnd_enabled(),
+                                                dnd_mode(),
+                                                notification_settings_status,
+                                            );
+                                            push_notification_rules_account_data(
+                                                base_url(),
+                                                token(),
+                                                state_store.read().muted_spaces(),
+                                            );
+                                        },
+                                        "Save"
+                                    }
+                                }
+                                div { class: "muted", "data-testid": "notification-settings-status", "{notification_settings_status}" }
+                            }
                             div { class: "event", "data-testid": "notification-rules-settings",
                     div { class: "event-head",
                         span { "Notification rules" }
@@ -1856,6 +2059,11 @@ pub fn SettingsPanel(
                                                     let space_id = space_id.clone();
                                                     move |_| {
                                                         state_store.write().set_space_muted(space_id.clone(), false);
+                                                        push_notification_rules_account_data(
+                                                            base_url(),
+                                                            token(),
+                                                            state_store.read().muted_spaces(),
+                                                        );
                                                         status.set(format!(
                                                             "Unmuted {} from notification preferences",
                                                             short_protocol_id(&space_id)
@@ -1873,6 +2081,11 @@ pub fn SettingsPanel(
                                 "data-testid": "notifications-settings-clear-muted-spaces",
                                 onclick: move |_| {
                                     state_store.write().clear_muted_spaces();
+                                    push_notification_rules_account_data(
+                                        base_url(),
+                                        token(),
+                                        state_store.read().muted_spaces(),
+                                    );
                                     status.set("Cleared all per-space mute rules".to_owned());
                                 },
                                 "Clear All Mutes"
