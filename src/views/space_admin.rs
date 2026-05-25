@@ -205,6 +205,34 @@ fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSu
     }
 }
 
+fn projected_members_for_space(store: &LocalStateStore, space_id: &str) -> Vec<String> {
+    store
+        .load()
+        .space_projections
+        .get(space_id)
+        .and_then(|proj| {
+            proj.get("members").or_else(|| {
+                proj.get("summary")
+                    .and_then(|summary| summary.get("members"))
+            })
+        })
+        .and_then(|members| members.as_array())
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(|member| {
+                    member.as_str().map(ToOwned::to_owned).or_else(|| {
+                        member
+                            .get("did")
+                            .and_then(|did| did.as_str())
+                            .map(ToOwned::to_owned)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[component]
 pub fn SpaceAdminPanel(
     base_url: String,
@@ -340,6 +368,20 @@ pub fn SpaceAdminPanel(
         .read()
         .space_has_pending_mls_binding(&selected_space);
     let active_section = SpaceAdminSection::from_slug(active_section.as_deref());
+    {
+        let selected_space_for_hydration = selected_space.clone();
+        let should_hydrate_members = active_section == SpaceAdminSection::Members;
+        use_effect(move || {
+            if !should_hydrate_members {
+                return;
+            }
+            let next =
+                projected_members_for_space(&state_store.read(), &selected_space_for_hydration);
+            if members() != next {
+                members.set(next);
+            }
+        });
+    }
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_space);
     if metadata_loaded_for() != selected_space {
         space_name.set(metadata_subject.title.clone());
@@ -1304,24 +1346,7 @@ pub fn SpaceAdminPanel(
                                 // Members appear as the local store applies
                                 // cx.member.state events.
                                 let store = state_store.read();
-                                let snapshot = store.load();
-                                let projection = snapshot.space_projections.get(&space);
-                                let next: Vec<String> = projection
-                                    .and_then(|proj| proj.get("members"))
-                                    .and_then(|members| members.as_array())
-                                    .map(|members| {
-                                        members
-                                            .iter()
-                                            .filter_map(|m| {
-                                                m.as_str().map(ToOwned::to_owned).or_else(|| {
-                                                    m.get("did")
-                                                        .and_then(|d| d.as_str())
-                                                        .map(ToOwned::to_owned)
-                                                })
-                                            })
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
+                                let next = projected_members_for_space(&store, &space);
                                 let count = next.len();
                                 members.set(next);
                                 status_msg.set(format!(
