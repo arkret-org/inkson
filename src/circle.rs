@@ -19,12 +19,13 @@
 //!
 //! ## Status
 //!
-//! P3B.2 ships the *scaffolding* — types, scope picker component,
-//! detail view, and error-code mapping. Deep wiring into the message
-//! send path, the timeline accent rail, and the chime
-//! subscribe-with-circle binding live behind explicit
-//! `TODO(circle-rollout-P3B.2.x):` markers that the next iteration of
-//! this branch closes.
+//! P3B.2 ships the typed scaffolding — types, scope picker component,
+//! detail view, error-code mapping, the composer banner, and the
+//! timeline accent rail wiring inside `views/chat.rs`. The local
+//! `DecryptedScope` enum has been replaced with a re-export of the
+//! SDK's [`contrix_sdk::model::events::EffectiveScope`]; pattern
+//! matching against `effective_scope` now happens against the same
+//! enum the reducer produces.
 
 use serde::{Deserialize, Serialize};
 
@@ -210,26 +211,44 @@ impl CircleErrorKind {
     }
 }
 
-/// Best-effort decryption-time signal used by [`crate::sync_engine`].
+/// Re-export the SDK's canonical `EffectiveScope` so client code can
+/// pattern-match on the same enum the reducer produces. Earlier
+/// rounds shipped a local `DecryptedScope` mirror — that mirror has
+/// been deleted now that the SDK enum is available.
+pub use contrix_sdk::model::EffectiveScope;
+
+/// Classify the relationship between an envelope's
+/// [`EffectiveScope`] and the payload-level `scope_circle_id`.
 ///
-/// When an envelope arrives with an `effective_scope` that does not
-/// match the payload-level `scope_circle_id`, the message body is held
-/// in [`MessageCryptoState::NeedsVerification`] and the UI raises a
-/// warning badge (see [`crate::components::sync_badge`]).
-///
-/// The `effective_scope` is computed by the SDK reducer
-/// (`contrix_sdk::contrix_core::model::events::Scope::Circle`); this
-/// enum is just the client-side classification of the *result*.
-///
-/// `TODO(circle-rollout-P3B.2.7):` once the chime envelope decoder is
-/// wired through `sync_engine::dispatch_envelope`, replace this enum
-/// with a direct `Scope` import from the SDK.
+/// When the two disagree the message body is held in
+/// [`MessageCryptoState::NeedsVerification`] and the UI raises a
+/// warning badge (see [`crate::components::sync_badge`]). When they
+/// agree the body decrypts against the matching MLS group (Realm vs
+/// Circle).
+pub fn classify_scope_match(
+    effective: &EffectiveScope,
+    payload_scope_circle_id: Option<&str>,
+) -> ScopeMatch {
+    match (effective.circle_id(), payload_scope_circle_id) {
+        (None, None) => ScopeMatch::Realm,
+        (Some(envelope_circle), Some(payload_circle))
+            if envelope_circle.as_str() == payload_circle =>
+        {
+            ScopeMatch::Circle
+        }
+        _ => ScopeMatch::Mismatch,
+    }
+}
+
+/// Outcome of [`classify_scope_match`]. Mirrors the three states the
+/// chat renderer cares about: Realm-scoped, Circle-scoped, or a
+/// mismatch that demands manual verification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecryptedScope {
+pub enum ScopeMatch {
     /// Realm-scoped — decrypted against the parent Realm MLS group.
     Realm,
     /// Circle-scoped — decrypted against the Circle's independent MLS
-    /// group. The circle id is carried out-of-band on the envelope.
+    /// group.
     Circle,
     /// `effective_scope` and payload `scope_circle_id` disagreed —
     /// surface as `NeedsVerification` in the message card.

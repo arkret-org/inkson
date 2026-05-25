@@ -1018,10 +1018,11 @@ impl ContrixApi {
     /// the user sees a `circle_member_must_be_realm_member` failure
     /// inline rather than as a round-tripped reducer rejection.
     ///
-    /// `TODO(circle-rollout-P3B.2.6):` once the SDK exposes a typed
-    /// builder for `cx.circle.create`, swap the hand-rolled JSON body
-    /// for `contrix_sdk::space::Circle::create_operation(...)` and
-    /// drop the inline literal below.
+    /// The wire body is built from the SDK's typed
+    /// [`contrix_sdk::model::circle::CircleDisplay`] struct so the
+    /// enum values (`color_token`, glyph names) stay in sync with
+    /// `spec/v1/artifacts/schemas/circle.schema.json` instead of being
+    /// hand-rolled JSON strings.
     pub async fn create_circle(
         &self,
         realm_id: &str,
@@ -1033,6 +1034,10 @@ impl ContrixApi {
         directory_visibility: &str,
         initial_members: &[String],
     ) -> anyhow::Result<serde_json::Value> {
+        use contrix_sdk::model::{
+            CircleColorToken, CircleDirectoryVisibility, CircleDisplay, CircleGlyph, CircleSymbol,
+        };
+
         let realm_id = realm_id.trim();
         let actor_id = actor_id.trim();
         let title = title.trim();
@@ -1041,16 +1046,40 @@ impl ContrixApi {
                 "realm_id / actor_id / title are all required for cx.circle.create"
             ));
         }
+
+        let color: CircleColorToken = serde_json::from_value(serde_json::Value::String(
+            color_token.trim().to_owned(),
+        ))
+        .map_err(|err| {
+            anyhow::anyhow!("invalid Circle color_token `{color_token}`: {err}")
+        })?;
+        let glyph: CircleGlyph = serde_json::from_value(serde_json::Value::String(
+            symbol_glyph.trim().to_owned(),
+        ))
+        .map_err(|err| {
+            anyhow::anyhow!("invalid Circle symbol glyph `{symbol_glyph}`: {err}")
+        })?;
+        let visibility: CircleDirectoryVisibility = serde_json::from_value(
+            serde_json::Value::String(directory_visibility.trim().to_owned()),
+        )
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "invalid Circle directory_visibility `{directory_visibility}`: {err}"
+            )
+        })?;
+
+        let display = CircleDisplay {
+            short_name: short_name.trim().to_owned(),
+            color_token: color,
+            symbol: CircleSymbol::Glyph { glyph },
+        };
+
         let body = serde_json::json!({
             "realm_id": realm_id,
             "actor_id": actor_id,
             "title": title,
-            "display": {
-                "short_name": short_name,
-                "color_token": color_token,
-                "symbol": { "glyph": symbol_glyph },
-            },
-            "directory_visibility": directory_visibility,
+            "display": serde_json::to_value(&display)?,
+            "directory_visibility": serde_json::to_value(&visibility)?,
             "initial_members": initial_members,
         });
         self.post_json("/api/v1/circles", body).await
