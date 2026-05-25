@@ -1659,10 +1659,16 @@ impl ContrixApi {
             .await
     }
 
-    pub async fn delete_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
+    pub async fn delete_key_backup(
+        &self,
+        backup_id: &str,
+        actor_did: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_did, backup_id);
         let request = self
             .http
-            .delete(self.endpoint(&format!("api/v1/keys/backups/{backup_id}"))?);
+            .delete(self.endpoint(&format!("api/v1/keys/backups/{backup_id}"))?)
+            .header(crate::key_backup::KEY_BACKUP_DELETE_PROOF_HEADER, proof);
         self.send_json(self.prepare_request(request), Method::DELETE)
             .await
     }

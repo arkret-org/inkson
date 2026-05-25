@@ -1625,9 +1625,10 @@ pub fn SettingsPanel(
                                 let base = base_url();
                                 let api_token = token();
                                 let backup_id = key_backup_id();
+                                let actor = account_did();
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, |api| async move {
-                                        api.delete_key_backup(&backup_id).await
+                                        api.delete_key_backup(&backup_id, &actor).await
                                     })
                                     .await
                                     {

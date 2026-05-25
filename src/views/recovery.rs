@@ -966,10 +966,12 @@ pub fn RecoveryPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             let bid = row.backup_id.clone();
+                                            let actor = account_did();
                                             move |_| {
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 let bid = bid.clone();
+                                                let actor = actor.clone();
                                                 restore_loading.set(true);
                                                 restore_status.set(format!(
                                                     "Deleting {}…",
@@ -979,7 +981,7 @@ pub fn RecoveryPanel(
                                                     let bid_label = short_protocol_id(&bid);
                                                     let bid_clone = bid.clone();
                                                     let result = with_authed_api(&base, api_token, |api| async move {
-                                                        api.delete_key_backup(&bid_clone).await
+                                                        api.delete_key_backup(&bid_clone, &actor).await
                                                     })
                                                     .await
                                                     .map_err(|err| anyhow::anyhow!("{}", err.display()));

@@ -2,6 +2,7 @@ use chrono::SecondsFormat;
 use serde_json::{Value, json};
 
 const KEY_BACKUP_SCHEMA: &str = "cx.schema.key_backup.v1";
+pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-contrix-key-backup-delete-proof";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyBackupClass {
@@ -35,6 +36,10 @@ impl TryFrom<&str> for KeyBackupClass {
 
 pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
     format!("contrix-key-backup/{}/{subdomain}/v1", class.as_str())
+}
+
+pub fn key_backup_delete_ownership_proof(actor_did: &str, backup_id: &str) -> String {
+    format!("dev-ssk-delete:v1:{actor_did}:{backup_id}")
 }
 
 pub fn attach_key_backup_domain_separation(
@@ -620,5 +625,16 @@ mod tests {
         )
         .expect_err("path/body backup id mismatch must be rejected");
         assert!(err.contains("mismatch"));
+    }
+
+    #[test]
+    fn delete_ownership_proof_binds_actor_and_backup() {
+        assert_eq!(
+            key_backup_delete_ownership_proof(
+                "did:web:alice.example",
+                "cx:backup:01964137-0000-7000-8000-00000000beef"
+            ),
+            "dev-ssk-delete:v1:did:web:alice.example:cx:backup:01964137-0000-7000-8000-00000000beef"
+        );
     }
 }
