@@ -1097,6 +1097,14 @@ impl ContrixApi {
         .await
     }
 
+    pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
+        self.get_json(&format!(
+            "api/v1/profile/presence?did={}",
+            query_component(did)
+        ))
+        .await
+    }
+
     pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
         self.get_json("api/v1/account/describe").await
     }
@@ -2747,10 +2755,11 @@ fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
     );
 }
 
-/// Round R2/R3 (T02) — default ephemeral TTL for `cx.typing` / `cx.presence`
-/// / `cx.receipt.read`. 30 seconds is comfortably below the 5-minute hard
-/// ceiling and matches the spec's recommended typing-fade window.
+/// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
+/// fanout such as `cx.presence` / `cx.receipt.read`. 30 seconds is
+/// comfortably below the 5-minute hard ceiling.
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
+const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 
 /// Round R2/R3 (T02) — build a `cx.typing` `EphemeralEnvelope`. Enforces
 /// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
@@ -2761,7 +2770,7 @@ pub fn build_typing_envelope(
     typing: bool,
 ) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
-    let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
+    let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
     let realm_id_wire = scope_id_as_realm_id(realm_id);
     let realm = contrix_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.typing: {err}"))?;
@@ -2787,7 +2796,7 @@ pub fn build_typing_envelope(
             "realm_id": realm_id_wire,
             "scope_id": realm_id,
             "typing": typing,
-            "ttl_ms": EPHEMERAL_DEFAULT_TTL_SECS * 1000
+            "ttl_ms": TYPING_EPHEMERAL_TTL_SECS * 1000
         }),
         None,
     )

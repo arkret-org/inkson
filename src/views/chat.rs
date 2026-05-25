@@ -1049,6 +1049,31 @@ fn space_participants(projection: Option<&Value>, account_did: &str) -> Vec<Spac
     participants
 }
 
+fn display_label_for_actor(
+    state_store: &LocalStateStore,
+    participants: &[SpaceParticipant],
+    live_labels: &std::collections::BTreeMap<String, String>,
+    did: &str,
+) -> String {
+    if let Some(label) = live_labels
+        .get(did)
+        .and_then(|label| clean_participant_display_name(label, Some(did)))
+    {
+        return label;
+    }
+    participants
+        .iter()
+        .find(|participant| participant.did == did)
+        .and_then(|participant| {
+            participant
+                .display_name
+                .as_ref()
+                .or(participant.handle_label.as_ref())
+                .cloned()
+        })
+        .unwrap_or_else(|| crate::views::helpers::display_name_for_did(state_store, did))
+}
+
 fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
     let sender = sender.trim();
     !sender.is_empty() && (sender == "yougen" || sender == account_did.trim())
@@ -1553,14 +1578,15 @@ fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Valu
     candidates
         .iter()
         .find(|candidate| {
-            candidate.get("kind").and_then(Value::as_str).is_some_and(|kind| {
-                matches!(
-                    kind,
-                    "cx.content.poll"
-                        | "cx.content.poll.response"
-                        | "cx.content.poll.close"
-                )
-            })
+            candidate
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        "cx.content.poll" | "cx.content.poll.response" | "cx.content.poll.close"
+                    )
+                })
         })
         .copied()
 }
@@ -1637,6 +1663,70 @@ fn poll_cards_from_sync_spaces(
         cards.extend(poll_cards_from_events(timeline_events));
     }
     cards
+}
+
+fn normalize_sync_space_id(space_id: &str) -> String {
+    let trimmed = space_id.trim();
+    trimmed
+        .strip_prefix("cx:space:")
+        .map(|suffix| format!("cx:realm:{suffix}"))
+        .unwrap_or_else(|| trimmed.to_owned())
+}
+
+fn sync_space_ids_match(left: &str, right: &str) -> bool {
+    left.trim() == right.trim() || normalize_sync_space_id(left) == normalize_sync_space_id(right)
+}
+
+fn typing_actors_from_sync_spaces(
+    spaces: &std::collections::BTreeMap<String, Value>,
+    space_id: &str,
+    account_did: &str,
+) -> Vec<String> {
+    let mut actors = std::collections::BTreeSet::<String>::new();
+    for (candidate_space_id, body) in spaces {
+        if !sync_space_ids_match(candidate_space_id, space_id) {
+            continue;
+        }
+        let Some(ephemeral) = body.get("ephemeral").and_then(Value::as_array) else {
+            continue;
+        };
+        for item in ephemeral {
+            let kind = value_string_at(item, &["type", "kind"]).unwrap_or_default();
+            if kind != "cx.typing" {
+                continue;
+            }
+            let Some(entries) = item.get("actors").and_then(Value::as_array) else {
+                continue;
+            };
+            for entry in entries {
+                let actor = value_string_at(entry, &["actor", "actor_did", "actor_id"])
+                    .unwrap_or_default()
+                    .trim();
+                if !actor.is_empty() && actor != account_did {
+                    actors.insert(actor.to_owned());
+                }
+            }
+        }
+    }
+    actors.into_iter().collect()
+}
+
+fn profile_presence_status(profile: &Value) -> String {
+    profile
+        .get("presence")
+        .and_then(|presence| presence.get("status"))
+        .and_then(Value::as_str)
+        .filter(|status| !status.trim().is_empty())
+        .unwrap_or("offline")
+        .to_owned()
+}
+
+fn profile_display_label(profile: &Value, did: &str) -> String {
+    profile
+        .get("display_name")
+        .and_then(Value::as_str)
+        .and_then(|label| clean_participant_display_name(label, Some(did)))
+        .unwrap_or_else(|| did.to_owned())
 }
 
 fn chat_messages_from_local_state(state: &ClientLocalState) -> Vec<ChatMessage> {
@@ -2164,15 +2254,14 @@ pub fn ChatPanel(
     let mut poll_cards = use_signal(Vec::<crate::messaging::polls::PollCard>::new);
     // G3.Y2 — typing indicator. `typing_actors` lists the DIDs of
     // other actors who have sent a `cx.typing` ephemeral within the
-    // TTL window. Currently seeded from local state for testability;
-    // the live wire path (subscribe to soland ephemeral fanout) is
-    // tracked under TODO(G3.Y2-followup).
+    // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
     // G3.Y2 — presence. Maps `actor_did -> "online"|"away"|"offline"`.
-    // Seeded from `local_state::presence_aggregate` when the sync
-    // engine surfaces a presence projection; for now the chat view
-    // just renders whatever the store hands it.
+    // Refreshed from soland's profile presence surface while the chat
+    // panel is mounted.
     let presence_states = use_signal(std::collections::BTreeMap::<String, String>::new);
+    let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
+    let mut presence_poll_key = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
     // (or Flow id) + the desired child-Space title.
     let mut promote_discussion_draft =
@@ -2199,7 +2288,8 @@ pub fn ChatPanel(
     let account_display_name = use_signal(String::new);
     let mut track_filter = use_signal(|| "discussion_only".to_owned());
     let mut left_panel_open = use_signal(|| true);
-    let mut right_panel = use_signal(|| Option::<DiscussionSidePanel>::None);
+    let mut right_panel =
+        use_signal(|| Option::<DiscussionSidePanel>::Some(DiscussionSidePanel::Users));
     let selected_channel_value = selected_channel();
     let all_channels = channels();
     let filter_value = track_filter();
@@ -2307,6 +2397,86 @@ pub fn ChatPanel(
     }
     let participants_for_messages = participants.clone();
     let account_display_label = account_display_name();
+
+    let mut participant_dids_for_presence = participants_for_messages
+        .iter()
+        .map(|participant| participant.did.clone())
+        .filter(|did| !did.trim().is_empty())
+        .collect::<Vec<_>>();
+    participant_dids_for_presence.sort();
+    participant_dids_for_presence.dedup();
+    let has_remote_presence = participant_dids_for_presence
+        .iter()
+        .any(|did| did != &account_did);
+    let poll_key = format!(
+        "{}|{}",
+        selected_space,
+        participant_dids_for_presence.join(",")
+    );
+    if !token().trim().is_empty()
+        && !selected_space.trim().is_empty()
+        && has_remote_presence
+        && presence_poll_key() != poll_key
+    {
+        presence_poll_key.set(poll_key.clone());
+        let base = base_url.clone();
+        let api_token = token();
+        let space = selected_space.clone();
+        let actor = account_did.clone();
+        let participants_for_poll = participant_dids_for_presence.clone();
+        let mut typing_actors_for_poll = typing_actors;
+        let mut presence_states_for_poll = presence_states;
+        let mut presence_labels_for_poll = presence_labels;
+        let self_label_for_poll = account_display_label.clone();
+        let poll_key_for_task = poll_key.clone();
+        let poll_key_signal = presence_poll_key;
+        spawn(async move {
+            for _ in 0..240 {
+                if poll_key_signal.read().as_str() != poll_key_for_task.as_str() {
+                    break;
+                }
+                if let Ok(api) = authed_api_with_sync(&base, api_token.clone(), None) {
+                    if let Ok(sync) = api.account_subscribe_snapshot(None).await {
+                        let active_typers =
+                            typing_actors_from_sync_spaces(&sync.spaces, &space, &actor);
+                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
+                            typing_actors_for_poll.set(active_typers);
+                        }
+                    }
+
+                    let mut next_presence = std::collections::BTreeMap::<String, String>::new();
+                    let mut next_labels = std::collections::BTreeMap::<String, String>::new();
+                    for did in &participants_for_poll {
+                        if did == &actor {
+                            next_presence.insert(did.clone(), "online".to_owned());
+                            if let Some(label) =
+                                clean_participant_display_name(&self_label_for_poll, Some(did))
+                            {
+                                next_labels.insert(did.clone(), label);
+                            }
+                            continue;
+                        }
+                        match api.profile_presence(did).await {
+                            Ok(profile) => {
+                                next_presence
+                                    .insert(did.clone(), profile_presence_status(&profile));
+                                next_labels
+                                    .insert(did.clone(), profile_display_label(&profile, did));
+                            }
+                            Err(_) => {
+                                next_presence.insert(did.clone(), "offline".to_owned());
+                            }
+                        }
+                    }
+                    if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
+                        presence_states_for_poll.set(next_presence);
+                        presence_labels_for_poll.set(next_labels);
+                    }
+                }
+                crate::api::sleep_for(std::time::Duration::from_millis(400)).await;
+            }
+        });
+    }
 
     if !initial_sync_requested() && !token().trim().is_empty() {
         initial_sync_requested.set(true);
@@ -3033,13 +3203,6 @@ pub fn ChatPanel(
                 // `cx.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
-                //
-                // TODO(G3.Y2-followup): subscribe to soland's
-                // ephemeral channel for `cx.typing` events and populate
-                // `typing_actors` from the parsed
-                // `crate::presence_rx::PresenceAggregate`. The plumbing
-                // exists on the receive side; the chat view just hasn't
-                // wired it yet.
                 {
                     let active_typers: Vec<String> = typing_actors()
                         .into_iter()
@@ -3047,11 +3210,14 @@ pub fn ChatPanel(
                         .collect();
                     if !active_typers.is_empty() {
                         let attr_value = active_typers.join(",");
+                        let live_labels = presence_labels();
                         let label = active_typers
                             .iter()
                             .map(|did| {
-                                crate::views::helpers::display_name_for_did(
+                                display_label_for_actor(
                                     &state_store.read(),
+                                    &participants_for_messages,
+                                    &live_labels,
                                     did,
                                 )
                             })
@@ -3986,17 +4152,8 @@ pub fn ChatPanel(
                         }
                     }
                     // G3.Y2 — presence list. One row per participant
-                    // with `data-presence-state` derived from the
-                    // local presence aggregate. Defaults to `offline`
-                    // until soland's presence stream is wired in.
-                    //
-                    // TODO(G3.Y2-followup): subscribe to soland's
-                    // ephemeral `cx.presence` fanout and populate
-                    // `presence_states` from
-                    // `crate::presence_rx::PresenceAggregate`. Until
-                    // then the row data-attribute lets cotest assert
-                    // *something* is wired without faking presence
-                    // semantics.
+                    // with `data-presence-state` derived from soland's
+                    // live profile presence surface.
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Presence" } }
                         div {
@@ -4005,8 +4162,11 @@ pub fn ChatPanel(
                             for participant in &participants {
                                 {
                                     let did_attr = participant.did.clone();
-                                    let display = crate::views::helpers::display_name_for_did(
+                                    let live_labels = presence_labels();
+                                    let display = display_label_for_actor(
                                         &state_store.read(),
+                                        &participants,
+                                        &live_labels,
                                         &participant.did,
                                     );
                                     let state = presence_states
@@ -4020,7 +4180,6 @@ pub fn ChatPanel(
                                                 "offline".to_owned()
                                             }
                                         });
-                                    let did_attr_label = short_protocol_id(&did_attr);
                                     let state_for_class = state.clone();
                                     rsx! {
                                         div {
@@ -4030,7 +4189,7 @@ pub fn ChatPanel(
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
                                             span { class: "presence-name", "{display}" }
-                                            span { class: "muted mono", title: "{did_attr}", " {did_attr_label}" }
+                                            span { class: "muted mono", title: "{did_attr}", " {did_attr}" }
                                             span { class: "muted", " ({state})" }
                                         }
                                     }
