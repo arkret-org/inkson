@@ -70,6 +70,8 @@ pub struct IndexSearchResponse {
 pub struct ContactResponse {
     pub requester: String,
     pub target: String,
+    #[serde(default)]
+    pub scope: String,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -78,6 +80,34 @@ pub struct ContactResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContactsResponse {
     pub contacts: Vec<ContactResponse>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConsentCellResponse {
+    pub ok: bool,
+    pub cell_id: String,
+    pub holder_did: String,
+    pub peer_did: String,
+    pub scope: String,
+    pub state: String,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub requested_at: Option<String>,
+    pub updated_at: String,
+    #[serde(default)]
+    pub active_grant_dots: Vec<String>,
+    #[serde(default)]
+    pub grant_dots: Vec<String>,
+    #[serde(default)]
+    pub revoked_dots: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConsentCellsResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub cells: Vec<ConsentCellResponse>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

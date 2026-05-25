@@ -37,6 +37,12 @@ pub enum Route {
     #[route("/directory", crate::app::RouterView)]
     Directory,
 
+    #[route("/contacts", crate::app::RouterView)]
+    Contacts,
+
+    #[route("/contacts/new", crate::app::RouterView)]
+    ContactsNew,
+
     #[route("/setup", crate::app::RouterView)]
     Setup,
 
@@ -230,6 +236,7 @@ impl Route {
                 View::Timeline
             }
             Route::Chat { .. } => View::Chat,
+            Route::Contacts | Route::ContactsNew => View::Contacts,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => {
@@ -316,6 +323,7 @@ impl From<View> for Route {
             View::Chat => Route::Chat {
                 space_id: String::new(),
             },
+            View::Contacts => Route::Contacts,
             View::Directory => Route::Directory,
             View::Setup => Route::Setup,
             View::Settings => Route::Settings,

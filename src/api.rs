@@ -102,9 +102,9 @@ use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
-    ClientSyncResponse, ContactResponse, ContactsResponse, DevLoginResponse,
-    DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
-    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
+    ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse, ContactResponse,
+    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
+    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
     EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
     IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
     KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
@@ -780,6 +780,18 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn request_contact_scoped(
+        &self,
+        target: &str,
+        scope: &str,
+    ) -> anyhow::Result<ContactResponse> {
+        self.post_json(
+            "api/v1/contacts/request",
+            json!({"target": target, "scope": scope}),
+        )
+        .await
+    }
+
     pub async fn respond_contact(
         &self,
         requester: &str,
@@ -794,6 +806,50 @@ impl ContrixApi {
 
     pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
         self.get_json("api/v1/contacts").await
+    }
+
+    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsResponse> {
+        self.get_json("api/v1/consent/cells").await
+    }
+
+    pub async fn grant_consent_cell(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+        valid_until: Option<&str>,
+    ) -> anyhow::Result<ConsentCellResponse> {
+        self.post_json(
+            &format!(
+                "api/v1/consent/cells/{}/grant",
+                url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
+            ),
+            json!({
+                "peer_did": peer,
+                "scope": scope,
+                "valid_until": valid_until,
+            }),
+        )
+        .await
+    }
+
+    pub async fn revoke_consent_cell(
+        &self,
+        holder: &str,
+        peer: &str,
+        scope: &str,
+    ) -> anyhow::Result<ConsentCellResponse> {
+        self.post_json(
+            &format!(
+                "api/v1/consent/cells/{}/revoke",
+                url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
+            ),
+            json!({
+                "peer_did": peer,
+                "scope": scope,
+            }),
+        )
+        .await
     }
 
     pub async fn logout(&self) -> anyhow::Result<LogoutResponse> {

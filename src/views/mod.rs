@@ -45,6 +45,7 @@ pub mod chat;
 /// POSTs a `cx.consent.grant` Move via the move_builder + api::submit_move
 /// pipeline.
 pub mod consent_demo;
+pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
 /// protocol-level details (raw event log, audit rows, profile / schema
@@ -117,6 +118,7 @@ pub enum View {
     Dashboard,
     Timeline,
     Chat,
+    Contacts,
     Directory,
     Setup,
     Settings,

@@ -7459,6 +7459,18 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
+                    Route::Contacts => rsx! {
+                        crate::views::contacts::ContactsPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
+                    Route::ContactsNew => rsx! {
+                        crate::views::contacts::ContactNewPanel {
+                            base_url: base_url(),
+                            token,
+                        }
+                    },
                     Route::Setup | Route::SetupSection { .. } => {
                         if full_ready {
                             rsx! {
@@ -8151,6 +8163,7 @@ fn route_label(route: &Route) -> &'static str {
             "Timeline View"
         }
         Route::Chat { .. } => "Discussion",
+        Route::Contacts | Route::ContactsNew => "Contacts",
         Route::Directory => "Search",
         Route::Setup => "New Realm",
         Route::SetupSection { section } => match section.as_str() {
