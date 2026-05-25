@@ -807,6 +807,50 @@ pub struct IceConfigRequest {
     pub context: Value,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CreateWebrtcSessionResponse {
+    pub session_id: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub participants: Vec<String>,
+    #[serde(default)]
+    pub expires_at: String,
+    #[serde(default)]
+    pub call_state: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub recording_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WebrtcSignalResponse {
+    #[serde(default)]
+    pub ok: bool,
+    pub session_id: String,
+    pub seq: u64,
+    #[serde(default)]
+    pub call_state: String,
+    #[serde(default)]
+    pub event: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CallRecordingStartResponse {
+    #[serde(default)]
+    pub ok: bool,
+    pub call_id: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub recording_policy: String,
+    #[serde(default)]
+    pub recording_id: String,
+    #[serde(default)]
+    pub recording_started_by: String,
+    #[serde(default)]
+    pub recording_blob_ref: String,
+}
+
 // ── MIMI Provider Facade ─────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -102,9 +102,10 @@ use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
     AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
-    ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse, ContactResponse,
-    ContactsResponse, DevLoginResponse, DeviceMessagesReceiveResBody, DeviceMessagesSendResBody,
-    DeviceTrustResponse, DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
+    CallRecordingStartResponse, ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse,
+    ContactResponse, ContactsResponse, CreateWebrtcSessionResponse, DevLoginResponse,
+    DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
+    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
     EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
     IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
     KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
@@ -115,7 +116,7 @@ use crate::models::{
     ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
     SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody, TokenRefreshResponse,
-    TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
+    TypingResponse, UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -1879,6 +1880,65 @@ impl ContrixApi {
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
         self.post_json("api/v1/directory/resolve-handle", json!({"handle": handle}))
             .await
+    }
+
+    // ── WebRTC calls ───────────────────────────────────────────────
+
+    pub async fn create_webrtc_session(
+        &self,
+        space_id: &str,
+        participants: Vec<String>,
+        mode: &str,
+        recording_policy: &str,
+    ) -> anyhow::Result<CreateWebrtcSessionResponse> {
+        self.post_json(
+            "api/v1/webrtc/sessions",
+            json!({
+                "space_id": space_id,
+                "participants": participants,
+                "mode": mode,
+                "recording_policy": recording_policy,
+                "ttl_ms": 120_000
+            }),
+        )
+        .await
+    }
+
+    pub async fn append_webrtc_signal(
+        &self,
+        session_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        message_type: &str,
+        seq: u64,
+        payload: Value,
+    ) -> anyhow::Result<WebrtcSignalResponse> {
+        self.post_json(
+            &format!("api/v1/webrtc/sessions/{session_id}/signals"),
+            json!({
+                "message_type": message_type,
+                "seq": seq,
+                "payload": payload,
+                "proofs": [{
+                    "actor": actor_id,
+                    "kid": format!("{actor_id}#{device_id}"),
+                    "sig": "yougen-device-proof"
+                }]
+            }),
+        )
+        .await
+    }
+
+    pub async fn start_call_recording(
+        &self,
+        session_id: &str,
+        space_id: &str,
+    ) -> anyhow::Result<CallRecordingStartResponse> {
+        self.post_json(
+            &format!("api/v1/calls/{session_id}/recording/start"),
+            json!({ "space_id": space_id }),
+        )
+        .await
     }
 
     // ── Space / Realm Management (all writes go through cx.events.submit) ─

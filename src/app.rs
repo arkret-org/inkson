@@ -7649,7 +7649,14 @@ pub fn RouterView() -> Element {
                     },
                     Route::Call => rsx! {
                         crate::views::call::CallPanel { state_store }
-                        crate::views::webrtc::WebRtcCallPanel { state_store }
+                        crate::views::webrtc::WebRtcCallPanel {
+                            base_url: base_url(),
+                            token,
+                            state_store,
+                            selected_space: active_space_id.clone(),
+                            account_did: account_did(),
+                            device_id: device_id(),
+                        }
                     },
                     Route::Recovery => rsx! {
                         crate::views::recovery::RecoveryPanel {
