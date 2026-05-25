@@ -42,3 +42,46 @@ Before a local milestone is recorded:
 - SBOM evidence under `dist/web-image/`
 - Signing dry-run evidence under `dist/signing/`
 - Lighthouse budget report under `dist/lighthouse/`
+
+## Concrete protections shipped today
+
+The following are NOT plans — they are guarantees enforced by the
+current branch:
+
+### Dev token guard (`tests/dev_token_guard.rs`)
+
+The integration test asserts that no committed source file under
+`src/` references the dev-only placeholder tokens
+(`yougen-dev-placeholder-token`, `desktop:yougen-dev-placeholder-token`,
+or the `a..b` JWS marker) outside the `dev_proof` cfg-gated paths.
+Production binaries built with `--no-default-features` never attach
+the placeholder to an envelope.
+
+### Push token redaction
+
+`crate::push::ensure_production_register_request` rejects any
+register-device request whose `push_key` matches the documented
+placeholder markers BEFORE the body crosses the wire. The chime
+orchestrator (`crate::push_registration::register_via_chime`) calls
+this guard between resolving the real provider token and posting to
+the principal server; a buggy provider that returns a placeholder
+trips a `PushRegistrationError::PlaceholderTokenRejected` fail-closed
+error rather than leaking the marker to floria.
+
+### Local OS keychain handoff
+
+On native targets, `crate::secure_key_store::KeyringSecureKeyStore`
+routes signing-key persistence through macOS Keychain Services /
+freedesktop Secret Service / Windows Credential Manager via the
+`keyring 3.6.x` `Entry` API. The wasm32 build falls back to
+`LocalStorageSecureKeyStore` / `IndexedDbSecureKeyStore`; the browser
+"no symmetric-secret tier" trade-off is called out in the keystore
+module docs. There is no code path that writes signing material to a
+plain-text file on disk.
+
+### Telemetry default OFF
+
+Crash telemetry is opt-in (`CrashTelemetryPrefs::default()` is `false`).
+The toggle lives in the settings page; turning it on requires an
+explicit user gesture. No crash payload leaves the device until the
+user flips the toggle.

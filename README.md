@@ -163,3 +163,10 @@ Unauthenticated users see only the login or registration entry screen. After a r
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
 - Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, push registration, and moderation report controls.
 - Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Principal Server session.
+
+---
+
+<!-- circle-rollout milestone pointer -->
+> **Active milestone tracking** (local-only, gitignored): see
+> `_yougen_todos.md` in the parent `contrix-dev/` directory for the
+> circle-rollout (CXP-0007) work item list and per-stage checkpoints.

@@ -1,5 +1,29 @@
 use dioxus::prelude::*;
 
+/// CXP-0007 P3B.4 — multi-account avatar dropdown switcher.
+/// Lists every profile in [`crate::config::MultiProfileConfig`] and
+/// fires `on_switch` / `on_add_account` handlers.
+pub mod account_switcher;
+/// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
+/// next to the connection status indicator.
+pub mod offline_pending_badge;
+/// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
+/// `RealmClassBadge` (Principal / Collaboration, switcher).
+pub mod verify_badges;
+/// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
+/// toggle. Crash reports are off by default.
+pub mod report_problem;
+/// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
+/// Consumes [`crate::circle::CircleErrorKind`] and renders the
+/// localized user-facing string.
+pub mod circle_error_toast;
+/// CXP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
+/// discussion-of cross-link banner. Shared between the new-Flow form,
+/// the composer header, and the Flow detail view.
+pub mod circle_scope_picker;
+/// CXP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
+/// page. Strict-subset validation runs client-side before submit.
+pub mod create_circle_modal;
 pub mod empty_state;
 pub mod permission_pill;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
@@ -10,6 +34,20 @@ pub mod shortcut_help;
 pub mod sync_badge;
 pub mod write_state;
 
+pub use account_switcher::AccountSwitcher;
+pub use offline_pending_badge::OfflinePendingBadge;
+pub use verify_badges::{NeedsVerificationBadge, RealmClass, RealmClassBadge};
+pub use report_problem::{
+    CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
+};
+pub use circle_error_toast::{
+    CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
+    take_circle_error,
+};
+pub use circle_scope_picker::{
+    CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
+};
+pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,

@@ -2579,6 +2579,48 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow-wrap: anywhere;
 }
 
+/* CXP-0007 P3B.2.4 — Circle-scope accent rail on Circle-scoped messages. */
+.discussion-message.has-circle-accent-rail {
+  position: relative;
+  padding-left: 10px;
+}
+
+.discussion-message.has-circle-accent-rail .circle-accent-rail {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent, #1f6b4f);
+  cursor: help;
+}
+
+.discussion-message.has-circle-accent-rail .circle-accent-rail:hover {
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 85%, #18212f);
+}
+
+/* CXP-0007 P3B.2.3 — composer banner colour tokens. */
+.circle-composer-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #1f6b4f) 35%, var(--border, #d8e0e8));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 10%, var(--surface, #ffffff));
+}
+
+.circle-composer-banner .banner-icon {
+  font-size: 18px;
+}
+
+.circle-composer-banner .banner-body {
+  display: grid;
+  gap: 2px;
+}
+
 .mention-token {
   display: inline-flex;
   align-items: center;
@@ -5842,6 +5884,13 @@ pub fn RouterView() -> Element {
     // itself is spawned by the `use_effect` further down.
     let mut sync_generation = use_signal(|| 0u64);
 
+    // CXP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
+    // the sync engine context so the loop can detect a profile rotation
+    // and exit cleanly. The shell is currently single-profile; the
+    // signal stays default-empty until the account switcher writes to
+    // it on the first user-driven add-account / switch action.
+    let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
+
     // Single-source-of-truth for the sidebar. Anything that wants to
     // change the visible Space list writes to
     // `state_store.space_projections` (sync engine, connect()'s initial
@@ -5954,6 +6003,7 @@ pub fn RouterView() -> Element {
             theme,
             account_did,
             selected_space,
+            profiles: profiles_signal,
         };
         spawn(async move {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
@@ -6301,6 +6351,11 @@ pub fn RouterView() -> Element {
             // banner is pulled from a process-wide queue populated by
             // `api::decode_contrix_error`'s `maybe_dispatch_policy_deny`.
             crate::components::PolicyDenyBanner {}
+            // CXP-0007 P3B.3 — global Circle-error toast, fed by the
+            // HTTP layer's `maybe_dispatch_circle_error` next to the
+            // policy-deny dispatcher. Renders nothing when no error
+            // is queued.
+            crate::components::CircleErrorToast { i18n: i18n_signal }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",

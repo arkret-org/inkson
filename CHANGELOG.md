@@ -6,6 +6,111 @@ Android / web).
 
 ## [Unreleased]
 
+### Circle rollout (CXP-0007 + cross-stack P3B)
+
+- **Added** Circle UX surface: Space-sidebar Circle list, Flow/Space scope
+  picker, composer banner labelling Circle-scoped writes, timeline accent
+  rail + tooltip on Circle-scoped messages, dedicated `views/circle.rs`
+  Circle-detail view, create-Circle modal in Realm detail page,
+  `Relation::ConfidentialDiscussionOf` cross-link banner above linked
+  Flows, and `sync_engine` envelope routing that selects the right MLS
+  group from each event's `effective_scope`. Chime push subscriptions now
+  pass the active Circle id so `PushNotification.circle_id` filtering and
+  per-Circle mute prefs flow through end-to-end.
+- **Added** CXP-0007 error-code UI surface: 5 reason codes
+  (`circle_realm_mismatch`, `circle_not_active`,
+  `circle_member_must_be_realm_member`, `scope_rebind_forbidden`,
+  `metadata_encryption_floor_violation`) + the top-level
+  `delivery_binding_handed_over` code now render as user-facing toasts
+  with English i18n strings.
+- **Added** multi-account profile switching: `ClientConfig` now holds a
+  `Vec<AccountProfile>` keyed by `active_profile_id`, with an avatar
+  dropdown switcher; `sync_engine` swaps cursor / token / push
+  registration on switch.
+- **Added** offline queue is now the canonical write path for message
+  send, settings write, and push-preference write. A background drain
+  worker replays in FIFO with exponential backoff once the network +
+  sync anchor are healthy. The UI exposes a "pending N" badge.
+- **Added** E2EE `NeedsVerification` badge + Principal / Collaboration
+  Realm class badges next to Realm switcher entries.
+- **Added** desktop bundling DRY-RUN scripts for macOS (.app via
+  `cargo-bundle` / `dx bundle`), Windows (.msi via `cargo-wix`), and
+  Linux (AppImage + .deb). All local-only — nothing is uploaded; the
+  signing path uses a placeholder identity that is rejected by real
+  notarization.
+- **Added** opt-in crash telemetry + in-app "Report a problem" dialog
+  that bundles the last 5 minutes of `tracing` lines + app version + OS.
+  Telemetry default is OFF.
+- **Changed** Floria push URL is now read from the `YOUGEN_FLORIA_URL`
+  env var (or `localhost:9001` in dev), with a no-op fallback when prod
+  is unset rather than the previous `https://push.example/...` hard-coded
+  placeholder.
+- **Notes** mobile (iOS / Android) packaging deferred to the next
+  milestone; version stays at `0.1.0` and no release artifact ships out
+  of this branch.
+- **Changed** `api.rs::create_circle` now serialises its wire body
+  through the SDK's typed
+  [`contrix_sdk::model::CircleDisplay`] / `CircleColorToken` /
+  `CircleGlyph` / `CircleDirectoryVisibility` enums instead of a
+  hand-rolled `json!` literal, so an invalid color token or glyph
+  fails inline instead of being round-tripped through the reducer.
+- **Changed** `circle.rs` now re-exports
+  [`contrix_sdk::model::EffectiveScope`] directly; the local
+  `DecryptedScope` mirror has been deleted. The new
+  `classify_scope_match` helper produces `ScopeMatch::{Realm,Circle,
+  Mismatch}` for the chat renderer.
+- **Changed** `cursor.rs::flow_position_label` accepts an optional
+  `last_read_at` and `last_read_at_from_projection` extracts the
+  field from the raw account-subscribe Space-position JSON, so the
+  label can surface "last read …" until the SDK promotes the field
+  onto `SpacePosition` directly.
+- **Changed** `config.rs` publishes the typed
+  [`ProfileSwitchEvent`] payload and
+  `MultiProfileConfig::build_switch_event`; the avatar
+  `AccountSwitcher` emits it through a new `on_switch_event` prop
+  alongside the legacy `on_switch` string handler.
+- **Changed** `SyncEngineContext` now carries
+  `Signal<MultiProfileConfig>`; the engine snapshots the active
+  `profile_id` at spawn and exits cleanly when the shell rotates
+  profiles so the next generation picks up the new cursor / token /
+  account_did atomically.
+- **Changed** `offline::spawn_offline_drain` now takes a bound
+  profile id + shared active-profile RwLock so a profile rotation
+  no longer replays the prior profile's queued writes against the
+  new account.
+- **Changed** `push_registration::RegisterContext` carries an
+  optional `active_circle_id`; `build_request` forwards it into the
+  chime gateway through the idempotency key and adds the Circle to
+  `PushPreferences.muted_circle_ids` so the gateway de-duplicates
+  Realm-wide and Circle-scoped wakeups.
+- **Removed** the `DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY` back-compat
+  shim in `push.rs`. All call sites now route through
+  `push::floria_gateway_url()` directly (env-driven, with a release
+  no-op fallback).
+- **Added** `views/chat.rs` mounts `CircleComposerBanner` at the
+  top of the composer when the active Flow carries a
+  `scope_circle_id`. The banner surfaces the Circle title plus the
+  visible-member count; Realm-scoped Flows render nothing so the UI
+  stays quiet during normal writes.
+- **Added** `views/chat.rs` per-message Circle accent rail: each
+  message card gets a left-edge coloured ribbon with the Circle
+  title as a tooltip when its enclosing Flow has `scope_circle_id`.
+- **Added** `chat_message_from_event` now compares the envelope's
+  `effective_scope.circle_id` against the payload `scope_circle_id`
+  and routes mismatches into
+  `MessageCryptoState::NeedsVerification` so the UI badge surfaces
+  the disagreement instead of presenting the decrypted body as
+  trustworthy.
+- **Added** `ConfidentialDiscussionOfBanner` accepts an optional
+  `target_space_id` prop that routes the link through
+  `Route::TimelineSpace { space_id }` with a `#flow:<id>` anchor.
+- **Added** `telemetry::sentry_init` initialises the opt-in Sentry
+  client when BOTH the user toggle is on AND the build-time
+  `SENTRY_DSN` env var is non-empty. An empty DSN logs a debug
+  breadcrumb and returns `None` silently. Wasm builds skip the dep
+  entirely. `CrashTelemetryPrefs::load_from_env` honours
+  `YOUGEN_CRASH_TELEMETRY_OPT_IN=1|true|on|yes`.
+
 ### Testing
 
 - **Changed** `tests/e2e/` is now mock-only. The five `live smoke ...` cases in

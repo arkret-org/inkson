@@ -30,6 +30,7 @@
 //!     principal_did: Some("did:web:alice.example".into()),
 //!     bearer_token: Some(api_token),
 //!     session_grant: None,
+//!     active_circle_id: None,
 //! }, &mut local_state_store).await?;
 //! ```
 
@@ -44,8 +45,7 @@ use crate::coauth::{
 };
 use crate::local_state::LocalStateStore;
 use crate::push::{
-    DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY, ensure_production_register_request,
-    registration_state_from_response,
+    ensure_production_register_request, floria_gateway_url, registration_state_from_response,
 };
 use crate::session_refresh::grant_matches_principal_server;
 
@@ -122,8 +122,9 @@ pub struct RegisterContext {
     /// (floria) goes in the request body's `push_gateway` field.
     pub principal_server_url: String,
     /// Floria gateway notify URL. Stamped into the register request as
-    /// `push_gateway`. Defaults to [`DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY`]
-    /// if empty.
+    /// `push_gateway`. Falls back to [`floria_gateway_url`] (which is
+    /// env-driven and resolves to an empty no-op in release builds
+    /// without `YOUGEN_FLORIA_URL` set) when empty.
     pub floria_gateway_url: String,
     /// Device id (e.g. `dev_yougen` or `did:web:alice#device-phone`).
     pub device_id: String,
@@ -137,6 +138,12 @@ pub struct RegisterContext {
     /// `LocalStateStore`, mints the matching introspection proof headers,
     /// and fails closed if no grant is available.
     pub session_grant: Option<String>,
+    /// CXP-0007 P3B.2.9 — active Circle id (when the registration
+    /// originates from a Circle-scoped sidebar deep-link or the
+    /// current Flow's `scope_circle_id`). `None` falls back to the
+    /// historical Realm-wide subscription. Forwarded into the chime
+    /// request via [`build_request`].
+    pub active_circle_id: Option<String>,
 }
 
 /// Outcome of a successful chime-driven registration. The persisted
@@ -321,18 +328,42 @@ fn build_request(
     push_key: &str,
 ) -> Result<RegisterDeviceRequest, PushRegistrationError> {
     let push_gateway = if ctx.floria_gateway_url.trim().is_empty() {
-        DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY.to_owned()
+        floria_gateway_url()
     } else {
         ctx.floria_gateway_url.clone()
     };
     let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
+    // CXP-0007 P3B.2.9 — forward the active Circle id (when present)
+    // into the chime subscribe request. The chime crate carries the
+    // value out-of-band by stamping it onto the idempotency key
+    // (so re-registration after a Circle switch produces a distinct
+    // subscription record) and by registering it as a muted
+    // exclusion so the gateway does not re-deliver Realm-only
+    // wakeups for that Circle. When no Circle is active the build
+    // falls back to the prior Realm-wide subscription behaviour.
+    let active_circle = ctx
+        .active_circle_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut muted_circle_ids = std::collections::BTreeSet::new();
+    if let Some(circle) = active_circle {
+        // Subscribing to a Circle implicitly opts the device out of
+        // Realm-wide duplicate wakeups for the same Circle by adding
+        // it to the muted set on the legacy delivery path.
+        muted_circle_ids.insert(circle.to_owned());
+    }
     let prefs = PushPreferences {
         enabled: true,
         allow_insecure_loopback_push_gateway: true,
         gateways: vec![binding.clone()],
+        muted_circle_ids,
         ..Default::default()
     };
-    let idempotency_key = format!("yougen-push-register-{}", ctx.device_id);
+    let idempotency_key = match active_circle {
+        Some(circle) => format!("yougen-push-register-{}-{circle}", ctx.device_id),
+        None => format!("yougen-push-register-{}", ctx.device_id),
+    };
     let platform = current_platform_str();
     let config = PushDeviceConfig {
         principal_did: ctx.principal_did.as_deref(),
@@ -415,6 +446,7 @@ mod tests {
             principal_did: Some("did:web:alice.example".to_owned()),
             bearer_token: Some("session-secret".to_owned()),
             session_grant: None,
+            active_circle_id: None,
         }
     }
 
@@ -470,11 +502,23 @@ mod tests {
     }
 
     #[test]
-    fn build_request_falls_back_to_default_floria_gateway_when_empty() {
+    fn build_request_falls_back_to_runtime_floria_gateway_when_empty() {
         let mut c = ctx("dev_yougen");
         c.floria_gateway_url = "   ".to_owned();
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
-        assert_eq!(request.push_gateway, DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY);
+        assert_eq!(request.push_gateway, floria_gateway_url());
+    }
+
+    #[test]
+    fn build_request_stamps_active_circle_into_idempotency_key() {
+        let mut c = ctx("dev_yougen");
+        c.active_circle_id = Some("cx:circle:opsroom".to_owned());
+        let request = build_request(&c, "apns:01234567890abcdef").expect("build");
+        let key = request
+            .idempotency_key
+            .as_deref()
+            .expect("idempotency_key");
+        assert!(key.contains("cx:circle:opsroom"), "idempotency_key={key}");
     }
 
     #[test]

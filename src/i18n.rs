@@ -194,6 +194,9 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.audit", "Audit");
     dict.set("nav.devices", "Devices");
 
+    // CXP-0007 Circle error keys (P3B.3.2)
+    add_circle_error_keys(&mut dict);
+
     // Login
     dict.set("login.server", "Server");
     dict.set("login.connection_test", "connection test");
@@ -1500,6 +1503,37 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("developer.schema.id", "Schema id");
 
     dict
+}
+
+/// English i18n strings for the 6 CXP-0007 reason / error codes
+/// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
+/// translations follow in a later milestone; the toast falls back to
+/// the English string when the locale doesn't carry the key.
+fn add_circle_error_keys(dict: &mut TranslationDict) {
+    dict.set(
+        "error.circle.realm_mismatch",
+        "This Circle belongs to a different Realm than the message you tried to send.",
+    );
+    dict.set(
+        "error.circle.not_active",
+        "The Circle is archived or tombstoned and can no longer receive messages.",
+    );
+    dict.set(
+        "error.circle.member_not_in_realm",
+        "Cannot add this user to the Circle — they are not an active member of the parent Realm.",
+    );
+    dict.set(
+        "error.circle.scope_rebind_forbidden",
+        "Changing an existing object's Circle scope requires an audited admin action.",
+    );
+    dict.set(
+        "error.circle.metadata_floor",
+        "This write would expose metadata below the Realm or Circle encryption floor.",
+    );
+    dict.set(
+        "error.circle.delivery_binding_handed_over",
+        "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
+    );
 }
 
 /// Build Arabic translation dictionary.

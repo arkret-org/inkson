@@ -40,6 +40,10 @@ pub mod applets;
 pub mod audit;
 pub mod call;
 pub mod chat;
+/// CXP-0007 P3B.2.5 — Circle detail panel (member list + leave /
+/// archive / scope-rotate controls). Rendered at `/circles/:circle_id`
+/// (route added by the follow-up commit that wires it into the router).
+pub mod circle;
 /// First end-to-end UI Move-flow PoC.
 /// "Grant consent" button under settings → Privacy that builds + signs +
 /// POSTs a `cx.consent.grant` Move via the move_builder + api::submit_move
@@ -164,6 +168,8 @@ pub enum View {
     SettingsSecurity,
     /// G3.Y1 — fresh-device restore-from-backup surface at `/recover`.
     Recover,
+    /// CXP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
+    Circle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
