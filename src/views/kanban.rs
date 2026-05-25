@@ -1986,19 +1986,37 @@ pub fn KanbanPanel(
                             ondragover: move |event| event.prevent_default(),
                             ondrop: {
                                 let target_column_id = column_id_for_drop.clone();
+                                let base = base_url.clone();
+                                let space = selected_space.clone();
+                                let actor = account_did.clone();
                                 move |event| {
                                     event.prevent_default();
                                     let Some(dragged) = dragging_column() else {
                                         return;
                                     };
                                     dragging_column.set(None);
-                                    let mut cols = columns.write();
-                                    if reorder_column_before(
-                                        &mut cols,
-                                        &dragged.column_id,
-                                        &target_column_id,
-                                    ) {
-                                        board_status.set("Column order updated locally; server child_order sync pending".to_owned());
+                                    let reordered_columns = {
+                                        let mut cols = columns.write();
+                                        if reorder_column_before(
+                                            &mut cols,
+                                            &dragged.column_id,
+                                            &target_column_id,
+                                        ) {
+                                            Some(cols.clone())
+                                        } else {
+                                            None
+                                        }
+                                    };
+                                    if let Some(reordered_columns) = reordered_columns {
+                                        submit_column_order_updates(
+                                            base.clone(),
+                                            token,
+                                            space.clone(),
+                                            actor.clone(),
+                                            reordered_columns,
+                                            state_store,
+                                            board_status,
+                                        );
                                     }
                                 }
                             },
@@ -3407,6 +3425,51 @@ fn submit_kanban_operation_event(
             }
         }
     });
+}
+
+fn submit_column_order_updates(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    ordered_columns: Vec<KanbanColumn>,
+    state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+) {
+    if actor_did.trim().is_empty() {
+        board_status.set("sign in before reordering lists".to_owned());
+        return;
+    }
+    if space_id.trim().is_empty() {
+        board_status.set("select a Realm before reordering lists".to_owned());
+        return;
+    }
+    let updates = ordered_columns
+        .into_iter()
+        .map(|column| (column.id, column.rank))
+        .collect::<Vec<_>>();
+    if updates.is_empty() {
+        return;
+    }
+    let update_count = updates.len();
+    board_status.set(format!("Column order queued ({update_count} rank updates)"));
+    for (column_id, rank) in updates {
+        let op = crate::operation::cx_ops::space_update_patch(
+            &space_id,
+            &actor_did,
+            &column_id,
+            json!({ "rank": rank }),
+        )
+        .build("yougen");
+        submit_kanban_operation_event(
+            base_url.clone(),
+            token,
+            space_id.clone(),
+            op,
+            state_store,
+            board_status,
+        );
+    }
 }
 
 /// Build + submit a Kanban event and record it in the board write queue.
