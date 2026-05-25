@@ -10,6 +10,9 @@ pub mod offline_pending_badge;
 /// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
 /// `RealmClassBadge` (Principal / Collaboration, switcher).
 pub mod verify_badges;
+/// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
+/// toggle. Crash reports are off by default.
+pub mod report_problem;
 /// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
 /// Consumes [`crate::circle::CircleErrorKind`] and renders the
 /// localized user-facing string.
@@ -34,6 +37,9 @@ pub mod write_state;
 pub use account_switcher::AccountSwitcher;
 pub use offline_pending_badge::OfflinePendingBadge;
 pub use verify_badges::{NeedsVerificationBadge, RealmClass, RealmClassBadge};
+pub use report_problem::{
+    CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
+};
 pub use circle_error_toast::{
     CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
     take_circle_error,
