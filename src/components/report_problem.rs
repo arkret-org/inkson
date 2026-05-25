@@ -152,11 +152,17 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn load_from_env_defaults_to_opt_out() {
-        // SAFETY: env vars are process-global; we scope the change and
-        // restore the prior state on exit so concurrent tests in the
-        // same process don't observe a stray opt-in.
+        // Serialise env mutation so the two parallel env tests in this
+        // module don't race each other when cargo test runs them on
+        // separate threads.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        // SAFETY: env vars are process-global; the mutex above scopes
+        // mutation to one test at a time within this binary.
         unsafe {
             std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
         }
@@ -167,8 +173,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn load_from_env_accepts_truthy_values() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         for value in ["1", "true", "TRUE", "on", "yes"] {
-            // SAFETY: same as above — env is process-global; scope and restore.
+            // SAFETY: env mutation is serialised by ENV_LOCK above.
             unsafe {
                 std::env::set_var("YOUGEN_CRASH_TELEMETRY_OPT_IN", value);
             }
