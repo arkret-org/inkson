@@ -1553,14 +1553,50 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
                 .and_then(|content| content.get("encrypted_payload"))
                 .is_some()
     });
-    // TODO(circle-rollout-P3B.2.7): once `sync_engine::dispatch_envelope`
-    // surfaces the envelope `effective_scope` next to each message
-    // candidate, compare it against the payload `scope_circle_id` here
-    // and route mismatches into `MessageCryptoState::NeedsVerification`
-    // rather than the default `Decrypting → Plaintext` path. The Circle
-    // accent rail (P3B.2.4) reads the same scope projection to render
-    // its left-side ribbon.
-    let crypto_state = if has_encrypted_payload {
+    // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`
+    // against the payload `scope_circle_id`. When they disagree we
+    // route the message into `NeedsVerification` so the UI badge
+    // surfaces the mismatch rather than presenting a body decrypted
+    // under the wrong MLS group as trustworthy.
+    let effective_scope_circle = candidates
+        .iter()
+        .find_map(|candidate| {
+            candidate
+                .get("effective_scope")
+                .and_then(|scope| scope.get("circle_id"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(ToOwned::to_owned);
+    let payload_scope_circle = candidates
+        .iter()
+        .find_map(|candidate| {
+            candidate
+                .get("scope_circle_id")
+                .or_else(|| {
+                    candidate
+                        .get("content")
+                        .and_then(|content| content.get("scope_circle_id"))
+                })
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(ToOwned::to_owned);
+    let scope_mismatch = match (
+        effective_scope_circle.as_deref(),
+        payload_scope_circle.as_deref(),
+    ) {
+        (None, None) => false,
+        (Some(env), Some(payload)) => env != payload,
+        // One side mentions a Circle but the other doesn't — flag it
+        // so the user is prompted to verify before trusting the body.
+        _ => true,
+    };
+    let crypto_state = if scope_mismatch {
+        MessageCryptoState::NeedsVerification
+    } else if has_encrypted_payload {
         MessageCryptoState::Decrypting
     } else {
         MessageCryptoState::Plaintext
@@ -2429,6 +2465,18 @@ pub fn ChatPanel(
         })
         .cloned()
         .collect::<Vec<_>>();
+    // CXP-0007 P3B.2.4 — per-flow Circle-scope lookup used by the
+    // timeline accent rail. We index by `flow_id` once instead of
+    // searching the `channels` Vec for every rendered message.
+    let flow_scope_lookup: std::collections::BTreeMap<String, FlowScopeCircle> = all_channels
+        .iter()
+        .filter_map(|channel| {
+            channel
+                .scope_circle
+                .clone()
+                .map(|circle| (channel.flow_id.clone(), circle))
+        })
+        .collect();
     let visible_message_count = visible_messages.len();
     // G3.Y2 — derive the highest visible event id so we can post a
     // `cx.read_cursor.advance` covering everything we've rendered. The marker
@@ -3340,6 +3388,18 @@ pub fn ChatPanel(
 
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
                     for msg in visible_messages {
+                        {
+                            let scope_circle = flow_scope_lookup.get(&msg.flow_id).cloned();
+                            let scope_class = if scope_circle.is_some() {
+                                " has-circle-accent-rail"
+                            } else {
+                                ""
+                            };
+                            let scope_attr = scope_circle
+                                .as_ref()
+                                .map(|c| c.circle_id.clone())
+                                .unwrap_or_default();
+                            rsx! {
                         div {
                             class: {
                                 let mut base = if is_own_message_sender(&msg.sender, &account_did) {
@@ -3355,9 +3415,11 @@ pub fn ChatPanel(
                                 if msg.crypto_state.is_pending() {
                                     base.push_str(" is-crypto-pending");
                                 }
+                                base.push_str(scope_class);
                                 base
                             },
                             "data-testid": "chat-message",
+                            "data-circle-scope-id": "{scope_attr}",
                             "data-crypto-state": match msg.crypto_state {
                                 MessageCryptoState::Plaintext => "plaintext",
                                 MessageCryptoState::Decrypting => "decrypting",
@@ -3384,6 +3446,23 @@ pub fn ChatPanel(
                                     message_context_menu.set(next);
                                 }
                             },
+                            // CXP-0007 P3B.2.4 — Circle scope accent
+                            // rail. Renders a left-edge coloured ribbon
+                            // with the Circle title as a tooltip when
+                            // the message's enclosing Flow has a
+                            // `scope_circle_id`. The CSS class
+                            // `has-circle-accent-rail` on the outer
+                            // message div positions the ribbon at the
+                            // left margin.
+                            if let Some(circle) = scope_circle.as_ref() {
+                                div {
+                                    class: "circle-accent-rail",
+                                    "data-testid": "circle-accent-rail",
+                                    "data-circle-id": "{circle.circle_id}",
+                                    title: "Circle scope · {circle.title}",
+                                    "aria-label": "This message is part of the Circle named {circle.title}",
+                                }
+                            }
                             // Tiny pop-out menu — Pin / Unpin / Cancel.
                             // The render condition checks per-message
                             // so only one menu is visible at a time.
@@ -4198,6 +4277,8 @@ pub fn ChatPanel(
                                         }
                                     }
                                 }
+                            }
+                        }
                             }
                         }
                     }

@@ -2579,6 +2579,27 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow-wrap: anywhere;
 }
 
+/* CXP-0007 P3B.2.4 — Circle-scope accent rail on Circle-scoped messages. */
+.discussion-message.has-circle-accent-rail {
+  position: relative;
+  padding-left: 10px;
+}
+
+.discussion-message.has-circle-accent-rail .circle-accent-rail {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent, #1f6b4f);
+  cursor: help;
+}
+
+.discussion-message.has-circle-accent-rail .circle-accent-rail:hover {
+  background: color-mix(in srgb, var(--accent, #1f6b4f) 85%, #18212f);
+}
+
 /* CXP-0007 P3B.2.3 — composer banner colour tokens. */
 .circle-composer-banner {
   display: flex;

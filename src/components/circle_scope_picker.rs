@@ -109,11 +109,29 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// when its `Relation::ConfidentialDiscussionOf` points at a parent
 /// Flow.
 ///
-/// `TODO(circle-rollout-P3B.2.8):` wire the click handler into the
-/// dioxus router (`Route::TimelineSpace { space_id }`) once the parent
-/// Flow's home Space id is available on the relation projection.
+/// CXP-0007 P3B.2.8 — the link routes through the dioxus router via
+/// the optional `target_space_id`. When the relation projection
+/// carries the parent Flow's home Space id the link is built as a
+/// `Route::TimelineSpace { space_id }` navigation; when it doesn't,
+/// the anchor falls back to a `#flow:<id>` hash so the in-Space
+/// timeline can still scroll to the parent Flow.
 #[component]
-pub fn ConfidentialDiscussionOfBanner(target_flow_id: String, target_title: String) -> Element {
+pub fn ConfidentialDiscussionOfBanner(
+    target_flow_id: String,
+    target_title: String,
+    /// Parent Flow's home Space id. When supplied the link routes via
+    /// the dioxus router's `Route::TimelineSpace` (with a flow anchor
+    /// in the URL hash). Defaults to `None` so legacy callers still
+    /// compile.
+    #[props(default)]
+    target_space_id: Option<String>,
+) -> Element {
+    let href = match target_space_id.as_deref() {
+        Some(space_id) if !space_id.trim().is_empty() => {
+            format!("/timeline/{space_id}#flow:{target_flow_id}")
+        }
+        _ => format!("#flow:{target_flow_id}"),
+    };
     rsx! {
         div {
             class: "banner confidential-discussion-of-banner",
@@ -121,7 +139,15 @@ pub fn ConfidentialDiscussionOfBanner(target_flow_id: String, target_title: Stri
             "data-target-flow-id": "{target_flow_id}",
             span { class: "banner-icon", "💬" }
             div { class: "banner-body",
-                strong { "Confidential discussion of " a { href: "#", "{target_title}" } }
+                strong {
+                    "Confidential discussion of "
+                    a {
+                        href: "{href}",
+                        "data-testid": "confidential-discussion-of-link",
+                        "data-target-space-id": "{target_space_id.clone().unwrap_or_default()}",
+                        "{target_title}"
+                    }
+                }
                 span { class: "muted",
                     "This Flow is the confidential side of another Flow. Members of this Circle can see both sides."
                 }
