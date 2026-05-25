@@ -116,6 +116,7 @@ pub enum View {
     Login,
     Dashboard,
     Timeline,
+    Chat,
     Directory,
     Setup,
     Settings,

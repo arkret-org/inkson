@@ -31,6 +31,9 @@ pub enum Route {
         message_id: String,
     },
 
+    #[route("/chat/:space_id", ChatSpacePage)]
+    Chat { space_id: String },
+
     #[route("/directory", crate::app::RouterView)]
     Directory,
 
@@ -155,6 +158,12 @@ fn TimelineMessagePage(space_id: String, message_id: String) -> Element {
 }
 
 #[component]
+fn ChatSpacePage(space_id: String) -> Element {
+    let _ = space_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn SpacePage(space_id: String) -> Element {
     let _ = space_id;
     rsx! { crate::app::RouterView {} }
@@ -212,6 +221,7 @@ impl Route {
             Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
                 View::Timeline
             }
+            Route::Chat { .. } => View::Chat,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings | Route::SettingsSection { .. } => View::Settings,
@@ -250,6 +260,7 @@ impl Route {
             Route::Space { space_id }
             | Route::TimelineSpace { space_id }
             | Route::TimelineMessage { space_id, .. }
+            | Route::Chat { space_id }
             | Route::KanbanSpace { space_id }
             | Route::KanbanTask { space_id, .. }
             | Route::DocumentSpace { space_id }
@@ -291,6 +302,9 @@ impl From<View> for Route {
             View::Dashboard => Route::Dashboard,
             View::Login => Route::Login,
             View::Timeline => Route::Timeline,
+            View::Chat => Route::Chat {
+                space_id: String::new(),
+            },
             View::Directory => Route::Directory,
             View::Setup => Route::Setup,
             View::Settings => Route::Settings,

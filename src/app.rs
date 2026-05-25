@@ -7423,6 +7423,32 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
+                    Route::Chat { .. } => {
+                        if let Some(sid) = route.space_id() {
+                            if selected_space() != sid {
+                                selected_space.set(sid.to_owned());
+                            }
+                        }
+                        if minimal_ready {
+                            rsx! {
+                                crate::views::chat::ChatPanel {
+                                    base_url: base_url(),
+                                    plaintext_service_did: active_service_did.clone(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_space: active_space_id.clone(),
+                                    selected_space_scope: active_space_scope_ids.clone(),
+                                    sync_cursor,
+                                    frontier_state,
+                                    state_store,
+                                    initial_flow_id: default_flow_id_for_scope(&active_space_id),
+                                    embedded: false,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
+                        }
+                    },
                     Route::Directory => rsx! {
                         crate::views::directory::DirectoryPanel {
                             base_url: base_url(),
@@ -8061,6 +8087,14 @@ fn persist_space_surface_preference(
     );
 }
 
+fn default_flow_id_for_scope(scope_id: &str) -> String {
+    scope_id
+        .strip_prefix("cx:realm:")
+        .or_else(|| scope_id.strip_prefix("cx:space:"))
+        .map(|suffix| format!("cx:flow:{suffix}"))
+        .unwrap_or_else(|| scope_id.to_owned())
+}
+
 fn resolve_space_surface(
     route: &Route,
     state_store: &LocalStateStore,
@@ -8076,6 +8110,7 @@ fn resolve_space_surface(
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
             Some(SpaceSurface::Timeline)
         }
+        Route::Chat { .. } => None,
         Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
             Some(SpaceSurface::Board)
         }
@@ -8092,6 +8127,7 @@ fn route_uses_space_context(route: &Route) -> bool {
             | Route::Timeline
             | Route::TimelineSpace { .. }
             | Route::TimelineMessage { .. }
+            | Route::Chat { .. }
             | Route::Kanban
             | Route::KanbanSpace { .. }
             | Route::KanbanTask { .. }
@@ -8114,6 +8150,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }
+        Route::Chat { .. } => "Discussion",
         Route::Directory => "Search",
         Route::Setup => "New Realm",
         Route::SetupSection { section } => match section.as_str() {
