@@ -48,15 +48,6 @@ pub fn floria_gateway_url() -> String {
     }
 }
 
-/// Back-compat shim retained so existing call sites don't break in a
-/// single CHANGELOG window. New code should call [`floria_gateway_url`]
-/// directly; this constant returns whatever the runtime resolver picks
-/// at *first call* and is otherwise an empty string.
-///
-/// `TODO(circle-rollout-P4):` delete this constant after the next
-/// release; every call site has been routed through `floria_gateway_url`.
-pub const DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY: &str = DEV_FLORIA_GATEWAY;
-
 /// Markers embedded in development push tokens. Any push key containing one of
 /// these substrings is a build-time placeholder that must NEVER reach a
 /// production push gateway — see `tests/dev_token_guard.rs` for the regression

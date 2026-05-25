@@ -1966,11 +1966,12 @@ pub fn SettingsPanel(
                                             .then_some(principal_did);
                                         let context = crate::push_registration::RegisterContext {
                                             principal_server_url: base,
-                                            floria_gateway_url: crate::push::DEFAULT_PUSH_GATEWAY_FLORIA_NOTIFY.to_owned(),
+                                            floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
                                             principal_did,
                                             bearer_token: Some(api_token),
                                             session_grant: None,
+                                            active_circle_id: None,
                                         };
                                         match crate::push_registration::register_via_chime(
                                             context,
