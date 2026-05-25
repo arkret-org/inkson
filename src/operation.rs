@@ -844,7 +844,7 @@ pub mod cx_ops {
             space_id,
             actor,
             flow_id,
-            json!({ "fields.status": { "$op": "set", "value": status } }),
+            json!({ "fields": { "$op": "set", "value": { "status": status } } }),
         )
     }
 
@@ -1917,6 +1917,25 @@ mod tests {
         assert!(op.payload.get("fields").is_none());
         assert!(op.payload["patch"]["fields.document"]["value"]["blocks"].is_array());
         assert_registered_payload_valid(&op);
+    }
+
+    #[test]
+    fn incident_status_update_uses_schema_safe_fields_patch() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let op = cx_ops::incident_status_update(
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            flow_id,
+            "mitigated",
+        )
+        .build("node");
+
+        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.payload["flow_id"], flow_id);
+        assert!(op.payload["patch"].get("fields.status").is_none());
+        assert_eq!(op.payload["patch"]["fields"]["value"]["status"], "mitigated");
+        assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
     }
 
     #[test]
