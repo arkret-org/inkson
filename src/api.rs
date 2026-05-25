@@ -1010,6 +1010,66 @@ impl ContrixApi {
         })
     }
 
+    /// CXP-0007 P3B.2.6 — POST a new Circle to soland's
+    /// `/api/v1/circles` administrative surface. The strict-subset
+    /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
+    /// reducer; this client also runs
+    /// [`crate::components::validate_strict_subset`] before sending so
+    /// the user sees a `circle_member_must_be_realm_member` failure
+    /// inline rather than as a round-tripped reducer rejection.
+    ///
+    /// `TODO(circle-rollout-P3B.2.6):` once the SDK exposes a typed
+    /// builder for `cx.circle.create`, swap the hand-rolled JSON body
+    /// for `contrix_sdk::space::Circle::create_operation(...)` and
+    /// drop the inline literal below.
+    pub async fn create_circle(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        title: &str,
+        short_name: &str,
+        color_token: &str,
+        symbol_glyph: &str,
+        directory_visibility: &str,
+        initial_members: &[String],
+    ) -> anyhow::Result<serde_json::Value> {
+        let realm_id = realm_id.trim();
+        let actor_id = actor_id.trim();
+        let title = title.trim();
+        if realm_id.is_empty() || actor_id.is_empty() || title.is_empty() {
+            return Err(anyhow::anyhow!(
+                "realm_id / actor_id / title are all required for cx.circle.create"
+            ));
+        }
+        let body = serde_json::json!({
+            "realm_id": realm_id,
+            "actor_id": actor_id,
+            "title": title,
+            "display": {
+                "short_name": short_name,
+                "color_token": color_token,
+                "symbol": { "glyph": symbol_glyph },
+            },
+            "directory_visibility": directory_visibility,
+            "initial_members": initial_members,
+        });
+        self.post_json("/api/v1/circles", body).await
+    }
+
+    /// CXP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
+    /// projection is filtered server-side by the caller's
+    /// `directory_visibility` (members-only Circles only return when
+    /// the caller is a Circle member). Returns the raw JSON shape; the
+    /// caller decodes into [`crate::circle::CircleSummary`].
+    pub async fn list_circles(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
+        let realm_id = realm_id.trim();
+        if realm_id.is_empty() {
+            return Err(anyhow::anyhow!("realm_id is required for /api/v1/circles"));
+        }
+        let path = format!("/api/v1/circles?realm_id={}", realm_id);
+        self.get_json(&path).await
+    }
+
     /// Send a Space lifecycle action (`archive` / `restore` /
     /// `tombstone`) per spec realm-and-space.md §3.4. Caller MUST
     /// pass the home Realm id — the event is authorized + written

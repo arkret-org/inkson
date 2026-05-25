@@ -1531,6 +1531,13 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
                 .and_then(|content| content.get("encrypted_payload"))
                 .is_some()
     });
+    // TODO(circle-rollout-P3B.2.7): once `sync_engine::dispatch_envelope`
+    // surfaces the envelope `effective_scope` next to each message
+    // candidate, compare it against the payload `scope_circle_id` here
+    // and route mismatches into `MessageCryptoState::NeedsVerification`
+    // rather than the default `Decrypting → Plaintext` path. The Circle
+    // accent rail (P3B.2.4) reads the same scope projection to render
+    // its left-side ribbon.
     let crypto_state = if has_encrypted_payload {
         MessageCryptoState::Decrypting
     } else {

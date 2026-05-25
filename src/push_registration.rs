@@ -326,6 +326,13 @@ fn build_request(
         ctx.floria_gateway_url.clone()
     };
     let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
+    // TODO(circle-rollout-P3B.2.9): forward the active Circle id (when
+    // we know it, e.g. from a sidebar deep-link or the current Flow's
+    // `scope_circle_id`) so chime sets `PushNotification.circle_id` on
+    // outgoing wakeups and respects `PushPreferences.muted_circle_ids`.
+    // Today the gateway gets the full Realm-wide subscription; per-Circle
+    // routing arrives once the chime client surfaces a
+    // `subscribe_circle(circle_id=...)` overload.
     let prefs = PushPreferences {
         enabled: true,
         allow_insecure_loopback_push_gateway: true,
