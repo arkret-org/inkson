@@ -2393,9 +2393,39 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
                                        obvious even before any drop
                                        happens. */
 .board-grid.is-dragging,
+.board-grid.is-column-dragging,
 .board-grid.is-dragging .board-card,
-.board-grid.is-dragging .board-column { cursor: grabbing; }
+.board-grid.is-dragging .board-column,
+.board-grid.is-column-dragging .board-column { cursor: grabbing; }
 .board-card { cursor: grab; }
+.column-drag-handle {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 28px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-1);
+    color: var(--text-2);
+    cursor: grab;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1;
+}
+.column-drag-handle:active { cursor: grabbing; }
+.column-drop-target-before {
+    height: 8px;
+    margin: -2px 0 6px;
+    border-radius: 4px;
+    outline: 1px dashed transparent;
+    outline-offset: -1px;
+}
+.board-grid.is-column-dragging .column-drop-target-before {
+    outline-color: var(--accent, #7c83ff);
+    background-color: color-mix(in srgb, var(--accent, #7c83ff) 10%, transparent);
+}
 .board-column.drop-zone-available {
     outline: 2px dashed var(--accent, #7c83ff);
     outline-offset: -2px;

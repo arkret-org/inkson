@@ -137,6 +137,11 @@ struct DraggedCard {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct DraggedColumn {
+    column_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct BoardSpaceOption {
     id: String,
     title: String,
@@ -736,6 +741,33 @@ fn sort_kanban_cards(cards: &mut [KanbanCard]) {
     });
 }
 
+fn reorder_column_before(
+    columns: &mut Vec<KanbanColumn>,
+    dragged_id: &str,
+    target_id: &str,
+) -> bool {
+    if dragged_id == target_id {
+        return false;
+    }
+    let Some(from_index) = columns.iter().position(|column| column.id == dragged_id) else {
+        return false;
+    };
+    let Some(target_index) = columns.iter().position(|column| column.id == target_id) else {
+        return false;
+    };
+    let dragged = columns.remove(from_index);
+    let insert_index = if from_index < target_index {
+        target_index.saturating_sub(1)
+    } else {
+        target_index
+    };
+    columns.insert(insert_index, dragged);
+    for (index, column) in columns.iter_mut().enumerate() {
+        column.rank = format!("r{:03}", index + 1);
+    }
+    true
+}
+
 fn flow_projection_field_string(
     flow: &crate::api::FlowProjectionView,
     top_level: Option<&str>,
@@ -1100,6 +1132,7 @@ pub fn KanbanPanel(
     let mut card_edit_assignee = use_signal(String::new);
     let mut card_edit_due = use_signal(String::new);
     let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
+    let mut dragging_column = use_signal(|| Option::<DraggedColumn>::None);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if initial_source == BoardProjectionSource::Unavailable {
@@ -1851,12 +1884,15 @@ pub fn KanbanPanel(
                     .as_ref()
                     .map(|d| d.card_id.clone())
                     .unwrap_or_default();
-                let board_grid_class = if is_dragging {
-                    "board-grid is-dragging"
-                } else {
-                    "board-grid"
+                let column_dragging_now = dragging_column();
+                let is_column_dragging = column_dragging_now.is_some();
+                let board_grid_class = match (is_dragging, is_column_dragging) {
+                    (true, true) => "board-grid is-dragging is-column-dragging",
+                    (true, false) => "board-grid is-dragging",
+                    (false, true) => "board-grid is-column-dragging",
+                    (false, false) => "board-grid",
                 };
-                let board_column_class = if is_dragging {
+                let board_column_class = if is_dragging || is_column_dragging {
                     "event board-column drop-zone-available"
                 } else {
                     "event board-column"
@@ -1889,6 +1925,12 @@ pub fn KanbanPanel(
                     }
                 } else {
                 for column in visible_columns.iter() {
+                    {
+                    let column_id_for_drop = column.id.clone();
+                    let column_id_for_drag = column.id.clone();
+                    let column_title_for_drop = column.title.clone();
+                    let column_title_for_drag = column.title.clone();
+                    rsx! {
                     div {
                         class: "{board_column_class}",
                         "data-testid": "kanban-column",
@@ -1936,9 +1978,55 @@ pub fn KanbanPanel(
                                 );
                             }
                         },
+                        div {
+                            class: "column-drop-target-before",
+                            "data-testid": "column-drop-target-before",
+                            "aria-label": "Drop column before {column_title_for_drop}",
+                            title: "Drop column before {column_title_for_drop}",
+                            ondragover: move |event| event.prevent_default(),
+                            ondrop: {
+                                let target_column_id = column_id_for_drop.clone();
+                                move |event| {
+                                    event.prevent_default();
+                                    let Some(dragged) = dragging_column() else {
+                                        return;
+                                    };
+                                    dragging_column.set(None);
+                                    let mut cols = columns.write();
+                                    if reorder_column_before(
+                                        &mut cols,
+                                        &dragged.column_id,
+                                        &target_column_id,
+                                    ) {
+                                        board_status.set("Column order updated locally; server child_order sync pending".to_owned());
+                                    }
+                                }
+                            },
+                        }
                         div { class: "event-head board-column-head",
                             div { class: "board-column-title",
-                                span { class: "space-title", "{column.title}" }
+                                button {
+                                    class: "column-drag-handle",
+                                    "data-testid": "column-drag-handle",
+                                    draggable: "true",
+                                    title: "Drag column {column_title_for_drag}",
+                                    "aria-label": "Drag column {column_title_for_drag}",
+                                    ondragstart: {
+                                        let column_id = column_id_for_drag.clone();
+                                        move |_| {
+                                            dragging_column.set(Some(DraggedColumn {
+                                                column_id: column_id.clone(),
+                                            }));
+                                        }
+                                    },
+                                    ondragend: move |_| dragging_column.set(None),
+                                    "::"
+                                }
+                                span {
+                                    class: "space-title",
+                                    "data-testid": "kanban-column-title",
+                                    "{column.title}"
+                                }
                             }
                             div { class: "board-column-actions",
                             {
@@ -2263,6 +2351,8 @@ pub fn KanbanPanel(
                                 }
                             }
                         }
+                    }
+                    }
                     }
                 }
                 }
