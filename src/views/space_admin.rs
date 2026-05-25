@@ -1436,18 +1436,13 @@ pub fn SpaceAdminPanel(
                                     let base = base_url.clone();
                                     let space = selected_space.clone();
                                     let m = member.clone();
+                                    let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let space = space.clone();
                                         let m = m.clone();
                                         let api_token = token();
-                                        let actor_did = match state_store.write().ensure_local_identity() {
-                                            Ok(id) => id.device_did.as_str().to_owned(),
-                                            Err(err) => {
-                                                status_msg.set(format!("identity unavailable: {err}"));
-                                                return;
-                                            }
-                                        };
+                                        let actor_did = actor_account_did.clone();
                                         spawn(async move {
                                             let m_for_msg = m.clone();
                                             let space_for_api = space.clone();
@@ -1511,18 +1506,13 @@ pub fn SpaceAdminPanel(
                                     let base = base_url.clone();
                                     let space = selected_space.clone();
                                     let m = member.clone();
+                                    let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let space = space.clone();
                                         let m = m.clone();
                                         let api_token = token();
-                                        let actor_did = match state_store.write().ensure_local_identity() {
-                                            Ok(id) => id.device_did.as_str().to_owned(),
-                                            Err(err) => {
-                                                status_msg.set(format!("identity unavailable: {err}"));
-                                                return;
-                                            }
-                                        };
+                                        let actor_did = actor_account_did.clone();
                                         spawn(async move {
                                             let m_for_msg = m.clone();
                                             let space_for_api = space.clone();
