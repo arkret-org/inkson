@@ -23,6 +23,27 @@ impl CrashTelemetryPrefs {
     pub fn is_opt_in(self) -> bool {
         self.enabled
     }
+
+    /// Load the boot-time opt-in preference from the environment.
+    ///
+    /// The persisted preference lives in `LocalStateStore` and isn't
+    /// readable until the Dioxus app tree mounts. For the
+    /// `sentry_init` boot call we accept a single env-var override
+    /// (`YOUGEN_CRASH_TELEMETRY_OPT_IN=1`) so deploys / CI can opt
+    /// the entire process in without waiting for the persisted
+    /// toggle to settle. Returns `default()` (opt-out) on any other
+    /// value or when the var is absent.
+    pub fn load_from_env() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(value) = std::env::var("YOUGEN_CRASH_TELEMETRY_OPT_IN") {
+                let normalized = value.trim().to_ascii_lowercase();
+                let enabled = matches!(normalized.as_str(), "1" | "true" | "on" | "yes");
+                return Self { enabled };
+            }
+        }
+        Self::default()
+    }
 }
 
 /// Build the body of the "Report a problem" mail. Caller passes:
@@ -128,5 +149,45 @@ mod tests {
     fn empty_tracing_renders_placeholder() {
         let body = build_report_body(&[], "0.1.0", "web");
         assert!(body.contains("no recent tracing captured"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn load_from_env_defaults_to_opt_out() {
+        // SAFETY: env vars are process-global; we scope the change and
+        // restore the prior state on exit so concurrent tests in the
+        // same process don't observe a stray opt-in.
+        unsafe {
+            std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
+        }
+        let prefs = CrashTelemetryPrefs::load_from_env();
+        assert!(!prefs.is_opt_in());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn load_from_env_accepts_truthy_values() {
+        for value in ["1", "true", "TRUE", "on", "yes"] {
+            // SAFETY: same as above — env is process-global; scope and restore.
+            unsafe {
+                std::env::set_var("YOUGEN_CRASH_TELEMETRY_OPT_IN", value);
+            }
+            let prefs = CrashTelemetryPrefs::load_from_env();
+            assert!(
+                prefs.is_opt_in(),
+                "expected opt-in for value {value}"
+            );
+        }
+        unsafe {
+            std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sentry_init_skips_when_opt_out() {
+        let prefs = CrashTelemetryPrefs { enabled: false };
+        let guard = crate::telemetry::sentry_init(prefs);
+        assert!(guard.is_none());
     }
 }
