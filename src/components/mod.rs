@@ -21,7 +21,10 @@ pub mod shortcut_help;
 pub mod sync_badge;
 pub mod write_state;
 
-pub use circle_error_toast::{CircleErrorToast, CircleErrorToastProps};
+pub use circle_error_toast::{
+    CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
+    take_circle_error,
+};
 pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };

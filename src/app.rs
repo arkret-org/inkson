@@ -6301,6 +6301,11 @@ pub fn RouterView() -> Element {
             // banner is pulled from a process-wide queue populated by
             // `api::decode_contrix_error`'s `maybe_dispatch_policy_deny`.
             crate::components::PolicyDenyBanner {}
+            // CXP-0007 P3B.3 — global Circle-error toast, fed by the
+            // HTTP layer's `maybe_dispatch_circle_error` next to the
+            // policy-deny dispatcher. Renders nothing when no error
+            // is queued.
+            crate::components::CircleErrorToast { i18n: i18n_signal }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",

@@ -4092,6 +4092,21 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     };
 
     maybe_dispatch_policy_deny(status, &envelope);
+    // CXP-0007 P3B.3 — also surface any of the 6 Circle reason codes
+    // as a global toast. The two dispatchers are independent: the
+    // policy deny banner targets 403 + policy code, the circle toast
+    // targets the CXP-0007 reason / error code family on any status.
+    let reason = envelope
+        .details()
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            envelope
+                .details()
+                .get("reason_code")
+                .and_then(|v| v.as_str())
+        });
+    crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     envelope
 }
 

@@ -1,36 +1,80 @@
-//! Circle-error toast (CXP-0007 / P3B.3.1).
+//! Circle-error toast (CXP-0007 / P3B.3).
 //!
 //! Surfaces the 6 CXP-0007 reason / error codes as user-facing toasts.
-//! Listens for a [`CircleErrorKind`] pushed onto a shared signal by
-//! API call sites (e.g. `api::create_circle`, `sync_engine::decrypt`,
-//! the offline-queue drain worker) and renders a dismissible card.
+//! Uses the same process-wide queue pattern as
+//! [`crate::components::policy_deny_banner`]: API call sites push a
+//! [`CircleErrorKind`] via [`push_circle_error`]; the [`CircleErrorToast`]
+//! component, mounted once near the app shell, drains the queue each
+//! render and displays a dismissible card with the localized message.
+
+use std::sync::Mutex;
 
 use dioxus::prelude::*;
 
 use crate::circle::CircleErrorKind;
 use crate::i18n::{I18nSignal, t};
 
-/// Props for the global circle-error toast surface. Parent should
-/// thread a [`Signal<Option<CircleErrorKind>>`] and the i18n signal
-/// from the app shell.
+/// Process-wide circle-error slot. Newer kinds overwrite older ones —
+/// a deny storm should not stack ten toasts.
+static CIRCLE_ERROR_QUEUE: Mutex<Option<CircleErrorKind>> = Mutex::new(None);
+
+/// API-layer / sync-engine entry point — record the latest CXP-0007
+/// error so the toast can pick it up.
+pub fn push_circle_error(kind: CircleErrorKind) {
+    if let Ok(mut slot) = CIRCLE_ERROR_QUEUE.lock() {
+        *slot = Some(kind);
+    }
+}
+
+/// Consumer entry point — drain (take) the most recent error if any.
+pub fn take_circle_error() -> Option<CircleErrorKind> {
+    CIRCLE_ERROR_QUEUE.lock().ok()?.take()
+}
+
+/// Helper that classifies a server-side error envelope and pushes a
+/// [`CircleErrorKind`] onto the queue if it matches one of the 6
+/// CXP-0007 codes. Returns `true` when a circle error was recognised.
+///
+/// The HTTP layer can call this opportunistically next to
+/// `maybe_dispatch_policy_deny` — the two queues are independent.
+pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
+    if let Some(kind) = CircleErrorKind::from_error_code(code) {
+        push_circle_error(kind);
+        return true;
+    }
+    if let Some(reason) = reason {
+        if let Some(kind) = CircleErrorKind::from_reason_code(reason) {
+            push_circle_error(kind);
+            return true;
+        }
+    }
+    false
+}
+
+/// Props for the visible toast surface.
 #[derive(Clone, PartialEq, Props)]
 pub struct CircleErrorToastProps {
-    pub current: Signal<Option<CircleErrorKind>>,
+    /// App-wide i18n signal so the toast can pick the localized
+    /// `error.circle.*` string.
     pub i18n: I18nSignal,
 }
 
 #[component]
 pub fn CircleErrorToast(props: CircleErrorToastProps) -> Element {
-    let mut signal = props.current;
-    let kind = *signal.read();
-    let Some(kind) = kind else {
+    let mut current = use_signal(|| Option::<CircleErrorKind>::None);
+
+    if current.read().is_none() {
+        if let Some(kind) = take_circle_error() {
+            current.set(Some(kind));
+        }
+    }
+
+    let Some(kind) = *current.read() else {
         return rsx! {};
     };
 
     let key = kind.i18n_key();
     let translated = t(&props.i18n, key);
-    // `t` falls back to returning the key itself when not found — treat
-    // that as "no translation" and use the hard-coded English fallback.
     let message = if translated == key {
         kind.english_fallback().to_owned()
     } else {
@@ -49,7 +93,7 @@ pub fn CircleErrorToast(props: CircleErrorToastProps) -> Element {
             button {
                 class: "icon-only",
                 "data-testid": "circle-error-toast-dismiss",
-                onclick: move |_| signal.set(None),
+                onclick: move |_| current.set(None),
                 "×"
             }
         }
@@ -72,5 +116,20 @@ mod tests {
         let kind = CircleErrorKind::DeliveryBindingHandedOver;
         let msg = kind.english_fallback();
         assert!(msg.contains("delivery binding"));
+    }
+
+    #[test]
+    fn dispatch_classifies_reason_code() {
+        // Drain any prior queue entry so this test is hermetic.
+        let _ = take_circle_error();
+        assert!(maybe_dispatch_circle_error("failed_precondition", Some("circle_not_active")));
+        assert_eq!(take_circle_error(), Some(CircleErrorKind::NotActive));
+    }
+
+    #[test]
+    fn dispatch_ignores_unrelated_codes() {
+        let _ = take_circle_error();
+        assert!(!maybe_dispatch_circle_error("invalid_param", Some("missing_field")));
+        assert_eq!(take_circle_error(), None);
     }
 }
