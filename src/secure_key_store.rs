@@ -39,6 +39,7 @@ use chacha20poly1305::{
     AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
     aead::{Aead, OsRng},
 };
+use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(target_arch = "wasm32")]
 static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore>> = OnceLock::new();
@@ -151,9 +152,17 @@ pub trait SecureKeyStore: Send + Sync {
 /// heap. Production callers should prefer [`KeyringSecureKeyStore`]
 /// and only fall back to this when the platform backend is
 /// [`SecureKeyStoreError::Unsupported`].
+///
+/// **Phase A.6 #1**: secret values are stored as `Zeroizing<Vec<u8>>` so
+/// the backing buffer is overwritten with zeros whenever an entry is
+/// dropped, overwritten, or removed (including the implicit clear when
+/// the map itself drops). Callers receive `String` clones via
+/// `get_secret`; those clones still need to be zeroized by the caller
+/// (they are typically wrapped in `Zeroizing<String>` at the call site,
+/// e.g. session-grant / refresh-token consumers).
 #[derive(Clone, Default)]
 pub struct MemorySecureKeyStore {
-    inner: Arc<Mutex<HashMap<String, String>>>,
+    inner: Arc<Mutex<HashMap<String, Zeroizing<Vec<u8>>>>>,
 }
 
 impl MemorySecureKeyStore {
@@ -187,7 +196,12 @@ impl SecureKeyStore for MemorySecureKeyStore {
             .inner
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("lock poisoned: {err}")))?;
-        guard.insert(key.to_owned(), value.to_owned());
+        // Insert wraps the bytes in `Zeroizing`, and the `HashMap::insert`
+        // return value drops the previous entry (also `Zeroizing`) which
+        // zeros it before deallocation. Overwriting an existing key
+        // therefore wipes the old plaintext, not just shadows it.
+        let zeroizing_value: Zeroizing<Vec<u8>> = Zeroizing::new(value.as_bytes().to_vec());
+        let _previous = guard.insert(key.to_owned(), zeroizing_value);
         Ok(())
     }
 
@@ -196,7 +210,19 @@ impl SecureKeyStore for MemorySecureKeyStore {
             .inner
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("lock poisoned: {err}")))?;
-        Ok(guard.get(key).cloned())
+        // The cloned bytes leave the zeroize protection — that is
+        // unavoidable for the sync trait surface (callers need a
+        // `String`). Callers handling long-lived secrets SHOULD wrap the
+        // returned `String` in `zeroize::Zeroizing` so their copy is
+        // also wiped on drop.
+        match guard.get(key) {
+            Some(bytes) => Ok(Some(
+                String::from_utf8(bytes.to_vec()).map_err(|err| {
+                    SecureKeyStoreError::Backend(format!("stored secret not utf8: {err}"))
+                })?,
+            )),
+            None => Ok(None),
+        }
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
@@ -204,12 +230,38 @@ impl SecureKeyStore for MemorySecureKeyStore {
             .inner
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("lock poisoned: {err}")))?;
-        guard.remove(key);
+        // `HashMap::remove` returns the value; dropping it triggers the
+        // `Zeroizing<Vec<u8>>` destructor which wipes the buffer.
+        let _ = guard.remove(key);
         Ok(())
     }
 
     fn backend_name(&self) -> &'static str {
         "memory"
+    }
+}
+
+/// Explicit drop wipe: when the last `Arc` clone of a
+/// `MemorySecureKeyStore` is released, walk the map and zeroize every
+/// remaining value. The `Zeroizing<Vec<u8>>` newtype already does this
+/// per-entry on drop, but iterating explicitly here protects against
+/// any future change where someone replaces the value type with a
+/// plain `Vec<u8>` — the `Drop` impl makes the wipe intent
+/// load-bearing.
+impl Drop for MemorySecureKeyStore {
+    fn drop(&mut self) {
+        // Only the strong-count == 1 case actually frees the underlying
+        // map. Clones share the `Arc`, so an early drop on a clone
+        // would zero data still in use by other holders.
+        if Arc::strong_count(&self.inner) > 1 {
+            return;
+        }
+        if let Ok(mut guard) = self.inner.lock() {
+            for (_, value) in guard.iter_mut() {
+                value.zeroize();
+            }
+            guard.clear();
+        }
     }
 }
 
@@ -229,6 +281,15 @@ impl SecureKeyStore for MemorySecureKeyStore {
 #[derive(Clone, Debug)]
 pub struct KeyringSecureKeyStore {
     service_name: String,
+    /// Phase A.6 #4: snapshot of the service name captured at
+    /// construction. `entry()` asserts that the current `service_name`
+    /// matches this expected value before handing off to
+    /// `keyring::Entry::new`, so any future code path that accidentally
+    /// mutates `service_name` (or constructs an Entry against a
+    /// different service) trips a panic instead of silently writing
+    /// secrets under the wrong keychain bucket. The field is `Box<str>`
+    /// (immutable) to make accidental mutation harder.
+    expected_service: Box<str>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
@@ -236,8 +297,11 @@ impl KeyringSecureKeyStore {
     /// Construct a store whose entries land under
     /// `service_name`. Conventional value: `"yougen"`.
     pub fn new(service_name: impl Into<String>) -> Self {
+        let service_name = service_name.into();
+        let expected_service = service_name.clone().into_boxed_str();
         Self {
-            service_name: service_name.into(),
+            service_name,
+            expected_service,
         }
     }
 
@@ -247,7 +311,24 @@ impl KeyringSecureKeyStore {
         &self.service_name
     }
 
+    /// Phase A.6 #4: invariant check. The expected service name was
+    /// captured at construction; verify that any caller / external
+    /// reflection has not mutated `self.service_name` before we
+    /// create the keychain Entry. If this fires, secrets would land
+    /// under the wrong service bucket and become irretrievable from
+    /// the legitimate `service_name()`-keyed path.
+    fn assert_service_invariant(&self) -> Result<(), SecureKeyStoreError> {
+        if self.service_name.as_str() != &*self.expected_service {
+            return Err(SecureKeyStoreError::Backend(format!(
+                "keyring service name drifted: current `{}` != expected `{}`",
+                self.service_name, self.expected_service
+            )));
+        }
+        Ok(())
+    }
+
     fn entry(&self, key: &str) -> Result<keyring::Entry, SecureKeyStoreError> {
+        self.assert_service_invariant()?;
         keyring::Entry::new(&self.service_name, key)
             .map_err(|err| SecureKeyStoreError::Backend(format!("entry init: {err}")))
     }
@@ -356,6 +437,31 @@ pub trait HostSecretBridge: Send + Sync {
     /// or `"ios-keychain"` so diagnostic UI can distinguish them.
     fn backend_label(&self) -> &'static str {
         "host-bridge"
+    }
+
+    /// Phase A.6 #5: iOS Keychain `kSecAttrAccessGroup` identifier.
+    ///
+    /// On iOS, Keychain items default to the calling app's private
+    /// access group (the `application-identifier` entitlement). When
+    /// yougen ships extensions (Notification Service Extension for
+    /// silent-push key unwrap, share extension, etc.) the extension and
+    /// the main app need to share Keychain entries; the OS enforces
+    /// that via a matching `kSecAttrAccessGroup` value on both sides
+    /// of the boundary.
+    ///
+    /// The host runtime is the only place that knows the app-bundle's
+    /// access-group identifier (it's a `$(AppIdentifierPrefix).<group>`
+    /// string burned into the entitlements plist). Bridges return
+    /// `Some(group)` to opt in, or `None` to keep the
+    /// per-app-private default. Implementations that don't carry an
+    /// access group (Android, desktop fallbacks, test stubs) should
+    /// return `None`.
+    ///
+    /// The trait's default is `None` so existing implementations
+    /// compile unchanged — they keep the private-access-group default
+    /// which is the safe choice when no entitlement is configured.
+    fn access_group_identifier(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -1790,6 +1896,41 @@ fn indexeddb_and_subtle_available() -> bool {
 // the same backend for the per-device Ed25519 signing seed so the seed
 // lands in the OS keychain alongside the rest of the secrets instead of
 // in `state.json` plaintext.
+//
+// ## Phase C.7 #7: wasm32 signer storage tiers
+//
+// On wasm32 the signing seed lands in the same store
+// `default_secure_key_store("yougen")` returns. That picker has two
+// tiers, both transparent to `ensure_signing_seed`:
+//
+//   1. **First-paint sync path** — [`LocalStorageSecureKeyStore`] backed
+//      by `window.localStorage`. The wrapping key is a 32-byte seed
+//      stashed under `yougen.secret.<service>.wrap_seed.v1`. Pros: works
+//      synchronously, no async init needed before the dioxus mount.
+//      Cons: the seed lives next to the ciphertext in localStorage, so a
+//      backup dump / extension with full DOM access can recover plaintext
+//      offline. See the [`LocalStorageSecureKeyStore`] doc-comment §threat
+//      model.
+//   2. **Async-promoted path** — [`IndexedDbSecureKeyStore`] backed by
+//      IndexedDB + SubtleCrypto `deriveKey({ extractable: false })`. The
+//      wrapping key is a non-extractable `CryptoKey` handle persisted
+//      via structured clone; even `subtle.exportKey(...)` rejects on it.
+//      The app calls [`upgrade_wasm_secure_key_store_async`] from a
+//      `spawn_local` task after first paint; once that resolves, every
+//      subsequent `default_secure_key_store` call returns the IDB store
+//      automatically (`WASM_UPGRADED_SECURE_KEY_STORE` cache hit).
+//
+// The signing seed migrates transparently: the upgrade path runs
+// [`migrate_localstorage_entries_to_indexeddb`] which copies
+// `device.ed25519.signing_seed.v1` from LocalStorage to IndexedDB, then
+// removes the LocalStorage copy + the wrapping seed. A subsequent
+// `load_signing_seed` call reads from IDB without re-deriving the DID.
+//
+// **What this means for callers**: pre-upgrade, the wasm signer holds
+// the seed in localStorage-AEAD (lukewarm tier). Post-upgrade, it holds
+// the seed in IndexedDB behind a non-extractable AES-GCM wrap. Boot
+// timing matters: callers that need the strongest tier should wait on
+// the upgrade future before producing the first signed envelope.
 
 /// Canonical key name for the active-device Ed25519 signing seed in the
 /// secure-key store. Scoped by `service_name` (`"yougen"` in production)

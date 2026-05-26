@@ -11,6 +11,12 @@ pub enum Locale {
     En,
     Zh,
     Ar,
+    /// Phase D.2 #8: Spanish.
+    Es,
+    /// Phase D.2 #8: Japanese.
+    Ja,
+    /// Phase D.2 #8: French.
+    Fr,
 }
 
 impl Locale {
@@ -19,13 +25,31 @@ impl Locale {
             Locale::En => "en",
             Locale::Zh => "zh",
             Locale::Ar => "ar",
+            Locale::Es => "es",
+            Locale::Ja => "ja",
+            Locale::Fr => "fr",
         }
     }
 
+    /// Parse a BCP 47 locale string. The match recognises both the base
+    /// tag (e.g. `"ar"`) and common region variants (`"ar-SA"`, `"ar-EG"`,
+    /// `"zh-CN"`, `"zh-TW"`, `"es-MX"`, `"fr-CA"`, `"ja-JP"`). Region
+    /// variants always fall through to the base locale dictionary.
     pub fn from_code(code: &str) -> Self {
-        match code {
-            "zh" | "zh-CN" | "zh-TW" => Locale::Zh,
-            "ar" | "ar-SA" | "ar-EG" => Locale::Ar,
+        // Normalise on the base subtag so `ar-SA` and `ar-EG` both pick
+        // the Arabic dictionary, which is the entry-point of the
+        // ar-SA → ar → en fallback chain defined in [`translate`].
+        let base = code
+            .split(|c| c == '-' || c == '_')
+            .next()
+            .unwrap_or(code)
+            .to_ascii_lowercase();
+        match base.as_str() {
+            "zh" => Locale::Zh,
+            "ar" => Locale::Ar,
+            "es" => Locale::Es,
+            "ja" => Locale::Ja,
+            "fr" => Locale::Fr,
             _ => Locale::En,
         }
     }
@@ -33,7 +57,7 @@ impl Locale {
     pub fn direction(&self) -> TextDirection {
         match self {
             Locale::Ar => TextDirection::Rtl,
-            Locale::En | Locale::Zh => TextDirection::Ltr,
+            Locale::En | Locale::Zh | Locale::Es | Locale::Ja | Locale::Fr => TextDirection::Ltr,
         }
     }
 }
@@ -87,23 +111,86 @@ pub fn t(signal: &I18nSignal, key: &str) -> String {
 }
 
 /// Lookup a translated string without requiring a Dioxus runtime.
+///
+/// Phase D.2 #8: extends the fallback chain so a region variant like
+/// `ar-SA` walks `ar-SA → ar → en → key` even though the
+/// [`Locale`] enum collapses region tags at parse time. Callers that
+/// keep a raw BCP 47 tag around can call [`translate_chain`] instead;
+/// this helper is the simple "I already have a `Locale`" entrypoint.
 pub fn translate(locale: Locale, dicts: &HashMap<String, TranslationDict>, key: &str) -> String {
-    // Try requested locale
-    if let Some(dict) = dicts.get(locale.code()) {
-        if let Some(val) = dict.get(key) {
-            return val.to_owned();
+    translate_chain(locale.code(), dicts, key)
+}
+
+/// Phase D.2 #8: translate against an explicit BCP 47 chain. The
+/// `requested_tag` may carry a region suffix (e.g. `"ar-SA"`). The
+/// lookup tries the full tag, then strips each `-region` segment, then
+/// falls back to English. Missing keys are reported via
+/// [`record_missing_translation`] before returning the key itself.
+pub fn translate_chain(
+    requested_tag: &str,
+    dicts: &HashMap<String, TranslationDict>,
+    key: &str,
+) -> String {
+    // Build the lookup chain: `ar-SA → ar → en`.
+    let mut chain: Vec<String> = Vec::new();
+    let mut current = requested_tag.to_owned();
+    chain.push(current.clone());
+    while let Some(idx) = current.rfind('-') {
+        current.truncate(idx);
+        if !current.is_empty() {
+            chain.push(current.clone());
         }
     }
-    // Fallback to English
-    if locale != Locale::En {
-        if let Some(dict) = dicts.get("en") {
+    if !chain.iter().any(|tag| tag == "en") {
+        chain.push("en".to_owned());
+    }
+    for tag in &chain {
+        if let Some(dict) = dicts.get(tag.as_str()) {
             if let Some(val) = dict.get(key) {
                 return val.to_owned();
             }
         }
     }
-    // Last resort: return the key itself
+    // Phase D.2 #8: surface the miss so QA can grow the dictionaries.
+    record_missing_translation(requested_tag, key);
     key.to_owned()
+}
+
+/// Phase D.2 #8: shared sink for missing `(locale_tag, key)` pairs.
+fn missing_translation_sink()
+-> &'static std::sync::Mutex<std::collections::HashSet<(String, String)>> {
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+    static SEEN: OnceLock<Mutex<std::collections::HashSet<(String, String)>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Phase D.2 #8: missing-key sink. Each unique `(locale, key)` pair
+/// is logged once via `tracing::warn!` so a long-running session
+/// doesn't spam the journal for the same untranslated label. The
+/// in-memory set is also queryable via
+/// [`missing_translation_snapshot`] for test / diagnostic UI.
+fn record_missing_translation(locale_tag: &str, key: &str) {
+    let Ok(mut guard) = missing_translation_sink().lock() else {
+        return;
+    };
+    let entry = (locale_tag.to_owned(), key.to_owned());
+    if guard.insert(entry) {
+        tracing::warn!(locale = %locale_tag, key = %key, "i18n missing translation");
+    }
+}
+
+/// Phase D.2 #8: snapshot of every `(locale_tag, key)` pair that has
+/// been reported missing by [`translate_chain`] during this process.
+/// Used by the developer-tools diagnostic surface and the i18n unit
+/// tests; production code should not iterate this.
+pub fn missing_translation_snapshot() -> Vec<(String, String)> {
+    let Ok(guard) = missing_translation_sink().lock() else {
+        return Vec::new();
+    };
+    let mut out: Vec<_> = guard.iter().cloned().collect();
+    out.sort();
+    out
 }
 
 /// Get the current text direction.
@@ -117,6 +204,14 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
         Locale::En => timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
         Locale::Zh => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
         Locale::Ar => timestamp.format("%Y/%m/%d %H:%M UTC").to_string(),
+        // Phase D.2 #8 locale extensions:
+        //   * Spanish uses day-first DD/MM/YYYY (DM ordering matches
+        //     ES/MX/AR conventions).
+        //   * Japanese uses Y年M月D日 like Chinese.
+        //   * French uses DD/MM/YYYY (matches FR/CA conventions).
+        Locale::Es => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
+        Locale::Ja => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
+        Locale::Fr => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
     }
 }
 
@@ -124,8 +219,16 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
 pub fn format_number(locale: Locale, value: u64) -> String {
     let grouped = group_decimal(value);
     match locale {
-        Locale::En | Locale::Ar => grouped,
+        // English / Arabic / Japanese: comma-grouped thousands.
+        Locale::En | Locale::Ar | Locale::Ja => grouped,
+        // Chinese: Eastern convention uses non-breaking space as a soft
+        // separator since the thousands grouping is not native to the
+        // language; we keep this for parity with the pre-D.2 behaviour.
         Locale::Zh => grouped.replace(',', " "),
+        // Spanish / French: dot grouping (es-ES / fr-FR style). Newer
+        // ISO 31 recommends thin-space grouping but the existing
+        // tooling consumes ASCII, so the dot is the pragmatic choice.
+        Locale::Es | Locale::Fr => grouped.replace(',', "."),
     }
 }
 
@@ -1577,13 +1680,142 @@ pub fn init_i18n() -> I18nSignal {
 /// Initialize i18n preloaded with a specific locale.
 pub fn init_i18n_with_locale(locale: Locale) -> I18nSignal {
     let mut dicts = HashMap::new();
-    let en = english_translations();
-    let zh = chinese_translations();
-    let ar = arabic_translations();
-    dicts.insert("en".to_owned(), en);
-    dicts.insert("zh".to_owned(), zh);
-    dicts.insert("ar".to_owned(), ar);
+    dicts.insert("en".to_owned(), english_translations());
+    dicts.insert("zh".to_owned(), chinese_translations());
+    dicts.insert("ar".to_owned(), arabic_translations());
+    // Phase D.2 #8: new locale slots — coverage is intentionally a
+    // subset (nav / common / login) so missing keys fall through the
+    // `xx → en` chain and surface in `missing_translation_snapshot()`
+    // for QA to grow as needed.
+    dicts.insert("es".to_owned(), spanish_translations());
+    dicts.insert("ja".to_owned(), japanese_translations());
+    dicts.insert("fr".to_owned(), french_translations());
     Signal::new((locale, dicts))
+}
+
+/// Phase D.2 #8: Spanish — covers the highest-visibility nav / common
+/// keys. Anything not listed falls through to English via the
+/// `translate_chain` fallback.
+pub fn spanish_translations() -> TranslationDict {
+    let mut dict = TranslationDict::new(Locale::Es);
+    dict.set("app.title", "yougen");
+    dict.set("nav.dashboard", "Panel");
+    dict.set("nav.timeline", "Cronología");
+    dict.set("nav.chat", "Chat");
+    dict.set("nav.forum", "Foro");
+    dict.set("nav.directory", "Directorio");
+    dict.set("nav.notifications", "Notificaciones");
+    dict.set("nav.settings", "Ajustes");
+    dict.set("nav.login", "Iniciar sesión");
+    dict.set("nav.audit", "Auditoría");
+    dict.set("nav.devices", "Dispositivos");
+    dict.set("common.loading", "Cargando...");
+    dict.set("common.error", "Error");
+    dict.set("common.retry", "Reintentar");
+    dict.set("common.close", "Cerrar");
+    dict.set("common.confirm", "Confirmar");
+    dict.set("common.cancel", "Cancelar");
+    dict.set("common.save", "Guardar");
+    dict.set("common.delete", "Eliminar");
+    dict.set("common.edit", "Editar");
+    dict.set("common.send", "Enviar");
+    dict.set("common.refresh", "Actualizar");
+    dict.set("common.back", "Atrás");
+    dict.set("common.next", "Siguiente");
+    dict.set("common.online", "en línea");
+    dict.set("common.offline", "sin conexión");
+    dict.set("common.reconnecting", "reconectando");
+    dict.set("settings.title", "Ajustes");
+    dict.set("settings.theme", "Tema");
+    dict.set("settings.language", "Idioma");
+    dict.set("settings.light", "Claro");
+    dict.set("settings.dark", "Oscuro");
+    dict.set("settings.system", "Sistema");
+    dict.set("login.server", "Servidor");
+    dict.set("login.continue", "Continuar");
+    dict
+}
+
+/// Phase D.2 #8: Japanese — nav / common starter set.
+pub fn japanese_translations() -> TranslationDict {
+    let mut dict = TranslationDict::new(Locale::Ja);
+    dict.set("app.title", "yougen");
+    dict.set("nav.dashboard", "ダッシュボード");
+    dict.set("nav.timeline", "タイムライン");
+    dict.set("nav.chat", "チャット");
+    dict.set("nav.forum", "フォーラム");
+    dict.set("nav.directory", "ディレクトリ");
+    dict.set("nav.notifications", "通知");
+    dict.set("nav.settings", "設定");
+    dict.set("nav.login", "ログイン");
+    dict.set("nav.audit", "監査");
+    dict.set("nav.devices", "デバイス");
+    dict.set("common.loading", "読み込み中...");
+    dict.set("common.error", "エラー");
+    dict.set("common.retry", "再試行");
+    dict.set("common.close", "閉じる");
+    dict.set("common.confirm", "確認");
+    dict.set("common.cancel", "キャンセル");
+    dict.set("common.save", "保存");
+    dict.set("common.delete", "削除");
+    dict.set("common.edit", "編集");
+    dict.set("common.send", "送信");
+    dict.set("common.refresh", "更新");
+    dict.set("common.back", "戻る");
+    dict.set("common.next", "次へ");
+    dict.set("common.online", "オンライン");
+    dict.set("common.offline", "オフライン");
+    dict.set("common.reconnecting", "再接続中");
+    dict.set("settings.title", "設定");
+    dict.set("settings.theme", "テーマ");
+    dict.set("settings.language", "言語");
+    dict.set("settings.light", "ライト");
+    dict.set("settings.dark", "ダーク");
+    dict.set("settings.system", "システム");
+    dict.set("login.server", "サーバー");
+    dict.set("login.continue", "続行");
+    dict
+}
+
+/// Phase D.2 #8: French — nav / common starter set.
+pub fn french_translations() -> TranslationDict {
+    let mut dict = TranslationDict::new(Locale::Fr);
+    dict.set("app.title", "yougen");
+    dict.set("nav.dashboard", "Tableau de bord");
+    dict.set("nav.timeline", "Chronologie");
+    dict.set("nav.chat", "Discussion");
+    dict.set("nav.forum", "Forum");
+    dict.set("nav.directory", "Annuaire");
+    dict.set("nav.notifications", "Notifications");
+    dict.set("nav.settings", "Paramètres");
+    dict.set("nav.login", "Connexion");
+    dict.set("nav.audit", "Audit");
+    dict.set("nav.devices", "Appareils");
+    dict.set("common.loading", "Chargement...");
+    dict.set("common.error", "Erreur");
+    dict.set("common.retry", "Réessayer");
+    dict.set("common.close", "Fermer");
+    dict.set("common.confirm", "Confirmer");
+    dict.set("common.cancel", "Annuler");
+    dict.set("common.save", "Enregistrer");
+    dict.set("common.delete", "Supprimer");
+    dict.set("common.edit", "Modifier");
+    dict.set("common.send", "Envoyer");
+    dict.set("common.refresh", "Actualiser");
+    dict.set("common.back", "Retour");
+    dict.set("common.next", "Suivant");
+    dict.set("common.online", "en ligne");
+    dict.set("common.offline", "hors ligne");
+    dict.set("common.reconnecting", "reconnexion");
+    dict.set("settings.title", "Paramètres");
+    dict.set("settings.theme", "Thème");
+    dict.set("settings.language", "Langue");
+    dict.set("settings.light", "Clair");
+    dict.set("settings.dark", "Sombre");
+    dict.set("settings.system", "Système");
+    dict.set("login.server", "Serveur");
+    dict.set("login.continue", "Continuer");
+    dict
 }
 
 /// Switch the active locale on an existing signal without rebuilding the
@@ -1618,7 +1850,42 @@ mod tests {
         assert_eq!(Locale::from_code("zh"), Locale::Zh);
         assert_eq!(Locale::from_code("zh-CN"), Locale::Zh);
         assert_eq!(Locale::from_code("ar"), Locale::Ar);
-        assert_eq!(Locale::from_code("fr"), Locale::En); // fallback
+        // Phase D.2 #8: `fr`, `es`, `ja` are first-class now.
+        assert_eq!(Locale::from_code("fr"), Locale::Fr);
+        assert_eq!(Locale::from_code("fr-CA"), Locale::Fr);
+        assert_eq!(Locale::from_code("es"), Locale::Es);
+        assert_eq!(Locale::from_code("es-MX"), Locale::Es);
+        assert_eq!(Locale::from_code("ja"), Locale::Ja);
+        assert_eq!(Locale::from_code("ja-JP"), Locale::Ja);
+        // ar-SA collapses to ar (entry point of the
+        // `ar-SA → ar → en` chain in `translate_chain`).
+        assert_eq!(Locale::from_code("ar-SA"), Locale::Ar);
+        // Unknown locale still falls back to English.
+        assert_eq!(Locale::from_code("xx"), Locale::En);
+    }
+
+    #[test]
+    fn translate_chain_walks_region_then_base_then_english() {
+        // Phase D.2 #8: `ar-SA → ar → en` lookup chain.
+        let mut dicts = HashMap::new();
+        let mut ar_sa = TranslationDict::new(Locale::Ar);
+        ar_sa.set("region.specific", "ar-SA value");
+        let mut ar = TranslationDict::new(Locale::Ar);
+        ar.set("base.value", "ar value");
+        let mut en = TranslationDict::new(Locale::En);
+        en.set("english.only", "en value");
+        dicts.insert("ar-SA".to_owned(), ar_sa);
+        dicts.insert("ar".to_owned(), ar);
+        dicts.insert("en".to_owned(), en);
+        // Region-specific value wins.
+        assert_eq!(translate_chain("ar-SA", &dicts, "region.specific"), "ar-SA value");
+        // Base value picked up via `ar-SA → ar`.
+        assert_eq!(translate_chain("ar-SA", &dicts, "base.value"), "ar value");
+        // English fallback via `ar-SA → ar → en`.
+        assert_eq!(translate_chain("ar-SA", &dicts, "english.only"), "en value");
+        // Missing everywhere → returns the key itself + records the miss.
+        let _ = missing_translation_snapshot(); // ensure helper compiles
+        assert_eq!(translate_chain("ar-SA", &dicts, "nothing.here"), "nothing.here");
     }
 
     #[test]

@@ -50,35 +50,50 @@
 //!
 //! ### Crypto choice
 //!
-//! Yougen already picked SHA-256 + sha2 for hashing and ed25519 for
-//! signing; pulling in AES-GCM through the wasm-incompatible RustCrypto
-//! `aes-gcm` crate would force a feature-gate maze across the SDK
-//! workspace. The chosen scheme stays inside what's already vendored:
+//! Phase A.6 #2: the envelope now uses real ChaCha20-Poly1305 AEAD —
+//! the `chacha20poly1305` crate is already a direct yougen dependency
+//! (used by the cloud-vault recovery path) and builds cleanly on wasm32.
+//! The pre-A.6 implementation used a SHA-256 keystream + manual
+//! HMAC-SHA-256, which is structurally similar to a Bellare-Namprempre
+//! Encrypt-then-MAC scheme but easy to misuse (key separation done by
+//! convention instead of by the AEAD construction). The new layout:
 //!
 //! * **Key derivation:** SHA-256-HMAC-style stretching. The
 //!   passphrase is concatenated with a per-envelope salt and hashed
-//!   `KDF_ITERATIONS` times. The resulting 32-byte key is split into
-//!   a 32-byte cipher key + a 32-byte MAC key (recomputed on each
-//!   chunk so we don't lose entropy by re-hashing the same input).
-//! * **Symmetric layer:** SHA-256 keystream — the cipher key is
-//!   chained through `SHA-256(key || counter)` to produce 32-byte
-//!   blocks XOR'd over the plaintext. This is structurally identical
-//!   to the chacha20-poly1305 path the SDK uses for E2EE message
-//!   bodies but stays inside the sha2 dependency the rest of yougen
-//!   already pulls in. Production deploys SHOULD swap this for
-//!   AES-GCM once the wasm-side feature plumbing exists.
-//! * **MAC:** HMAC-SHA-256 (manual `K_outer || H(K_inner || msg)`
-//!   construction) over `salt || epoch || ciphertext`. A passphrase
-//!   mismatch lights up the MAC verification, not a "decrypt looks
-//!   garbled" heuristic — the test suite asserts the typed error.
+//!   `KDF_ITERATIONS` times. The resulting 32-byte key feeds the
+//!   ChaCha20-Poly1305 AEAD directly — no key-splitting needed because
+//!   AEAD authenticates the ciphertext under the same key.
+//! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte
+//!   random nonce per envelope. The nonce is stored alongside the
+//!   ciphertext so decryption is self-contained.
+//! * **Tamper detection:** the AEAD's built-in Poly1305 tag covers
+//!   the ciphertext. We additionally bind the envelope's
+//!   `(salt, epoch, recorded_at, magic)` into the AEAD's
+//!   `additional_data` so a tampered envelope (e.g. an attacker
+//!   swapping the recorded epoch to bypass the freshness check)
+//!   trips the AEAD verification instead of decrypting cleanly under
+//!   a forged epoch.
+//! * **Replay defence:** `recorded_at` is now part of the AEAD AAD,
+//!   so an envelope cannot be replayed with a forged timestamp to
+//!   make it look fresh. The freshness check
+//!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering
+//!   provided by the Anchor view, but the AAD binding guarantees
+//!   the timestamp the caller sees has not been swapped out.
 //!
-//! These choices make the envelope format stable across browsers
-//! (both wasm32 and native targets see the same bytes) without
-//! pulling new build-system dependencies.
+//! Legacy SHA-256-keystream envelopes minted before A.6 are still
+//! decryptable via [`decrypt_envelope_legacy_sha256_keystream`]; the
+//! main `decrypt_envelope` path returns
+//! `EnvelopeError::PassphraseMismatch` for them so callers can fall
+//! back to the legacy decoder when they know the blob predates the
+//! migration.
 
 use std::fmt;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chacha20poly1305::{
+    AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
+    aead::{Aead, OsRng, Payload},
+};
 use chrono::SecondsFormat;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -105,6 +120,13 @@ pub const MLS_ENVELOPE_MAGIC: &[u8] = b"yg-mls-snap-v1";
 const MAC_OUTER_PAD: u8 = 0x5c;
 const MAC_INNER_PAD: u8 = 0x36;
 
+/// Phase A.6 #2: AEAD envelope version. `0` = legacy SHA-256 keystream
+/// + manual HMAC (pre-A.6, accepted for backward compatibility via
+/// [`decrypt_envelope_legacy_sha256_keystream`]); `1` = ChaCha20-Poly1305
+/// AEAD with `(salt, epoch, recorded_at, magic)` bound into the AAD.
+pub const AEAD_VERSION_LEGACY_KEYSTREAM: u8 = 0;
+pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
+
 /// Typed envelope wrapping an encrypted MLS group state
 /// record. Persisted via `LocalStateStore` and (for cross-device
 /// restore) shipped as the `ciphertext` body of a
@@ -128,16 +150,36 @@ pub struct MlsSnapshotEnvelope {
     /// Per-envelope salt used during passphrase stretching.
     /// Hex-encoded so the JSON form is human-debuggable.
     pub salt_hex: String,
-    /// Ciphertext (the SDK's `MlsGroupStateRecord` JSON, XOR'd with
-    /// the SHA-256 keystream). Hex-encoded.
+    /// Ciphertext.
+    ///
+    /// * `aead_version == AEAD_VERSION_CHACHA20_POLY1305`: the
+    ///   ChaCha20-Poly1305 AEAD output, which is the encrypted
+    ///   plaintext followed by the 16-byte Poly1305 tag.
+    /// * `aead_version == AEAD_VERSION_LEGACY_KEYSTREAM`: the
+    ///   pre-A.6 SHA-256-keystream XOR output (no tag — auth is
+    ///   carried separately in `mac_hex`).
     pub ciphertext_hex: String,
-    /// MAC (HMAC-SHA-256 over `salt || epoch || ciphertext`). Used
-    /// for both passphrase-mismatch detection and tamper detection.
-    /// Hex-encoded.
+    /// AEAD nonce / legacy MAC.
+    ///
+    /// * `aead_version == AEAD_VERSION_CHACHA20_POLY1305`: 12-byte
+    ///   ChaCha20-Poly1305 nonce. The nonce is freshly generated per
+    ///   envelope so replay is prevented at the AEAD layer.
+    /// * `aead_version == AEAD_VERSION_LEGACY_KEYSTREAM`: 32-byte
+    ///   HMAC-SHA-256 tag over `salt || epoch || ciphertext`.
     pub mac_hex: String,
     /// RFC 3339 timestamp at which the snapshot was taken. Used by
     /// "newest envelope wins" tie-breaking on multi-device restore.
+    /// For [`AEAD_VERSION_CHACHA20_POLY1305`] envelopes the timestamp
+    /// is also bound into the AEAD AAD so a tampered envelope cannot
+    /// fake a fresh recording time.
     pub recorded_at: DateTime<Utc>,
+    /// AEAD scheme tag. Defaults to
+    /// [`AEAD_VERSION_LEGACY_KEYSTREAM`] when absent from the JSON,
+    /// so envelopes minted before Phase A.6 deserialize without
+    /// migration. Phase A.6 +new envelopes always serialize with
+    /// [`AEAD_VERSION_CHACHA20_POLY1305`].
+    #[serde(default)]
+    pub aead_version: u8,
 }
 
 /// Errors produced while encrypting / decrypting / verifying an MLS
@@ -212,6 +254,13 @@ impl std::error::Error for EnvelopeError {}
 /// SDK-serialised `MlsGroupStateRecord` JSON. `salt` SHOULD be a
 /// 16-byte random value but the helper accepts any length so tests
 /// can pin a deterministic salt.
+///
+/// Phase A.6 #2: produces a [`AEAD_VERSION_CHACHA20_POLY1305`]
+/// envelope. The AEAD AAD binds the envelope's metadata
+/// (`MLS_ENVELOPE_MAGIC || salt || epoch_be || recorded_at_unix_be`),
+/// so a tampered envelope (e.g. an attacker swapping the recorded
+/// epoch / timestamp) fails the AEAD verification instead of
+/// decrypting cleanly.
 pub fn encrypt_state(
     space_id: &str,
     group_id: &str,
@@ -220,25 +269,99 @@ pub fn encrypt_state(
     passphrase: &str,
     salt: &[u8],
 ) -> MlsSnapshotEnvelope {
+    let recorded_at = Utc::now();
     let key = derive_key(passphrase, salt, KDF_ITERATIONS);
-    let ciphertext = xor_keystream(&key, state_bytes);
-    let mac = compute_mac(&key, salt, epoch, &ciphertext);
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let aad = build_aead_aad(salt, epoch, recorded_at);
+    let cipher = ChaCha20Poly1305::new((&key).into());
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: state_bytes,
+                aad: &aad,
+            },
+        )
+        // ChaCha20-Poly1305 encryption only fails when the plaintext
+        // exceeds the 256 GiB AEAD limit, which is impossible for an
+        // MLS group state record. Treat as unreachable.
+        .expect("chacha20-poly1305 encrypt should not fail for in-memory MLS state");
     MlsSnapshotEnvelope {
         space_id: space_id.to_owned(),
         group_id: group_id.to_owned(),
         epoch,
         salt_hex: hex_encode(salt),
         ciphertext_hex: hex_encode(&ciphertext),
-        mac_hex: hex_encode(&mac),
-        recorded_at: Utc::now(),
+        mac_hex: hex_encode(nonce.as_slice()),
+        recorded_at,
+        aead_version: AEAD_VERSION_CHACHA20_POLY1305,
     }
 }
 
 /// Decrypt the envelope and return the inner state bytes (the SDK's
-/// `MlsGroupStateRecord` JSON). Verifies the MAC first — passphrase
-/// mismatch lights up before any `serde_json::from_slice` call on
-/// the (still-encrypted) bytes.
+/// `MlsGroupStateRecord` JSON).
+///
+/// Phase A.6 #2: dispatches on
+/// `aead_version`. For [`AEAD_VERSION_CHACHA20_POLY1305`] envelopes the
+/// AEAD's Poly1305 tag detects both passphrase mismatch and tamper.
+/// For legacy [`AEAD_VERSION_LEGACY_KEYSTREAM`] envelopes the manual
+/// HMAC-SHA-256 over `salt || epoch || ciphertext` is verified before
+/// the XOR-keystream decrypt.
 pub fn decrypt_envelope(
+    envelope: &MlsSnapshotEnvelope,
+    passphrase: &str,
+) -> Result<Vec<u8>, EnvelopeError> {
+    match envelope.aead_version {
+        AEAD_VERSION_CHACHA20_POLY1305 => decrypt_envelope_aead_v1(envelope, passphrase),
+        AEAD_VERSION_LEGACY_KEYSTREAM => {
+            decrypt_envelope_legacy_sha256_keystream(envelope, passphrase)
+        }
+        other => Err(EnvelopeError::Malformed(format!(
+            "unsupported aead_version {other}"
+        ))),
+    }
+}
+
+fn decrypt_envelope_aead_v1(
+    envelope: &MlsSnapshotEnvelope,
+    passphrase: &str,
+) -> Result<Vec<u8>, EnvelopeError> {
+    let salt = hex_decode(&envelope.salt_hex)
+        .ok_or_else(|| EnvelopeError::Malformed("salt is not hex".to_owned()))?;
+    let ciphertext = hex_decode(&envelope.ciphertext_hex)
+        .ok_or_else(|| EnvelopeError::Malformed("ciphertext is not hex".to_owned()))?;
+    let nonce_bytes = hex_decode(&envelope.mac_hex)
+        .ok_or_else(|| EnvelopeError::Malformed("nonce is not hex".to_owned()))?;
+    if nonce_bytes.len() != 12 {
+        return Err(EnvelopeError::Malformed(format!(
+            "nonce length {} (expected 12 for ChaCha20-Poly1305)",
+            nonce_bytes.len()
+        )));
+    }
+    let key = derive_key(passphrase, &salt, KDF_ITERATIONS);
+    let aad = build_aead_aad(&salt, envelope.epoch, envelope.recorded_at);
+    let cipher = ChaCha20Poly1305::new((&key).into());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    cipher
+        .decrypt(
+            nonce,
+            Payload {
+                msg: &ciphertext,
+                aad: &aad,
+            },
+        )
+        // ChaCha20-Poly1305 decrypt failure is the typed
+        // PassphraseMismatch signal; we deliberately do not distinguish
+        // "wrong key" from "tampered envelope".
+        .map_err(|_| EnvelopeError::PassphraseMismatch)
+}
+
+/// Phase A.6 #2: legacy decoder for pre-A.6 envelopes that used the
+/// SHA-256 keystream + manual HMAC-SHA-256 construction. New
+/// callers MUST mint AEAD-v1 envelopes via [`encrypt_state`]; this
+/// helper exists only so saved-state restores across the upgrade
+/// boundary keep working.
+pub fn decrypt_envelope_legacy_sha256_keystream(
     envelope: &MlsSnapshotEnvelope,
     passphrase: &str,
 ) -> Result<Vec<u8>, EnvelopeError> {
@@ -254,6 +377,19 @@ pub fn decrypt_envelope(
         return Err(EnvelopeError::PassphraseMismatch);
     }
     Ok(xor_keystream(&key, &ciphertext))
+}
+
+/// Phase A.6 #2: build the AEAD additional-data bytes binding the
+/// envelope's plaintext metadata (magic, salt, epoch, timestamp).
+/// Any caller-side mutation of one of these fields invalidates the
+/// AEAD tag.
+fn build_aead_aad(salt: &[u8], epoch: u64, recorded_at: DateTime<Utc>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(MLS_ENVELOPE_MAGIC.len() + salt.len() + 8 + 8);
+    out.extend_from_slice(MLS_ENVELOPE_MAGIC);
+    out.extend_from_slice(salt);
+    out.extend_from_slice(&epoch.to_be_bytes());
+    out.extend_from_slice(&recorded_at.timestamp().to_be_bytes());
+    out
 }
 
 /// Decrypt + verify epoch freshness. Returns the inner state bytes

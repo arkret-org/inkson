@@ -709,6 +709,15 @@ body {
 }
 .board-column-actions [data-testid="list-archive-button"],
 .board-card-footer [data-testid="card-archive-button"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+.board-column:hover .board-column-actions [data-testid="list-archive-button"],
+.board-column:focus-within .board-column-actions [data-testid="list-archive-button"],
+.board-card:hover .board-card-footer [data-testid="card-archive-button"],
+.board-card:focus-within .board-card-footer [data-testid="card-archive-button"] {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;

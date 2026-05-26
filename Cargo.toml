@@ -91,6 +91,12 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # pin is used for the ciphertext digest's sha256 (already in `sha2`).
 argon2 = "0.5"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
+# in-memory secure key store. The crate is already in the dependency graph
+# transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it
+# a direct dep lets `MemorySecureKeyStore` reach for `Zeroize` /
+# `ZeroizeOnDrop` without an indirect import path.
+zeroize = { version = "1.8", features = ["derive"] }
 # A3 (round 28): markdown rendering for the timeline/chat content
 # renderer. pulldown-cmark is pure-Rust, no_std-friendly, and known to
 # build cleanly under wasm32-unknown-unknown. Raw-HTML pass-through is
