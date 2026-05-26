@@ -43,6 +43,7 @@ pub fn CircleScopePicker(
             select {
                 class: "select",
                 "data-testid": "{tid}",
+                "aria-label": "Circle scope selector",
                 value: "{current_id}",
                 onchange: move |evt| {
                     let value = evt.value();

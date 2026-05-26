@@ -463,6 +463,40 @@ pub trait HostSecretBridge: Send + Sync {
     fn access_group_identifier(&self) -> Option<&str> {
         None
     }
+
+    /// True when the bridge has been asked (typically by the user via a
+    /// host-side setting toggle) to require a biometric / device-credential
+    /// challenge before [`HostBridgeSecureKeyStore::store_secret`] and
+    /// [`HostBridgeSecureKeyStore::get_secret`] succeed. The default is
+    /// `false` so existing bridges compile unchanged — they retain the
+    /// no-prompt behaviour that matches the pre-biometric contract.
+    ///
+    /// On Android the bridge typically maps this to
+    /// `setUserAuthenticationRequired(true)` on the AndroidKeystore alias;
+    /// on iOS it maps to a `SecAccessControl` with the
+    /// `kSecAccessControlBiometryCurrentSet` / `kSecAccessControlUserPresence`
+    /// flag. Both surfaces translate a failed prompt to
+    /// [`SecureKeyStoreError::Backend`] with a "biometric" substring so
+    /// the UI can detect "user cancelled" vs a real backend failure.
+    fn biometric_challenge_required(&self) -> bool {
+        false
+    }
+
+    /// Prompt the host runtime to perform a biometric (or device-credential
+    /// fallback) authentication challenge. Returns `Ok(true)` when the user
+    /// satisfied the prompt, `Ok(false)` when the user declined or cancelled,
+    /// and `Err(...)` when the prompt could not be displayed (e.g. no
+    /// enrolled biometrics, hardware unavailable). `reason` is a short
+    /// human-readable string the host shows in the system biometric sheet.
+    ///
+    /// The default implementation returns `Ok(true)` so non-biometric
+    /// bridges (desktop test stubs, the in-process unit-test bridge) keep
+    /// compiling and behave as if the challenge always succeeds. Real
+    /// Android / iOS bridges override this method to invoke
+    /// `BiometricPrompt` / `LAContext.evaluatePolicy` respectively.
+    fn biometric_authenticate(&self, _reason: &str) -> Result<bool, SecureKeyStoreError> {
+        Ok(true)
+    }
 }
 
 static HOST_SECRET_BRIDGE: std::sync::OnceLock<Arc<dyn HostSecretBridge>> =
@@ -535,16 +569,41 @@ impl std::fmt::Debug for HostBridgeSecureKeyStore {
     }
 }
 
+impl HostBridgeSecureKeyStore {
+    /// If the bridge has biometric protection enabled, prompt the user
+    /// for a biometric/device-credential challenge and require an
+    /// affirmative response. Returns `Err(Backend("biometric..."))` on
+    /// user cancel so callers can distinguish "user declined" from a
+    /// hardware failure via the `biometric` substring.
+    fn require_biometric(&self, reason: &str) -> Result<(), SecureKeyStoreError> {
+        if !self.bridge.biometric_challenge_required() {
+            return Ok(());
+        }
+        match self.bridge.biometric_authenticate(reason)? {
+            true => Ok(()),
+            false => Err(SecureKeyStoreError::Backend(
+                "biometric challenge declined or cancelled".to_owned(),
+            )),
+        }
+    }
+}
+
 impl SecureKeyStore for HostBridgeSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        self.require_biometric("Authenticate to store secret")?;
         self.bridge.put(&self.service_name, key, value)
     }
 
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        self.require_biometric("Authenticate to access secret")?;
         self.bridge.get(&self.service_name, key)
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        // Deletion is intentionally NOT biometric-gated — letting users
+        // remove an entry without re-auth lets them recover from a lost
+        // biometric (e.g. enrolled fingerprint removed) without being
+        // permanently locked out of overwriting the key.
         self.bridge.delete(&self.service_name, key)
     }
 
@@ -2331,6 +2390,69 @@ mod tests {
         assert_eq!(store.backend_name(), "custom-label");
     }
 
+    /// Biometric challenge gates `store_secret` / `get_secret` on the
+    /// bridge. With biometric_required = true and the prompt accepting,
+    /// the round-trip works. With the prompt rejecting, both paths fail
+    /// with a "biometric" substring so the UI can distinguish "user
+    /// cancelled" from a real hardware failure. `delete_secret` is
+    /// intentionally NOT gated — see comment in `delete_secret`.
+    #[test]
+    fn host_bridge_biometric_blocks_store_and_get_on_reject() {
+        let bridge = Arc::new(TestHostSecretBridge::new("biometric-bridge"));
+        bridge.set_biometric_required(true);
+        bridge.set_biometric_accept(false);
+        let store =
+            HostBridgeSecureKeyStore::new("svc.bio", bridge.clone() as Arc<dyn HostSecretBridge>);
+
+        let err = store
+            .store_secret("rt", "secret")
+            .expect_err("biometric reject must fail store");
+        assert!(matches!(err, SecureKeyStoreError::Backend(ref msg) if msg.contains("biometric")));
+
+        // Even if the bridge happens to already hold an entry from a
+        // prior accept, a subsequent reject denies the get.
+        bridge.set_biometric_accept(true);
+        store.store_secret("rt", "secret").expect("store accepted");
+        bridge.set_biometric_accept(false);
+        let err = store
+            .get_secret("rt")
+            .expect_err("biometric reject must fail get");
+        assert!(matches!(err, SecureKeyStoreError::Backend(ref msg) if msg.contains("biometric")));
+
+        // Delete is NOT biometric-gated by design.
+        store.delete_secret("rt").expect("delete is not gated");
+    }
+
+    #[test]
+    fn host_bridge_biometric_allows_store_and_get_on_accept() {
+        let bridge = Arc::new(TestHostSecretBridge::new("biometric-bridge"));
+        bridge.set_biometric_required(true);
+        bridge.set_biometric_accept(true);
+        let store = HostBridgeSecureKeyStore::new("svc.bio", bridge as Arc<dyn HostSecretBridge>);
+
+        store.store_secret("rt", "secret").expect("store accepted");
+        assert_eq!(
+            store.get_secret("rt").expect("get accepted").as_deref(),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn host_bridge_biometric_disabled_does_not_prompt() {
+        // biometric_challenge_required() defaults to false; the bridge
+        // never calls biometric_authenticate, so a bridge that would
+        // reject still permits store/get.
+        let bridge = Arc::new(TestHostSecretBridge::new("no-bio"));
+        bridge.set_biometric_required(false);
+        bridge.set_biometric_accept(false);
+        let store = HostBridgeSecureKeyStore::new("svc.no-bio", bridge as Arc<dyn HostSecretBridge>);
+        store.store_secret("rt", "secret").expect("not gated");
+        assert_eq!(
+            store.get_secret("rt").expect("not gated").as_deref(),
+            Some("secret")
+        );
+    }
+
     /// In-process [`HostSecretBridge`] used by mobile-platform unit
     /// tests so the round-trip can run on any target. Stores entries
     /// in a `(service_name, key) -> value` map. NOT a real Android /
@@ -2338,6 +2460,8 @@ mod tests {
     struct TestHostSecretBridge {
         label: &'static str,
         inner: std::sync::Mutex<std::collections::HashMap<(String, String), String>>,
+        biometric_required: std::sync::atomic::AtomicBool,
+        biometric_accept: std::sync::atomic::AtomicBool,
     }
 
     impl TestHostSecretBridge {
@@ -2345,7 +2469,19 @@ mod tests {
             Self {
                 label,
                 inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+                biometric_required: std::sync::atomic::AtomicBool::new(false),
+                biometric_accept: std::sync::atomic::AtomicBool::new(true),
             }
+        }
+
+        fn set_biometric_required(&self, required: bool) {
+            self.biometric_required
+                .store(required, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn set_biometric_accept(&self, accept: bool) {
+            self.biometric_accept
+                .store(accept, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -2386,6 +2522,15 @@ mod tests {
         }
         fn backend_label(&self) -> &'static str {
             self.label
+        }
+        fn biometric_challenge_required(&self) -> bool {
+            self.biometric_required
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn biometric_authenticate(&self, _reason: &str) -> Result<bool, SecureKeyStoreError> {
+            Ok(self
+                .biometric_accept
+                .load(std::sync::atomic::Ordering::SeqCst))
         }
     }
 }

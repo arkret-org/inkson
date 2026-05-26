@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
 use chime::{
     GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig,
     PushGatewayIntegrationDescribeResponse, PushGatewayType, PushPreferences,
@@ -9,6 +11,10 @@ use chime::{
 };
 use chrono::Utc;
 use serde_json::Value;
+
+use crate::secure_key_store::{
+    SecureKeyStore, SecureKeyStoreError, unwrap_secret, wrap_secret,
+};
 
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
@@ -911,6 +917,249 @@ pub fn resolve_provider_push_token(
     provider.subscribe(vapid_application_server_key)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SecureKeyStore-backed push-token binding.
+//
+// The push token (`RegisterDeviceRequest::push_key`) is a long-lived
+// platform identifier that we would otherwise persist plaintext in
+// `LocalStateStore` so a register/unregister retry can find it. By
+// routing the persistence through the [`SecureKeyStore`] tier and
+// AEAD-wrapping the token with a key derived from a per-installation
+// wrapping seed (itself stored in the secure-key tier), we get two
+// useful properties:
+//
+//   1. The on-disk form of the token is ChaCha20-Poly1305 ciphertext;
+//      a backup/disk-dump that doesn't include the secure-key tier
+//      cannot recover the plaintext token.
+//   2. Rotating the wrapping seed via [`PushTokenBinding::rotate`]
+//      invalidates every prior ciphertext — useful when device
+//      credentials change or when the user opts to wipe push state
+//      without re-registering.
+//
+// The binding is intentionally narrow: it owns *one* wrapping seed
+// per service_name and one entry slot per device_id. Multi-device
+// hosts construct one binding per device.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// SecureKeyStore key under which the AEAD wrapping seed for push tokens
+/// is held. Keyed by service_name, so a `yougen` install and a
+/// `yougen.test` install have separate seeds (and so do their
+/// ciphertext entries).
+pub const PUSH_TOKEN_WRAP_SEED_KEY: &str = "push.token.wrap_seed.v1";
+
+/// SecureKeyStore key prefix under which the per-device wrapped push
+/// token ciphertext is held. Combined with the device id to form the
+/// full entry name.
+pub const PUSH_TOKEN_ENTRY_PREFIX: &str = "push.token.v1.";
+
+fn push_token_entry_key(device_id: &str) -> String {
+    format!("{PUSH_TOKEN_ENTRY_PREFIX}{device_id}")
+}
+
+/// Read (or generate + persist) the 32-byte AEAD wrapping seed under
+/// [`PUSH_TOKEN_WRAP_SEED_KEY`]. Used by [`PushTokenBinding`] to
+/// wrap/unwrap the persisted push token. A future call to
+/// [`rotate_push_token_wrap_seed`] overwrites the seed; afterwards
+/// any prior ciphertext fails to decrypt.
+fn load_or_create_push_token_wrap_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<[u8; 32], SecureKeyStoreError> {
+    if let Some(existing) = store.get_secret(PUSH_TOKEN_WRAP_SEED_KEY)? {
+        let bytes = STANDARD_NO_PAD.decode(existing.as_bytes()).map_err(|err| {
+            SecureKeyStoreError::Backend(format!("push wrap seed decode: {err}"))
+        })?;
+        if bytes.len() != 32 {
+            return Err(SecureKeyStoreError::Backend(format!(
+                "push wrap seed length {}, expected 32",
+                bytes.len()
+            )));
+        }
+        let mut buf = [0u8; 32];
+        buf.copy_from_slice(&bytes);
+        return Ok(buf);
+    }
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom wrap seed: {err}")))?;
+    store.store_secret(PUSH_TOKEN_WRAP_SEED_KEY, &STANDARD_NO_PAD.encode(seed))?;
+    Ok(seed)
+}
+
+/// Force-rotate the AEAD wrapping seed used to wrap persisted push
+/// tokens. Returns the new seed bytes (the caller usually does not need
+/// them — [`PushTokenBinding::rotate`] handles re-wrapping the live
+/// token). After this call, every ciphertext stored under
+/// [`PUSH_TOKEN_ENTRY_PREFIX`]`*` becomes undecryptable, so callers
+/// should follow up with [`PushTokenBinding::store_token`] or
+/// [`PushTokenBinding::rotate`] before the next register-device flow.
+pub fn rotate_push_token_wrap_seed(
+    store: &dyn SecureKeyStore,
+) -> Result<[u8; 32], SecureKeyStoreError> {
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom wrap seed: {err}")))?;
+    store.store_secret(PUSH_TOKEN_WRAP_SEED_KEY, &STANDARD_NO_PAD.encode(seed))?;
+    Ok(seed)
+}
+
+/// Per-device wrapper that funnels push-token persistence through the
+/// process-wide [`SecureKeyStore`]. Construct via
+/// [`PushTokenBinding::new`] passing the same `service_name` that was
+/// handed to [`crate::secure_key_store::default_secure_key_store`].
+///
+/// The binding does not own the SecureKeyStore — it holds an
+/// `Arc<dyn SecureKeyStore>` so multiple bindings (one per device id)
+/// share the same wrapping-seed slot.
+#[derive(Clone)]
+pub struct PushTokenBinding {
+    store: Arc<dyn SecureKeyStore>,
+    device_id: String,
+}
+
+impl PushTokenBinding {
+    /// Construct a binding that persists tokens for `device_id` via
+    /// `store`. The wrapping seed under
+    /// [`PUSH_TOKEN_WRAP_SEED_KEY`] is created lazily on the first
+    /// [`store_token`](Self::store_token) call (or eagerly via
+    /// [`ensure_wrap_seed`](Self::ensure_wrap_seed)).
+    pub fn new(store: Arc<dyn SecureKeyStore>, device_id: impl Into<String>) -> Self {
+        Self {
+            store,
+            device_id: device_id.into(),
+        }
+    }
+
+    /// Device id this binding writes / reads under.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// Ensure the wrapping seed exists. Returns `Ok(())` whether the
+    /// seed was already present or freshly generated.
+    pub fn ensure_wrap_seed(&self) -> Result<(), SecureKeyStoreError> {
+        let _ = load_or_create_push_token_wrap_seed(self.store.as_ref())?;
+        Ok(())
+    }
+
+    /// Persist `push_key` under this binding's device id. Overwrites
+    /// silently. The on-disk form is `wrap_secret(push_key, seed)` —
+    /// a ChaCha20-Poly1305 ciphertext with a random nonce prefix.
+    pub fn store_token(&self, push_key: &str) -> Result<(), SecureKeyStoreError> {
+        let seed = load_or_create_push_token_wrap_seed(self.store.as_ref())?;
+        let wrapped = wrap_secret(push_key, &seed)?;
+        self.store
+            .store_secret(&push_token_entry_key(&self.device_id), &wrapped)
+    }
+
+    /// Load the previously-persisted push token. Returns `Ok(None)`
+    /// when no entry exists; also returns `Ok(None)` when the
+    /// ciphertext fails to authenticate (matches
+    /// [`unwrap_secret`]'s contract — typically because the wrapping
+    /// seed has been rotated since the ciphertext was written).
+    pub fn load_token(&self) -> Result<Option<String>, SecureKeyStoreError> {
+        let Some(wrapped) = self
+            .store
+            .get_secret(&push_token_entry_key(&self.device_id))?
+        else {
+            return Ok(None);
+        };
+        let Some(seed_b64) = self.store.get_secret(PUSH_TOKEN_WRAP_SEED_KEY)? else {
+            // Seed was rotated away without re-wrapping; the ciphertext
+            // is unrecoverable.
+            return Ok(None);
+        };
+        let seed_bytes = STANDARD_NO_PAD
+            .decode(seed_b64.as_bytes())
+            .map_err(|err| SecureKeyStoreError::Backend(format!("seed decode: {err}")))?;
+        if seed_bytes.len() != 32 {
+            return Ok(None);
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&seed_bytes);
+        unwrap_secret(&wrapped, &seed)
+    }
+
+    /// Remove the persisted token for this device id. Idempotent —
+    /// deleting an absent entry returns `Ok(())`.
+    pub fn delete_token(&self) -> Result<(), SecureKeyStoreError> {
+        self.store
+            .delete_secret(&push_token_entry_key(&self.device_id))
+    }
+
+    /// Rotate the AEAD wrapping seed AND re-wrap the current token
+    /// under the new seed. Returns the rotated token (read from the
+    /// store before rotation) so the caller can immediately drive a
+    /// fresh `register_device` call.
+    ///
+    /// If no token was persisted, the seed is rotated and `Ok(None)`
+    /// is returned.
+    ///
+    /// After this method returns, any *other* ciphertext stored under
+    /// a different device id with the old seed becomes unrecoverable —
+    /// callers that share a wrapping seed across device ids should
+    /// rotate at a higher layer.
+    pub fn rotate(&self) -> Result<Option<String>, SecureKeyStoreError> {
+        let token = self.load_token()?;
+        let _ = rotate_push_token_wrap_seed(self.store.as_ref())?;
+        if let Some(ref t) = token {
+            self.store_token(t)?;
+        } else {
+            // Drop any stale ciphertext that was wrapped under the
+            // pre-rotation seed.
+            self.delete_token()?;
+        }
+        Ok(token)
+    }
+}
+
+impl std::fmt::Debug for PushTokenBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushTokenBinding")
+            .field("device_id", &self.device_id)
+            .field("store", &self.store.backend_name())
+            .finish()
+    }
+}
+
+/// Build a chime [`RegisterDeviceRequest`] for `device_id`, persisting
+/// the resolved push token through [`PushTokenBinding`] for future
+/// idempotency / rotation. The returned request is wire-identical to
+/// [`build_register_request_for_actor`] — the binding effect is purely
+/// on the at-rest secret storage side.
+///
+/// Use this in the login / settings flow when you already have an
+/// [`Arc<dyn SecureKeyStore>`] from
+/// [`crate::secure_key_store::default_secure_key_store`].
+pub fn build_register_request_with_secure_store(
+    device_id: &str,
+    principal_did: Option<&str>,
+    store: &Arc<dyn SecureKeyStore>,
+) -> anyhow::Result<RegisterDeviceRequest> {
+    let request = build_register_request_for_actor(device_id, principal_did)?;
+    let binding = PushTokenBinding::new(store.clone(), device_id);
+    // Best-effort persist. A backend failure here should not block
+    // registration — log and continue. The persisted token is only
+    // load-bearing for retry/rotation paths.
+    if let Err(err) = binding.store_token(&request.push_key) {
+        tracing::warn!(?err, %device_id, "PushTokenBinding::store_token failed");
+    }
+    Ok(request)
+}
+
+/// Hex-encoded SHA-256 of `value`. Helper kept here so the rotation
+/// tests can compare push-token hashes without dragging in a full
+/// hashing surface from chime's wire module.
+#[cfg(test)]
+fn sha256_hex(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(value.as_bytes());
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -983,6 +1232,7 @@ mod tests {
             provider_capabilities_version: None,
             provider_capabilities: Vec::new(),
             todos: vec!["TODO(push-bridge)".to_owned()],
+            spec_version: None,
         });
 
         assert!(summary.contains("cx.push.bridge.describe"));
@@ -1180,5 +1430,118 @@ mod tests {
         assert!(decode_vapid_application_server_key("   ").is_err());
         // Stars are outside both base64 alphabets.
         assert!(decode_vapid_application_server_key("****").is_err());
+    }
+
+    // ── PushTokenBinding / secure_key_store integration ───────────────
+
+    use crate::secure_key_store::MemorySecureKeyStore;
+
+    #[test]
+    fn push_token_binding_round_trips_a_token() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let binding = PushTokenBinding::new(store.clone(), "dev_yougen");
+        assert!(binding.load_token().unwrap().is_none());
+        binding.store_token("fcm:real-token-abc").unwrap();
+        assert_eq!(
+            binding.load_token().unwrap().as_deref(),
+            Some("fcm:real-token-abc")
+        );
+    }
+
+    /// Distinct device ids share the wrapping seed but get distinct
+    /// ciphertext slots — overwriting one device's token does not
+    /// affect another.
+    #[test]
+    fn push_token_binding_namespaces_by_device_id() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let b_a = PushTokenBinding::new(store.clone(), "device_a");
+        let b_b = PushTokenBinding::new(store.clone(), "device_b");
+        b_a.store_token("fcm:token-a").unwrap();
+        b_b.store_token("apns:token-b").unwrap();
+        assert_eq!(b_a.load_token().unwrap().as_deref(), Some("fcm:token-a"));
+        assert_eq!(b_b.load_token().unwrap().as_deref(), Some("apns:token-b"));
+    }
+
+    /// After rotating the wrapping seed, any ciphertext written under
+    /// the old seed and NOT re-wrapped is unrecoverable. This is the
+    /// load-bearing security property of the binding: a stolen
+    /// pre-rotation backup cannot be used to recover the post-rotation
+    /// state.
+    #[test]
+    fn push_token_rotation_invalidates_old_ciphertext() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let binding = PushTokenBinding::new(store.clone(), "device_x");
+        binding.store_token("fcm:original-token").unwrap();
+        // Snapshot the ciphertext under the device-id slot.
+        let ciphertext_before = store
+            .get_secret(&push_token_entry_key("device_x"))
+            .unwrap()
+            .unwrap();
+
+        // Rotate the wrapping seed WITHOUT re-wrapping the entry —
+        // this simulates an attacker who exfiltrated the old
+        // ciphertext, then we rotated. The old ciphertext must not
+        // decrypt under the new seed.
+        let _ = rotate_push_token_wrap_seed(store.as_ref()).unwrap();
+        // Manually re-insert the pre-rotation ciphertext so the load
+        // path is forced to attempt decryption with the new seed.
+        store
+            .store_secret(&push_token_entry_key("device_x"), &ciphertext_before)
+            .unwrap();
+        // load_token returns None when the AEAD MAC fails — that's
+        // the "ciphertext is unrecoverable" signal.
+        assert!(
+            binding.load_token().unwrap().is_none(),
+            "old ciphertext must not decrypt under rotated seed"
+        );
+    }
+
+    /// `PushTokenBinding::rotate` rotates the seed AND re-wraps the
+    /// current token so subsequent loads still recover the plaintext.
+    /// This is the happy path for "user manually rotated push state".
+    #[test]
+    fn push_token_binding_rotate_preserves_live_token() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let binding = PushTokenBinding::new(store.clone(), "device_y");
+        binding.store_token("apns:live-token").unwrap();
+        let rotated = binding.rotate().unwrap();
+        assert_eq!(rotated.as_deref(), Some("apns:live-token"));
+        // Subsequent load succeeds under the new seed.
+        assert_eq!(
+            binding.load_token().unwrap().as_deref(),
+            Some("apns:live-token")
+        );
+    }
+
+    /// `delete_token` is idempotent and clears the per-device slot.
+    #[test]
+    fn push_token_binding_delete_is_idempotent() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let binding = PushTokenBinding::new(store.clone(), "device_z");
+        binding.delete_token().expect("idempotent delete");
+        binding.store_token("apns:stale").unwrap();
+        binding.delete_token().expect("delete");
+        assert!(binding.load_token().unwrap().is_none());
+        binding.delete_token().expect("idempotent second delete");
+    }
+
+    /// `build_register_request_with_secure_store` persists the
+    /// resolved push token through the binding so a retry path can
+    /// recover it. The on-wire request is unaffected: same
+    /// `push_key` / `device_id` shape as the non-binding helper.
+    #[test]
+    fn build_register_request_with_secure_store_persists_token() {
+        let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
+        let request =
+            build_register_request_with_secure_store("dev_yougen", None, &store).unwrap();
+        assert_eq!(request.device_id, "dev_yougen");
+        assert!(!request.push_key.is_empty());
+
+        let binding = PushTokenBinding::new(store.clone(), "dev_yougen");
+        let loaded = binding.load_token().unwrap().expect("token persisted");
+        // Compare via hash to avoid printing the token if the test
+        // logs are leaked anywhere — sha256_hex is also used for the
+        // `push_key_hash` field in the registration state.
+        assert_eq!(sha256_hex(&loaded), sha256_hex(&request.push_key));
     }
 }

@@ -27,6 +27,9 @@ pub fn OfflinePendingBadge(props: OfflinePendingBadgeProps) -> Element {
             "data-testid": "offline-pending-badge",
             "data-pending-count": "{count}",
             title: "Pending writes — will be sent when the network is healthy.",
+            role: "status",
+            "aria-live": "polite",
+            "aria-label": "{count} pending offline writes",
             "Pending {count}"
         }
     }

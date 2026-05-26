@@ -5371,4 +5371,99 @@ mod tests {
             "without the `demo-crypto` feature, even loopback hosts must fail closed"
         );
     }
+
+    // ── Production-path (no `demo-crypto`) wire guards ──────────────
+    //
+    // These tests pin the contract that the three demo-only entry
+    // points (`upload_keys`, `publish_mls_key_package`, `send_to_device`)
+    // never let a dev placeholder reach the wire when the binary is
+    // compiled without the `demo-crypto` feature. The prod path
+    // `anyhow::bail!`s synchronously inside the async fn, so it's
+    // safe to call without spinning up a network mock — no HTTP byte
+    // is sent.
+    //
+    // CI gate: see `.github/workflows/ci.yml` (`cargo check
+    // --workspace --no-default-features`) which compiles this module
+    // with `not(feature = "demo-crypto")` enabled.
+
+    #[cfg(not(feature = "demo-crypto"))]
+    #[tokio::test]
+    async fn upload_keys_refuses_to_ship_demo_device_signature_in_prod_build() {
+        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let err = api
+            .upload_keys("cx:device:test-prod-guard")
+            .await
+            .expect_err("prod build MUST refuse to ship demo device_signature placeholders");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("device_signature") && msg.contains("demo-crypto"),
+            "prod-path error must name the placeholder + missing feature gate, got: {msg}"
+        );
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    #[tokio::test]
+    async fn publish_mls_key_package_refuses_demo_signature_in_prod_build() {
+        // Build a syntactically-valid MlsKeyPackageRecord via JSON so
+        // we don't need to import every field type. The prod path
+        // bails before reading any field, but we still want the
+        // argument well-formed so a future refactor that touches the
+        // record before bailing surfaces here.
+        let record: contrix_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
+            "keypackage_id": "cx:mls:kp:01904100-0000-7000-8000-000000000001",
+            "principal_id": "did:web:alice.example",
+            "device_id": "cx:device:01904100-0000-7000-8000-000000000001",
+            "key_package": "AAAA",
+            "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "cipher_suites": ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("MlsKeyPackageRecord fixture must deserialize");
+
+        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let err = api
+            .publish_mls_key_package("cx:device:test-prod-guard", &record)
+            .await
+            .expect_err("prod build MUST refuse to publish demo-signed key packages");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("device_signature") && msg.contains("demo-crypto"),
+            "prod-path error must name the placeholder + missing feature gate, got: {msg}"
+        );
+    }
+
+    #[cfg(not(feature = "demo-crypto"))]
+    #[tokio::test]
+    async fn send_to_device_refuses_opaque_ciphertext_placeholder_in_prod_build() {
+        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let err = api
+            .send_to_device("did:web:bob.example", "cx:device:test-prod-guard")
+            .await
+            .expect_err("prod build MUST refuse to ship opaque ciphertext placeholders");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("ciphertext") && msg.contains("demo-crypto"),
+            "prod-path error must name the placeholder + missing feature gate, got: {msg}"
+        );
+    }
+
+    /// Belt-and-braces: even on a loopback host, the prod build of the
+    /// helper guard must fail closed. We already cover this in
+    /// `demo_crypto_fallbacks_are_compiled_out` for the public
+    /// `ensure_demo_crypto_fallback_allowed`; this variant additionally
+    /// asserts that the error message names the missing build feature
+    /// so the caller can suggest the right fix in operator-facing logs.
+    #[cfg(not(feature = "demo-crypto"))]
+    #[test]
+    fn demo_crypto_guard_message_names_required_build_feature() {
+        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let err = local
+            .ensure_demo_crypto_fallback_allowed("upload_keys demo device_signature")
+            .expect_err("prod build must fail closed even on loopback");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("demo-crypto"),
+            "guard error must reference the `demo-crypto` build feature for operators, got: {msg}"
+        );
+    }
 }

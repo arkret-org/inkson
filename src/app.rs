@@ -7187,6 +7187,7 @@ pub fn RouterView() -> Element {
                                             button {
                                                 class: "btn sm ghost",
                                                 "data-testid": "account-menu-session-refresh",
+                                                "aria-label": "Refresh session",
                                                 disabled: !has_session,
                                                 onclick: {
                                                     let base = base_url();
@@ -7248,6 +7249,7 @@ pub fn RouterView() -> Element {
                                             button {
                                                 class: "btn sm ghost",
                                                 "data-testid": "account-menu-session-logout",
+                                                "aria-label": "Log out",
                                                 disabled: !has_session,
                                                 onclick: move |_| {
                                                     let base = base_url();
@@ -7958,6 +7960,7 @@ fn CommandPalette(
                                     class: "command-palette-item",
                                     "data-testid": "command-palette-space",
                                     role: "option",
+                                    "aria-label": "Open space {space.name}",
                                     onclick: {
                                         let id = space.space_id.clone();
                                         move |_| on_pick_space.call(id.clone())
@@ -7978,6 +7981,7 @@ fn CommandPalette(
                             class: "command-palette-item",
                             "data-testid": "command-palette-dest",
                             role: "option",
+                            "aria-label": "Navigate to {label}",
                             onclick: {
                                 let route = route.clone();
                                 move |_| on_navigate.call(route.clone())
@@ -7992,6 +7996,7 @@ fn CommandPalette(
                 button {
                     class: "btn sm ghost",
                     "data-testid": "command-palette-close",
+                    "aria-label": "Close command palette",
                     onclick: move |_| on_close.call(()),
                     {crate::i18n::tr("command_palette.close")}
                 }

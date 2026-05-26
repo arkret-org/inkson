@@ -55,12 +55,16 @@ pub fn CreateCircleModal(
     rsx! {
         div { class: "modal-overlay create-circle-modal-overlay",
             "data-testid": "create-circle-modal",
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-label": "New Circle in {realm_id}",
             div { class: "modal",
                 header { class: "modal-head",
                     h2 { "New Circle in {realm_id}" }
                     button {
                         class: "icon-only",
                         "data-testid": "create-circle-cancel",
+                        "aria-label": "Cancel and close dialog",
                         onclick: move |_| on_cancel.call(()),
                         "×"
                     }
@@ -158,12 +162,14 @@ pub fn CreateCircleModal(
                     button {
                         class: "secondary",
                         "data-testid": "create-circle-cancel-bottom",
+                        "aria-label": "Cancel new Circle",
                         onclick: move |_| on_cancel.call(()),
                         "Cancel"
                     }
                     button {
                         class: "primary",
                         "data-testid": "create-circle-submit",
+                        "aria-label": "Create new Circle",
                         onclick: move |_| {
                             let members: Vec<String> = members_text
                                 .read()

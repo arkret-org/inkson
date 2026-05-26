@@ -51,6 +51,9 @@ pub fn AccountSwitcher(
             button {
                 class: "account-switcher-trigger",
                 "data-testid": "account-switcher-trigger",
+                "aria-label": "Account switcher: {active_label}",
+                "aria-haspopup": "menu",
+                "aria-expanded": if open() { "true" } else { "false" },
                 onclick: move |_| open.toggle(),
                 span { class: "avatar", "👤" }
                 span { class: "account-label", "{active_label}" }
@@ -59,6 +62,7 @@ pub fn AccountSwitcher(
             if open() {
                 div { class: "account-switcher-menu",
                     "data-testid": "account-switcher-menu",
+                    role: "menu",
                     ul { class: "account-list",
                         for profile in profiles.profiles.iter() {
                             {
@@ -77,6 +81,8 @@ pub fn AccountSwitcher(
                                         "data-profile-id": "{pid}",
                                         button {
                                             class: "account-row-switch",
+                                            "aria-label": "Switch to account {label}",
+                                            role: "menuitem",
                                             disabled: is_active,
                                             onclick: move |_| {
                                                 // CXP-0007 P3B.4.3 — emit the typed
@@ -102,6 +108,7 @@ pub fn AccountSwitcher(
                                             button {
                                                 class: "icon-only",
                                                 "data-testid": "account-switcher-remove",
+                                                "aria-label": "Remove account {label}",
                                                 onclick: move |_| on_remove.call(pid_for_remove.clone()),
                                                 "×"
                                             }
@@ -114,6 +121,8 @@ pub fn AccountSwitcher(
                     button {
                         class: "account-add-button",
                         "data-testid": "account-switcher-add",
+                        "aria-label": "Add another account",
+                        role: "menuitem",
                         onclick: move |_| {
                             on_add_account.call(());
                             open.set(false);
