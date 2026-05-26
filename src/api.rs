@@ -101,7 +101,11 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
-    AccountDataSetOutcome, AccountResponse, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
+    AccountDataSetOutcome, AccountResponse, AgentGrantAttachReqBody, AgentGrantDetachResBody,
+    AgentGrantResBody, AgentKeyPairReqBody, AgentKeyPairResBody, AgentLifecycleReqBody,
+    AgentLifecycleResBody, AgentListResBody, AgentProvisionReqBody, AgentResBody,
+    AgentRotateKeyReqBody, AgentRotateKeyResBody, AgentSidecarThreadEnsureReqBody,
+    AgentSidecarThreadEnsureResBody, AuthzCheckResBody, BackfillResBody, BlobUploadResBody,
     CallRecordingStartResponse, ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse,
     ContactResponse, ContactsResponse, CreateWebrtcSessionResponse, DevLoginResponse,
     DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
@@ -122,6 +126,18 @@ use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
     scope_id_as_realm_id, uuid_v7,
 };
+
+/// B-F / CXP-0009 §3 — default home-policy discriminator passed on
+/// `cx.agent.sidecar_thread.ensure`. The spec rolled the default from
+/// "default home realm" to "context realm preferred"; yougen MUST emit
+/// this token unless the caller explicitly overrides it.
+pub const SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED: &str = "context_realm_preferred";
+
+/// Returns the canonical default home-policy string for the
+/// `cx.agent.sidecar_thread.ensure` request body's `home_policy` field.
+pub fn sidecar_home_policy_default() -> &'static str {
+    SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED
+}
 
 /// Generic wrapper for soland's
 /// `/api/v1/projection/{spaces|flows}` lifecycle endpoints. Keeps
@@ -1047,25 +1063,21 @@ impl ContrixApi {
             ));
         }
 
-        let color: CircleColorToken = serde_json::from_value(serde_json::Value::String(
-            color_token.trim().to_owned(),
-        ))
-        .map_err(|err| {
-            anyhow::anyhow!("invalid Circle color_token `{color_token}`: {err}")
-        })?;
-        let glyph: CircleGlyph = serde_json::from_value(serde_json::Value::String(
-            symbol_glyph.trim().to_owned(),
-        ))
-        .map_err(|err| {
-            anyhow::anyhow!("invalid Circle symbol glyph `{symbol_glyph}`: {err}")
-        })?;
+        let color: CircleColorToken =
+            serde_json::from_value(serde_json::Value::String(color_token.trim().to_owned()))
+                .map_err(|err| {
+                    anyhow::anyhow!("invalid Circle color_token `{color_token}`: {err}")
+                })?;
+        let glyph: CircleGlyph =
+            serde_json::from_value(serde_json::Value::String(symbol_glyph.trim().to_owned()))
+                .map_err(|err| {
+                    anyhow::anyhow!("invalid Circle symbol glyph `{symbol_glyph}`: {err}")
+                })?;
         let visibility: CircleDirectoryVisibility = serde_json::from_value(
             serde_json::Value::String(directory_visibility.trim().to_owned()),
         )
         .map_err(|err| {
-            anyhow::anyhow!(
-                "invalid Circle directory_visibility `{directory_visibility}`: {err}"
-            )
+            anyhow::anyhow!("invalid Circle directory_visibility `{directory_visibility}`: {err}")
         })?;
 
         let display = CircleDisplay {
@@ -1742,6 +1754,47 @@ impl ContrixApi {
 
     pub async fn list_key_backups(&self) -> anyhow::Result<serde_json::Value> {
         self.get_json("api/v1/keys/backups").await
+    }
+
+    /// CXP B-C / spec head 37ce729 — `LIST?series_id=` query path the
+    /// recovery flow uses to rebuild a backup series by sequence. When
+    /// `series_id` is `None` and `backup_class` is `None`, this falls
+    /// back to the legacy plain `GET /api/v1/keys/backups` shape.
+    ///
+    /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
+    /// query parameters; the chain reconstruction MUST decrypt only
+    /// from the tail and surface `backup_frontier_stale` /
+    /// `backup_post_reset_stale` errors per CXP B-C §3.3.
+    ///
+    /// TODO(P3-impl): the deep series-chain decryption / frontier
+    /// validation lives in `key_backup` / `recovery_crypto` and is out
+    /// of scope for the wire-contract pass.
+    pub async fn list_key_backups_by_series(
+        &self,
+        series_id: Option<&str>,
+        backup_class: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut query: Vec<(String, String)> = Vec::new();
+        if let Some(series_id) = series_id {
+            if !series_id.trim().is_empty() {
+                query.push(("series_id".to_owned(), series_id.to_owned()));
+            }
+        }
+        if let Some(class) = backup_class {
+            if !class.trim().is_empty() {
+                query.push(("backup_class".to_owned(), class.to_owned()));
+            }
+        }
+        if query.is_empty() {
+            return self.get_json("api/v1/keys/backups").await;
+        }
+        let query_string = query
+            .into_iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        self.get_json(&format!("api/v1/keys/backups?{query_string}"))
+            .await
     }
 
     pub async fn get_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
@@ -2733,6 +2786,158 @@ impl ContrixApi {
             .await
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // CXP-0008 / CXP-0009 — Personal Agent HTTP surface (11 endpoints
+    // landed in soland P2 aa76b91). Each method here verifies the
+    // cross-project HTTP contract so the wire shape is exercised end
+    // to end even while deeper UI form layouts remain
+    // `// TODO(P3-impl)` stubs.
+    // ────────────────────────────────────────────────────────────────
+
+    /// `POST /auth/account/agent-key-pair` — `cx.account.agent_key_pair`.
+    /// Authorizes a fresh agent runtime key pair against an agent
+    /// principal.
+    pub async fn agent_key_pair(
+        &self,
+        body: &AgentKeyPairReqBody,
+    ) -> anyhow::Result<AgentKeyPairResBody> {
+        self.post_json("auth/account/agent-key-pair", serde_json::to_value(body)?)
+            .await
+    }
+
+    /// `POST /api/v1/agents` — `cx.agent.provision`. Provisions a new
+    /// personal agent: DID issuance + first agent key authorize +
+    /// controller grant attach in one orchestrated request.
+    pub async fn agent_provision(
+        &self,
+        body: &AgentProvisionReqBody,
+    ) -> anyhow::Result<AgentResBody> {
+        self.post_json("api/v1/agents", serde_json::to_value(body)?)
+            .await
+    }
+
+    /// `GET /api/v1/agents` — `cx.agent.list`. Returns the
+    /// controller-self list of agents (soland enforces caller binding).
+    pub async fn agent_list(&self) -> anyhow::Result<AgentListResBody> {
+        self.get_json("api/v1/agents").await
+    }
+
+    /// `GET /api/v1/agents/{id}` — `cx.agent.get`.
+    pub async fn agent_get(&self, agent_principal_id: &str) -> anyhow::Result<AgentResBody> {
+        self.get_json(&format!("api/v1/agents/{agent_principal_id}"))
+            .await
+    }
+
+    /// `POST /api/v1/agents/{id}/pause` — `cx.agent.pause` (durable
+    /// reducer-input event). Auth Server flushes capability cache with
+    /// reason `agent_paused`.
+    pub async fn agent_pause(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentLifecycleReqBody,
+    ) -> anyhow::Result<AgentLifecycleResBody> {
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/pause"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `POST /api/v1/agents/{id}/resume` — `cx.agent.resume`.
+    pub async fn agent_resume(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentLifecycleReqBody,
+    ) -> anyhow::Result<AgentLifecycleResBody> {
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/resume"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `POST /api/v1/agents/{id}/deactivate` — `cx.agent.deactivate`.
+    /// Triggers a cascade: `cx.agent.key.revoke` +
+    /// `cx.capability.revoke` + runtime endpoint revocation on the
+    /// soland side. Destructive — callers MUST gate this on an
+    /// explicit "DEACTIVATE" type-to-confirm dialog.
+    pub async fn agent_deactivate(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentLifecycleReqBody,
+    ) -> anyhow::Result<AgentLifecycleResBody> {
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/deactivate"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `POST /api/v1/agents/{id}/rotate-key` — `cx.agent.rotate_key`.
+    /// Writes the `cx.agent.key.{revoke,authorize}` pair atomically.
+    pub async fn agent_rotate_key(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentRotateKeyReqBody,
+    ) -> anyhow::Result<AgentRotateKeyResBody> {
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/rotate-key"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `POST /api/v1/agents/{id}/grants` — `cx.agent.grant.attach`.
+    /// Attaches a capability grant scoped to the agent. `grant_kind`
+    /// SHOULD be one of the 14 CXP-0008 capability actions.
+    pub async fn agent_grant_attach(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentGrantAttachReqBody,
+    ) -> anyhow::Result<AgentGrantResBody> {
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/grants"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `DELETE /api/v1/agents/{id}/grants/{grant_id}` —
+    /// `cx.agent.grant.detach`.
+    pub async fn agent_grant_detach(
+        &self,
+        agent_principal_id: &str,
+        grant_id: &str,
+    ) -> anyhow::Result<AgentGrantDetachResBody> {
+        self.delete_json(&format!(
+            "api/v1/agents/{agent_principal_id}/grants/{grant_id}"
+        ))
+        .await
+    }
+
+    /// `POST /api/v1/agents/{id}/sidecar-thread/ensure` —
+    /// `cx.agent.sidecar_thread.ensure`. Idempotently derives the
+    /// controller_agent_circle_key and ensures a sidecar Circle exists
+    /// between the controller and the native agent. Defaults
+    /// `home_policy = "context_realm_preferred"` per CXP-0009 §3 / B-F.
+    pub async fn agent_sidecar_thread_ensure(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentSidecarThreadEnsureReqBody,
+    ) -> anyhow::Result<AgentSidecarThreadEnsureResBody> {
+        // Apply the spec-mandated default at the call site if the
+        // caller passed an empty discriminator.
+        let mut body = body.clone();
+        if body.home_policy.trim().is_empty() {
+            body.home_policy = sidecar_home_policy_default().to_owned();
+        }
+        self.post_json(
+            &format!("api/v1/agents/{agent_principal_id}/sidecar-thread/ensure"),
+            serde_json::to_value(&body)?,
+        )
+        .await
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let request = self.http.get(self.endpoint(path)?);
         self.send_json(self.prepare_request(request), Method::GET)
@@ -3318,7 +3523,8 @@ pub fn build_realm_bootstrap_events(
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<EventEnvelope>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
-    // by the reducer from `cx.realm.create`'s `created_by_principal == actor_id`.
+    // by the reducer from `cx.realm.create`'s `created_by == actor_id`
+    // (renamed from `created_by_principal` at spec head 37ce729).
     // The bootstrap MUST NOT emit an explicit `cx.member.state{join}` for
     // the creator — the reducer writes that cell atomically with the
     // create event.
@@ -3409,7 +3615,10 @@ pub fn build_realm_create_event(
         "schema": "cx.schema.realm.v1",
         "title": title,
         "trust_domain": trust_domain,
-        "created_by_principal": actor_id,
+        // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
+        // `created_by_principal` → `created_by`. No serde alias —
+        // aggressive migration.
+        "created_by": actor_id,
         "schema_refs": ["cx.schema.realm.v1"],
         "default_discoverability": discoverability,
         "default_join_rule": join_rule,
@@ -3741,8 +3950,12 @@ pub fn build_plaintext_visible_services_event(
             json!({
                 "service_did": service,
                 "service_type": "principal_server",
+                // Spec rename (head 37ce729 / SDK 4d5a1af): privacy / service
+                // feature enums renamed `flow_body / message_body / body_only`
+                // → `flow_content / message_content / content_only`. No serde
+                // alias — aggressive migration.
                 "data_classes": [
-                    "message_body",
+                    "message_content",
                     "full_text_index",
                     "notification_summary",
                     "inbox_preview",
@@ -4677,10 +4890,9 @@ mod tests {
 
         let create = &events[0];
         assert_eq!(create.payload["object"]["schema"], "cx.schema.realm.v1");
-        assert_eq!(
-            create.payload["object"]["created_by_principal"],
-            create.actor_id
-        );
+        // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
+        // `created_by_principal` → `created_by`.
+        assert_eq!(create.payload["object"]["created_by"], create.actor_id);
         assert_eq!(
             create.payload["object"]["created_at"].as_str().unwrap(),
             create.created_at,
@@ -4727,7 +4939,7 @@ mod tests {
         assert_eq!(
             events[4].payload["services"][0]["data_classes"],
             json!([
-                "message_body",
+                "message_content",
                 "full_text_index",
                 "notification_summary",
                 "inbox_preview",

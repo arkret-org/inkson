@@ -6,7 +6,18 @@
 //!
 //! Spec sources:
 //! - `identity/identity-did.md` (§3 default DID methods, §4 resolver policy)
-//! - `identity/identity-handles.md` (§5 fail-closed rules)
+//! - `identity/identity-handles.md` (§5 fail-closed rules, §6 verifier
+//!   authority/cache split)
+//!
+//! TRUST-AUTHORITY: this module is the single authority-grade DID
+//! resolution path. Trust-decision surfaces — wallet disclosure,
+//! accept-invite, join-official-Realm, cross-org federation, audit
+//! trail review — MUST go through here (CXP B-E §1 /
+//! identity-handles §6.1). They MUST NOT accept the server-attested
+//! `binding_state=verified` projection as authoritative; that field
+//! is a cache hint only. Cache-allowed surfaces (verified badge,
+//! mention autocomplete, contact card) live in `components::verify_badges`
+//! and `views::contacts` — those are tagged `TRUST-CACHE`.
 
 use std::collections::HashMap;
 

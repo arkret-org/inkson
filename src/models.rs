@@ -567,7 +567,10 @@ pub struct DeviceMessagesReceiveResBody {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BlobUploadResBody {
     pub blob_ref: String,
-    pub size: usize,
+    /// Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`
+    /// on blob/media metadata. No serde alias by design — aggressive
+    /// migration mode.
+    pub size_bytes: usize,
     pub media_type: String,
     pub sha256: String,
     #[serde(default)]
@@ -964,8 +967,172 @@ pub struct MimiProxyDownloadResBody {
     pub ok: bool,
     pub blob_ref: String,
     pub media_type: Option<String>,
-    pub size: Option<usize>,
+    /// Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`.
+    pub size_bytes: Option<usize>,
     pub proxy_url: Option<String>,
     #[serde(default)]
     pub receipt: Value,
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CXP-0008 / CXP-0009 — Personal Agent HTTP wire types (spec head
+// 37ce729 / SDK 4d5a1af / soland P2 aa76b91).
+//
+// These mirror soland's `AgentProvisionReqBody` / `AgentResBody` /
+// `AgentListResBody` / `AgentLifecycleReqBody` / `AgentLifecycleResBody`
+// / `AgentRotateKeyReqBody` / `AgentRotateKeyResBody` /
+// `AgentGrantAttachReqBody` / `AgentGrantResBody` /
+// `AgentGrantDetachResBody` / `AgentSidecarThreadEnsureReqBody` /
+// `AgentSidecarThreadEnsureResBody` / `AgentKeyPairReqBody` /
+// `AgentKeyPairResBody`. Soland's reducer-side semantics are still
+// `TODO(P2-impl)` stubs, so yougen treats the response payloads
+// permissively (most fields are optional/defaulted) — the wire contract
+// for the 11 endpoints is what we want pinned here.
+//
+// TODO(P3-impl): once soland's reducer stamps `actor_kind` and the
+// projection lands, tighten these into typed sub-shapes.
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentKeyPairReqBody {
+    pub agent_principal_id: String,
+    pub verification_method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_attestation: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentKeyPairResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub verification_method: String,
+    pub authorized_at: String,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentProvisionReqBody {
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_did: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_did: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_grants: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentResBody {
+    pub agent_principal_id: String,
+    pub controller_did: String,
+    pub agent_did: String,
+    pub display_name: String,
+    pub state: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub grants: Vec<Value>,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentListResBody {
+    #[serde(default)]
+    pub agents: Vec<AgentResBody>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentLifecycleReqBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentLifecycleResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub state: String,
+    pub at: String,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentRotateKeyReqBody {
+    pub new_verification_method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_key_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentRotateKeyResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub authorized_verification_method: String,
+    #[serde(default)]
+    pub revoked_verification_method: Option<String>,
+    pub at: String,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentGrantAttachReqBody {
+    pub grant_kind: String,
+    pub scope: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentGrantResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub grant_id: String,
+    pub grant_kind: String,
+    pub scope: Value,
+    pub state: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentGrantDetachResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub grant_id: String,
+    pub detached_at: String,
+    #[serde(default)]
+    pub todos: Vec<String>,
+}
+
+/// CXP-0008 / CXP-0009 §6 + B-F: `cx.agent.sidecar_thread.ensure` MUST
+/// default `home_policy = "context_realm_preferred"`. This is encoded
+/// in the request body's optional `context_realm_id` plus the
+/// `home_policy` discriminator.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentSidecarThreadEnsureReqBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_realm_id: Option<String>,
+    /// Default value emitted by yougen: `"context_realm_preferred"`
+    /// (B-F / CXP-0009 §3 sidecar home policy).
+    #[serde(default)]
+    pub home_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentSidecarThreadEnsureResBody {
+    pub ok: bool,
+    pub agent_principal_id: String,
+    pub sidecar_circle_id: String,
+    pub realm_id: String,
+    pub created: bool,
+    #[serde(default)]
+    pub todos: Vec<String>,
 }

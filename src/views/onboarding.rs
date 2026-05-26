@@ -380,6 +380,25 @@ pub fn OnboardingPanel(
                             div { class: "muted", "Your existing devices cross-sign the new one" }
                         }
                     }
+
+                    // CXP B-C first-backup gate (spec head 37ce729 /
+                    // CXP-0008 §4 / device-lifecycle §10-§13).
+                    //
+                    // The inception key (the very first device key
+                    // authorized at account bootstrap) MUST NOT be
+                    // retired until a `backup_class=did_recovery`
+                    // envelope has been published — otherwise an
+                    // account could become permanently
+                    // unrecoverable. The UI hard-blocks the
+                    // "Authorize device" → retirement transition
+                    // until the first did_recovery envelope is
+                    // observed via `GET /api/v1/keys/backups`.
+                    FirstBackupGate {
+                        base_url: base_url.clone(),
+                        token,
+                        account_did: account_did(),
+                    }
+
                     div { class: "actions",
                         button { class: "secondary", onclick: move |_| step.set(OnboardingStep::Handle), "← Back" }
                         button { class: "secondary", "data-testid": "next-recovery", onclick: move |_| step.set(OnboardingStep::Recovery), "Next →" }
@@ -462,6 +481,129 @@ pub fn OnboardingPanel(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// CXP B-C — first-backup gate. The inception key cannot retire
+/// until a `backup_class=did_recovery` envelope has been published.
+/// This component polls `GET /api/v1/keys/backups?backup_class=did_recovery`
+/// and renders a hard-blocked panel until at least one such envelope
+/// is observed. On `ok=true` the gate flips to "satisfied".
+#[component]
+pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: String) -> Element {
+    let mut gate_satisfied = use_signal(|| false);
+    let mut status = use_signal(|| "checking did_recovery backup envelope…".to_owned());
+    let mut last_error_code = use_signal(String::new);
+
+    let do_check = {
+        let base = base_url.clone();
+        move || {
+            let base = base.clone();
+            let api_token = token();
+            spawn(async move {
+                match with_authed_api(&base, api_token, |api| async move {
+                    // CXP B-C / §3.3: recovery flow calls
+                    // `LIST?series_id=` (or the bare `LIST` with
+                    // `backup_class=did_recovery` filter). For the
+                    // first-backup gate we only need at least one
+                    // did_recovery envelope to exist; pass
+                    // `series_id=None` so we see all series and
+                    // filter on `backup_class`.
+                    api.list_key_backups_by_series(None, Some("did_recovery"))
+                        .await
+                })
+                .await
+                {
+                    Ok(value) => {
+                        let count = value
+                            .get("backups")
+                            .and_then(|b| b.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        if count > 0 {
+                            gate_satisfied.set(true);
+                            status.set(format!(
+                                "first-backup gate satisfied: {count} did_recovery envelope(s) on record"
+                            ));
+                        } else {
+                            gate_satisfied.set(false);
+                            status.set(
+                                "no did_recovery envelope on record — publish one before retiring the inception key".to_owned()
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        gate_satisfied.set(false);
+                        let display = err.display();
+                        // Surface the spec-defined error codes so the
+                        // operator can tell apart a frontier-stale
+                        // mismatch from a post-reset-stale mismatch.
+                        for code in [
+                            "backup_frontier_stale",
+                            "backup_post_reset_stale",
+                            "recovery_policy_mismatch",
+                            "legacy_secret_storage_wire_form",
+                        ] {
+                            if display.contains(code) {
+                                last_error_code.set(code.to_owned());
+                                break;
+                            }
+                        }
+                        status.set(format!("backup list failed: {display}"));
+                    }
+                }
+            });
+        }
+    };
+
+    // Kick off a check once when the component mounts. The
+    // dependent-on-account-did effect ensures we re-check if the
+    // identity changes mid-flow.
+    {
+        let do_check = do_check.clone();
+        let _account_did = account_did.clone();
+        use_effect(move || {
+            do_check();
+        });
+    }
+
+    rsx! {
+        div {
+            class: "event",
+            "data-testid": "onboarding-first-backup-gate",
+            "data-gate-state": if gate_satisfied() { "satisfied" } else { "blocked" },
+            div { class: "event-head",
+                span { "First-backup gate (CXP B-C)" }
+                if gate_satisfied() {
+                    span { class: "badge green", "satisfied" }
+                } else {
+                    span { class: "badge red", "blocked" }
+                }
+            }
+            div { class: "muted",
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it your account could become permanently unrecoverable."
+            }
+            div { class: "muted", "data-testid": "onboarding-first-backup-status", "{status}" }
+            if !last_error_code().is_empty() {
+                div {
+                    class: "badge red",
+                    "data-testid": "onboarding-first-backup-error-code",
+                    "data-error-code": "{last_error_code}",
+                    "error: {last_error_code}"
+                }
+            }
+            div { class: "actions",
+                button {
+                    class: "primary",
+                    "data-testid": "onboarding-first-backup-retry",
+                    onclick: {
+                        let do_check = do_check.clone();
+                        move |_| do_check()
+                    },
+                    "Retry check"
                 }
             }
         }

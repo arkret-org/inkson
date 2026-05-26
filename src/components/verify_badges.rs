@@ -16,6 +16,15 @@
 
 use dioxus::prelude::*;
 
+// TRUST-CACHE: `NeedsVerificationBadge` and `RealmClassBadge` are
+// cache-allowed surfaces per CXP B-E §1 / identity-handles §6. They
+// render the locally-cached binding state but MUST downgrade to the
+// "needs verification" tint on a cache miss or any §6.1.2 trigger.
+// Authority surfaces (wallet disclosure / accept invite / audit-trail
+// review) MUST go through `crate::did_resolver::build_default_resolver`
+// and verify the DID Document inline before granting trust — they
+// MUST NOT consult these cached badges as a source of truth.
+
 /// Renders a small "Needs verification" badge. Hidden when `active` is
 /// `false` so call sites can unconditionally include the badge in
 /// message-card rsx without an `if` branch.

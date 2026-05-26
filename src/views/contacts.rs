@@ -1,3 +1,12 @@
+// TRUST-CACHE: contact card / contact list per CXP B-E §1 — these
+// surfaces MAY consult the locally cached `binding_state` (verified
+// badge, mention autocomplete fields). On cache miss or any
+// identity-handles.md §6.1.2 trigger the UI MUST downgrade to an
+// "unverified" badge. For authority surfaces (wallet disclosure /
+// accept invite / audit-trail review) callers MUST first-party verify
+// the DID Document via `crate::did_resolver::build_default_resolver`
+// instead of relying on the cached binding state surfaced here.
+
 use dioxus::prelude::*;
 
 use crate::{
@@ -94,7 +103,9 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
             let api_token = token();
             let base = base.clone();
             spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move { api.contacts().await }).await {
+                match with_authed_api(&base, api_token, |api| async move { api.contacts().await })
+                    .await
+                {
                     Ok(response) => {
                         let count = response.contacts.len();
                         contacts.set(response.contacts);

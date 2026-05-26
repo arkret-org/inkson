@@ -47,7 +47,9 @@ pub struct TimelineRevision {
 #[derive(Clone, Debug, PartialEq)]
 struct BlobAttachment {
     blob_ref: String,
-    size: usize,
+    /// Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`
+    /// on blob/media metadata.
+    size_bytes: usize,
     media_type: String,
     sha256: String,
     thumbnail_ref: Option<String>,
@@ -1683,7 +1685,7 @@ pub fn TimelinePanel(
                                         let policy = media_type_preview_policy(&blob.media_type);
                                         attached_blob.set(Some(BlobAttachment {
                                             blob_ref: blob.blob_ref.clone(),
-                                            size: blob.size,
+                                            size_bytes: blob.size_bytes,
                                             media_type: blob.media_type.clone(),
                                             sha256: blob.sha256.clone(),
                                             thumbnail_ref: blob.thumbnail_ref.clone(),
@@ -1710,7 +1712,7 @@ pub fn TimelinePanel(
                         }
                         div { class: "muted", "Ref: {blob.blob_ref}" }
                         div { class: "muted", "SHA-256: {blob.sha256}" }
-                        div { class: "muted", "Size: {blob.size} bytes" }
+                        div { class: "muted", "Size: {blob.size_bytes} bytes" }
                         div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
                         div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
                         if let Some(thumbnail_ref) = &blob.thumbnail_ref {

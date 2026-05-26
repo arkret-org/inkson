@@ -34,10 +34,52 @@
 //!     `agent-protocol-audit-verify-result`'s `data-state` attribute.
 
 use dioxus::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
+use crate::models::{
+    AgentGrantAttachReqBody, AgentLifecycleReqBody, AgentProvisionReqBody, AgentResBody,
+    AgentRotateKeyReqBody, AgentSidecarThreadEnsureReqBody,
+};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
+
+// ─────────────────────────────────────────────────────────────────────
+// CXP-0008 / CXP-0009 — Envelope `actor_kind` reducer-stamped
+// projection. SDK 4d5a1af exposes `EnvelopeActorKind { Native, Ghost,
+// Service, Agent }`. The UI labels below MUST stay user-facing
+// readable: actor lists, sidecar disclosure cards, and the personal-
+// agent admin all want a stable mapping.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Returns a short, user-facing label for an envelope-level
+/// `actor_kind`. Returns `None` when the value is missing or not one
+/// of the four canonical variants (the reducer is the only writer; an
+/// unrecognized value means the envelope is from a future reducer
+/// version and the UI should fall back to a neutral "actor" label).
+pub fn actor_kind_label(actor_kind: Option<&str>) -> Option<&'static str> {
+    match actor_kind? {
+        "native" => Some("Native"),
+        "ghost" => Some("Ghost Actor"),
+        "service" => Some("Service"),
+        "agent" => Some("Personal Agent"),
+        _ => None,
+    }
+}
+
+/// Maps an envelope-level `actor_kind` to the badge CSS class. Native
+/// devices get the neutral chip; ghost actors (applet-bound) get the
+/// amber chip so users can tell at a glance the message did not
+/// originate from a real device; agents and services get distinct
+/// tints.
+pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
+    match actor_kind {
+        Some("native") => "badge",
+        Some("ghost") => "badge amber",
+        Some("service") => "badge blue",
+        Some("agent") => "badge green",
+        _ => "badge",
+    }
+}
 
 /// Whether the local UI should expose the agent endpoint / handoff panel.
 pub fn agents_enabled() -> bool {
@@ -851,6 +893,1076 @@ pub fn AgentsPanel(
                     }
                 }
             }
+
+            // CXP-0008 / CXP-0009 — Personal Agent admin (B-A / P3-A).
+            // The 11 soland HTTP operations + actor_kind badges + sidecar
+            // exposure disclosure live in their own panel below.
+            PersonalAgentAdminPanel {
+                base_url: base_url.clone(),
+                token,
+                controller_did: account_did.clone(),
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CXP-0008 / CXP-0009 — Personal Agent admin panel (B-A · P3-A).
+//
+// Surfaces the 11 soland personal-agent HTTP operations as a single
+// admin view. Each soland endpoint has a matching reqwest call below
+// — that's the load-bearing bit of this commit. The form layouts
+// themselves are intentionally minimal: deeper UI work (per-agent
+// inspector, grant catalog, sidecar projection viewer) lives under
+// `// TODO(P3-impl)` markers and lands once soland's reducer stamps
+// `actor_kind` and the projection ships.
+//
+// Sidecar Thread renderer guard: a sidecar thread MUST render as a
+// controller × native-agent 1:1 channel, not as a group chat. The
+// `SidecarThreadGuard` component below enforces this invariant in the
+// UI — it refuses to render when more than two actors are present and
+// shows a placeholder explaining the constraint.
+//
+// Action-approve dialog: when the UI receives a notification of kind
+// `cx.agent.action_request` (delivered via chime's push frame
+// parser), the controller MUST review the payload digest + expiry +
+// single-use nonce status before approving. The `ActionApproveDialog`
+// component carries that flow; on confirm it submits a
+// `cx.agent.action_approve` event.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Render an `actor_kind` badge for a single envelope. Pure helper so
+/// the dashboard / chat / kanban can reuse the same colored chip
+/// without duplicating the mapping.
+#[component]
+pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
+    let kind = actor_kind.as_deref();
+    let label = actor_kind_label(kind).unwrap_or("actor");
+    let class = actor_kind_badge_class(kind);
+    rsx! {
+        span {
+            class: "{class}",
+            "data-testid": "actor-kind-badge",
+            "data-actor-kind": kind.unwrap_or("unknown"),
+            "{label}"
+        }
+    }
+}
+
+/// Sidecar Thread guard: a sidecar thread is a `controller × native
+/// agent` 1:1 channel. CXP-0008 §4.5 and CXP-0009 §3 invariant 10
+/// require the renderer to refuse to expose it as a group chat. The
+/// component renders the inner children only when the participant
+/// list contains exactly the controller DID and one native agent
+/// DID; otherwise it shows a placeholder.
+#[component]
+pub fn SidecarThreadGuard(
+    controller_did: String,
+    agent_did: String,
+    participants: Vec<String>,
+    children: Element,
+) -> Element {
+    let normalized: Vec<String> = participants
+        .iter()
+        .map(|p| p.trim().to_owned())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let mut expected = vec![controller_did.clone(), agent_did.clone()];
+    expected.sort();
+    let mut found = normalized.clone();
+    found.sort();
+    let ok = normalized.len() == 2 && expected == found;
+    rsx! {
+        if ok {
+            div {
+                class: "event",
+                "data-testid": "sidecar-thread-guard-ok",
+                "data-controller-did": "{controller_did}",
+                "data-agent-did": "{agent_did}",
+                {children}
+            }
+        } else {
+            div {
+                class: "event",
+                "data-testid": "sidecar-thread-guard-placeholder",
+                div { class: "event-head",
+                    span { "Sidecar thread" }
+                    span { class: "badge amber", "1:1 invariant violated" }
+                }
+                div { class: "muted",
+                    "CXP-0008 §4.5 / CXP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
+                }
+                div { class: "muted",
+                    "Expected controller: {controller_did}; agent: {agent_did}. Observed {normalized.len()} participant(s)."
+                }
+            }
+        }
+    }
+}
+
+/// State machine for the action_approve dialog. The dialog gates the
+/// controller's review of an incoming `cx.agent.action_request`
+/// notification (digest + expiry + single-use nonce status) before a
+/// `cx.agent.action_approve` event is published.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionApproveDialogState {
+    /// No request to review.
+    Idle,
+    /// Dialog open; controller is reviewing payload + nonce + expiry.
+    Reviewing,
+    /// Controller confirmed; an approve event is being submitted.
+    Submitting,
+    /// Approve event landed; dialog can close.
+    Submitted,
+    /// Controller explicitly rejected (or a `cx.agent.action_reject`
+    /// is being submitted).
+    Rejected,
+    /// The single-use nonce was already consumed by another approve
+    /// or the expiry passed.
+    NonceExhausted,
+}
+
+impl ActionApproveDialogState {
+    pub fn as_data_state(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Reviewing => "reviewing",
+            Self::Submitting => "submitting",
+            Self::Submitted => "submitted",
+            Self::Rejected => "rejected",
+            Self::NonceExhausted => "nonce_exhausted",
+        }
+    }
+}
+
+/// Returns true when the per-request expiry timestamp has already
+/// passed. The dialog must refuse to submit an approve event once
+/// expiry elapses (CXP-0008 §4 action_request invariants).
+pub fn is_action_request_expired(expires_at: &str, now: &str) -> bool {
+    // Both arguments are RFC3339 timestamps emitted by the SDK
+    // event-canonicalizer; do a lexicographic compare on UTC ISO-8601
+    // strings as a safe baseline. TODO(P3-impl): swap to chrono
+    // DateTime parsing once the timezone normalization path is
+    // settled.
+    !expires_at.is_empty() && !now.is_empty() && now > expires_at
+}
+
+/// Single-use nonce status. The reducer is the source of truth — the
+/// UI displays a hint here so the controller can see whether their
+/// approval would race a duplicate submission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionRequestNonceStatus {
+    /// Unused — safe to approve.
+    Fresh,
+    /// Already consumed by a previous approve / reject.
+    Consumed,
+    /// Server has not projected the nonce yet (UI should treat as
+    /// `fresh` for display but flag it to the controller).
+    Unknown,
+}
+
+impl ActionRequestNonceStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Consumed => "consumed",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn badge_class(self) -> &'static str {
+        match self {
+            Self::Fresh => "badge green",
+            Self::Consumed => "badge red",
+            Self::Unknown => "badge",
+        }
+    }
+}
+
+/// Personal Agent admin panel. Renders the 11 soland HTTP operations
+/// as buttons; deeper form layouts are stubbed as TODO(P3-impl). The
+/// critical contract is that each soland endpoint has a matching
+/// client-side reqwest call so the cross-project wire shape is
+/// verified end to end.
+#[component]
+pub fn PersonalAgentAdminPanel(
+    base_url: String,
+    token: Signal<String>,
+    controller_did: String,
+) -> Element {
+    let mut agents = use_signal(Vec::<AgentResBody>::new);
+    let mut list_status = use_signal(String::new);
+    let mut selected_agent_id = use_signal(String::new);
+    let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
+    let mut new_agent_did = use_signal(String::new);
+    let mut rotate_vm = use_signal(String::new);
+    let mut grant_kind = use_signal(|| "cx.agent.action_request".to_owned());
+    let mut grant_scope_json = use_signal(|| "{}".to_owned());
+    let mut sidecar_realm = use_signal(String::new);
+    let mut deactivate_confirm = use_signal(String::new);
+    let mut last_op_status = use_signal(String::new);
+
+    rsx! {
+        div { class: "timeline", "data-testid": "personal-agent-admin",
+            div { class: "event",
+                div { class: "event-head",
+                    span { "Personal Agent admin" }
+                    span { class: "badge", "CXP-0008 / CXP-0009" }
+                }
+                div { class: "muted",
+                    "Provision and operate native personal agents. Each button below maps 1:1 to a soland P2 endpoint; deeper form layouts are TODO(P3-impl) stubs while the reducer projection lands."
+                }
+                if !last_op_status().is_empty() {
+                    div { class: "muted", "data-testid": "agent-admin-last-op", "{last_op_status}" }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // List + refresh (cx.agent.list)
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-list",
+                div { class: "event-head",
+                    span { "Agents" }
+                    span { class: "badge", "{agents.read().len()} known" }
+                }
+                if !list_status().is_empty() {
+                    div { class: "muted", "data-testid": "agent-admin-list-status", "{list_status}" }
+                }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "agent-admin-refresh-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let api_token = token();
+                                spawn(async move {
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.agent_list().await
+                                    })
+                                    .await
+                                    {
+                                        Ok(resp) => {
+                                            list_status.set(format!(
+                                                "fetched {} agent(s)",
+                                                resp.agents.len()
+                                            ));
+                                            agents.set(resp.agents);
+                                        }
+                                        Err(err) => list_status.set(format!(
+                                            "list failed: {}",
+                                            err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Refresh"
+                    }
+                }
+                for agent in agents.read().iter() {
+                    {
+                        let agent = agent.clone();
+                        let id = agent.agent_principal_id.clone();
+                        let agent_did_label = short_protocol_id(&agent.agent_did);
+                        let id_label = short_protocol_id(&id);
+                        rsx! {
+                            div {
+                                class: "event",
+                                "data-testid": "agent-admin-row",
+                                "data-agent-principal-id": "{id}",
+                                div { class: "event-head",
+                                    span { class: "mono", title: "{id}", "{id_label}" }
+                                    // Personal agents always run as actor_kind=agent —
+                                    // surface the badge so the operator can see at
+                                    // a glance which row is a native personal agent.
+                                    ActorKindBadge { actor_kind: Some("agent".to_owned()) }
+                                    span { class: "badge", "{agent.state}" }
+                                }
+                                div { class: "muted", "did: {agent_did_label}" }
+                                div { class: "muted", "display_name: {agent.display_name}" }
+                                div { class: "actions",
+                                    button {
+                                        class: if selected_agent_id() == id { "primary" } else { "secondary" },
+                                        "data-testid": "agent-admin-select-button",
+                                        onclick: {
+                                            let id = id.clone();
+                                            move |_| selected_agent_id.set(id.clone())
+                                        },
+                                        "Select"
+                                    }
+                                    // cx.agent.get
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "agent-admin-get-button",
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let id = id.clone();
+                                            move |_| {
+                                                let base = base.clone();
+                                                let id = id.clone();
+                                                let api_token = token();
+                                                spawn(async move {
+                                                    match with_authed_api(&base, api_token, move |api| {
+                                                        let id = id.clone();
+                                                        async move {
+                                                            api.agent_get(&id).await
+                                                        }
+                                                    })
+                                                    .await
+                                                    {
+                                                        Ok(a) => last_op_status.set(format!(
+                                                            "get {} state={}",
+                                                            a.agent_principal_id, a.state
+                                                        )),
+                                                        Err(err) => last_op_status.set(format!(
+                                                            "get failed: {}",
+                                                            err.display()
+                                                        )),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Get"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Provision (cx.agent.provision)
+            // TODO(P3-impl): expand to a full form with initial_grants
+            // picker driven by the 14-capability-action registry.
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-provision",
+                div { class: "event-head",
+                    span { "Provision agent" }
+                    span { class: "badge blue", "cx.agent.provision" }
+                }
+                div { class: "muted",
+                    "Provisions a new native personal agent: DID issuance + first agent-key authorize + controller grant attach (orchestrated server-side)."
+                }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "agent-admin-provision-display-name",
+                        placeholder: "display name",
+                        value: "{new_display_name}",
+                        oninput: move |e| new_display_name.set(e.value()),
+                    }
+                    input {
+                        "data-testid": "agent-admin-provision-agent-did",
+                        placeholder: "optional agent_did (server-issued if blank)",
+                        value: "{new_agent_did}",
+                        oninput: move |e| new_agent_did.set(e.value()),
+                    }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "agent-admin-provision-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            let controller = controller_did.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let controller = controller.clone();
+                                let api_token = token();
+                                let display = new_display_name();
+                                let agent_did_input = new_agent_did();
+                                let agent_did = if agent_did_input.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(agent_did_input.trim().to_owned())
+                                };
+                                let body = AgentProvisionReqBody {
+                                    display_name: display,
+                                    controller_did: Some(controller),
+                                    agent_did,
+                                    initial_grants: Vec::new(),
+                                };
+                                spawn(async move {
+                                    match with_authed_api(&base, api_token, move |api| {
+                                        let body = body.clone();
+                                        async move {
+                                            api.agent_provision(&body).await
+                                        }
+                                    })
+                                    .await
+                                    {
+                                        Ok(agent) => last_op_status.set(format!(
+                                            "provisioned {} (state={})",
+                                            agent.agent_principal_id, agent.state
+                                        )),
+                                        Err(err) => last_op_status.set(format!(
+                                            "provision failed: {}",
+                                            err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Provision"
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Lifecycle: pause / resume / deactivate
+            // (cx.agent.{pause,resume,deactivate})
+            // Deactivate is destructive — gate on type-to-confirm.
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-lifecycle",
+                div { class: "event-head",
+                    span { "Lifecycle" }
+                    if selected_agent_id().is_empty() {
+                        span { class: "badge amber", "no agent selected" }
+                    } else {
+                        {
+                            let id_label = short_protocol_id(selected_agent_id().as_str());
+                            rsx! { span { class: "badge", "{id_label}" } }
+                        }
+                    }
+                }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "agent-admin-pause-button",
+                        disabled: selected_agent_id().is_empty(),
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let id = selected_agent_id();
+                                if id.is_empty() { return; }
+                                let base = base.clone();
+                                let api_token = token();
+                                let body = AgentLifecycleReqBody { reason: Some("controller_paused".to_owned()) };
+                                spawn(async move {
+                                    match with_authed_api(&base, api_token, move |api| {
+                                        let id = id.clone();
+                                        let body = body.clone();
+                                        async move {
+                                            api.agent_pause(&id, &body).await
+                                        }
+                                    })
+                                    .await
+                                    {
+                                        Ok(r) => last_op_status.set(format!(
+                                            "pause: {} → state={}", r.agent_principal_id, r.state
+                                        )),
+                                        Err(err) => last_op_status.set(format!(
+                                            "pause failed: {}", err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Pause"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "agent-admin-resume-button",
+                        disabled: selected_agent_id().is_empty(),
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let id = selected_agent_id();
+                                if id.is_empty() { return; }
+                                let base = base.clone();
+                                let api_token = token();
+                                let body = AgentLifecycleReqBody { reason: Some("controller_resumed".to_owned()) };
+                                spawn(async move {
+                                    match with_authed_api(&base, api_token, move |api| {
+                                        let id = id.clone();
+                                        let body = body.clone();
+                                        async move {
+                                            api.agent_resume(&id, &body).await
+                                        }
+                                    })
+                                    .await
+                                    {
+                                        Ok(r) => last_op_status.set(format!(
+                                            "resume: {} → state={}", r.agent_principal_id, r.state
+                                        )),
+                                        Err(err) => last_op_status.set(format!(
+                                            "resume failed: {}", err.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Resume"
+                    }
+                }
+                // Deactivate (destructive) — type-to-confirm dialog.
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "agent-admin-deactivate-confirm-input",
+                        placeholder: "type DEACTIVATE to enable the destructive button",
+                        value: "{deactivate_confirm}",
+                        oninput: move |e| deactivate_confirm.set(e.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "destructive",
+                            "data-testid": "agent-admin-deactivate-button",
+                            disabled: selected_agent_id().is_empty() || deactivate_confirm() != "DEACTIVATE",
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let body = AgentLifecycleReqBody { reason: Some("controller_deactivated".to_owned()) };
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let body = body.clone();
+                                            async move {
+                                                api.agent_deactivate(&id, &body).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => last_op_status.set(format!(
+                                                "deactivate: {} → state={}", r.agent_principal_id, r.state
+                                            )),
+                                            Err(err) => last_op_status.set(format!(
+                                                "deactivate failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                    deactivate_confirm.set(String::new());
+                                }
+                            },
+                            "Deactivate (destructive)"
+                        }
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Rotate key (cx.agent.rotate_key)
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-rotate-key",
+                div { class: "event-head",
+                    span { "Rotate runtime key" }
+                    span { class: "badge blue", "cx.agent.rotate_key" }
+                }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "agent-admin-rotate-vm-input",
+                        placeholder: "new verification_method (e.g. did:key:zNew...)",
+                        value: "{rotate_vm}",
+                        oninput: move |e| rotate_vm.set(e.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "agent-admin-rotate-key-button",
+                            disabled: selected_agent_id().is_empty() || rotate_vm().trim().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    let vm = rotate_vm();
+                                    if id.is_empty() || vm.trim().is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let body = AgentRotateKeyReqBody {
+                                        new_verification_method: vm,
+                                        previous_key_id: None,
+                                    };
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let body = body.clone();
+                                            async move {
+                                                api.agent_rotate_key(&id, &body).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => last_op_status.set(format!(
+                                                "rotate_key: {} authorized={}",
+                                                r.agent_principal_id,
+                                                short_protocol_id(&r.authorized_verification_method)
+                                            )),
+                                            Err(err) => last_op_status.set(format!(
+                                                "rotate_key failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Rotate key"
+                        }
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Grant attach / detach
+            // (cx.agent.grant.attach / cx.agent.grant.detach)
+            // TODO(P3-impl): wire a 14-capability-action picker
+            // (CAP_ACTION_AGENT_*); for now the grant_kind is a
+            // free-form input so cotest journey vectors can drive the
+            // wire shape.
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-grants",
+                div { class: "event-head",
+                    span { "Capability grants" }
+                    span { class: "badge blue", "cx.agent.grant.attach / detach" }
+                }
+                div { class: "muted",
+                    "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CXP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
+                }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "agent-admin-grant-kind-input",
+                        placeholder: "grant_kind (one of cx.agent.* capability actions)",
+                        value: "{grant_kind}",
+                        oninput: move |e| grant_kind.set(e.value()),
+                    }
+                    input {
+                        "data-testid": "agent-admin-grant-scope-input",
+                        placeholder: "scope (JSON)",
+                        value: "{grant_scope_json}",
+                        oninput: move |e| grant_scope_json.set(e.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "agent-admin-grant-attach-button",
+                            disabled: selected_agent_id().is_empty() || grant_kind().trim().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let scope: Value = serde_json::from_str(grant_scope_json().as_str())
+                                        .unwrap_or(json!({}));
+                                    let body = AgentGrantAttachReqBody {
+                                        grant_kind: grant_kind(),
+                                        scope,
+                                        expires_at: None,
+                                    };
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let body = body.clone();
+                                            async move {
+                                                api.agent_grant_attach(&id, &body).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => last_op_status.set(format!(
+                                                "grant.attach: {} grant_id={}",
+                                                r.agent_principal_id,
+                                                short_protocol_id(&r.grant_id)
+                                            )),
+                                            Err(err) => last_op_status.set(format!(
+                                                "grant.attach failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Attach grant"
+                        }
+                        // Detach uses the latest known grant_id; the
+                        // detach surface is currently a stub button
+                        // wired to the most recent grant — TODO(P3-impl)
+                        // surface the grant list + per-row detach.
+                        button {
+                            class: "secondary",
+                            "data-testid": "agent-admin-grant-detach-button",
+                            disabled: selected_agent_id().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    // TODO(P3-impl): track the latest
+                                    // grant_id in a Signal once the
+                                    // grant list view ships; passing
+                                    // a placeholder here makes the
+                                    // wire call fail in a useful way.
+                                    let grant_id = format!(
+                                        "cx:grant:{}",
+                                        crate::operation::uuid_v7()
+                                    );
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let grant_id = grant_id.clone();
+                                            async move {
+                                                api.agent_grant_detach(&id, &grant_id).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => last_op_status.set(format!(
+                                                "grant.detach: {} grant_id={}",
+                                                r.agent_principal_id,
+                                                short_protocol_id(&r.grant_id)
+                                            )),
+                                            Err(err) => last_op_status.set(format!(
+                                                "grant.detach failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Detach grant (latest)"
+                        }
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Sidecar thread ensure
+            // (cx.agent.sidecar_thread.ensure)
+            // Default home_policy = context_realm_preferred (B-F).
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-sidecar-ensure",
+                div { class: "event-head",
+                    span { "Sidecar thread (ensure)" }
+                    span { class: "badge blue", "cx.agent.sidecar_thread.ensure" }
+                }
+                div { class: "muted",
+                    "Default home policy: context_realm_preferred (CXP-0009 §3 / B-F). Pass a context realm_id to bind the sidecar Circle to a specific Realm; leave blank for the active Realm."
+                }
+                div { class: "workflow-form",
+                    input {
+                        "data-testid": "agent-admin-sidecar-realm-input",
+                        placeholder: "optional context_realm_id",
+                        value: "{sidecar_realm}",
+                        oninput: move |e| sidecar_realm.set(e.value()),
+                    }
+                    div { class: "actions",
+                        button {
+                            class: "primary",
+                            "data-testid": "agent-admin-sidecar-ensure-button",
+                            disabled: selected_agent_id().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let realm = sidecar_realm();
+                                    let realm_opt = if realm.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(realm.trim().to_owned())
+                                    };
+                                    let body = AgentSidecarThreadEnsureReqBody {
+                                        context_realm_id: realm_opt,
+                                        home_policy: crate::api::sidecar_home_policy_default()
+                                            .to_owned(),
+                                    };
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let body = body.clone();
+                                            async move {
+                                                api.agent_sidecar_thread_ensure(&id, &body).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => last_op_status.set(format!(
+                                                "sidecar.ensure: {} circle={} created={}",
+                                                r.agent_principal_id,
+                                                short_protocol_id(&r.sidecar_circle_id),
+                                                r.created
+                                            )),
+                                            Err(err) => last_op_status.set(format!(
+                                                "sidecar.ensure failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Ensure sidecar thread"
+                        }
+                    }
+                }
+            }
+
+            // ───────────────────────────────────────────────────────
+            // Sidecar exposure disclosure (CXP-0009 §3 invariant 10 +
+            // CXP-0008 §4.5). UI scaffold only — backend projection
+            // is TODO(P3-impl).
+            // ───────────────────────────────────────────────────────
+            SidecarExposureDisclosure {
+                controller_did: controller_did.clone(),
+            }
+        }
+    }
+}
+
+/// CXP-0009 §3 invariant 10 / CXP-0008 §4.5 — sidecar exposure
+/// disclosure panel. Surfaces the controller's device list, the
+/// currently active agent runtime endpoint, and the most recent
+/// `action_approve` nonce status so the controller can see what their
+/// agent is allowed to act on and from where. Data wiring is
+/// `TODO(P3-impl)` while soland's exposure projection ships; the
+/// component renders a clear placeholder until then.
+#[component]
+pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
+    rsx! {
+        div { class: "event", "data-testid": "sidecar-exposure-disclosure",
+            div { class: "event-head",
+                span { "Sidecar exposure disclosure" }
+                span { class: "badge", "CXP-0009 §3 inv. 10" }
+            }
+            div { class: "muted",
+                "Controller: {controller_did}. Devices, agent runtime endpoint, and the most recent action_approve nonce status are shown here so you can audit what your agent can act on and from where."
+            }
+            // TODO(P3-impl): replace these placeholders with live
+            // data once soland's exposure projection lands. The wire
+            // shape is documented in CXP-0009 §3 and the related
+            // account-data type `cx.agent.sidecar_projection.v1`.
+            div { class: "metric-grid",
+                div { class: "metric",
+                    strong { "Device list" }
+                    span { class: "badge amber", "TODO(P3-impl)" }
+                    div { class: "muted", "Awaiting soland sidecar projection" }
+                }
+                div { class: "metric",
+                    strong { "Agent runtime endpoint" }
+                    span { class: "badge amber", "TODO(P3-impl)" }
+                    div { class: "muted", "Awaiting cx.agent.endpoint resolution" }
+                }
+                div { class: "metric",
+                    strong { "Last action_approve nonce" }
+                    span { class: "badge amber", "TODO(P3-impl)" }
+                    div { class: "muted", "Awaiting action_request stream" }
+                }
+            }
+        }
+    }
+}
+
+/// Action-approve dialog component. Renders the payload digest,
+/// expiry, and single-use nonce status of an incoming
+/// `cx.agent.action_request` notification; on confirm it submits a
+/// `cx.agent.action_approve` event.
+///
+/// TODO(P3-impl): the action_request payload pipe goes through
+/// chime's push frame parser (chime P3) → this dialog. Today the
+/// dialog accepts a payload-digest string as input so the wire
+/// envelope can be exercised; full integration with the notification
+/// stream lands in P3-impl.
+#[component]
+pub fn ActionApproveDialog(
+    base_url: String,
+    token: Signal<String>,
+    actor_did: String,
+    space_id: String,
+    request_id: String,
+    payload_digest: String,
+    expires_at: String,
+    nonce_status: String,
+    now: String,
+) -> Element {
+    let mut state = use_signal(|| ActionApproveDialogState::Reviewing);
+    let mut status_text = use_signal(String::new);
+
+    let expired = is_action_request_expired(&expires_at, &now);
+    let nonce_st = match nonce_status.as_str() {
+        "fresh" => ActionRequestNonceStatus::Fresh,
+        "consumed" => ActionRequestNonceStatus::Consumed,
+        _ => ActionRequestNonceStatus::Unknown,
+    };
+    let can_submit = !expired
+        && nonce_st != ActionRequestNonceStatus::Consumed
+        && state() == ActionApproveDialogState::Reviewing;
+
+    rsx! {
+        div {
+            class: "event",
+            "data-testid": "action-approve-dialog",
+            "data-state": "{state().as_data_state()}",
+            "data-request-id": "{request_id}",
+            div { class: "event-head",
+                span { "Approve agent action" }
+                span { class: "{nonce_st.badge_class()}", "nonce {nonce_st.label()}" }
+            }
+            div { class: "muted", "data-testid": "action-approve-payload-digest",
+                "payload digest: {payload_digest}"
+            }
+            div { class: "muted", "data-testid": "action-approve-expires-at",
+                "expires_at: {expires_at}"
+            }
+            if expired {
+                div {
+                    class: "badge red",
+                    "data-testid": "action-approve-expiry-blocked",
+                    "expired — submit rejected"
+                }
+            }
+            div { class: "actions",
+                button {
+                    class: "primary",
+                    "data-testid": "action-approve-confirm-button",
+                    disabled: !can_submit,
+                    onclick: {
+                        let base = base_url.clone();
+                        let actor = actor_did.clone();
+                        let space = space_id.clone();
+                        let request_id = request_id.clone();
+                        let digest = payload_digest.clone();
+                        move |_| {
+                            state.set(ActionApproveDialogState::Submitting);
+                            let base = base.clone();
+                            let actor = actor.clone();
+                            let space = space.clone();
+                            let request_id = request_id.clone();
+                            let digest = digest.clone();
+                            let api_token = token();
+                            spawn(async move {
+                                // Submit a cx.agent.action_approve
+                                // event. The payload carries the
+                                // request_id + the digest we approved
+                                // so the reducer can match it back to
+                                // the originating action_request and
+                                // burn the single-use nonce.
+                                let op = crate::operation::OperationBuilder::new(
+                                    &space,
+                                    &actor,
+                                    "cx.agent.action_approve",
+                                )
+                                .body(json!({
+                                    "request_id": request_id,
+                                    "payload_digest": digest,
+                                }))
+                                .build("yougen");
+                                match with_authed_api(&base, api_token, move |api| {
+                                    let op = op.clone();
+                                    async move {
+                                        api.submit_event_envelope(&op).await
+                                    }
+                                })
+                                .await
+                                {
+                                    Ok(resp) => {
+                                        state.set(ActionApproveDialogState::Submitted);
+                                        status_text.set(format!(
+                                            "approved; event_id {}",
+                                            resp.event_id
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        state.set(ActionApproveDialogState::Reviewing);
+                                        status_text.set(format!(
+                                            "approve failed: {}", err.display()
+                                        ));
+                                    }
+                                }
+                            });
+                        }
+                    },
+                    "Approve"
+                }
+                button {
+                    class: "secondary",
+                    "data-testid": "action-approve-reject-button",
+                    disabled: state() == ActionApproveDialogState::Submitting,
+                    onclick: move |_| {
+                        state.set(ActionApproveDialogState::Rejected);
+                        status_text.set("rejected locally — no approve event will be submitted".to_owned());
+                    },
+                    "Reject"
+                }
+            }
+            if !status_text().is_empty() {
+                div { class: "muted", "data-testid": "action-approve-status", "{status_text}" }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod personal_agent_tests {
+    use super::*;
+
+    #[test]
+    fn actor_kind_label_maps_four_canonical_variants() {
+        assert_eq!(actor_kind_label(Some("native")), Some("Native"));
+        assert_eq!(actor_kind_label(Some("ghost")), Some("Ghost Actor"));
+        assert_eq!(actor_kind_label(Some("service")), Some("Service"));
+        assert_eq!(actor_kind_label(Some("agent")), Some("Personal Agent"));
+    }
+
+    #[test]
+    fn actor_kind_label_falls_back_for_unknown_or_missing() {
+        assert_eq!(actor_kind_label(None), None);
+        assert_eq!(actor_kind_label(Some("")), None);
+        assert_eq!(actor_kind_label(Some("future_kind")), None);
+    }
+
+    #[test]
+    fn actor_kind_badge_class_distinguishes_ghost_and_native() {
+        assert_eq!(actor_kind_badge_class(Some("native")), "badge");
+        assert_ne!(
+            actor_kind_badge_class(Some("ghost")),
+            actor_kind_badge_class(Some("native"))
+        );
+        assert_ne!(
+            actor_kind_badge_class(Some("agent")),
+            actor_kind_badge_class(Some("service"))
+        );
+    }
+
+    #[test]
+    fn action_request_expired_only_when_now_strictly_after_expires_at() {
+        assert!(is_action_request_expired(
+            "2026-05-26T00:00:00Z",
+            "2026-05-27T00:00:00Z"
+        ));
+        assert!(!is_action_request_expired(
+            "2026-05-27T00:00:00Z",
+            "2026-05-26T00:00:00Z"
+        ));
+        assert!(!is_action_request_expired("", "2026-05-26T00:00:00Z"));
+        assert!(!is_action_request_expired("2026-05-26T00:00:00Z", ""));
+    }
+
+    #[test]
+    fn nonce_status_badge_classes_are_distinct() {
+        assert_ne!(
+            ActionRequestNonceStatus::Fresh.badge_class(),
+            ActionRequestNonceStatus::Consumed.badge_class()
+        );
+    }
+
+    #[test]
+    fn dialog_state_round_trip_data_state_tokens() {
+        for s in [
+            ActionApproveDialogState::Idle,
+            ActionApproveDialogState::Reviewing,
+            ActionApproveDialogState::Submitting,
+            ActionApproveDialogState::Submitted,
+            ActionApproveDialogState::Rejected,
+            ActionApproveDialogState::NonceExhausted,
+        ] {
+            // Every variant maps to a non-empty kebab/snake string.
+            let token = s.as_data_state();
+            assert!(!token.is_empty());
+            assert!(!token.contains(' '));
         }
     }
 }
