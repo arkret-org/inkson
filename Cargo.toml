@@ -47,6 +47,12 @@ chime = { version = "1.0.0", path = "../chime", features = ["http"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 dioxus-router = "0.7"
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
+# Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
+# crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and contrix-core →
+# contrix-identifiers). On `wasm32-unknown-unknown` that 0.2.x dep needs the
+# `js` feature so it routes RNG through Web Crypto; this alias is the only
+# place in the workspace that turns it on. NOT used via `use getrandom_02`
+# anywhere in src/ — do not remove without re-checking the wasm build.
 getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 serde = { version = "1.0.228", features = ["derive"] }
