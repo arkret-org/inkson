@@ -39,6 +39,22 @@ experimental-polls = []
 experimental-discussion-promote = []
 experimental-agents = []
 experimental-applets = []
+# Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
+# `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
+# `HostSecretBridge` trait the platform shell installs; there is NO real
+# JNI / Security.framework FFI inside yougen. The actual mobile artifacts
+# are outside the local 1.0 milestone.
+#
+# Gating rule: these types are compiled when EITHER the target is the
+# corresponding mobile OS (`target_os = "android"` / `target_os = "ios"`)
+# OR the feature is explicitly enabled. That gives:
+#   * Native Android / iOS builds — types auto-enabled, no manual feature
+#     wiring required by downstream tooling.
+#   * Desktop / wasm builds — types compiled OUT by default so the
+#     desktop binary doesn't ship dead stub code; opt in with
+#     `--features mobile-android,mobile-ios` to cross-compile-check.
+mobile-android = []
+mobile-ios = []
 
 [dependencies]
 anyhow = "1.0.100"

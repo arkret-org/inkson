@@ -454,13 +454,19 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
 /// `java.security.KeyStore` with provider `"AndroidKeyStore"`).
 ///
 /// See the [`HostSecretBridge`] doc-comment for the full contract.
-#[cfg(target_os = "android")]
+///
+/// **Feature gating**: compiled when either the target is
+/// `target_os = "android"` (native mobile build) OR the `mobile-android`
+/// crate feature is enabled (e.g. desktop cross-compile-check). Desktop
+/// / wasm builds without that feature do not see this type, so the
+/// host-bridge stub code is dropped from those binaries.
+#[cfg(any(feature = "mobile-android", target_os = "android"))]
 #[derive(Clone, Debug)]
 pub struct AndroidKeystoreSecureKeyStore {
     inner: HostBridgeSecureKeyStore,
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(feature = "mobile-android", target_os = "android"))]
 impl AndroidKeystoreSecureKeyStore {
     /// Construct a store delegating to the installed
     /// [`HostSecretBridge`]. Returns `None` when no bridge has been
@@ -487,7 +493,7 @@ impl AndroidKeystoreSecureKeyStore {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(feature = "mobile-android", target_os = "android"))]
 impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.store_secret(key, value)
@@ -511,13 +517,19 @@ impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
 /// `SecItemDelete`).
 ///
 /// See the [`HostSecretBridge`] doc-comment for the full contract.
-#[cfg(target_os = "ios")]
+///
+/// **Feature gating**: compiled when either the target is
+/// `target_os = "ios"` (native mobile build) OR the `mobile-ios` crate
+/// feature is enabled (e.g. desktop cross-compile-check). Desktop / wasm
+/// builds without that feature do not see this type, so the host-bridge
+/// stub code is dropped from those binaries.
+#[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 #[derive(Clone, Debug)]
 pub struct IosKeychainSecureKeyStore {
     inner: HostBridgeSecureKeyStore,
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 impl IosKeychainSecureKeyStore {
     pub fn from_installed(service_name: impl Into<String>) -> Option<Self> {
         HostBridgeSecureKeyStore::from_installed(service_name).map(|inner| Self { inner })
@@ -537,7 +549,7 @@ impl IosKeychainSecureKeyStore {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 impl SecureKeyStore for IosKeychainSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.store_secret(key, value)
@@ -2107,7 +2119,10 @@ mod tests {
     /// JNI-backed bridge here;
     /// this test wires `MemorySecureKeyStore` behind a thin adapter
     /// so the surface compiles + functions on any target.
-    #[cfg(target_os = "android")]
+    ///
+    /// Cfg matches the type definition: native Android OR explicit
+    /// `mobile-android` feature opt-in.
+    #[cfg(any(feature = "mobile-android", target_os = "android"))]
     #[test]
     fn android_keystore_via_bridge_round_trips_secrets() {
         let bridge: Arc<dyn HostSecretBridge> =
@@ -2125,7 +2140,10 @@ mod tests {
     }
 
     /// Matching iOS test — same rationale as the Android case above.
-    #[cfg(target_os = "ios")]
+    ///
+    /// Cfg matches the type definition: native iOS OR explicit
+    /// `mobile-ios` feature opt-in.
+    #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
     #[test]
     fn ios_keychain_via_bridge_round_trips_secrets() {
         let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("ios-keychain"));
