@@ -946,6 +946,16 @@ pub struct ClientLocalState {
     /// SubtleCrypto during app initialization.
     #[serde(default)]
     pub dpop_device_key: Option<DpopDeviceKeyRecord>,
+    /// R3.1 (MID-2) — raw inlined `cx.member.identity.update` event
+    /// envelopes harvested from `account.subscribe` `members[]` entries.
+    /// Keyed by `realm_id -> actor_id -> Vec<envelope>`. The runtime
+    /// store ([`crate::member_identity_store::MemberIdentityStore`]) is
+    /// rebuilt from this list on boot; persisting the envelopes (not the
+    /// typed payload) keeps the on-disk schema stable against future
+    /// `MemberIdentityUpdatePayload` extensions and lets the renderer
+    /// re-decrypt encrypted carriers once an MLS welcome arrives later.
+    #[serde(default)]
+    pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
 }
 
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
@@ -1113,6 +1123,7 @@ impl Default for ClientLocalState {
             client_blocklist: Vec::new(),
             server_trust_domain: None,
             dpop_device_key: None,
+            member_identity_events: BTreeMap::new(),
         }
     }
 }
@@ -1258,6 +1269,96 @@ impl LocalStateStore {
             .space_projections
             .insert(space_id.into(), projection);
         let _ = self.flush();
+    }
+
+    /// R3.1 MID-2 — record inlined `cx.member.identity.update` event
+    /// envelopes harvested off a `members[]` roster entry. Idempotent
+    /// on event id; events that already exist for this `(realm, actor)`
+    /// pair are skipped. The runtime
+    /// [`crate::member_identity_store::MemberIdentityStore`] is rebuilt
+    /// from these envelopes on demand.
+    pub fn ingest_member_identity_events(
+        &mut self,
+        realm_id: impl Into<String>,
+        actor_id: impl Into<String>,
+        events: &[Value],
+    ) {
+        if events.is_empty() {
+            return;
+        }
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let actor_id = actor_id.into();
+        let bucket = self
+            .cached
+            .member_identity_events
+            .entry(realm_id)
+            .or_default()
+            .entry(actor_id)
+            .or_default();
+        for event in events {
+            let Some(event_id) = event.get("event_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+            if kind != "cx.member.identity.update" {
+                continue;
+            }
+            let already = bucket.iter().any(|existing| {
+                existing
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|existing_id| existing_id == event_id)
+            });
+            if !already {
+                bucket.push(event.clone());
+            }
+        }
+        let _ = self.flush();
+    }
+
+    /// R3.1 MID-3 — return the resolved [`contrix_sdk::MemberIdentity`]
+    /// for `(realm_id, actor_id)`, or `None` when no plaintext identity
+    /// has been observed (decryption pending or no events ingested
+    /// yet). UI surfaces SHOULD fall back to a muted placeholder when
+    /// [`is_member_decryption_pending`] returns `true`, and to the
+    /// compact DID otherwise.
+    pub fn resolved_member_identity(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> Option<contrix_sdk::MemberIdentity> {
+        let envelopes = self.member_identity_envelopes(realm_id, actor_id);
+        if envelopes.is_empty() {
+            return None;
+        }
+        let mut store = crate::member_identity_store::MemberIdentityStore::new();
+        store.ingest_inline(realm_id, actor_id, &envelopes);
+        store.current_identity(realm_id, actor_id)
+    }
+
+    /// R3.1 MID-6 — `true` when the actor has at least one identity
+    /// event but every effective event is `decryption_pending` (the
+    /// MLS group state needed to decrypt the carrier has not yet
+    /// arrived). UI surfaces a muted placeholder rather than the raw
+    /// DID in this state.
+    pub fn is_member_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
+        let envelopes = self.member_identity_envelopes(realm_id, actor_id);
+        if envelopes.is_empty() {
+            return false;
+        }
+        let mut store = crate::member_identity_store::MemberIdentityStore::new();
+        store.ingest_inline(realm_id, actor_id, &envelopes);
+        store.is_decryption_pending(realm_id, actor_id)
+    }
+
+    fn member_identity_envelopes(&self, realm_id: &str, actor_id: &str) -> Vec<Value> {
+        self.cached
+            .member_identity_events
+            .get(realm_id)
+            .and_then(|by_actor| by_actor.get(actor_id))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Drop every `space_projections` entry whose key isn't in `keep`. Used

@@ -339,6 +339,11 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
             store.save_space_projection(id.clone(), body.clone());
             let view = LocalAnchorView::from_sync_body(body);
             store.set_anchor_view(id.clone(), view);
+            // R3.1 MID-2 — harvest inlined `cx.member.identity.update`
+            // event envelopes off the `members[]` roster entries. The
+            // SDK's effective-set filter is applied lazily when a UI
+            // surface needs to resolve a display identity.
+            ingest_member_identity_events_from_projection(&mut store, id, body);
         }
 
         apply_account_data(
@@ -391,6 +396,99 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
 
     device_queue.set(response.to_device.len());
     sync_cursor.set(response.cursor.clone());
+}
+
+/// R3.1 MID-2 — walk a space projection's `members[]` roster looking
+/// for inlined `identity_events[]` arrays. Each
+/// `cx.member.identity.update` envelope is recorded on the
+/// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
+/// `state.events[]` form where the roster only carries
+/// `identity_event_ids[]` and the events themselves live in the
+/// frame-level event log.
+fn ingest_member_identity_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) {
+    // Build a quick lookup over any `state.events[]` array on the
+    // projection so that referenced identity_event_ids can be resolved
+    // without a separate query.
+    let state_events: BTreeSet<String> = body
+        .get("state")
+        .and_then(|state| state.get("events"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|event| {
+                    event
+                        .get("event_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let state_event_by_id: std::collections::BTreeMap<String, Value> = body
+        .get("state")
+        .and_then(|state| state.get("events"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|event| {
+                    event
+                        .get("event_id")
+                        .and_then(Value::as_str)
+                        .map(|id| (id.to_owned(), event.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for source in [
+        body.get("members"),
+        body.get("summary").and_then(|s| s.get("members")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(items) = source.as_array() else {
+            continue;
+        };
+        for entry in items {
+            let Some(map) = entry.as_object() else {
+                continue;
+            };
+            let Some(actor_id) = map
+                .get("actor_id")
+                .or_else(|| map.get("did"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            // Inline events have priority — they're complete envelopes.
+            if let Some(events) = map.get("identity_events").and_then(Value::as_array) {
+                store.ingest_member_identity_events(realm_id, actor_id, events);
+            }
+            // Otherwise hydrate envelopes from `state.events[]` keyed
+            // by id. Missing references are dropped silently — the
+            // server will resend them on the next subscribe frame, or
+            // a `cx.events.query` backfill will catch up.
+            if let Some(refs) = map.get("identity_event_ids").and_then(Value::as_array) {
+                let mut resolved: Vec<Value> = Vec::new();
+                for r in refs {
+                    if let Some(id) = r.as_str()
+                        && state_events.contains(id)
+                        && let Some(envelope) = state_event_by_id.get(id)
+                    {
+                        resolved.push(envelope.clone());
+                    }
+                }
+                if !resolved.is_empty() {
+                    store.ingest_member_identity_events(realm_id, actor_id, &resolved);
+                }
+            }
+        }
+    }
 }
 
 fn apply_account_data(

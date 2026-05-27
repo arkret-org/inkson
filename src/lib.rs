@@ -46,6 +46,13 @@ pub mod key_store;
 pub mod late_recovery;
 pub mod local_state;
 pub mod media;
+/// R3.1 (contrix-spec @ 7157ee8) — Realm-scoped
+/// `cx.member.identity.update` event store. Sync ingests inlined
+/// `members[].identity_events[]` here; UI views resolve the current
+/// effective [`contrix_sdk::MemberIdentity`] via the SDK's
+/// replacement-edge filter helper. MLS decryption (MID-4) + proof
+/// signature verification (MID-5) are gated on `TODO(R4)`.
+pub mod member_identity_store;
 /// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
 /// discussion-promote, sidecar-hash). The chat view consumes these
 /// helpers; see `crate::messaging::mod` for the rationale.
