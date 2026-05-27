@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: yougen-web
+  labels:
+    app.kubernetes.io/name: yougen
+    app.kubernetes.io/component: web
+  annotations:
+    # cert-manager wires TLS; swap issuer name for your deployment.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # SPA fallback: every unknown path serves index.html so client-side
+    # routing (dioxus-router) handles the URL.
+    nginx.ingress.kubernetes.io/custom-http-errors: "404"
+    nginx.ingress.kubernetes.io/default-backend: yougen-web
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - yougen.example.com
+      secretName: yougen-web-tls
+  rules:
+    - host: yougen.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: yougen-web
+                port:
+                  name: http

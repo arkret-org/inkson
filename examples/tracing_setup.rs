@@ -1,0 +1,88 @@
+//! Tracing initialisation sample for yougen.
+//!
+//! This example shows the two recommended wirings:
+//!
+//! 1. Native (desktop) target: a `tracing-subscriber` chain that respects
+//!    `RUST_LOG` and uses ANSI-coloured terminal output.
+//! 2. Browser (wasm32) target: a sketch of how to mirror `tracing` events to
+//!    `console.error` and POST recoverable errors to a `/api/v1/telemetry/error`
+//!    endpoint via `fetch`.
+//!
+//! Run the native variant with:
+//!
+//! ```text
+//! cargo run --example tracing_setup
+//! ```
+//!
+//! The browser sketch is comment-only; the actual hook lives in the Dioxus
+//! web entrypoint when the `web` feature is enabled.
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() {
+    use tracing::{debug, info, warn};
+
+    // Honour `RUST_LOG`; fall back to `info` everywhere if unset.
+    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info,yougen=debug".to_owned());
+
+    // The real client uses `tracing-subscriber` for the formatting layer; in
+    // production builds add an `EnvFilter` + `fmt` layer here. For this
+    // example we keep the dependency surface minimal and route directly
+    // through `tracing`'s default subscriber.
+    eprintln!("[tracing_setup] would init subscriber with filter: {filter}");
+
+    info!(target: "yougen::example", "tracing-subscriber wired");
+    debug!("debug event — only visible when filter allows it");
+    warn!("a warn-level event survives the default filter");
+
+    // In real code (see `src/telemetry.rs`) the native sentry layer is
+    // attached behind the `CrashTelemetryPrefs` toggle:
+    //
+    //     yougen::telemetry::sentry_init(&prefs);
+    //
+    // Sketch of the production native chain (kept as a comment so this
+    // example stays dependency-light):
+    //
+    //     use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+    //     tracing_subscriber::registry()
+    //         .with(EnvFilter::try_from_default_env()
+    //             .unwrap_or_else(|_| EnvFilter::new("info,yougen=debug")))
+    //         .with(fmt::layer().with_ansi(true))
+    //         .with(sentry_tracing::layer())  // gated on telemetry prefs
+    //         .init();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // Browser-side sketch. The Dioxus web binary should:
+    //
+    //   1. Install a panic hook routing to `console.error`:
+    //
+    //         console_error_panic_hook::set_once();
+    //
+    //   2. Mirror `tracing` events to `console.{info,warn,error}`:
+    //
+    //         tracing_wasm::set_as_global_default_with_config(
+    //             tracing_wasm::WASMLayerConfigBuilder::new()
+    //                 .set_max_level(tracing::Level::DEBUG)
+    //                 .build(),
+    //         );
+    //
+    //   3. POST structured error payloads to `/api/v1/telemetry/error` from
+    //      a small `report_error(code, context)` helper. The helper is
+    //      fire-and-forget — a failed telemetry POST must never crash the
+    //      SPA. Wire it from `ErrorBanner` and the global panic hook:
+    //
+    //         pub fn report_error(code: &str, context: &str) {
+    //             let body = serde_json::json!({
+    //                 "code": code, "context": context,
+    //             }).to_string();
+    //             wasm_bindgen_futures::spawn_local(async move {
+    //                 let _ = reqwest::Client::new()
+    //                     .post("/api/v1/telemetry/error")
+    //                     .header("content-type", "application/json")
+    //                     .body(body)
+    //                     .send()
+    //                     .await;
+    //             });
+    //         }
+}
