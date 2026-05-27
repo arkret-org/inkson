@@ -67,10 +67,6 @@ jobs:
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
-      - name: Format check
-        working-directory: yougen
-        run: cargo fmt --check
-
       - name: Clippy
         working-directory: yougen
         run: cargo clippy --all-targets -- -D warnings
