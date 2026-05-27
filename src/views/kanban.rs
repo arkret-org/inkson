@@ -1209,6 +1209,60 @@ pub fn KanbanPanel(
         });
     }
 
+    // Route → board reconciler. When the URL points at a card-detail
+    // page (`/kanban/<realm>/task/<flow>`) and the card's home board
+    // is NOT the currently-selected board, switch the board and
+    // re-project the columns from the cached lifecycle snapshot. This
+    // handles the case where the user arrives at the card-detail URL
+    // via a fresh KanbanPanel mount (e.g. coming from `/spaces/<realm>`
+    // Board tab where a different KanbanPanel instance held the
+    // previous selection) — the bootstrap fetch may have already
+    // picked `board_options.first()` before this reconciler runs, so
+    // we override here whenever the URL's task_id resolves to a known
+    // flow with a different `board_space_id`.
+    {
+        let routed_flow_id = route_card_flow_id(&route);
+        use_effect(move || {
+            let Some(flow_id) = routed_flow_id.clone() else {
+                return;
+            };
+            let flow_items = lifecycle_flow_projection.read();
+            let Some(flow_board) = flow_items
+                .iter()
+                .find(|f| f.flow_id == flow_id)
+                .and_then(|f| f.board_space_id.clone())
+            else {
+                return;
+            };
+            if selected_board_space_id() == flow_board {
+                return;
+            }
+            // Re-project columns for the resolved board so the existing
+            // card-detail effect (above) can find the card on the next
+            // render cycle.
+            let containers = lifecycle_container_projection.read().clone();
+            let flows = flow_items.clone();
+            drop(flow_items);
+            let (projected_columns, options, projected_board_id) =
+                columns_from_lifecycle_projection(&containers, &flows, &flow_board);
+            if let Some(board_id) = projected_board_id {
+                if !options.is_empty() {
+                    board_space_options.set(options);
+                }
+                let board_id_for_overlay = board_id.clone();
+                selected_board_space_id.set(board_id);
+                let projected_columns = overlay_local_card_creates(
+                    projected_columns,
+                    &state_store.read(),
+                    &board_id_for_overlay,
+                );
+                if columns() != projected_columns {
+                    columns.set(projected_columns);
+                }
+            }
+        });
+    }
+
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
     // `/api/v1/views/:id/projection` when a View id is provided. Success
@@ -1344,10 +1398,20 @@ pub fn KanbanPanel(
     // off than before this wiring.
     let mut lifecycle_bootstrapped_for = use_signal(String::new);
     let lifecycle_realm_id = projection_realm_id.trim().to_owned();
+    // When the kanban panel mounts on a card-detail URL
+    // (`/kanban/<realm>/task/<flow>`), the user typically came from a
+    // different shell (e.g. `/spaces/<realm>` with the Board tab open)
+    // and the freshly-mounted panel has no `selected_board_space_id`
+    // yet. Without a hint, `columns_from_lifecycle_projection` falls
+    // back to `board_options.first()`, which may not be the board that
+    // actually contains the card. Capture the routed flow id so the
+    // lifecycle fetch below can resolve the card's home board.
+    let lifecycle_routed_flow_id = route_card_flow_id(&route);
     if !lifecycle_realm_id.is_empty() && lifecycle_bootstrapped_for() != lifecycle_realm_id {
         lifecycle_bootstrapped_for.set(lifecycle_realm_id.clone());
         let base = base_url.clone();
         let lifecycle_token = token;
+        let lifecycle_routed_flow_id = lifecycle_routed_flow_id.clone();
         spawn(async move {
             let realm_id = lifecycle_realm_id.clone();
             let api_token = lifecycle_token();
@@ -1378,6 +1442,23 @@ pub fn KanbanPanel(
                 lifecycle_container_projection.set(container_items.clone());
                 lifecycle_flow_projection.set(flow_items.clone());
                 let current_board = selected_board_space_id();
+                // If the user landed on a card-detail URL and no board
+                // is selected yet, resolve the card's home board from
+                // the just-fetched flow projection so the matching
+                // board is loaded (instead of `board_options.first()`).
+                let current_board = if current_board.trim().is_empty() {
+                    lifecycle_routed_flow_id
+                        .as_deref()
+                        .and_then(|flow_id| {
+                            flow_items
+                                .iter()
+                                .find(|f| f.flow_id == flow_id)
+                                .and_then(|f| f.board_space_id.clone())
+                        })
+                        .unwrap_or(current_board)
+                } else {
+                    current_board
+                };
                 let (projected_columns, options, projected_board_id) =
                     columns_from_lifecycle_projection(
                         &container_items,
