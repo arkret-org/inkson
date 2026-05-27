@@ -501,7 +501,11 @@ fn mention_handle_label_from_value(value: &str) -> Option<String> {
 
 fn participant_handle_label_from_value(value: &Value, did: Option<&str>) -> Option<String> {
     let object = value.as_object()?;
+    // R3.1 wire rename: spec field is `handle`. Older payloads may
+    // still ship `handle_uri` (contrix:// URI form retired @ 7157ee8);
+    // accept both for migration compatibility.
     [
+        "handle",
         "handle_uri",
         "handleUri",
         "user_handle",
@@ -509,7 +513,6 @@ fn participant_handle_label_from_value(value: &Value, did: Option<&str>) -> Opti
         "acct_alias",
         "acctAlias",
         "acct",
-        "handle",
         "mxid",
     ]
     .iter()
@@ -551,7 +554,7 @@ struct MentionInlinePart {
 }
 
 fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> {
-    if let Some(label) = mention_handle_label_from_value(&mention.handle_uri) {
+    if let Some(label) = mention_handle_label_from_value(&mention.handle) {
         return Some(label);
     }
     if let Some(label) = mention_handle_label_from_value(&mention.display_snapshot) {
@@ -1451,17 +1454,20 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .and_then(Value::as_str)
                             .unwrap_or(target)
                             .to_owned(),
-                        // T7.3: pull the compose-time snapshot fields
-                        // through from the event payload so the renderer
-                        // can flag handle reassignments.
+                        // T7.3 / R3.1: pull the compose-time snapshot
+                        // fields through from the event payload so the
+                        // renderer can flag handle reassignments. Spec
+                        // field is `handle`; older payloads may carry
+                        // the legacy `handle_uri` URI form.
                         display_snapshot: item
                             .get("display_snapshot")
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_owned(),
-                        handle_uri: item
-                            .get("handle_uri")
+                        handle: item
+                            .get("handle")
                             .and_then(Value::as_str)
+                            .or_else(|| item.get("handle_uri").and_then(Value::as_str))
                             .unwrap_or_default()
                             .to_owned(),
                         resolved_at: item
@@ -5313,8 +5319,8 @@ pub fn ChatPanel(
                                                 target: chip.did.clone(),
                                                 token: format!("@{}", chip.display_name),
                                                 display_snapshot: chip.display_name.clone(),
-                                                handle_uri: parsed_handle
-                                                    .map(|handle| handle.handle_uri)
+                                                handle: parsed_handle
+                                                    .map(|h| h.handle)
                                                     .unwrap_or_default(),
                                                 resolved_at: String::new(),
                                             });
@@ -5877,11 +5883,13 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
     mentions
         .iter()
         .map(|mention| {
-            // T7.3: emit the spec's `subject` field alongside our legacy
-            // `target` so projections that already read `subject`
-            // receive it. `display_snapshot`/`handle_uri`/`resolved_at`
-            // round-trip through the persisted local op record so the
-            // renderer can detect handle reassignments.
+            // T7.3 / R3.1: emit the spec's `subject` field alongside
+            // our legacy `target` so projections that already read
+            // `subject` receive it. `display_snapshot` / `handle` /
+            // `resolved_at` round-trip through the persisted local op
+            // record so the renderer can detect handle reassignments.
+            // `handle` is the R3.1 canonical `<localpart>:<domain>`
+            // form (renamed from `handle_uri` @ contrix-spec 7157ee8).
             let mut obj = serde_json::Map::new();
             obj.insert("kind".to_owned(), json!(mention.kind));
             obj.insert("subject".to_owned(), json!(mention.target));
@@ -5893,8 +5901,8 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
                     json!(mention.display_snapshot),
                 );
             }
-            if !mention.handle_uri.is_empty() {
-                obj.insert("handle_uri".to_owned(), json!(mention.handle_uri));
+            if !mention.handle.is_empty() {
+                obj.insert("handle".to_owned(), json!(mention.handle));
             }
             if !mention.resolved_at.is_empty() {
                 obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
@@ -6192,11 +6200,12 @@ mod tests {
 
     #[test]
     fn extracts_participant_handle_label_from_projection() {
+        // R3.1: canonical wire field is `handle` (`<localpart>:<domain>`).
         let projection = json!({
             "members": [
                 {
                     "actor_id": "did:web:example.com:users:bob",
-                    "handle_uri": "contrix://example.com/users/bob"
+                    "handle": "bob:example.com"
                 }
             ]
         });
@@ -6235,7 +6244,7 @@ mod tests {
             target: "did:web:local.host:users:alice".to_owned(),
             token: "@alice:local.host".to_owned(),
             display_snapshot: "alice:local.host".to_owned(),
-            handle_uri: "contrix://local.host/users/alice".to_owned(),
+            handle: "alice:local.host".to_owned(),
             resolved_at: String::new(),
         };
 
@@ -6261,7 +6270,7 @@ mod tests {
             target: "did:web:example.com:users:bob".to_owned(),
             token: "@bob:example.com".to_owned(),
             display_snapshot: "bob:example.com".to_owned(),
-            handle_uri: "contrix://example.com/users/bob".to_owned(),
+            handle: "bob:example.com".to_owned(),
             resolved_at: String::new(),
         };
 

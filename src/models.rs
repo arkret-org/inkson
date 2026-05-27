@@ -626,14 +626,19 @@ pub struct ResolveHandleResponse {
     pub handle_claim: Option<Value>,
 }
 
-/// Structured mention node embedded in message body. Spec 0a5ab85
+/// Structured mention node embedded in message body. Spec 7157ee8
 /// `models/flow-and-message.md §9.4`. `display_snapshot` is the human
 /// label captured at compose time; UI MUST surface a "handle reassigned"
 /// badge when current resolution diverges from the snapshot.
+///
+/// R3.1 wire rename: the canonical handle field is `handle`
+/// (`<localpart>:<domain>`). The legacy `handle_uri` field name is
+/// accepted as a serde alias for one release.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mention {
     pub subject: String,
-    pub handle_uri: String,
+    #[serde(alias = "handle_uri")]
+    pub handle: String,
     pub display_snapshot: String,
     pub resolved_at: String,
 }

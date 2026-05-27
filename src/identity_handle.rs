@@ -1,17 +1,23 @@
 /// Utilities for Contrix user handles.
 ///
-/// Protocol display input is `user:domain.example` (optionally with a
-/// leading `@` in mention-style surfaces). The signed / cached protocol
-/// form is always `contrix://domain.example/users/user`; Realm membership
-/// materialises the resolved user DID plus the recipient Principal Server
-/// DID, never the display string itself.
+/// R3.1 wire form (contrix-spec @ 7157ee8): the canonical handle is
+/// `<localpart>:<domain>(:<port>)?`. The previous `contrix://domain/users/local`
+/// URI form has been retired. `acct:<localpart>@<domain>` remains an interop
+/// alias only.
+///
+/// Realm membership materialises the resolved user DID plus the recipient
+/// Principal Server DID, never the display string itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedUserHandle {
     pub localpart: String,
     pub domain: String,
     pub port: Option<u16>,
     pub display: String,
-    pub handle_uri: String,
+    /// R3.1 canonical wire handle `<localpart>:<domain>(:<port>)?`.
+    /// Same string as [`display`] for ASCII handles; carried as its own
+    /// field so callers that want the wire-canonical form can grab it
+    /// without going through the display path.
+    pub handle: String,
     pub acct_alias: String,
     pub subject_did: String,
     pub principal_server_did: String,
@@ -23,8 +29,10 @@ pub fn parse_user_handle(input: &str) -> Option<ParsedUserHandle> {
         return None;
     }
 
+    // R3.1: the contrix:// URI handle form is retired. Inputs are
+    // `<localpart>:<domain>` or `acct:<localpart>@<domain>`.
     if trimmed.starts_with("contrix://") {
-        return parse_handle_uri(trimmed);
+        return None;
     }
 
     let without_acct = trimmed.strip_prefix("acct:").unwrap_or(trimmed);
@@ -50,15 +58,6 @@ pub fn principal_did_from_identifier(input: &str) -> Option<String> {
     parse_user_handle(trimmed).map(|handle| handle.subject_did)
 }
 
-fn parse_handle_uri(input: &str) -> Option<ParsedUserHandle> {
-    let rest = input.strip_prefix("contrix://")?;
-    let (authority, local) = rest.split_once("/users/")?;
-    if local.contains('/') {
-        return None;
-    }
-    build_handle(local, authority)
-}
-
 fn build_handle(local: &str, authority: &str) -> Option<ParsedUserHandle> {
     let localpart = local.trim().to_ascii_lowercase();
     if !valid_localpart(&localpart) {
@@ -71,13 +70,9 @@ fn build_handle(local: &str, authority: &str) -> Option<ParsedUserHandle> {
         return None;
     }
 
-    let display = match port {
+    let canonical = match port {
         Some(port) => format!("{localpart}:{domain}:{port}"),
         None => format!("{localpart}:{domain}"),
-    };
-    let handle_uri = match port {
-        Some(port) => format!("contrix://{domain}:{port}/users/{localpart}"),
-        None => format!("contrix://{domain}/users/{localpart}"),
     };
     let acct_alias = match port {
         Some(port) => format!("acct:{localpart}@{domain}:{port}"),
@@ -94,8 +89,8 @@ fn build_handle(local: &str, authority: &str) -> Option<ParsedUserHandle> {
         localpart,
         domain,
         port,
-        display,
-        handle_uri,
+        display: canonical.clone(),
+        handle: canonical,
         acct_alias,
         subject_did,
         principal_server_did,
@@ -311,7 +306,7 @@ mod tests {
     fn parses_display_handle_to_protocol_parts() {
         let parsed = parse_user_handle("Alice:Example.COM").expect("handle");
         assert_eq!(parsed.display, "alice:example.com");
-        assert_eq!(parsed.handle_uri, "contrix://example.com/users/alice");
+        assert_eq!(parsed.handle, "alice:example.com");
         assert_eq!(parsed.acct_alias, "acct:alice@example.com");
         assert_eq!(parsed.principal_server_did, "did:web:example.com");
         assert_eq!(parsed.subject_did, "did:web:example.com:users:alice");
@@ -320,12 +315,12 @@ mod tests {
     #[test]
     fn accepts_mention_and_acct_alias_inputs() {
         assert_eq!(
-            parse_user_handle("@alice:example.com").unwrap().handle_uri,
-            "contrix://example.com/users/alice"
+            parse_user_handle("@alice:example.com").unwrap().handle,
+            "alice:example.com"
         );
         assert_eq!(
-            parse_user_handle("alice@example.com").unwrap().handle_uri,
-            "contrix://example.com/users/alice"
+            parse_user_handle("alice@example.com").unwrap().handle,
+            "alice:example.com"
         );
         assert_eq!(
             parse_user_handle("acct:alice@example.com").unwrap().display,
@@ -338,6 +333,8 @@ mod tests {
         assert!(parse_user_handle("did:web:alice.example").is_none());
         assert!(parse_user_handle("@alice").is_none());
         assert!(parse_user_handle("alice.example.com").is_none());
+        // R3.1: contrix:// URI form is retired.
+        assert!(parse_user_handle("contrix://example.com/users/alice").is_none());
     }
 
     #[test]

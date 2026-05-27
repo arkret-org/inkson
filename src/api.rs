@@ -3440,10 +3440,13 @@ pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     format!("{base}/api/v1/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
 }
 
+/// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
+/// (renamed from `handle_uri` @ contrix-spec 7157ee8 — the `contrix://`
+/// URI handle form has been retired).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RealmBootstrapMember {
     actor_id: String,
-    handle_uri: Option<String>,
+    handle: Option<String>,
     delivery_binding: Option<Value>,
 }
 
@@ -3451,7 +3454,7 @@ impl RealmBootstrapMember {
     fn from_did(did: &str) -> Self {
         Self {
             actor_id: did.trim().to_owned(),
-            handle_uri: None,
+            handle: None,
             delivery_binding: None,
         }
     }
@@ -3460,7 +3463,7 @@ impl RealmBootstrapMember {
         let resolved_at = event_timestamp();
         Self {
             actor_id: handle.subject_did,
-            handle_uri: Some(handle.handle_uri),
+            handle: Some(handle.handle),
             delivery_binding: Some(json!({
                 "recipient_service_did": handle.principal_server_did,
                 "recipient_service_type": "principal_server",
@@ -4020,7 +4023,7 @@ fn build_member_state_event(
         None,
         membership,
         "space_create",
-        member.handle_uri.as_deref(),
+        member.handle.as_deref(),
         member.delivery_binding.clone(),
     )
 }
@@ -4056,7 +4059,7 @@ fn build_member_state_transition_event_with_binding(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-    handle_uri: Option<&str>,
+    handle: Option<&str>,
     delivery_binding: Option<Value>,
 ) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
@@ -4068,10 +4071,12 @@ fn build_member_state_transition_event_with_binding(
     if to_state == "join" {
         payload["delivery_status"] = json!("unroutable");
     }
-    if let Some(handle_uri) = handle_uri
-        && !handle_uri.trim().is_empty()
+    // R3.1: spec field is `handle` (`<localpart>:<domain>`); the prior
+    // `handle_uri` (`contrix://`) form has been retired @ 7157ee8.
+    if let Some(handle) = handle
+        && !handle.trim().is_empty()
     {
-        payload["handle_uri"] = json!(handle_uri);
+        payload["handle"] = json!(handle);
     }
     if let Some(delivery_binding) = delivery_binding {
         payload["delivery_binding"] = delivery_binding;
@@ -5009,8 +5014,8 @@ mod tests {
 
         assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
         assert_eq!(
-            member.payload["handle_uri"],
-            "contrix://example.com/users/bob"
+            member.payload["handle"],
+            "bob:example.com"
         );
         assert_eq!(
             member.payload["delivery_binding"]["recipient_service_did"],

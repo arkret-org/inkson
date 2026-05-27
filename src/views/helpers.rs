@@ -17,10 +17,12 @@ pub struct StructuredMention {
     /// a resolved snapshot.
     #[serde(default)]
     pub display_snapshot: String,
-    /// T7.3: original handle URI as typed by the author (e.g.
-    /// `contrix://example.com/users/alice`). Empty when only a DID was supplied.
-    #[serde(default)]
-    pub handle_uri: String,
+    /// T7.3 / R3.1: canonical handle string `<localpart>:<domain>` as
+    /// typed by the author. Empty when only a DID was supplied. Spec
+    /// rename from the prior `handle_uri` (contrix:// URI form retired
+    /// at contrix-spec @ 7157ee8).
+    #[serde(default, alias = "handle_uri")]
+    pub handle: String,
     /// T7.3: ISO-8601 timestamp the mention was resolved at compose
     /// time. Empty when the resolver didn't supply it.
     #[serde(default)]
@@ -253,7 +255,7 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                         target: parsed.subject_did,
                         token: normalized.to_owned(),
                         display_snapshot: parsed.display,
-                        handle_uri: parsed.handle_uri,
+                        handle: parsed.handle,
                         resolved_at: String::new(),
                     });
                 }
@@ -266,7 +268,7 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                 target: format!("cx:{entity}"),
                 token: normalized.to_owned(),
                 display_snapshot: String::new(),
-                handle_uri: String::new(),
+                handle: String::new(),
                 resolved_at: String::new(),
             });
             continue;
@@ -278,7 +280,7 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
                     target: entity.to_owned(),
                     token: normalized.to_owned(),
                     display_snapshot: String::new(),
-                    handle_uri: String::new(),
+                    handle: String::new(),
                     resolved_at: String::new(),
                 });
             }
