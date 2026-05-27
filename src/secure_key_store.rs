@@ -1052,10 +1052,193 @@ unsafe impl<T> Send for IndexedDbSendBoundary<T> {}
 #[cfg(target_arch = "wasm32")]
 unsafe impl<T> Sync for IndexedDbSendBoundary<T> {}
 
+// ─────────────────────────────────────────────────────────────────────
+// P5 (threat-model §13) — IndexedDB hardening scaffold.
+//
+// Two concerns sit on top of the existing `IndexedDbSecureKeyStore`:
+//
+//   1. **Schema migration**. `DB_VERSION` is currently `1`. Future
+//      versions need a documented migration plan so the
+//      `onupgradeneeded` handler can route per-version diffs without
+//      smashing existing entries. [`IndexedDbSchemaVersion`] +
+//      [`IndexedDbSchemaMigration`] are the typed surface for that.
+//
+//   2. **WAL-style checkpoint**. IndexedDB autocommits per-transaction,
+//      but the in-process cache and the on-disk encrypted store can
+//      diverge for the duration of an in-flight `spawn_local`
+//      persistence task (see the doc comment on
+//      `IndexedDbSecureKeyStore` about page-unload during writes).
+//      [`IndexedDbCheckpoint`] is the scaffold for a quiescent
+//      checkpoint API that flushes pending writes and persists a
+//      checkpoint marker so a subsequent boot can detect partial
+//      writes and trigger recovery.
+//
+// Both types are intentionally pure-data scaffolding right now. The
+// concrete migration runner + checkpoint flusher are
+// TODO(P5-impl) — landing the surface unblocks the v1.1 cycle work
+// without forcing a deep rewrite of the wasm-only IndexedDB plumbing
+// in this commit.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Current IndexedDB schema version for `yougen.secret.*` databases.
+///
+/// Bump in lockstep with [`IndexedDbSecureKeyStore::DB_VERSION`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct IndexedDbSchemaVersion(pub u32);
+
+impl IndexedDbSchemaVersion {
+    pub const V1: Self = Self(1);
+    pub const CURRENT: Self = Self::V1;
+}
+
+/// A typed schema migration. The runner walks the registered list in
+/// order whenever `onupgradeneeded` fires.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexedDbSchemaMigration {
+    pub from: IndexedDbSchemaVersion,
+    pub to: IndexedDbSchemaVersion,
+    /// Human-readable summary surfaced in tracing logs when the
+    /// migration runs.
+    pub description: &'static str,
+}
+
+impl IndexedDbSchemaMigration {
+    /// Built-in migration list. Empty in V1 (nothing to upgrade from).
+    /// Add `Self { from: V1, to: V2, ... }` here when a new version
+    /// lands.
+    pub fn registered() -> Vec<Self> {
+        Vec::new()
+    }
+
+    /// Compute the migration path from `from` to `to`. Returns `None`
+    /// when the request is a no-op (`from == to`) or unsupported
+    /// (`from > to`, i.e. downgrade).
+    pub fn plan(
+        from: IndexedDbSchemaVersion,
+        to: IndexedDbSchemaVersion,
+    ) -> Option<Vec<IndexedDbSchemaMigration>> {
+        if from == to {
+            return None;
+        }
+        if from > to {
+            return None;
+        }
+        let registered = Self::registered();
+        let mut path: Vec<Self> = registered
+            .into_iter()
+            .filter(|m| m.from >= from && m.to <= to)
+            .collect();
+        path.sort_by_key(|m| m.from);
+        // TODO(P5-impl): validate that every adjacent pair lines up
+        // (m[i].to == m[i+1].from) and bail with a typed error on a
+        // gap. The current empty list is trivially valid.
+        Some(path)
+    }
+}
+
+/// WAL-style checkpoint marker. Written to a dedicated IndexedDB
+/// object store whenever the in-process cache reaches quiescence
+/// (no pending `spawn_local` persistence tasks). Boot reads the
+/// marker; a mismatch between the marker and the latest entry
+/// triggers a recovery pass.
+///
+/// TODO(P5-impl): wire [`IndexedDbCheckpoint::record`] into the
+/// `IndexedDbSecureKeyStore` write path, and call
+/// [`IndexedDbCheckpoint::verify_on_boot`] from `new_async`. The
+/// current scaffold lets downstream callers exercise the type without
+/// committing to the wasm-only persistence plumbing in this commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexedDbCheckpoint {
+    pub schema_version: IndexedDbSchemaVersion,
+    pub last_entry_count: usize,
+    pub recorded_at_ms: u64,
+}
+
+impl IndexedDbCheckpoint {
+    pub const STORE_NAME: &'static str = "checkpoint";
+    pub const KEY: &'static str = "primary";
+
+    /// Record a fresh checkpoint snapshot. The wasm32 persistence path
+    /// is TODO(P5-impl); on non-wasm targets this is a no-op stub used
+    /// for type-level integration tests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn record(_: &IndexedDbCheckpoint) -> Result<(), SecureKeyStoreError> {
+        Ok(())
+    }
+
+    /// Verify the checkpoint at boot. Returns `Ok(())` when the
+    /// marker matches the live entry count, `Err` otherwise.
+    /// TODO(P5-impl): wire into `IndexedDbSecureKeyStore::new_async`
+    /// once the persistence sibling lands.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn verify_on_boot(
+        _live_entries: usize,
+        _marker: &IndexedDbCheckpoint,
+    ) -> Result<(), SecureKeyStoreError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod indexed_db_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn schema_versions_are_ordered() {
+        assert!(IndexedDbSchemaVersion::V1 == IndexedDbSchemaVersion::CURRENT);
+    }
+
+    #[test]
+    fn migration_plan_for_same_version_is_none() {
+        assert!(IndexedDbSchemaMigration::plan(
+            IndexedDbSchemaVersion::V1,
+            IndexedDbSchemaVersion::V1
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn migration_plan_downgrade_is_none() {
+        let from = IndexedDbSchemaVersion(2);
+        let to = IndexedDbSchemaVersion(1);
+        assert!(IndexedDbSchemaMigration::plan(from, to).is_none());
+    }
+
+    #[test]
+    fn migration_plan_empty_until_v2_lands() {
+        let plan = IndexedDbSchemaMigration::plan(
+            IndexedDbSchemaVersion::V1,
+            IndexedDbSchemaVersion(2),
+        );
+        // The plan slot is populated (Some) but contains no steps yet
+        // because the registered list is empty until V2 lands.
+        let plan = plan.expect("plan should be Some for forward jump");
+        assert!(plan.is_empty(), "no V1 → V2 migration registered yet");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn checkpoint_record_and_verify_are_no_op_on_native() {
+        let marker = IndexedDbCheckpoint {
+            schema_version: IndexedDbSchemaVersion::CURRENT,
+            last_entry_count: 0,
+            recorded_at_ms: 0,
+        };
+        assert!(IndexedDbCheckpoint::record(&marker).is_ok());
+        assert!(IndexedDbCheckpoint::verify_on_boot(0, &marker).is_ok());
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 impl IndexedDbSecureKeyStore {
     /// IndexedDB database version. Bump when the object-store schema
     /// changes; the `onupgradeneeded` handler will fire.
+    ///
+    /// P5: see [`IndexedDbSchemaVersion`] / [`IndexedDbSchemaMigration`]
+    /// for the typed migration surface. When this constant bumps, add
+    /// a corresponding `IndexedDbSchemaMigration` entry to
+    /// `IndexedDbSchemaMigration::registered()` so the upgrade path
+    /// is type-checked + logged.
     const DB_VERSION: u32 = 1;
     const OBJECT_STORE_ENTRIES: &'static str = "entries";
     const OBJECT_STORE_KEYS: &'static str = "wrapping_keys";

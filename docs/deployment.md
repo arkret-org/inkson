@@ -91,3 +91,94 @@ future phase accepts mobile scope, prepare:
   `src/secure_key_store.rs`.
 - Thin host adapters that forward FCM/APNs tokens into the Rust bridge before
   push registration.
+
+---
+
+## Production hardening — CSP / CORS / TLS / update channel
+
+Everything in this section is **production-only**. Local dev defaults are
+permissive enough for the dev loop but unfit for any internet-facing host.
+
+### Content Security Policy
+
+The web image ships with the following CSP. Set it as an HTTP response
+header (preferred) or, only if your host cannot, as a `<meta http-equiv>`
+tag:
+
+```text
+default-src 'self';
+script-src 'self' 'wasm-unsafe-eval';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:;
+connect-src 'self' https://<your-soland-origin> https://<your-chime-origin>;
+font-src 'self' data:;
+frame-ancestors 'none';
+base-uri 'self';
+form-action 'self';
+report-uri /csp-report;
+```
+
+Notes:
+
+- `wasm-unsafe-eval` is required — Dioxus loads the WebAssembly bundle.
+- `style-src 'unsafe-inline'` is required by Dioxus's runtime `style="..."`
+  prop interpolation. **TODO(P5-impl)**: migrate to scoped style tags so we
+  can drop `unsafe-inline`.
+- Enumerate the soland + chime origins explicitly in `connect-src`. Do
+  **not** ship `connect-src *`.
+- `frame-ancestors 'none'` prevents click-jacking. yougen is a top-level
+  app, not an embed.
+- `dangerous_inner_html` is permanently disabled at the source level — see
+  `crate::content` and `pulldown-cmark` configuration.
+
+### CORS
+
+soland sets the CORS policy; yougen is the browser caller. Required
+soland response headers for the yougen web origin:
+
+```text
+Access-Control-Allow-Origin: https://<yougen-web-origin>
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Headers: authorization, content-type, idempotency-key,
+                              x-contrix-request-id, dpop
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
+Access-Control-Expose-Headers: x-contrix-request-id
+Access-Control-Max-Age: 600
+```
+
+`Access-Control-Allow-Origin: *` is **forbidden** because the browser
+also sends DPoP-bound credentials and the `cx.session.grant` cookie.
+
+### TLS
+
+- Minimum: TLS 1.2; prefer 1.3.
+- Reject SHA-1 cert chains.
+- Use a separate certificate per origin (soland, chime, the static
+  yougen host). Wildcards are acceptable when scoped to a single trust
+  boundary.
+- HSTS: `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
+  for the yougen web origin.
+- OCSP stapling on the soland edge to reduce a fingerprinting vector.
+- Certificate transparency: rely on your CA. yougen does not currently
+  pin certificates — that is a deferred mobile-only concern.
+
+### Update channel
+
+Desktop releases are distributed via the same dry-run dance documented
+in [`build-per-platform.md`](build-per-platform.md). Until codesign /
+notarization graduate out of dry-run, **do not** ship an auto-update
+channel to end users — there is no signed manifest to verify.
+
+For pre-prod cohorts:
+
+- Publish artifacts to a private object store with TLS + auth.
+- Pin the artifact sha256 in a separate signed manifest under your
+  control.
+- Run `scripts/codesign-dryrun.{ps1,sh}` against each artifact to record
+  evidence of what was (or was not) signed.
+- Ship a manual "Check for updates" UI surface that pulls the manifest
+  and warns when the local artifact sha differs.
+
+The web build naturally rolls forward on next page load; cache-bust by
+versioning the asset path (Dioxus does this by default).
+

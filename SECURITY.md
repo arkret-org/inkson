@@ -22,6 +22,35 @@ Include:
 - Whether real credentials, device tokens, recovery keys, or message content
   were exposed.
 
+### Private reporting channel
+
+Use the lowest-bandwidth channel that still lets you attach repro steps.
+
+- **Email**: `<security@>` (PGP-encrypted preferred).
+- **PGP fingerprint**: `<TODO(P5-impl) FINGERPRINT — replace once a real key is generated>`
+- **GitHub Private Vulnerability Reporting**: available on the canonical
+  yougen repository once the project metadata is finalized. Until then,
+  prefer the email channel above.
+
+Reports are acknowledged within 3 business days. If you do not receive an
+acknowledgement, your message did not arrive — please retry through a
+different channel (mention "yougen security" in the subject line).
+
+What to expect:
+
+1. **Acknowledgement** (≤ 3 business days) — confirms receipt + assigns
+   a private tracking ID.
+2. **Triage** (≤ 10 business days) — severity rating + initial
+   reproduction.
+3. **Fix window** — coordinated disclosure timeline shared privately.
+   Critical issues may ship a hotfix before public disclosure.
+4. **Public note** — once a fix lands, the issue is documented in
+   `CHANGELOG.md` with credit to the reporter unless they opt out.
+
+Do **not** include real production tokens, private keys, or message
+content in the report. Reproduce against a throwaway account when
+possible.
+
 ## Handling expectations
 
 - Treat local config files, secure-store records, push tokens, DPoP keys, and

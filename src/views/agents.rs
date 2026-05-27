@@ -422,13 +422,18 @@ pub fn AgentsPanel(
         })
         .cloned()
         .collect();
+    // P5 — cache the count before the iterator consumes the vec; the
+    // aria-label below interpolates it alongside the badge text.
+    let endpoints_count = endpoints.len();
 
     rsx! {
         div { class: "timeline", "data-testid": "agents-panel", role: "region", "aria-label": "Agent endpoints and protocol sessions",
             div { class: "event",
+                role: "region",
+                "aria-labelledby": "agent-endpoints-heading",
                 div { class: "event-head",
-                    span { "Agent endpoints" }
-                    span { class: "badge", "{endpoints.len()} registered" }
+                    span { id: "agent-endpoints-heading", "Agent endpoints" }
+                    span { class: "badge", "aria-label": "{endpoints_count} agent endpoints registered", "{endpoints_count} registered" }
                 }
                 div { class: "muted",
                     "Spec extensions/agent-integration.md §2 — agent endpoints carry agent_did + protocol + capabilities. Each registered agent acts as a delegated principal that needs an explicit capability_proof to invoke."
@@ -467,25 +472,37 @@ pub fn AgentsPanel(
                 }
             }
             div { class: "event", "data-testid": "agent-register-form",
+                role: "region",
+                "aria-labelledby": "agent-register-form-heading",
+                "aria-describedby": "agent-register-form-help",
                 div { class: "event-head",
-                    span { "Register an automated member" }
+                    span { id: "agent-register-form-heading", "Register an automated member" }
                     span { class: "badge", title: "cx.agent.endpoint", "Bot endpoint" }
+                }
+                div { id: "agent-register-form-help", class: "muted",
+                    "Fill in agent_did + protocol + comma-separated capabilities. Submits a cx.agent.endpoint envelope."
                 }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-register-did",
+                        "aria-label": "Agent DID (bot handle)",
+                        "aria-describedby": "agent-register-form-help",
                         value: "{agent_did}",
                         placeholder: "bot handle (e.g. assistant:example.com)",
                         oninput: move |evt| agent_did.set(evt.value()),
                     }
                     input {
                         "data-testid": "agent-register-protocol",
+                        "aria-label": "Agent invocation protocol",
+                        "aria-describedby": "agent-register-form-help",
                         value: "{protocol}",
                         placeholder: "protocol (cx.agent.v1)",
                         oninput: move |evt| protocol.set(evt.value()),
                     }
                     input {
                         "data-testid": "agent-register-capabilities",
+                        "aria-label": "Capability list (comma-separated)",
+                        "aria-describedby": "agent-register-form-help",
                         value: "{capabilities}",
                         placeholder: "capabilities (comma-separated)",
                         oninput: move |evt| capabilities.set(evt.value()),
@@ -541,11 +558,20 @@ pub fn AgentsPanel(
                         }
                     }
                     if !status().is_empty() {
-                        div { class: "muted", "data-testid": "agent-register-status", "{status}" }
+                        div {
+                            class: "muted",
+                            "data-testid": "agent-register-status",
+                            role: "status",
+                            "aria-live": "polite",
+                            "aria-atomic": "true",
+                            "{status}"
+                        }
                     }
                 }
             }
             div { class: "event", "data-testid": "agent-session-list",
+                role: "region",
+                "aria-label": "Active protocol sessions",
                 div { class: "event-head",
                     span { "Active protocol sessions" }
                     span { class: "badge", "{sessions.len()} session-event(s)" }

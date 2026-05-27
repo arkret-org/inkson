@@ -4349,6 +4349,40 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
                 .and_then(|v| v.as_str())
         });
     crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
+    // P5 — surface request_id in tracing logs so server + client
+    // logs cross-reference on the same ID. The ID may have come from
+    // the body or (when callers use `decode_contrix_error_with_header`)
+    // from the response header.
+    tracing::warn!(
+        target: "yougen.api",
+        request_id = %envelope.request_id,
+        status = %status.as_u16(),
+        code = %envelope.code(),
+        "contrix error envelope decoded"
+    );
+    envelope
+}
+
+/// Same as [`decode_contrix_error`], but also threads the
+/// `x-contrix-request-id` response header so the resulting envelope
+/// carries the soland trace ID even when the body's `request_id` slot
+/// was missing or `"unknown"`.
+///
+/// P5: callers that have access to the `reqwest::Response::headers()`
+/// map (currently only a few hot paths) should switch to this helper
+/// so error toasts can render the **Copy ID** button consistently.
+pub fn decode_contrix_error_with_header(
+    status: StatusCode,
+    bytes: &[u8],
+    response_request_id: Option<&str>,
+) -> ErrorEnvelope {
+    let mut envelope = decode_contrix_error(status, bytes);
+    if let Some(id) = response_request_id {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() && (envelope.request_id == "unknown" || envelope.request_id.is_empty()) {
+            envelope.request_id = trimmed.to_owned();
+        }
+    }
     envelope
 }
 

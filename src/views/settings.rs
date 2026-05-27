@@ -3101,6 +3101,22 @@ pub fn SettingsPanel(
                     div { class: "muted",
                         "Theme is actor-private account data. Shared board filters/layout still require an explicit shared View save."
                     }
+                    // P5 — radiogroup-flavoured three-mode switcher
+                    // alongside the existing icon-button trio. Same
+                    // persistence path; adds ARIA semantics + a label
+                    // surface for keyboard / screen-reader users.
+                    crate::components::ThemeSwitcher {
+                        theme: theme,
+                        on_persist: {
+                            let base = base_url();
+                            let api_token = token();
+                            EventHandler::new(move |next: String| {
+                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                                push_client_ui_account_data(base.clone(), api_token.clone(), next.clone());
+                                status.set(format!("Theme set to {next}"));
+                            })
+                        },
+                    }
                 }
                             div { class: "event", "data-testid": "language-settings",
                     div { class: "event-head",

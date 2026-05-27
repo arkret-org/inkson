@@ -25,7 +25,20 @@ pub mod circle_scope_picker;
 /// page. Strict-subset validation runs client-side before submit.
 pub mod create_circle_modal;
 pub mod empty_state;
+/// P5 — recoverable error display + retry affordance. Pairs with the
+/// passive `ErrorBanner` below: this one carries a request_id and a
+/// retry callback so users can copy the soland trace ID into bug
+/// reports without leaving the failing surface.
+pub mod error_boundary;
 pub mod permission_pill;
+/// P5 — skeleton loaders for feed / agent list / key-backup history.
+pub mod skeleton;
+/// P5 — banner shown when running with the browser-storage symmetric-
+/// secret fallback. Always visible on wasm; opt-in on native.
+pub mod storage_fallback_banner;
+/// P5 — three-mode theme switcher (light / dark / follow system) with
+/// persistence routed through the caller's local-state path.
+pub mod theme_switcher;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
 /// app shell so any view inherits the 403 surface without needing to
 /// thread its own error UI.
@@ -49,9 +62,13 @@ pub use circle_scope_picker::{
 };
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
+pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
+pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
+pub use storage_fallback_banner::StorageFallbackBanner;
+pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use policy_deny_banner::{
     POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
     push_policy_deny, take_policy_deny,

@@ -163,17 +163,29 @@ pub fn OnboardingPanel(
             }
 
             div { class: "event", "data-testid": "account-flow",
+                role: "region",
+                "aria-labelledby": "account-flow-heading",
+                "aria-describedby": "account-flow-help",
                 div { class: "event-head",
-                    span { "Identity bootstrap" }
+                    span { id: "account-flow-heading", "Identity bootstrap" }
                     span { "account / session checks" }
                 }
-                div { class: "muted",
+                div { id: "account-flow-help", class: "muted",
                     "Account bootstrap moved out of Realm setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
                 }
-                div { class: "muted", "{account_state}" }
+                div {
+                    class: "muted",
+                    role: "status",
+                    "aria-live": "polite",
+                    "aria-atomic": "true",
+                    "data-testid": "account-flow-status",
+                    "{account_state}"
+                }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "account-register-did-input",
+                        "aria-label": "Account DID",
+                        "aria-describedby": "account-flow-help",
                         value: "{register_did}",
                         oninput: move |event| {
                             let value = event.value();
@@ -183,16 +195,19 @@ pub fn OnboardingPanel(
                     }
                     input {
                         "data-testid": "account-register-handle-input",
+                        "aria-label": "Local handle",
                         value: "{register_handle}",
                         oninput: move |event| register_handle.set(event.value())
                     }
                     input {
                         "data-testid": "account-register-display-name-input",
+                        "aria-label": "Display name",
                         value: "{register_display_name}",
                         oninput: move |event| register_display_name.set(event.value())
                     }
                     input {
                         "data-testid": "account-register-device-id-input",
+                        "aria-label": "Device ID",
                         value: "{register_device_id}",
                         oninput: move |event| register_device_id.set(event.value())
                     }
@@ -322,15 +337,19 @@ pub fn OnboardingPanel(
                         "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
                     }
                     div { class: "workflow-form",
-                        label { "Local part" }
+                        label { r#for: "handle-local-input", "Local part" }
                         input {
+                            id: "handle-local-input",
                             "data-testid": "handle-local-input",
+                            "aria-label": "Handle local part",
                             value: "{handle_local}",
                             oninput: move |evt| handle_local.set(evt.value()),
                         }
-                        label { "Domain" }
+                        label { r#for: "handle-domain-input", "Domain" }
                         input {
+                            id: "handle-domain-input",
                             "data-testid": "handle-domain-input",
+                            "aria-label": "Handle domain",
                             value: "{handle_domain}",
                             oninput: move |evt| handle_domain.set(evt.value()),
                         }
@@ -434,21 +453,32 @@ pub fn OnboardingPanel(
                         }
                     }
                     div { class: "actions",
+                        role: "radiogroup",
+                        "aria-label": "Recovery policy",
                         button {
                             class: if recovery_choice() == "vault" { "primary" } else { "secondary" },
                             "data-testid": "recovery-vault",
+                            role: "radio",
+                            "aria-checked": if recovery_choice() == "vault" { "true" } else { "false" },
+                            "aria-label": "Encrypted Cloud Vault",
                             onclick: move |_| recovery_choice.set("vault".to_owned()),
                             "Vault"
                         }
                         button {
                             class: if recovery_choice() == "social" { "primary" } else { "secondary" },
                             "data-testid": "recovery-social",
+                            role: "radio",
+                            "aria-checked": if recovery_choice() == "social" { "true" } else { "false" },
+                            "aria-label": "Social Recovery using Shamir Secret Sharing",
                             onclick: move |_| recovery_choice.set("social".to_owned()),
                             "Social Recovery"
                         }
                         button {
                             class: if recovery_choice() == "key" { "primary" } else { "secondary" },
                             "data-testid": "recovery-key",
+                            role: "radio",
+                            "aria-checked": if recovery_choice() == "key" { "true" } else { "false" },
+                            "aria-label": "Display-once Recovery Key",
                             onclick: move |_| recovery_choice.set("key".to_owned()),
                             "Recovery Key"
                         }
@@ -575,18 +605,28 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             class: "event",
             "data-testid": "onboarding-first-backup-gate",
             "data-gate-state": if gate_satisfied() { "satisfied" } else { "blocked" },
+            role: "region",
+            "aria-labelledby": "first-backup-gate-heading",
+            "aria-describedby": "first-backup-gate-help",
             div { class: "event-head",
-                span { "First-backup gate (CXP B-C)" }
+                span { id: "first-backup-gate-heading", "First-backup gate (CXP B-C)" }
                 if gate_satisfied() {
-                    span { class: "badge green", "satisfied" }
+                    span { class: "badge green", "aria-label": "First backup envelope satisfied", "satisfied" }
                 } else {
-                    span { class: "badge red", "blocked" }
+                    span { class: "badge red", "aria-label": "First backup envelope still required", "blocked" }
                 }
             }
-            div { class: "muted",
+            div { id: "first-backup-gate-help", class: "muted",
                 "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it your account could become permanently unrecoverable."
             }
-            div { class: "muted", "data-testid": "onboarding-first-backup-status", "{status}" }
+            div {
+                class: "muted",
+                "data-testid": "onboarding-first-backup-status",
+                role: "status",
+                "aria-live": "polite",
+                "aria-atomic": "true",
+                "{status}"
+            }
             if !last_error_code().is_empty() {
                 div {
                     class: "badge red",
