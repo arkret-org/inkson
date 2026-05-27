@@ -67,8 +67,10 @@ jobs:
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
-      # rustfmt enforcement was dropped intentionally in commit 5983c23;
-      # restore via `cargo fmt --all -- --check` before tagging a release.
+      - name: Check formatting
+        working-directory: yougen
+        run: cargo fmt --all -- --check
+
       - name: Clippy
         working-directory: yougen
         run: cargo clippy --all-targets -- -D warnings
