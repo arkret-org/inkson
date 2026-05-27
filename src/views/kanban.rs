@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     components::{EmptyState, EmptyStateKind, UiIcon},
     hlc::Hlc,
+    identity_handle::parse_user_handle,
     local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord},
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
     operation::uuid_v7,
@@ -179,16 +180,14 @@ enum CardDetailContentTab {
 /// - `Details`: per-card metadata (Flow ID, Assignee, Due, Visibility) + Activity hints.
 /// - `Members`: every actor in the surrounding Realm/Space — sourced from
 ///   the cached space projection (`members`/`participants`/`owners` keys).
-/// - `Participants`: actors that have authored an event against the current
-///   Flow specifically — derived by scanning local raw operations for the
-///   flow's id so the list is meaningful even before the server returns a
-///   discussion-roster projection.
+///   Each row is also marked when the actor has authored an event against
+///   the current Flow (derived from local raw operations), so participation
+///   is surfaced inline instead of in a separate tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CardDetailSidebarTab {
     #[default]
     Details,
     Members,
-    Participants,
 }
 
 /// Which slice of card fields the inline edit form is currently editing.
@@ -3553,15 +3552,16 @@ pub fn KanbanPanel(
                                         aside { class: "card-detail-sidebar",
                                             {
                                                 let store = state_store.read().load();
-                                                let realm_member_dids = realm_member_dids(
+                                                let realm_member_rows = realm_member_roster(
                                                     store.space_projections.get(&selected_space),
                                                 );
-                                                let realm_member_count = realm_member_dids.len();
-                                                let participant_dids = flow_participant_dids(
+                                                let realm_member_count = realm_member_rows.len();
+                                                let participant_set: BTreeSet<String> = flow_participant_dids(
                                                     &store.raw_operations,
                                                     &card.primary_flow_id,
-                                                );
-                                                let participant_count = participant_dids.len();
+                                                )
+                                                .into_iter()
+                                                .collect();
                                                 let active_sidebar_tab = card_detail_sidebar_tab();
                                                 let details_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Details {
                                                     "card-detail-tab active"
@@ -3569,11 +3569,6 @@ pub fn KanbanPanel(
                                                     "card-detail-tab"
                                                 };
                                                 let members_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Members {
-                                                    "card-detail-tab active"
-                                                } else {
-                                                    "card-detail-tab"
-                                                };
-                                                let participants_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Participants {
                                                     "card-detail-tab active"
                                                 } else {
                                                     "card-detail-tab"
@@ -3601,15 +3596,6 @@ pub fn KanbanPanel(
                                                             "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Members}",
                                                             onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Members),
                                                             "Members ({realm_member_count})"
-                                                        }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "{participants_tab_class}",
-                                                            "data-testid": "card-detail-sidebar-tab-participants",
-                                                            role: "tab",
-                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Participants}",
-                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Participants),
-                                                            "Participants ({participant_count})"
                                                         }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
@@ -3647,41 +3633,42 @@ pub fn KanbanPanel(
                                                         }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Members {
-                                                        div { class: "card-detail-side-section", "data-testid": "card-detail-realm-members",
-                                                            h3 { "Realm members" }
-                                                            if realm_member_dids.is_empty() {
-                                                                div { class: "card-detail-empty",
-                                                                    div { "No members yet for this Realm." }
-                                                                }
-                                                            } else {
-                                                                ul { class: "card-detail-actor-list",
-                                                                    for did in realm_member_dids.iter() {
-                                                                        li {
-                                                                            key: "{did}",
-                                                                            class: "card-detail-actor-row",
-                                                                            span { class: "card-detail-actor-dot" }
-                                                                            span { class: "card-detail-actor-did", title: "{did}", "{short_protocol_id(did)}" }
-                                                                        }
-                                                                    }
-                                                                }
+                                                        if realm_member_rows.is_empty() {
+                                                            div { class: "card-detail-empty", "data-testid": "card-detail-realm-members",
+                                                                div { "No members yet for this Realm." }
                                                             }
-                                                        }
-                                                    }
-                                                    if active_sidebar_tab == CardDetailSidebarTab::Participants {
-                                                        div { class: "card-detail-side-section", "data-testid": "card-detail-flow-participants",
-                                                            h3 { "Flow participants" }
-                                                            if participant_dids.is_empty() {
-                                                                div { class: "card-detail-empty",
-                                                                    div { "No participants yet. This list grows as actors message or update the Flow." }
-                                                                }
-                                                            } else {
-                                                                ul { class: "card-detail-actor-list",
-                                                                    for did in participant_dids.iter() {
-                                                                        li {
-                                                                            key: "{did}",
-                                                                            class: "card-detail-actor-row",
-                                                                            span { class: "card-detail-actor-dot" }
-                                                                            span { class: "card-detail-actor-did", title: "{did}", "{short_protocol_id(did)}" }
+                                                        } else {
+                                                            ul {
+                                                                class: "card-detail-actor-list",
+                                                                "data-testid": "card-detail-realm-members",
+                                                                for row in realm_member_rows.iter() {
+                                                                    {
+                                                                        let did = row.did.clone();
+                                                                        let label = member_display_label(row);
+                                                                        let in_flow = participant_set.contains(&did);
+                                                                        let row_class = if in_flow {
+                                                                            "card-detail-actor-row participant"
+                                                                        } else {
+                                                                            "card-detail-actor-row"
+                                                                        };
+                                                                        let dot_class = if in_flow {
+                                                                            "card-detail-actor-dot participant"
+                                                                        } else {
+                                                                            "card-detail-actor-dot"
+                                                                        };
+                                                                        let dot_title = if in_flow {
+                                                                            "Participated in this Flow"
+                                                                        } else {
+                                                                            "Realm member"
+                                                                        };
+                                                                        rsx! {
+                                                                            li {
+                                                                                key: "{did}",
+                                                                                class: "{row_class}",
+                                                                                "data-flow-participant": "{in_flow}",
+                                                                                span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
+                                                                                span { class: "card-detail-actor-did", title: "{did}", "{label}" }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -3736,10 +3723,45 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
 /// soland emits for some space kinds. Each member entry is either a
 /// bare DID string or a map carrying a `did` / `actor_id` / `actor_did`.
 fn realm_member_dids(projection: Option<&Value>) -> Vec<String> {
-    let mut dids: BTreeSet<String> = BTreeSet::new();
+    realm_member_roster(projection)
+        .into_iter()
+        .map(|row| row.did)
+        .collect()
+}
+
+/// Per-member entry harvested from a cached space projection.
+///
+/// `handle_uri` is the canonical `contrix://<domain>/users/<localpart>` form
+/// (spec `zh/sync/client-sync.md` §8.1) when the server included it on the
+/// member roster; sidebar / mention surfaces normalize it to the display form
+/// `localpart:domain` via [`crate::identity_handle::parse_user_handle`].
+#[derive(Clone, Debug)]
+pub(super) struct RealmMemberRow {
+    pub did: String,
+    pub handle_uri: Option<String>,
+}
+
+/// Pick the best UI label for a roster row: prefer the canonical handle
+/// (`alice:acme.example`) when the server gave us one, else fall back to
+/// the compact DID form so long `did:webvh:...` strings don't overflow.
+fn member_display_label(row: &RealmMemberRow) -> String {
+    if let Some(handle_uri) = row.handle_uri.as_deref()
+        && let Some(parsed) = parse_user_handle(handle_uri)
+    {
+        return parsed.display;
+    }
+    short_protocol_id(&row.did)
+}
+
+/// Collect the sorted roster of realm members from a cached space
+/// projection, preserving the optional canonical `handle_uri` carried on
+/// each `members[]` entry. Falls back to bare DIDs for legacy projections
+/// where members were emitted as a flat `string[]`.
+fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
     let Some(root) = projection else {
         return Vec::new();
     };
+    let mut rows: BTreeMap<String, Option<String>> = BTreeMap::new();
     let sources: [&Value; 2] = [root, root.get("summary").unwrap_or(root)];
     for source in sources {
         for key in [
@@ -3752,12 +3774,56 @@ fn realm_member_dids(projection: Option<&Value>) -> Vec<String> {
             "created_by",
             "creator",
         ] {
-            collect_dids_from_value(source.get(key), &mut dids);
+            collect_member_rows(source.get(key), &mut rows);
         }
     }
-    let mut out: Vec<String> = dids.into_iter().collect();
-    out.sort();
-    out
+    rows.into_iter()
+        .map(|(did, handle_uri)| RealmMemberRow { did, handle_uri })
+        .collect()
+}
+
+fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, Option<String>>) {
+    let Some(value) = value else { return };
+    match value {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                out.entry(trimmed.to_owned()).or_insert(None);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_member_rows(Some(item), out);
+            }
+        }
+        Value::Object(map) => {
+            let did = ["did", "actor_id", "actor_did", "principal_did", "id"]
+                .into_iter()
+                .find_map(|key| map.get(key).and_then(|child| child.as_str()))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let handle_uri = map
+                .get("handle_uri")
+                .and_then(|child| child.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            if let Some(did) = did {
+                match out.entry(did) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(handle_uri);
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut entry) => {
+                        if entry.get().is_none() && handle_uri.is_some() {
+                            *entry.get_mut() = handle_uri;
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Collect a deduped list of actor DIDs that have authored *any*
@@ -5364,6 +5430,58 @@ fn seed_columns() -> Vec<KanbanColumn> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn realm_member_roster_reads_did_and_handle_uri_objects() {
+        let projection = json!({
+            "members": [
+                {
+                    "did": "did:web:acme.example:users:alice",
+                    "handle_uri": "contrix://acme.example/users/alice"
+                },
+                { "did": "did:webvh:zQmPr8" }
+            ]
+        });
+        let rows = realm_member_roster(Some(&projection));
+        assert_eq!(rows.len(), 2);
+        let alice = rows.iter().find(|row| row.did.contains("alice")).unwrap();
+        assert_eq!(
+            alice.handle_uri.as_deref(),
+            Some("contrix://acme.example/users/alice")
+        );
+        let webvh = rows
+            .iter()
+            .find(|row| row.did.starts_with("did:webvh:"))
+            .unwrap();
+        assert!(webvh.handle_uri.is_none());
+    }
+
+    #[test]
+    fn realm_member_roster_falls_back_to_bare_did_strings() {
+        let projection = json!({
+            "members": ["did:web:bob.example", "did:web:carol.example"]
+        });
+        let rows = realm_member_roster(Some(&projection));
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.handle_uri.is_none()));
+    }
+
+    #[test]
+    fn member_display_label_prefers_handle_over_short_did() {
+        let with_handle = RealmMemberRow {
+            did: "did:web:acme.example:users:alice".to_owned(),
+            handle_uri: Some("contrix://acme.example/users/alice".to_owned()),
+        };
+        assert_eq!(member_display_label(&with_handle), "alice:acme.example");
+
+        let bare = RealmMemberRow {
+            did: "did:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha".to_owned(),
+            handle_uri: None,
+        };
+        let label = member_display_label(&bare);
+        assert!(label.starts_with("did:webvh:"));
+        assert!(label.contains("..."));
+    }
 
     /// `try_load_api_columns` is the synchronous-init probe. Real API
     /// fetching now lives in the async refresh handler that calls

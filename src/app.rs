@@ -1056,7 +1056,14 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 999px;
+  background: color-mix(in srgb, var(--text-2, var(--cx-muted)) 60%, transparent);
+}
+.card-detail-actor-dot.participant {
   background: var(--accent, var(--cx-brand));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--cx-brand)) 25%, transparent);
+}
+.card-detail-actor-row.participant {
+  background: color-mix(in srgb, var(--accent, var(--cx-brand)) 8%, var(--surface-2, var(--cx-bg-soft)) 70%);
 }
 .card-detail-actor-did {
   overflow: hidden;
