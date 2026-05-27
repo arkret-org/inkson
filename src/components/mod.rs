@@ -33,9 +33,6 @@ pub mod error_boundary;
 pub mod permission_pill;
 /// P5 — skeleton loaders for feed / agent list / key-backup history.
 pub mod skeleton;
-/// P5 — banner shown when running with the browser-storage symmetric-
-/// secret fallback. Always visible on wasm; opt-in on native.
-pub mod storage_fallback_banner;
 /// P5 — three-mode theme switcher (light / dark / follow system) with
 /// persistence routed through the caller's local-state path.
 pub mod theme_switcher;
@@ -67,7 +64,6 @@ pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
 pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
-pub use storage_fallback_banner::StorageFallbackBanner;
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use policy_deny_banner::{
     POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,

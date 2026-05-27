@@ -2505,17 +2505,6 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
     color: white;
 }
 
-/* ─── P5: Storage fallback banner ─────────────────────────────────── */
-.banner.warning.storage-fallback-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    background: color-mix(in srgb, #f59e0b 18%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
-    font-size: 0.9em;
-}
-
 /* ─── P5: Retryable error ─────────────────────────────────────────── */
 .retryable-error {
     border-left: 3px solid #ef4444;

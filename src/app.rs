@@ -6365,10 +6365,6 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
-            // P5 — browser-storage symmetric-secret fallback warning.
-            // Always rendered on wasm (no symmetric-secret tier); the
-            // component itself guards `cfg!(target_arch = "wasm32")`.
-            crate::components::StorageFallbackBanner { force: false }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",

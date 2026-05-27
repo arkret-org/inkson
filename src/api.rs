@@ -878,7 +878,7 @@ impl ContrixApi {
     /// (`POST /api/v1/events`).
     ///
     /// Per spec realm-and-space.md §2.6 the create event itself is the
-    /// genesis-member declaration for `created_by_principal`. The
+    /// genesis-member declaration for `created_by`. The
     /// server reducer bootstraps the member set atomically with the
     /// metadata, so the same actor's per-facet follow-ups
     /// (`cx.realm.join_rule` / `cx.realm.history_visibility` /

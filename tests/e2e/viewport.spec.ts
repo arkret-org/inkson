@@ -27,11 +27,6 @@ test.describe("responsive viewport — mobile", () => {
     await expect(page.getByTestId("onboarding-panel")).toBeVisible();
     await expect(page.getByTestId("onboarding-step-did")).toBeVisible();
   });
-
-  test.skip("storage fallback banner is visible on web build", async ({ page }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("storage-fallback-banner")).toBeVisible();
-  });
 });
 
 test.describe("responsive viewport — tablet", () => {
