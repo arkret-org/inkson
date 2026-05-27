@@ -19,7 +19,7 @@ type SpaceContainerProjection = {
   title: string;
   state: string;
   rank?: string;
-  parent_ref?: string;
+  parent_space_id?: string;
 };
 
 type FlowProjection = {
@@ -60,7 +60,7 @@ export async function mockContrixApi(page: Page) {
       title: "To Do",
       state: "active",
       rank: "U",
-      parent_ref: DEMO_BOARD_SPACE,
+      parent_space_id: DEMO_BOARD_SPACE,
     },
     {
       container_space_id: DEMO_PROGRESS_LIST,
@@ -69,7 +69,7 @@ export async function mockContrixApi(page: Page) {
       title: "In Progress",
       state: "active",
       rank: "f",
-      parent_ref: DEMO_BOARD_SPACE,
+      parent_space_id: DEMO_BOARD_SPACE,
     },
     {
       container_space_id: DEMO_DONE_LIST,
@@ -78,7 +78,7 @@ export async function mockContrixApi(page: Page) {
       title: "Done",
       state: "active",
       rank: "p",
-      parent_ref: DEMO_BOARD_SPACE,
+      parent_space_id: DEMO_BOARD_SPACE,
     },
     {
       container_space_id: DEMO_SECOND_LIST,
@@ -87,7 +87,7 @@ export async function mockContrixApi(page: Page) {
       title: "Selected Backlog",
       state: "active",
       rank: "U",
-      parent_ref: DEMO_SECOND_BOARD_SPACE,
+      parent_space_id: DEMO_SECOND_BOARD_SPACE,
     },
   ];
   const boardFlowProjections: FlowProjection[] = [
@@ -412,7 +412,7 @@ export async function mockContrixApi(page: Page) {
             title: object.title ?? containerId,
             state: "active",
             rank: object.rank,
-            parent_ref: object.parent_ref,
+            parent_space_id: object.parent_space_id,
           });
         }
       }

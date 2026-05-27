@@ -9111,7 +9111,7 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
                 SpacePreviewKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
             // Sidebar tree wiring: a Space without an explicit
-            // `parent_ref` is rendered under its home Realm. This
+            // `parent_space_id` is rendered under its home Realm. This
             // turns the Realm/Space classification into a single
             // tree the existing sidebar code can render without
             // restructure. Realms (and Spaces with real parents)

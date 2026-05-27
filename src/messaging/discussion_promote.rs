@@ -4,7 +4,7 @@
 //! `models/space-hierarchy.md §3-§4` (parent/child confirmed edge).
 //!
 //! The full promote flow needs three durable events:
-//! 1. `cx.space.create` for the new child Space, with `parent_ref`
+//! 1. `cx.space.create` for the new child Space, with `parent_space_id`
 //!    pointing back at the parent.
 //! 2. `cx.space.child` on the parent + `cx.space.parent` on the child
 //!    (the bidirectional confirmation edge).
@@ -86,7 +86,7 @@ pub fn build_child_space_create_op(
         .body(json!({
             "space_id": ids.child_space_id,
             "title": title.trim(),
-            "parent_ref": parent_space_id,
+            "parent_space_id": parent_space_id,
             "discoverability": "listed",
             "join_rule": "invite",
         }))

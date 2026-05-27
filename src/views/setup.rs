@@ -445,12 +445,12 @@ pub fn SetupPanel(
     let mut new_space_title = use_signal(String::new);
     let mut new_space_summary = use_signal(String::new);
     let mut new_space_kind = use_signal(|| "space".to_owned());
-    // Phase 3+ (M-SPACE-PARENT-1) — `parent_ref` + `default_realm_ref`
+    // Phase 3+ (M-SPACE-PARENT-1) — `parent_space_id` + `default_realm_id`
     // per spec realm-and-space.md §3.2. Empty string = root (omit
-    // parent_ref) for the parent picker; empty default_realm_ref means
+    // parent_space_id) for the parent picker; empty default_realm_id means
     // "inherit from parent / home Realm".
     let mut new_space_parent_id = use_signal(String::new);
-    let mut new_space_default_realm_ref = use_signal(String::new);
+    let mut new_space_default_realm_id = use_signal(String::new);
     let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut new_space_created_id = use_signal(String::new);
     let mut space_state = use_signal(|| "Draft not created yet".to_owned());
@@ -518,7 +518,7 @@ pub fn SetupPanel(
     let new_space_summary_value = new_space_summary();
     let new_space_kind_value = new_space_kind();
     let new_space_parent_id_value = new_space_parent_id();
-    let new_space_default_realm_ref_value = new_space_default_realm_ref();
+    let new_space_default_realm_id_value = new_space_default_realm_id();
     let new_space_state_value = new_space_state();
     let new_space_created_id_value = new_space_created_id();
     let new_space_created_id_label = short_protocol_id(&new_space_created_id_value);
@@ -1423,7 +1423,7 @@ pub fn SetupPanel(
                                 // parent. Picker is filtered by realm_id
                                 // (Realms aren't valid parents per §2.1;
                                 // cross-Realm parents are valid but live
-                                // under `default_realm_ref`).
+                                // under `default_realm_id`).
                                 div { class: "setup-field setup-field-span-2",
                                     label { "Parent Space (optional)" }
                                     if new_space_realm_id_value.trim().is_empty() {
@@ -1453,7 +1453,7 @@ pub fn SetupPanel(
                                 }
                             }
 
-                            // Spec realm-and-space.md §3.2 — `default_realm_ref`
+                            // Spec realm-and-space.md §3.2 — `default_realm_id`
                             // points new resources created from this Space at
                             // a different Realm. Most users leave this empty
                             // (= inherit home Realm). Folded as advanced.
@@ -1464,14 +1464,14 @@ pub fn SetupPanel(
                                 }
                                 div { class: "workflow-form setup-form-grid",
                                     div { class: "setup-field setup-field-span-2",
-                                        label { "default_realm_ref" }
+                                        label { "default_realm_id" }
                                         if available_realms.is_empty() {
                                             div { class: "muted", "Need at least one Realm to point at." }
                                         } else {
                                             select {
                                                 "data-testid": "new-space-default-realm-ref-input",
-                                                value: "{new_space_default_realm_ref_value}",
-                                                onchange: move |event| new_space_default_realm_ref.set(event.value()),
+                                                value: "{new_space_default_realm_id_value}",
+                                                onchange: move |event| new_space_default_realm_id.set(event.value()),
                                                 option { value: "", "(inherit — use home Realm)" }
                                                 for (id, title) in &available_realms {
                                                     {
@@ -1479,7 +1479,7 @@ pub fn SetupPanel(
                                                         rsx! {
                                                             option {
                                                                 value: "{id}",
-                                                                selected: new_space_default_realm_ref_value == *id,
+                                                                selected: new_space_default_realm_id_value == *id,
                                                                 "{title} ({id_label})"
                                                             }
                                                         }
@@ -1506,7 +1506,7 @@ pub fn SetupPanel(
                                         let summary = new_space_summary();
                                         let kind = new_space_kind();
                                         let parent_id = new_space_parent_id();
-                                        let default_realm_ref = new_space_default_realm_ref();
+                                        let default_realm_id = new_space_default_realm_id();
                                         let actor = account_did();
                                         new_space_state.set("Submitting cx.space.create...".to_owned());
                                         spawn(async move {
@@ -1522,10 +1522,10 @@ pub fn SetupPanel(
                                                     } else {
                                                         Some(parent_id.as_str())
                                                     };
-                                                    let default_realm_opt = if default_realm_ref.trim().is_empty() {
+                                                    let default_realm_opt = if default_realm_id.trim().is_empty() {
                                                         None
                                                     } else {
-                                                        Some(default_realm_ref.as_str())
+                                                        Some(default_realm_id.as_str())
                                                     };
                                                     match api.create_space_under_realm(
                                                         &realm_id,
@@ -1557,10 +1557,10 @@ pub fn SetupPanel(
                                                                 "timeline": { "events": [] }
                                                             });
                                                             if let Some(parent) = parent_opt {
-                                                                projection_body["parent_ref"] = json!(parent);
+                                                                projection_body["parent_space_id"] = json!(parent);
                                                             }
                                                             if let Some(default_realm) = default_realm_opt {
-                                                                projection_body["default_realm_ref"] = json!(default_realm);
+                                                                projection_body["default_realm_id"] = json!(default_realm);
                                                             }
                                                             state_store.write().save_space_projection(
                                                                 space.space_id.clone(),
@@ -1615,7 +1615,7 @@ pub fn SetupPanel(
                             div { class: "setup-summary-row setup-summary-row-stack",
                                 strong { "Wire shape" }
                                 span { class: "muted",
-                                    "cx.space.create event + optional parent_ref / default_realm_ref. Lifecycle actions below dispatch cx.space.archive / restore / tombstone."
+                                    "cx.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch cx.space.archive / restore / tombstone."
                                 }
                             }
                         }

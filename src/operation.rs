@@ -709,7 +709,7 @@ pub mod cx_ops {
             },
         });
         if let Some(parent_space_id) = parent_space_id {
-            body["object"]["parent_ref"] = json!(parent_space_id);
+            body["object"]["parent_space_id"] = json!(parent_space_id);
         }
         if let Some(rank) = rank {
             body["object"]["rank"] = json!(rank);
@@ -2316,7 +2316,7 @@ mod tests {
         assert_eq!(op.payload["object"]["kind"], "list");
         assert!(op.payload["object"].get("board_place_id").is_none());
         assert_eq!(
-            op.payload["object"]["parent_ref"],
+            op.payload["object"]["parent_space_id"],
             "cx:space:0196419b-0000-7000-8000-000000000003"
         );
         assert_eq!(op.payload["object"]["rank"], "U");

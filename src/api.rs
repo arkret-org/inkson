@@ -179,7 +179,7 @@ pub struct SpaceContainerProjectionView {
     #[serde(default)]
     pub rank: Option<String>,
     #[serde(default)]
-    pub parent_ref: Option<String>,
+    pub parent_space_id: Option<String>,
 }
 
 /// Server-side Flow row from `GET /api/v1/projection/flows`.
@@ -988,7 +988,7 @@ impl ContrixApi {
         summary: Option<&str>,
         kind: &str,
         parent_space_id: Option<&str>,
-        default_realm_ref: Option<&str>,
+        default_realm_id: Option<&str>,
     ) -> anyhow::Result<SpaceLifecycleResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
@@ -1013,7 +1013,7 @@ impl ContrixApi {
             summary,
             kind,
             parent_space_id,
-            default_realm_ref,
+            default_realm_id,
         )?;
         self.submit_event_envelope(&event).await?;
 
@@ -3749,7 +3749,7 @@ pub fn build_space_create_event(
     summary: Option<&str>,
     kind: &str,
     parent_space_id: Option<&str>,
-    default_realm_ref: Option<&str>,
+    default_realm_id: Option<&str>,
 ) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
     let mut object = json!({
@@ -3770,12 +3770,12 @@ pub fn build_space_create_event(
     if let Some(parent) = parent_space_id
         && !parent.trim().is_empty()
     {
-        object["parent_ref"] = Value::String(parent.trim().to_owned());
+        object["parent_space_id"] = Value::String(parent.trim().to_owned());
     }
-    if let Some(default_realm) = default_realm_ref
+    if let Some(default_realm) = default_realm_id
         && !default_realm.trim().is_empty()
     {
-        object["default_realm_ref"] = Value::String(scope_id_as_realm_id(default_realm.trim()));
+        object["default_realm_id"] = Value::String(scope_id_as_realm_id(default_realm.trim()));
     }
 
     let cell = space_cell("cx.component.space.create.v1", space_id);

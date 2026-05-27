@@ -511,7 +511,7 @@ fn board_space_options_from_projection(
     let mut options = containers
         .iter()
         .filter(|view| {
-            view.kind == "board" || (view.kind.trim().is_empty() && view.parent_ref.is_none())
+            view.kind == "board" || (view.kind.trim().is_empty() && view.parent_space_id.is_none())
         })
         .map(|view| BoardSpaceOption {
             id: view.container_space_id.clone(),
@@ -690,7 +690,7 @@ fn columns_from_lifecycle_projection(
 
     let mut cols = containers
         .iter()
-        .filter(|view| view.kind == "list" && view.parent_ref.as_deref() == Some(board_id.as_str()))
+        .filter(|view| view.kind == "list" && view.parent_space_id.as_deref() == Some(board_id.as_str()))
         .map(|view| KanbanColumn {
             id: view.container_space_id.clone(),
             title: if view.title.trim().is_empty() {
@@ -5085,7 +5085,7 @@ mod tests {
                 title: "Release".to_owned(),
                 state: "active".to_owned(),
                 rank: None,
-                parent_ref: None,
+                parent_space_id: None,
             },
             crate::api::SpaceContainerProjectionView {
                 container_space_id: "cx:space:0196419b-0000-7000-8000-000000000002".to_owned(),
@@ -5094,7 +5094,7 @@ mod tests {
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_ref: Some("cx:space:0196419b-0000-7000-8000-000000000001".to_owned()),
+                parent_space_id: Some("cx:space:0196419b-0000-7000-8000-000000000001".to_owned()),
             },
         ]);
 
@@ -5118,7 +5118,7 @@ mod tests {
                 title: "Release".to_owned(),
                 state: "active".to_owned(),
                 rank: None,
-                parent_ref: None,
+                parent_space_id: None,
             },
             crate::api::SpaceContainerProjectionView {
                 container_space_id: list_id.to_owned(),
@@ -5127,7 +5127,7 @@ mod tests {
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_ref: Some(board_id.to_owned()),
+                parent_space_id: Some(board_id.to_owned()),
             },
         ];
         let flows = vec![crate::api::FlowProjectionView {

@@ -143,9 +143,7 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
             let has_parent = projection_string(
                 body,
                 &[
-                    &["parent_ref"],
                     &["parent_space_id"],
-                    &["summary", "parent_ref"],
                     &["summary", "parent_space_id"],
                 ],
             )
