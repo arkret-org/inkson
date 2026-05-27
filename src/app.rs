@@ -1022,6 +1022,14 @@ body {
 .card-detail-empty {
   color: var(--text-3, var(--cx-muted));
   font-size: 13px;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.card-detail-tab-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .card-detail-tabs-section {
   min-height: 0;
@@ -1069,6 +1077,10 @@ body {
 .card-detail-synthesis-empty {
   color: var(--text-3, var(--cx-muted));
   font-size: 13px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
 }
 .card-detail-side-section {
   min-width: 0;

@@ -99,6 +99,8 @@ struct KanbanCard {
 struct CardDetailDraft {
     title: String,
     description: String,
+    /// Flow `body` — long-form content shown in the Description tab.
+    body: String,
     labels: Vec<String>,
     assignee: String,
     due: String,
@@ -1140,6 +1142,7 @@ pub fn KanbanPanel(
     let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
+    let mut card_edit_body = use_signal(String::new);
     let mut card_edit_labels = use_signal(String::new);
     let mut card_edit_assignee = use_signal(String::new);
     let mut card_edit_due = use_signal(String::new);
@@ -1195,6 +1198,7 @@ pub fn KanbanPanel(
                 let draft = card_detail_draft_from_card(&card);
                 card_edit_title.set(draft.title);
                 card_edit_description.set(draft.description);
+                card_edit_body.set(draft.body);
                 card_edit_labels.set(draft.labels.join(", "));
                 card_edit_assignee.set(draft.assignee);
                 card_edit_due.set(draft.due);
@@ -2342,6 +2346,7 @@ pub fn KanbanPanel(
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
                                         card_edit_description.set(draft.description);
+                                        card_edit_body.set(draft.body);
                                         card_edit_labels.set(draft.labels.join(", "));
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
@@ -3034,6 +3039,15 @@ pub fn KanbanPanel(
                                                 on_change: move |value| card_edit_description.set(value),
                                             }
                                         }
+                                        div { class: "field",
+                                            label { "Description" }
+                                            CardMarkdownEditor {
+                                                value: card_edit_body(),
+                                                base_url: base_url.clone(),
+                                                token: token(),
+                                                on_change: move |value| card_edit_body.set(value),
+                                            }
+                                        }
                                         div { class: "card-detail-form-actions",
                                             button {
                                                 class: "primary",
@@ -3047,6 +3061,7 @@ pub fn KanbanPanel(
                                                         let draft = CardDetailDraft {
                                                             title: card_edit_title().trim().to_owned(),
                                                             description: card_edit_description().trim().to_owned(),
+                                                            body: card_edit_body().trim().to_owned(),
                                                             labels: parse_card_labels(&card_edit_labels()),
                                                             assignee: card_edit_assignee().trim().to_owned(),
                                                             due: card_edit_due().trim().to_owned(),
@@ -3079,6 +3094,7 @@ pub fn KanbanPanel(
                                                         let draft = card_detail_draft_from_card(&current);
                                                         card_edit_title.set(draft.title);
                                                         card_edit_description.set(draft.description);
+                                                        card_edit_body.set(draft.body);
                                                         card_edit_labels.set(draft.labels.join(", "));
                                                         card_edit_assignee.set(draft.assignee);
                                                         card_edit_due.set(draft.due);
@@ -3108,6 +3124,7 @@ pub fn KanbanPanel(
                                                                 let draft = card_detail_draft_from_card(&current);
                                                                 card_edit_title.set(draft.title);
                                                                 card_edit_description.set(draft.description);
+                                                                card_edit_body.set(draft.body);
                                                                 card_edit_labels.set(draft.labels.join(", "));
                                                                 card_edit_assignee.set(draft.assignee);
                                                                 card_edit_due.set(draft.due);
@@ -3169,8 +3186,50 @@ pub fn KanbanPanel(
                                                         "data-testid": "card-description-panel",
                                                         role: "tabpanel",
                                                         if card.body.trim().is_empty() {
-                                                            div { class: "card-detail-empty", "No description" }
+                                                            div { class: "card-detail-empty",
+                                                                div { "No description" }
+                                                                button {
+                                                                    class: "secondary card-detail-mini-action",
+                                                                    "data-testid": "card-detail-add-description-button",
+                                                                    onclick: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            let draft = card_detail_draft_from_card(&current);
+                                                                            card_edit_title.set(draft.title);
+                                                                            card_edit_description.set(draft.description);
+                                                                            card_edit_body.set(draft.body);
+                                                                            card_edit_labels.set(draft.labels.join(", "));
+                                                                            card_edit_assignee.set(draft.assignee);
+                                                                            card_edit_due.set(draft.due);
+                                                                            editing_card_detail.set(true);
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: "plus" }
+                                                                    span { "Add description" }
+                                                                }
+                                                            }
                                                         } else {
+                                                            div { class: "card-detail-tab-actions",
+                                                                button {
+                                                                    class: "secondary card-detail-mini-action",
+                                                                    "data-testid": "card-detail-edit-description-button",
+                                                                    onclick: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            let draft = card_detail_draft_from_card(&current);
+                                                                            card_edit_title.set(draft.title);
+                                                                            card_edit_description.set(draft.description);
+                                                                            card_edit_body.set(draft.body);
+                                                                            card_edit_labels.set(draft.labels.join(", "));
+                                                                            card_edit_assignee.set(draft.assignee);
+                                                                            card_edit_due.set(draft.due);
+                                                                            editing_card_detail.set(true);
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: "settings" }
+                                                                    span { {crate::i18n::tr("common.edit")} }
+                                                                }
+                                                            }
                                                             div { class: "{description_class}",
                                                                 {crate::content::render_blocks(
                                                                     &crate::content::parse_message_body(&card.body),
@@ -3195,7 +3254,24 @@ pub fn KanbanPanel(
                                                         class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
-                                                        div { class: "card-detail-synthesis-empty", "No synthesis yet." }
+                                                        div { class: "card-detail-synthesis-empty",
+                                                            div { "No synthesis yet." }
+                                                            button {
+                                                                class: "secondary card-detail-mini-action",
+                                                                "data-testid": "card-detail-open-synthesis-button",
+                                                                onclick: {
+                                                                    let synthesis_navigator = navigator.clone();
+                                                                    let synthesis_space = selected_space.clone();
+                                                                    move |_| {
+                                                                        let _ = synthesis_navigator.push(Route::DocumentSpace {
+                                                                            space_id: synthesis_space.clone(),
+                                                                        });
+                                                                    }
+                                                                },
+                                                                UiIcon { name: "file" }
+                                                                span { "Open synthesis editor" }
+                                                            }
+                                                        }
                                                     }
                                                 } else {
                                                     div {
@@ -3374,6 +3450,7 @@ fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft {
     CardDetailDraft {
         title: card.title.clone(),
         description: card.description.clone(),
+        body: card.body.clone(),
         labels: card.labels.clone(),
         assignee: editor_value_for_optional_card_field(&card.assignee),
         due: editor_value_for_optional_card_field(&card.due),
@@ -3445,6 +3522,16 @@ fn card_detail_update_patch(
         patch.insert("summary".to_owned(), op);
     }
 
+    let body = draft.body.trim();
+    if current.body.trim() != body {
+        let op = if body.is_empty() {
+            json!({ "$op": "unset" })
+        } else {
+            json!({ "$op": "set", "value": body })
+        };
+        patch.insert("body".to_owned(), op);
+    }
+
     let current_assignee = editor_value_for_optional_card_field(&current.assignee);
     let current_due = editor_value_for_optional_card_field(&current.due);
     let fields_changed = current.labels != draft.labels
@@ -3476,6 +3563,7 @@ fn card_detail_update_patch(
 fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
+    card.body = draft.body.trim().to_owned();
     card.labels = draft.labels.clone();
     card.assignee = display_optional_card_field(&draft.assignee);
     card.due = display_optional_card_field(&draft.due);
@@ -5345,6 +5433,7 @@ mod tests {
         let draft = CardDetailDraft {
             title: "Launch checklist".to_owned(),
             description: "Ship blockers only".to_owned(),
+            body: String::new(),
             labels: vec!["release".to_owned(), "ops".to_owned()],
             assignee: "did:web:alice.example".to_owned(),
             due: "2026-05-20".to_owned(),
@@ -5363,6 +5452,23 @@ mod tests {
     }
 
     #[test]
+    fn card_detail_update_patch_emits_body_set_and_unset_ops() {
+        let mut current = test_card("cx:flow:f1", "U");
+        current.title = "Keep".to_owned();
+        current.body = "old long-form body".to_owned();
+        let mut draft = card_detail_draft_from_card(&current);
+        draft.body = "new long-form body".to_owned();
+        let patch = card_detail_update_patch(&current, &draft).unwrap();
+        assert_eq!(patch["body"]["$op"], "set");
+        assert_eq!(patch["body"]["value"], "new long-form body");
+
+        let mut draft_clear = card_detail_draft_from_card(&current);
+        draft_clear.body = String::new();
+        let patch = card_detail_update_patch(&current, &draft_clear).unwrap();
+        assert_eq!(patch["body"]["$op"], "unset");
+    }
+
+    #[test]
     fn card_detail_update_patch_unsets_empty_optional_fields() {
         let mut current = test_card("cx:flow:f1", "U");
         current.title = "Keep".to_owned();
@@ -5372,6 +5478,7 @@ mod tests {
         let draft = CardDetailDraft {
             title: "Keep".to_owned(),
             description: String::new(),
+            body: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
             due: String::new(),
@@ -5389,6 +5496,7 @@ mod tests {
         let draft = CardDetailDraft {
             title: "New title".to_owned(),
             description: "New summary".to_owned(),
+            body: "Body content".to_owned(),
             labels: vec!["ops".to_owned()],
             assignee: String::new(),
             due: "2026-05-20".to_owned(),
@@ -5397,6 +5505,7 @@ mod tests {
         apply_card_detail_draft(&mut card, &draft);
         assert_eq!(card.title, "New title");
         assert_eq!(card.description, "New summary");
+        assert_eq!(card.body, "Body content");
         assert_eq!(card.labels, vec!["ops".to_owned()]);
         assert_eq!(card.assignee, "—");
         assert_eq!(card.due, "2026-05-20");
