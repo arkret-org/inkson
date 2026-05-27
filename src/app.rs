@@ -1031,6 +1031,41 @@ body {
   justify-content: flex-end;
   gap: 6px;
 }
+.card-detail-sidebar-tabs {
+  margin-bottom: 8px;
+}
+.card-detail-actor-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.card-detail-actor-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2, var(--cx-bg-soft)) 70%, transparent);
+  font-size: 13px;
+  color: var(--text, var(--cx-ink));
+}
+.card-detail-actor-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent, var(--cx-brand));
+}
+.card-detail-actor-did {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--text-2, var(--cx-muted));
+}
 .card-detail-tabs-section {
   min-height: 0;
 }
@@ -1442,6 +1477,22 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+/* The global `.primary` rule slaps a 14×28px accent-tinted box-shadow
+ * on every primary button — in the dark theme that reads as a bright
+ * orange halo around the Save button and makes Save/Cancel look chunky
+ * inside the compact card-detail edit form. Match the rest of the
+ * popup's modest mini-action sizing here (no shadow, tighter padding,
+ * smaller min-height) without globally suppressing the CTA treatment. */
+.card-detail-form-actions .primary,
+.card-detail-form-actions .secondary {
+  min-height: 34px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.card-detail-form-actions .primary:hover {
+  box-shadow: none;
 }
 @media (max-width: 900px) {
   .card-detail-overlay {

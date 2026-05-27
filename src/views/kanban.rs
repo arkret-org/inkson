@@ -77,6 +77,12 @@ struct KanbanCard {
     description: String,
     /// Flow `body` — rich long-form content shown in the Description tab.
     body: String,
+    /// Flow `synthesis` — rich content shown in the Synthesis tab. Stored
+    /// on the Flow object alongside `body` so the kanban popup can edit
+    /// it inline without round-tripping through the Document/Morph view.
+    /// Canonical wire path: `object.synthesis` (with `object.tracks.synthesis.body`
+    /// honored as a back-compat fallback in projection reads).
+    synthesis: String,
     labels: Vec<String>,
     assignee: String,
     due: String,
@@ -101,6 +107,8 @@ struct CardDetailDraft {
     description: String,
     /// Flow `body` — long-form content shown in the Description tab.
     body: String,
+    /// Flow `synthesis` — long-form content shown in the Synthesis tab.
+    synthesis: String,
     labels: Vec<String>,
     assignee: String,
     due: String,
@@ -167,6 +175,22 @@ enum CardDetailContentTab {
     Discussion,
 }
 
+/// Which tab the right-hand card-detail sidebar is showing.
+/// - `Details`: per-card metadata (Flow ID, Assignee, Due, Visibility) + Activity hints.
+/// - `Members`: every actor in the surrounding Realm/Space — sourced from
+///   the cached space projection (`members`/`participants`/`owners` keys).
+/// - `Participants`: actors that have authored an event against the current
+///   Flow specifically — derived by scanning local raw operations for the
+///   flow's id so the list is meaningful even before the server returns a
+///   discussion-roster projection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CardDetailSidebarTab {
+    #[default]
+    Details,
+    Members,
+    Participants,
+}
+
 /// Which slice of card fields the inline edit form is currently editing.
 /// The Summary scope edits title + the short summary blurb; the
 /// Description scope edits only the long-form body shown in the
@@ -178,6 +202,7 @@ enum CardEditScope {
     #[default]
     Summary,
     Description,
+    Synthesis,
 }
 
 const TOAST_EDITOR_SCRIPT_URL: &str =
@@ -654,6 +679,12 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
                 .get("fields")
                 .and_then(|fields| fields.get("body"))
         })),
+        synthesis: flow_body_display_text(item.object.get("synthesis").or_else(|| {
+            item.object
+                .get("tracks")
+                .and_then(|tracks| tracks.get("synthesis"))
+                .and_then(|track| track.get("body"))
+        })),
         labels: item
             .object
             .get("fields")
@@ -908,6 +939,12 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
         title: title.clone(),
         description,
         body: flow_body_display_text(flow.body.as_ref().or_else(|| flow.fields.get("body"))),
+        synthesis: flow_body_display_text(flow.fields.get("synthesis").or_else(|| {
+            flow.fields
+                .get("tracks")
+                .and_then(|tracks| tracks.get("synthesis"))
+                .and_then(|track| track.get("body"))
+        })),
         labels: flow_projection_labels(flow),
         assignee: flow_projection_field_string(flow, None, &["assignee"])
             .unwrap_or_else(|| "—".to_owned()),
@@ -943,6 +980,7 @@ fn local_created_card(
         title,
         description,
         body: String::new(),
+        synthesis: String::new(),
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),
         due: "unscheduled".to_owned(),
@@ -963,7 +1001,135 @@ fn overlay_local_card_creates(
     board_space_id: &str,
 ) -> Vec<KanbanColumn> {
     let state = state_store.load();
-    overlay_local_card_create_records(columns, &state.raw_operations, board_space_id)
+    let columns =
+        overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
+    overlay_local_card_update_records(columns, &state.raw_operations)
+}
+
+/// Re-apply locally-queued `cx.flow.update` patches on top of the
+/// server projection. Without this overlay, optimistic edits to a
+/// card's title / summary / body / fields would vanish on page reload
+/// because the server projection is refetched but the local mutation
+/// lived only in the in-memory `columns` signal. The reducer copy of
+/// each Move is the source of truth once the server confirms, but in
+/// the meantime we keep the user's edit visible by replaying the
+/// queued payload here. Ops marked as terminally-failed are skipped
+/// so a rejected edit doesn't keep clobbering the projection.
+fn overlay_local_card_update_records(
+    mut columns: Vec<KanbanColumn>,
+    raw_operations: &[RawOperationRecord],
+) -> Vec<KanbanColumn> {
+    for update in raw_operations
+        .iter()
+        .filter_map(local_card_update_from_raw_operation)
+    {
+        for column in columns.iter_mut() {
+            if let Some(card) = column.cards.iter_mut().find(|card| card.id == update.flow_id) {
+                apply_card_update_overlay(card, &update);
+            }
+        }
+    }
+    columns
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LocalCardUpdate {
+    flow_id: String,
+    title: Option<Option<String>>,
+    summary: Option<Option<String>>,
+    body: Option<Option<String>>,
+    synthesis: Option<Option<String>>,
+    fields: Option<Value>,
+}
+
+fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<LocalCardUpdate> {
+    let payload = &record.payload;
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    if kind != "cx.flow.update" {
+        return None;
+    }
+    let write_state =
+        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
+    if matches!(
+        write_state.as_str(),
+        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
+    ) {
+        return None;
+    }
+    let body = payload.get("body").or_else(|| payload.get("payload"))?;
+    let flow_id = json_path_string(Some(body), &["flow_id"])
+        .or_else(|| json_path_string(Some(body), &["target_ref"]))?;
+    let patch = body.get("patch")?.as_object()?;
+
+    fn extract_set_unset(op: &Value) -> Option<Option<String>> {
+        let op_kind = op.get("$op").and_then(Value::as_str)?;
+        match op_kind {
+            "set" => op
+                .get("value")
+                .and_then(Value::as_str)
+                .map(|s| Some(s.to_owned())),
+            "unset" => Some(None),
+            _ => None,
+        }
+    }
+
+    let title = patch.get("title").and_then(extract_set_unset);
+    let summary = patch.get("summary").and_then(extract_set_unset);
+    let body_op = patch.get("body").and_then(extract_set_unset);
+    let synthesis = patch.get("synthesis").and_then(extract_set_unset);
+    let fields = patch
+        .get("fields")
+        .and_then(|fields_op| {
+            if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
+                fields_op.get("value").cloned()
+            } else {
+                None
+            }
+        });
+
+    Some(LocalCardUpdate {
+        flow_id,
+        title,
+        summary,
+        body: body_op,
+        synthesis,
+        fields,
+    })
+}
+
+fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCardUpdate) {
+    if let Some(slot) = &update.title {
+        card.title = slot.clone().unwrap_or_default();
+    }
+    if let Some(slot) = &update.summary {
+        card.description = slot.clone().unwrap_or_default();
+    }
+    if let Some(slot) = &update.body {
+        card.body = slot.clone().unwrap_or_default();
+    }
+    if let Some(slot) = &update.synthesis {
+        card.synthesis = slot.clone().unwrap_or_default();
+    }
+    if let Some(fields) = &update.fields {
+        if let Some(labels) = fields.get("labels").and_then(Value::as_array) {
+            card.labels = labels
+                .iter()
+                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                .collect();
+        }
+        if let Some(assignee) = fields.get("assignee").and_then(Value::as_str) {
+            card.assignee = display_optional_card_field(assignee);
+        }
+        if let Some(due) = fields
+            .get("due_at")
+            .or_else(|| fields.get("due"))
+            .and_then(Value::as_str)
+        {
+            card.due = display_optional_card_field(due);
+        }
+    }
+    card.state = CardState::Queued;
 }
 
 fn overlay_local_card_create_records(
@@ -1158,11 +1324,13 @@ pub fn KanbanPanel(
     let mut card_detail_actions_open = use_signal(|| false);
     let mut card_detail_description_expanded = use_signal(|| false);
     let mut card_detail_tab = use_signal(CardDetailContentTab::default);
+    let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
     let mut card_edit_body = use_signal(String::new);
+    let mut card_edit_synthesis = use_signal(String::new);
     let mut card_edit_labels = use_signal(String::new);
     let mut card_edit_assignee = use_signal(String::new);
     let mut card_edit_due = use_signal(String::new);
@@ -1219,6 +1387,7 @@ pub fn KanbanPanel(
                 card_edit_title.set(draft.title);
                 card_edit_description.set(draft.description);
                 card_edit_body.set(draft.body);
+                card_edit_synthesis.set(draft.synthesis);
                 card_edit_labels.set(draft.labels.join(", "));
                 card_edit_assignee.set(draft.assignee);
                 card_edit_due.set(draft.due);
@@ -2367,6 +2536,7 @@ pub fn KanbanPanel(
                                         card_edit_title.set(draft.title);
                                         card_edit_description.set(draft.description);
                                         card_edit_body.set(draft.body);
+                                        card_edit_synthesis.set(draft.synthesis);
                                         card_edit_labels.set(draft.labels.join(", "));
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
@@ -3074,6 +3244,18 @@ pub fn KanbanPanel(
                                                 }
                                             }
                                         }
+                                        if card_edit_scope() == CardEditScope::Synthesis {
+                                            div { class: "field",
+                                                label { "Synthesis" }
+                                                CardMarkdownEditor {
+                                                    value: card_edit_synthesis(),
+                                                    base_url: base_url.clone(),
+                                                    token: token(),
+                                                    on_change: move |value| card_edit_synthesis.set(value),
+                                                    slot: "synthesis".to_owned(),
+                                                }
+                                            }
+                                        }
                                         div { class: "card-detail-form-actions",
                                             button {
                                                 class: "primary",
@@ -3088,6 +3270,7 @@ pub fn KanbanPanel(
                                                             title: card_edit_title().trim().to_owned(),
                                                             description: card_edit_description().trim().to_owned(),
                                                             body: card_edit_body().trim().to_owned(),
+                                                            synthesis: card_edit_synthesis().trim().to_owned(),
                                                             labels: parse_card_labels(&card_edit_labels()),
                                                             assignee: card_edit_assignee().trim().to_owned(),
                                                             due: card_edit_due().trim().to_owned(),
@@ -3121,6 +3304,7 @@ pub fn KanbanPanel(
                                                         card_edit_title.set(draft.title);
                                                         card_edit_description.set(draft.description);
                                                         card_edit_body.set(draft.body);
+                                                        card_edit_synthesis.set(draft.synthesis);
                                                         card_edit_labels.set(draft.labels.join(", "));
                                                         card_edit_assignee.set(draft.assignee);
                                                         card_edit_due.set(draft.due);
@@ -3151,6 +3335,7 @@ pub fn KanbanPanel(
                                                                 card_edit_title.set(draft.title);
                                                                 card_edit_description.set(draft.description);
                                                                 card_edit_body.set(draft.body);
+                                                                card_edit_synthesis.set(draft.synthesis);
                                                                 card_edit_labels.set(draft.labels.join(", "));
                                                                 card_edit_assignee.set(draft.assignee);
                                                                 card_edit_due.set(draft.due);
@@ -3225,6 +3410,7 @@ pub fn KanbanPanel(
                                                                             card_edit_title.set(draft.title);
                                                                             card_edit_description.set(draft.description);
                                                                             card_edit_body.set(draft.body);
+                                                                            card_edit_synthesis.set(draft.synthesis);
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
@@ -3248,6 +3434,7 @@ pub fn KanbanPanel(
                                                                             card_edit_title.set(draft.title);
                                                                             card_edit_description.set(draft.description);
                                                                             card_edit_body.set(draft.body);
+                                                                            card_edit_synthesis.set(draft.synthesis);
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
@@ -3280,25 +3467,62 @@ pub fn KanbanPanel(
                                                     }
                                                 } else if active_detail_tab == CardDetailContentTab::Synthesis {
                                                     div {
-                                                        class: "card-detail-synthesis-panel",
+                                                        class: "card-detail-description-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
-                                                        div { class: "card-detail-synthesis-empty",
-                                                            div { "No synthesis yet." }
-                                                            button {
-                                                                class: "secondary card-detail-mini-action",
-                                                                "data-testid": "card-detail-open-synthesis-button",
-                                                                onclick: {
-                                                                    let synthesis_navigator = navigator.clone();
-                                                                    let synthesis_space = selected_space.clone();
-                                                                    move |_| {
-                                                                        let _ = synthesis_navigator.push(Route::DocumentSpace {
-                                                                            space_id: synthesis_space.clone(),
-                                                                        });
-                                                                    }
-                                                                },
-                                                                UiIcon { name: "file" }
-                                                                span { "Open synthesis editor" }
+                                                        if card.synthesis.trim().is_empty() {
+                                                            div { class: "card-detail-empty",
+                                                                div { "No synthesis yet." }
+                                                                button {
+                                                                    class: "secondary card-detail-mini-action",
+                                                                    "data-testid": "card-detail-add-synthesis-button",
+                                                                    onclick: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            let draft = card_detail_draft_from_card(&current);
+                                                                            card_edit_title.set(draft.title);
+                                                                            card_edit_description.set(draft.description);
+                                                                            card_edit_body.set(draft.body);
+                                                                            card_edit_synthesis.set(draft.synthesis);
+                                                                            card_edit_labels.set(draft.labels.join(", "));
+                                                                            card_edit_assignee.set(draft.assignee);
+                                                                            card_edit_due.set(draft.due);
+                                                                            card_edit_scope.set(CardEditScope::Synthesis);
+                                                                            editing_card_detail.set(true);
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: "plus" }
+                                                                    span { "Add synthesis" }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            div { class: "card-detail-tab-actions",
+                                                                button {
+                                                                    class: "secondary card-detail-mini-action",
+                                                                    "data-testid": "card-detail-edit-synthesis-button",
+                                                                    onclick: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            let draft = card_detail_draft_from_card(&current);
+                                                                            card_edit_title.set(draft.title);
+                                                                            card_edit_description.set(draft.description);
+                                                                            card_edit_body.set(draft.body);
+                                                                            card_edit_synthesis.set(draft.synthesis);
+                                                                            card_edit_labels.set(draft.labels.join(", "));
+                                                                            card_edit_assignee.set(draft.assignee);
+                                                                            card_edit_due.set(draft.due);
+                                                                            card_edit_scope.set(CardEditScope::Synthesis);
+                                                                            editing_card_detail.set(true);
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: "settings" }
+                                                                    span { {crate::i18n::tr("common.edit")} }
+                                                                }
+                                                            }
+                                                            div { class: "card-detail-description",
+                                                                {crate::content::render_blocks(
+                                                                    &crate::content::parse_message_body(&card.synthesis),
+                                                                )}
                                                             }
                                                         }
                                                     }
@@ -3327,37 +3551,143 @@ pub fn KanbanPanel(
 
                                         if sidebar_is_visible {
                                         aside { class: "card-detail-sidebar",
-                                            div { class: "card-detail-side-section", "data-testid": "card-fields",
-                                                h3 { "Details" }
-                                                dl { class: "card-detail-field-list",
+                                            {
+                                                let store = state_store.read().load();
+                                                let realm_member_dids = realm_member_dids(
+                                                    store.space_projections.get(&selected_space),
+                                                );
+                                                let realm_member_count = realm_member_dids.len();
+                                                let participant_dids = flow_participant_dids(
+                                                    &store.raw_operations,
+                                                    &card.primary_flow_id,
+                                                );
+                                                let participant_count = participant_dids.len();
+                                                let active_sidebar_tab = card_detail_sidebar_tab();
+                                                let details_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Details {
+                                                    "card-detail-tab active"
+                                                } else {
+                                                    "card-detail-tab"
+                                                };
+                                                let members_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Members {
+                                                    "card-detail-tab active"
+                                                } else {
+                                                    "card-detail-tab"
+                                                };
+                                                let participants_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Participants {
+                                                    "card-detail-tab active"
+                                                } else {
+                                                    "card-detail-tab"
+                                                };
+                                                rsx! {
                                                     div {
-                                                        dt { "Flow ID" }
-                                                        dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
+                                                        class: "card-detail-tabs card-detail-sidebar-tabs",
+                                                        "data-testid": "card-detail-sidebar-tabs",
+                                                        role: "tablist",
+                                                        "aria-label": "Sidebar views",
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "{details_tab_class}",
+                                                            "data-testid": "card-detail-sidebar-tab-details",
+                                                            role: "tab",
+                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Details}",
+                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Details),
+                                                            "Details"
+                                                        }
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "{members_tab_class}",
+                                                            "data-testid": "card-detail-sidebar-tab-members",
+                                                            role: "tab",
+                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Members}",
+                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Members),
+                                                            "Members ({realm_member_count})"
+                                                        }
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "{participants_tab_class}",
+                                                            "data-testid": "card-detail-sidebar-tab-participants",
+                                                            role: "tab",
+                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Participants}",
+                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Participants),
+                                                            "Participants ({participant_count})"
+                                                        }
                                                     }
-                                                    div {
-                                                        dt { "Assignee" }
-                                                        dd { "{card.assignee}" }
+                                                    if active_sidebar_tab == CardDetailSidebarTab::Details {
+                                                        div { class: "card-detail-side-section", "data-testid": "card-fields",
+                                                            h3 { "Details" }
+                                                            dl { class: "card-detail-field-list",
+                                                                div {
+                                                                    dt { "Flow ID" }
+                                                                    dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
+                                                                }
+                                                                div {
+                                                                    dt { "Assignee" }
+                                                                    dd { "{card.assignee}" }
+                                                                }
+                                                                div {
+                                                                    dt { "Due" }
+                                                                    dd { "{card.due}" }
+                                                                }
+                                                                div {
+                                                                    dt { "Visibility" }
+                                                                    dd { "{card.external_visibility}" }
+                                                                }
+                                                            }
+                                                        }
+                                                        div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
+                                                            h3 { "Activity" }
+                                                            div { class: "card-detail-activity-item",
+                                                                span { class: "card-detail-activity-dot" }
+                                                                div { "{card.activity_hint}" }
+                                                            }
+                                                            div { class: "card-detail-activity-item muted",
+                                                                span { class: "card-detail-activity-dot" }
+                                                                div { "{card.audit_hint}" }
+                                                            }
+                                                        }
                                                     }
-                                                    div {
-                                                        dt { "Due" }
-                                                        dd { "{card.due}" }
+                                                    if active_sidebar_tab == CardDetailSidebarTab::Members {
+                                                        div { class: "card-detail-side-section", "data-testid": "card-detail-realm-members",
+                                                            h3 { "Realm members" }
+                                                            if realm_member_dids.is_empty() {
+                                                                div { class: "card-detail-empty",
+                                                                    div { "No members yet for this Realm." }
+                                                                }
+                                                            } else {
+                                                                ul { class: "card-detail-actor-list",
+                                                                    for did in realm_member_dids.iter() {
+                                                                        li {
+                                                                            key: "{did}",
+                                                                            class: "card-detail-actor-row",
+                                                                            span { class: "card-detail-actor-dot" }
+                                                                            span { class: "card-detail-actor-did", title: "{did}", "{short_protocol_id(did)}" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
-                                                    div {
-                                                        dt { "Visibility" }
-                                                        dd { "{card.external_visibility}" }
+                                                    if active_sidebar_tab == CardDetailSidebarTab::Participants {
+                                                        div { class: "card-detail-side-section", "data-testid": "card-detail-flow-participants",
+                                                            h3 { "Flow participants" }
+                                                            if participant_dids.is_empty() {
+                                                                div { class: "card-detail-empty",
+                                                                    div { "No participants yet. This list grows as actors message or update the Flow." }
+                                                                }
+                                                            } else {
+                                                                ul { class: "card-detail-actor-list",
+                                                                    for did in participant_dids.iter() {
+                                                                        li {
+                                                                            key: "{did}",
+                                                                            class: "card-detail-actor-row",
+                                                                            span { class: "card-detail-actor-dot" }
+                                                                            span { class: "card-detail-actor-did", title: "{did}", "{short_protocol_id(did)}" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
-                                                }
-                                            }
-
-                                            div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
-                                                h3 { "Activity" }
-                                                div { class: "card-detail-activity-item",
-                                                    span { class: "card-detail-activity-dot" }
-                                                    div { "{card.activity_hint}" }
-                                                }
-                                                div { class: "card-detail-activity-item muted",
-                                                    span { class: "card-detail-activity-dot" }
-                                                    div { "{card.audit_hint}" }
                                                 }
                                             }
                                         }
@@ -3398,6 +3728,108 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
         .flat_map(|column| column.cards.iter())
         .find(|card| card_matches_flow_id(card, flow_id))
         .cloned()
+}
+
+/// Collect a deduped, sorted list of actor DIDs from a cached space
+/// projection's roster-like fields. Handles both top-level entries
+/// (`projection.members`) and the wrapped `summary.members` shape
+/// soland emits for some space kinds. Each member entry is either a
+/// bare DID string or a map carrying a `did` / `actor_id` / `actor_did`.
+fn realm_member_dids(projection: Option<&Value>) -> Vec<String> {
+    let mut dids: BTreeSet<String> = BTreeSet::new();
+    let Some(root) = projection else {
+        return Vec::new();
+    };
+    let sources: [&Value; 2] = [root, root.get("summary").unwrap_or(root)];
+    for source in sources {
+        for key in [
+            "members",
+            "participants",
+            "owners",
+            "admins",
+            "admin_dids",
+            "owner",
+            "created_by",
+            "creator",
+        ] {
+            collect_dids_from_value(source.get(key), &mut dids);
+        }
+    }
+    let mut out: Vec<String> = dids.into_iter().collect();
+    out.sort();
+    out
+}
+
+/// Collect a deduped list of actor DIDs that have authored *any*
+/// queued / accepted raw operation that targets the given flow id
+/// (matched against `target_ref`, `flow_id`, or `object.id`). This
+/// gives the "who's interacted with this Flow" list shown on the
+/// sidebar's Participants tab even before the server returns a
+/// canonical discussion-roster projection.
+fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -> Vec<String> {
+    let flow_id = flow_id.trim();
+    if flow_id.is_empty() {
+        return Vec::new();
+    }
+    let mut dids: BTreeSet<String> = BTreeSet::new();
+    for op in raw_operations {
+        let payload = &op.payload;
+        let target = json_path_string(Some(payload), &["body", "target_ref"])
+            .or_else(|| json_path_string(Some(payload), &["body", "flow_id"]))
+            .or_else(|| json_path_string(Some(payload), &["body", "object", "id"]))
+            .or_else(|| json_path_string(Some(payload), &["payload", "target_ref"]))
+            .or_else(|| json_path_string(Some(payload), &["payload", "flow_id"]));
+        if target.as_deref() != Some(flow_id) {
+            continue;
+        }
+        for path in [
+            &["body", "actor_id"][..],
+            &["body", "actor_did"][..],
+            &["body", "sender"][..],
+            &["body", "author"][..],
+            &["body", "created_by"][..],
+            &["payload", "actor_id"][..],
+            &["actor_id"][..],
+            &["actor_did"][..],
+        ] {
+            if let Some(did) = json_path_string(Some(payload), path) {
+                dids.insert(did);
+            }
+        }
+    }
+    let mut out: Vec<String> = dids.into_iter().collect();
+    out.sort();
+    out
+}
+
+fn collect_dids_from_value(value: Option<&Value>, out: &mut BTreeSet<String>) {
+    let Some(value) = value else { return };
+    match value {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                out.insert(trimmed.to_owned());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_dids_from_value(Some(item), out);
+            }
+        }
+        Value::Object(map) => {
+            for key in ["did", "actor_id", "actor_did", "principal_did", "id"] {
+                if let Some(child) = map.get(key) {
+                    if let Some(s) = child.as_str() {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            out.insert(trimmed.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn card_detail_route_space_id(space_id: &str) -> String {
@@ -3480,6 +3912,7 @@ fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft {
         title: card.title.clone(),
         description: card.description.clone(),
         body: card.body.clone(),
+        synthesis: card.synthesis.clone(),
         labels: card.labels.clone(),
         assignee: editor_value_for_optional_card_field(&card.assignee),
         due: editor_value_for_optional_card_field(&card.due),
@@ -3561,6 +3994,16 @@ fn card_detail_update_patch(
         patch.insert("body".to_owned(), op);
     }
 
+    let synthesis = draft.synthesis.trim();
+    if current.synthesis.trim() != synthesis {
+        let op = if synthesis.is_empty() {
+            json!({ "$op": "unset" })
+        } else {
+            json!({ "$op": "set", "value": synthesis })
+        };
+        patch.insert("synthesis".to_owned(), op);
+    }
+
     let current_assignee = editor_value_for_optional_card_field(&current.assignee);
     let current_due = editor_value_for_optional_card_field(&current.due);
     let fields_changed = current.labels != draft.labels
@@ -3593,6 +4036,7 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
     card.body = draft.body.trim().to_owned();
+    card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
     card.assignee = display_optional_card_field(&draft.assignee);
     card.due = display_optional_card_field(&draft.due);
@@ -4843,6 +5287,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 title: "Legal review for public beta".to_owned(),
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
                 body: String::new(),
+                synthesis: String::new(),
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
                 assignee: "Alice".to_owned(),
                 due: "May 08".to_owned(),
@@ -4870,6 +5315,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
                 body: String::new(),
+                synthesis: String::new(),
                 labels: vec!["copy".to_owned(), "support".to_owned()],
                 assignee: "Bob".to_owned(),
                 due: "May 10".to_owned(),
@@ -4894,6 +5340,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
                 body: String::new(),
+                synthesis: String::new(),
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],
                 assignee: "Carol".to_owned(),
                 due: "May 01".to_owned(),
@@ -5463,6 +5910,7 @@ mod tests {
             title: "Launch checklist".to_owned(),
             description: "Ship blockers only".to_owned(),
             body: String::new(),
+            synthesis: String::new(),
             labels: vec!["release".to_owned(), "ops".to_owned()],
             assignee: "did:web:alice.example".to_owned(),
             due: "2026-05-20".to_owned(),
@@ -5478,6 +5926,131 @@ mod tests {
         );
         assert_eq!(patch["fields"]["value"]["due_at"], "2026-05-20");
         assert!(patch["fields"]["value"].get("due").is_none());
+    }
+
+    #[test]
+    fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projection() {
+        // Simulate: server projection returns the pre-edit card; the user
+        // had queued a cx.flow.update locally that bumped summary + body.
+        // After page refresh, the overlay must re-apply that patch so the
+        // user doesn't see their edits silently disappear.
+        let mut card = test_card("cx:flow:edit-me", "U");
+        card.title = "old title".to_owned();
+        card.description = "old summary".to_owned();
+        card.body = "old body".to_owned();
+        card.synthesis = "old synthesis".to_owned();
+        let columns = vec![KanbanColumn {
+            id: "cx:space:list-a".to_owned(),
+            title: "A".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![card],
+            state: SpaceContainerLifecycleState::Active,
+        }];
+        let queued = RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            space_id: Some("cx:realm:r1".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "cx.flow.update",
+                "operation_id": "op-1",
+                "write_state": "queued",
+                "body": {
+                    "flow_id": "cx:flow:edit-me",
+                    "patch": {
+                        "title": { "$op": "set", "value": "new title" },
+                        "summary": { "$op": "set", "value": "new summary" },
+                        "body": { "$op": "set", "value": "new body" },
+                        "synthesis": { "$op": "set", "value": "new synthesis" },
+                    },
+                },
+            }),
+        };
+        let overlaid = overlay_local_card_update_records(columns, &[queued]);
+        let card = &overlaid[0].cards[0];
+        assert_eq!(card.title, "new title");
+        assert_eq!(card.description, "new summary");
+        assert_eq!(card.body, "new body");
+        assert_eq!(card.synthesis, "new synthesis");
+        assert_eq!(card.state, CardState::Queued);
+    }
+
+    #[test]
+    fn realm_member_dids_dedupes_across_summary_and_top_level_roster_fields() {
+        let projection = json!({
+            "members": [
+                "did:web:alice.example",
+                { "did": "did:web:bob.example", "display_name": "Bob" },
+            ],
+            "owners": ["did:web:alice.example"],
+            "summary": {
+                "admins": [{ "actor_did": "did:web:carol.example" }],
+                "participants": ["did:web:bob.example"],
+            },
+        });
+        let dids = realm_member_dids(Some(&projection));
+        assert_eq!(
+            dids,
+            vec![
+                "did:web:alice.example".to_owned(),
+                "did:web:bob.example".to_owned(),
+                "did:web:carol.example".to_owned(),
+            ]
+        );
+        assert!(realm_member_dids(None).is_empty());
+    }
+
+    #[test]
+    fn flow_participant_dids_filters_by_target_flow_and_pulls_unique_actors() {
+        let ops = vec![
+            RawOperationRecord {
+                operation_id: "op-a".to_owned(),
+                space_id: Some("cx:realm:r1".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "cx.flow.update",
+                    "body": {
+                        "flow_id": "cx:flow:target",
+                        "actor_id": "did:web:alice.example",
+                    },
+                }),
+            },
+            // Same flow, different actor — both should appear.
+            RawOperationRecord {
+                operation_id: "op-b".to_owned(),
+                space_id: Some("cx:realm:r1".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "cx.message.create",
+                    "body": {
+                        "target_ref": "cx:flow:target",
+                        "sender": "did:web:bob.example",
+                    },
+                }),
+            },
+            // Different flow — must be excluded so we don't bleed
+            // unrelated realm actors into the per-card participant list.
+            RawOperationRecord {
+                operation_id: "op-c".to_owned(),
+                space_id: Some("cx:realm:r1".to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "cx.flow.update",
+                    "body": {
+                        "flow_id": "cx:flow:other",
+                        "actor_id": "did:web:carol.example",
+                    },
+                }),
+            },
+        ];
+        let dids = flow_participant_dids(&ops, "cx:flow:target");
+        assert_eq!(
+            dids,
+            vec![
+                "did:web:alice.example".to_owned(),
+                "did:web:bob.example".to_owned(),
+            ]
+        );
+        assert!(flow_participant_dids(&ops, "").is_empty());
     }
 
     #[test]
@@ -5508,6 +6081,7 @@ mod tests {
             title: "Keep".to_owned(),
             description: String::new(),
             body: String::new(),
+            synthesis: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
             due: String::new(),
@@ -5526,6 +6100,7 @@ mod tests {
             title: "New title".to_owned(),
             description: "New summary".to_owned(),
             body: "Body content".to_owned(),
+            synthesis: "Synthesis content".to_owned(),
             labels: vec!["ops".to_owned()],
             assignee: String::new(),
             due: "2026-05-20".to_owned(),
@@ -5535,6 +6110,7 @@ mod tests {
         assert_eq!(card.title, "New title");
         assert_eq!(card.description, "New summary");
         assert_eq!(card.body, "Body content");
+        assert_eq!(card.synthesis, "Synthesis content");
         assert_eq!(card.labels, vec!["ops".to_owned()]);
         assert_eq!(card.assignee, "—");
         assert_eq!(card.due, "2026-05-20");
@@ -5692,6 +6268,7 @@ mod tests {
             title: "test".to_owned(),
             description: String::new(),
             body: String::new(),
+            synthesis: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
             due: String::new(),
